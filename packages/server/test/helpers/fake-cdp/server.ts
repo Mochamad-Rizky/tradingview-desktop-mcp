@@ -259,7 +259,7 @@ export async function startFakeCdpServer(options: FakeCdpServerOptions): Promise
     method: string,
     params: Record<string, unknown>,
   ): Promise<void> => {
-    let payload: Record<string, unknown>;
+    let frame: string;
     try {
       const handler =
         target.handlers !== undefined && Object.hasOwn(target.handlers, method)
@@ -268,17 +268,25 @@ export async function startFakeCdpServer(options: FakeCdpServerOptions): Promise
       const result: unknown = await (handler
         ? handler(params)
         : defaultAnswer(target, method, params));
-      payload = { id, result: result ?? {} };
+      // Serialized inside the try: a handler result that JSON cannot carry (a BigInt, a cycle)
+      // becomes an error reply. Outside it, the throw would reject this unawaited call and
+      // surface as an unhandled rejection, and the client would wait for a reply forever.
+      frame = JSON.stringify({ id, result: result ?? {} });
     } catch (error) {
-      payload = { id, error: errorPayload(error) };
+      frame = JSON.stringify({ id, error: errorPayload(error) });
     }
-    send(connection.webSocket, payload);
+    sendFrame(connection.webSocket, frame);
   };
 
-  const send = (webSocket: WebSocket, payload: Record<string, unknown>): void => {
+  const sendFrame = (webSocket: WebSocket, frame: string): void => {
     if (webSocket.readyState === WebSocket.OPEN) {
-      webSocket.send(JSON.stringify(payload));
+      webSocket.send(frame);
     }
+  };
+
+  // For the replies the server builds itself, which always serialize.
+  const send = (webSocket: WebSocket, payload: Record<string, unknown>): void => {
+    sendFrame(webSocket, JSON.stringify(payload));
   };
 
   const handleMessage = (connection: Connection, target: FakeTarget, data: RawData): void => {

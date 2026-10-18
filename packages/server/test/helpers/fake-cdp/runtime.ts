@@ -21,7 +21,21 @@ export interface PageRuntime {
   // Answers Runtime.evaluate with the `result` payload of the response. Throws FakeCdpError for
   // a protocol-level failure; a throw inside the evaluated code is part of the payload instead.
   evaluate(params: Record<string, unknown>): Promise<Record<string, unknown>>;
-  // Cancels the timers the page scheduled, so none outlives the server.
+  // Cancels the pending timers of the window (see PageContext), so none outlives the server.
+  dispose(): void;
+}
+
+// A window turned into the global object of a vm context, with the timers a page has. This is
+// what Runtime.evaluate of the fake server runs code in, so tests that run page code in-process
+// (the page-function guard, for one) see the same page.
+export interface PageContext {
+  // The contextified window, for vm calls of the caller's own. It is the window object itself.
+  readonly context: vm.Context;
+  // Runs `code` as a script of the page, the way Runtime.evaluate runs an expression, and returns
+  // its completion value; a promise is returned as it is. A throw passes through unchanged: an
+  // error the page code creates comes from the page realm, so `instanceof Error` is false for it.
+  run(code: string): unknown;
+  // Cancels every pending timer of the window, whichever context of it scheduled the timer.
   dispose(): void;
 }
 
@@ -169,34 +183,36 @@ function exceptionPayload(
   };
 }
 
-export function createPageRuntime(window: object): PageRuntime {
-  const context = vm.createContext(window);
-  const timers = new Map<number, NodeJS.Timeout>();
-  let lastTimerId = 0;
-  let lastExceptionId = 0;
+// The pending timers of one window and the last handle given out.
+interface WindowTimers {
+  readonly pending: Map<number, NodeJS.Timeout>;
+  lastId: number;
+}
 
-  const define = (name: string, value: unknown): void => {
-    // A window that brings its own definition wins.
-    if (!(name in window)) {
-      Object.defineProperty(window, name, {
-        value,
-        configurable: true,
-        writable: true,
-        enumerable: false,
-      });
-    }
-  };
+// Keyed by window, not by context or runtime: several runtimes can share one window (two fake
+// servers, or a server and a test running page code in-process), and the timer functions are put
+// on the window only once, by the first of them. Each later one calls the same functions, so a
+// dispose of any of them has to reach the timers of all of them.
+const windowTimers = new WeakMap<object, WindowTimers>();
 
-  // In a browser `window` is the global object, so `window.Array` or `window === globalThis`
-  // hold. The vm global is not the sandbox object, so the name has to point at the global.
-  const pageGlobal: unknown = vm.runInContext('globalThis', context);
-  define('window', pageGlobal);
-  define('self', pageGlobal);
+function defineGlobal(window: object, name: string, value: unknown): void {
+  // A window that brings its own definition wins.
+  if (!(name in window)) {
+    Object.defineProperty(window, name, {
+      value,
+      configurable: true,
+      writable: true,
+      enumerable: false,
+    });
+  }
+}
 
-  // The page schedules timers (for example to wait for dataReady), and a vm context has none.
-  // They are numbers like in a browser, they never keep the process alive, and a throw inside
-  // one is swallowed like the uncaught error of a page: it is reported to a console, never to
-  // the caller of Runtime.evaluate.
+// The page schedules timers (for example to wait for dataReady), and a vm context has none.
+// They are numbers like in a browser, they never keep the process alive, and a throw inside one
+// is swallowed like the uncaught error of a page: it is reported to a console, never to the
+// caller of Runtime.evaluate.
+function installTimers(window: object): WindowTimers {
+  const timers: WindowTimers = { pending: new Map(), lastId: 0 };
   const schedule =
     (repeat: boolean) =>
     (callback: unknown, delay?: unknown, ...args: unknown[]): number => {
@@ -205,10 +221,10 @@ export function createPageRuntime(window: object): PageRuntime {
       }
       const milliseconds =
         typeof delay === 'number' && Number.isFinite(delay) && delay > 0 ? delay : 0;
-      const id = ++lastTimerId;
+      const id = ++timers.lastId;
       const run = (): void => {
         if (!repeat) {
-          timers.delete(id);
+          timers.pending.delete(id);
         }
         try {
           callback(...args);
@@ -218,23 +234,66 @@ export function createPageRuntime(window: object): PageRuntime {
       };
       const timer = repeat ? setInterval(run, milliseconds) : setTimeout(run, milliseconds);
       timer.unref();
-      timers.set(id, timer);
+      timers.pending.set(id, timer);
       return id;
     };
   const cancel = (id: unknown): void => {
     if (typeof id !== 'number') {
       return;
     }
-    const timer = timers.get(id);
+    const timer = timers.pending.get(id);
     if (timer !== undefined) {
       clearTimeout(timer);
-      timers.delete(id);
+      timers.pending.delete(id);
     }
   };
-  define('setTimeout', schedule(false));
-  define('setInterval', schedule(true));
-  define('clearTimeout', cancel);
-  define('clearInterval', cancel);
+  defineGlobal(window, 'setTimeout', schedule(false));
+  defineGlobal(window, 'setInterval', schedule(true));
+  defineGlobal(window, 'clearTimeout', cancel);
+  defineGlobal(window, 'clearInterval', cancel);
+  return timers;
+}
+
+export function createPageContext(window: object): PageContext {
+  // A window that is already contextified gets its existing context back, so every context of
+  // one window is the same page.
+  const context = vm.createContext(window);
+
+  // In a browser `window` is the global object, so `window.Array` or `window === globalThis`
+  // hold. The vm global is not the sandbox object, so the name has to point at the global.
+  const pageGlobal: unknown = vm.runInContext('globalThis', context);
+  defineGlobal(window, 'window', pageGlobal);
+  defineGlobal(window, 'self', pageGlobal);
+
+  let timers = windowTimers.get(window);
+  if (timers === undefined) {
+    timers = installTimers(window);
+    windowTimers.set(window, timers);
+  }
+  const { pending } = timers;
+
+  return {
+    context,
+    run(code) {
+      const script = new vm.Script(code, { filename: SCRIPT_NAME });
+      const value: unknown = script.runInContext(context, {
+        timeout: SYNC_TIMEOUT_MS,
+        displayErrors: false,
+      });
+      return value;
+    },
+    dispose() {
+      for (const timer of pending.values()) {
+        clearTimeout(timer);
+      }
+      pending.clear();
+    },
+  };
+}
+
+export function createPageRuntime(window: object): PageRuntime {
+  const page = createPageContext(window);
+  let lastExceptionId = 0;
 
   return {
     async evaluate(params) {
@@ -249,8 +308,7 @@ export function createPageRuntime(window: object): PageRuntime {
 
       let value: unknown;
       try {
-        const script = new vm.Script(expression, { filename: SCRIPT_NAME });
-        value = script.runInContext(context, { timeout: SYNC_TIMEOUT_MS, displayErrors: false });
+        value = page.run(expression);
       } catch (thrown) {
         return exceptionPayload(thrown, 'Uncaught', ++lastExceptionId);
       }
@@ -272,10 +330,7 @@ export function createPageRuntime(window: object): PageRuntime {
     },
 
     dispose() {
-      for (const timer of timers.values()) {
-        clearTimeout(timer);
-      }
-      timers.clear();
+      page.dispose();
     },
   };
 }

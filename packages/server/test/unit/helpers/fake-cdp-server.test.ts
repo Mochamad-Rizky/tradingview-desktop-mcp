@@ -2,7 +2,9 @@ import { once } from 'node:events';
 import { request } from 'node:http';
 import { connect as connectSocket } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
+import vm from 'node:vm';
 import WebSocket, { type RawData } from 'ws';
+import { createPageContext, createPageRuntime } from '../../helpers/fake-cdp/runtime.js';
 import {
   FakeCdpError,
   startFakeCdpServer,
@@ -151,6 +153,15 @@ function closeCode(socket: WebSocket): Promise<number> {
 
 function pageGlobal(window: object, name: string): unknown {
   return (window as Record<string, unknown>)[name];
+}
+
+// Fails a test that waits for a reply which never comes, instead of letting it run into the test
+// timeout.
+async function within<T>(work: Promise<T>, ms: number): Promise<T> {
+  const deadline = delay(ms).then(() => {
+    throw new Error(`No answer within ${String(ms)} ms`);
+  });
+  return Promise.race([work, deadline]);
 }
 
 // Resolves with the HTTP status of a refused WebSocket upgrade. A listener for
@@ -752,6 +763,112 @@ test('survives a page timer that throws', async () => {
   expect(evaluation(await evaluate(client, '1 + 1')).result.value).toBe(2);
 });
 
+test('clears the timers of a window that two servers share when either one closes', async () => {
+  const win = createFakeTvWindow(loadTvFixture());
+  const first = await start([pageTarget({ window: () => win })]);
+  const second = await start([pageTarget({ window: () => win })]);
+  const firstClient = await connect(first, 'PAGE1');
+  const secondClient = await connect(second, 'PAGE1');
+  // The first page puts the timer functions on the window, and the second finds them there.
+  await evaluate(firstClient, '1');
+  await evaluate(secondClient, 'setTimeout(() => { window.fired = true; }, 200)');
+
+  await second.close();
+  await delay(250);
+
+  expect(pageGlobal(win, 'fired')).toBeUndefined();
+});
+
+test('disposing one runtime clears the timers every runtime of the window scheduled', async () => {
+  const win = {};
+  const first = createPageRuntime(win);
+  const second = createPageRuntime(win);
+  await first.evaluate({ expression: 'setTimeout(() => { window.first = true; }, 100)' });
+  await second.evaluate({ expression: 'setTimeout(() => { window.second = true; }, 100)' });
+
+  second.dispose();
+  await delay(150);
+
+  expect(pageGlobal(win, 'first')).toBeUndefined();
+  expect(pageGlobal(win, 'second')).toBeUndefined();
+  first.dispose();
+});
+
+describe('createPageContext', () => {
+  test('runs page code with the window as its global object, and with timers', async () => {
+    const win = createFakeTvWindow(loadTvFixture(), { visibilityState: 'hidden' });
+    const page = createPageContext(win);
+    try {
+      // A string, because values made in the page come from another realm.
+      const value = page.run(`new Promise((resolve) => {
+        setTimeout(() => {
+          resolve([window === globalThis, self === window, document.visibilityState,
+            TradingViewApi.activeChart().symbol()].join(' '));
+        }, 5);
+      })`);
+
+      await expect(value).resolves.toBe('true true hidden NASDAQ:AAPL');
+    } finally {
+      page.dispose();
+    }
+  });
+
+  test('throws what the page code throws, as an error of the page', () => {
+    const page = createPageContext(createFakeTvWindow(loadTvFixture()));
+
+    let thrown: unknown;
+    try {
+      page.run('notAPageGlobal + 1');
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).not.toBeInstanceOf(ReferenceError);
+    expect(thrown).toMatchObject({
+      name: 'ReferenceError',
+      message: 'notAPageGlobal is not defined',
+    });
+    expect(page.run('typeof ReferenceError')).toBe('function');
+    page.dispose();
+  });
+
+  test('gives the vm context of the window for vm calls of its own', () => {
+    const win = createFakeTvWindow(loadTvFixture());
+    const page = createPageContext(win);
+
+    expect(vm.runInContext('typeof setTimeout', page.context)).toBe('function');
+    expect(page.context).toBe(win);
+    page.dispose();
+  });
+
+  test('dispose cancels the pending timers of the page', async () => {
+    const win = createFakeTvWindow(loadTvFixture());
+    const page = createPageContext(win);
+    page.run('setTimeout(() => { window.fired = true; }, 20)');
+
+    page.dispose();
+    await delay(60);
+
+    expect(pageGlobal(win, 'fired')).toBeUndefined();
+  });
+
+  test('shares the timers of a window with the runtime of a server', async () => {
+    const win = createFakeTvWindow(loadTvFixture());
+    const server = await start([pageTarget({ window: () => win })]);
+    const client = await connect(server, 'PAGE1');
+    const page = createPageContext(win);
+    page.run('setTimeout(() => { window.fromContext = true; }, 200)');
+    await evaluate(client, 'setTimeout(() => { window.fromServer = true; }, 200)');
+
+    await server.close();
+    await delay(250);
+
+    expect(pageGlobal(win, 'fromContext')).toBeUndefined();
+    expect(pageGlobal(win, 'fromServer')).toBeUndefined();
+    page.dispose();
+  });
+});
+
 test('never answers silent targets', async () => {
   const server = await start([silentTarget()]);
   const client = await connect(server, 'BLANK1');
@@ -903,6 +1020,42 @@ test('turns a handler failure into a CDP error response', async () => {
     id: 3,
     error: { code: -32602, message: 'Invalid parameters' },
   });
+});
+
+test('answers with a server error when a handler result cannot be serialized', async () => {
+  const unhandled = vi.fn();
+  process.on('unhandledRejection', unhandled);
+  try {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const server = await start([
+      pageTarget({
+        handlers: {
+          'Page.getLayoutMetrics': () => ({ contentSize: 1n }),
+          'Page.getFrameTree': () => Promise.resolve(cyclic),
+        },
+      }),
+    ]);
+    const client = await connect(server, 'PAGE1');
+
+    const bigint = await within(client.send('Page.getLayoutMetrics'), 1000);
+    const cycle = await within(client.send('Page.getFrameTree'), 1000);
+    const after = await within(client.send('Runtime.evaluate', { expression: '1 + 1' }), 1000);
+    await delay(20);
+
+    expect(bigint).toEqual({
+      id: 1,
+      error: { code: -32000, message: 'Do not know how to serialize a BigInt' },
+    });
+    expect(cycle.id).toBe(2);
+    expect(cycle.error?.code).toBe(-32000);
+    expect(cycle.error?.message).toMatch(/^Converting circular structure to JSON/);
+    // The connection keeps working after a reply that could not be sent as it was.
+    expect(after.result).toEqual({ result: { type: 'number', value: 2 } });
+    expect(unhandled).not.toHaveBeenCalled();
+  } finally {
+    process.off('unhandledRejection', unhandled);
+  }
 });
 
 test('rejects Runtime.evaluate without an expression as invalid parameters', async () => {
