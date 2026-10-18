@@ -1,0 +1,109 @@
+import type { JsonObject } from '../utils/json.js';
+
+// A closed set (design spec 5.2): clients branch on these codes, so adding one is a contract
+// change that should show up in review, not a free-form string.
+export type ErrorCode =
+  | 'TV_NOT_INSTALLED'
+  | 'TV_NOT_RUNNING'
+  | 'RESTART_REQUIRED'
+  | 'LAUNCH_FAILED'
+  | 'CDP_UNREACHABLE'
+  | 'TARGET_NOT_FOUND'
+  | 'TIMEOUT'
+  | 'PAGE_EVALUATION_FAILED'
+  | 'CAPABILITY_UNAVAILABLE'
+  | 'NOT_AVAILABLE'
+  | 'PLAN_LIMIT'
+  | 'INVALID_INPUT'
+  | 'CONFIRMATION_REQUIRED'
+  | 'UNSAFE_ACTION_BLOCKED'
+  | 'AUTH_REQUIRED'
+  | 'INTERNAL';
+
+// The only error shape that leaves the server. It has no stack and no cause by construction.
+export interface ErrorPayload {
+  code: ErrorCode;
+  message: string;
+  hint?: string;
+  details?: JsonObject;
+}
+
+export class TvMcpError extends Error {
+  readonly code: ErrorCode;
+  readonly hint?: string;
+  readonly details?: JsonObject;
+
+  constructor(
+    code: ErrorCode,
+    message: string,
+    options: { hint?: string; details?: JsonObject; cause?: unknown } = {},
+  ) {
+    // Error reads only `cause` from its options and ignores the other keys.
+    super(message, options);
+    this.name = 'TvMcpError';
+    this.code = code;
+    // With exactOptionalPropertyTypes an absent hint or details must stay absent, not undefined.
+    if (options.hint !== undefined) {
+      this.hint = options.hint;
+    }
+    if (options.details !== undefined) {
+      this.details = options.details;
+    }
+  }
+
+  toPayload(): ErrorPayload {
+    const payload: ErrorPayload = { code: this.code, message: this.message };
+    if (this.hint !== undefined) {
+      payload.hint = this.hint;
+    }
+    if (this.details !== undefined) {
+      payload.details = this.details;
+    }
+    return payload;
+  }
+}
+
+export class PlanLimitError extends TvMcpError {
+  // A message reported by TradingView itself is relayed unchanged (design spec 5.3, rule 3).
+  constructor(feature: string, limit: number, message?: string) {
+    super('PLAN_LIMIT', message ?? `Plan limit reached for ${feature} (limit: ${String(limit)})`, {
+      details: { feature, limit },
+    });
+    this.name = 'PlanLimitError';
+  }
+}
+
+export class TimeoutError extends TvMcpError {
+  constructor(label: string, ms: number) {
+    super('TIMEOUT', `${label} timed out after ${String(ms)} ms`, { details: { label, ms } });
+    this.name = 'TimeoutError';
+  }
+}
+
+export class CapabilityError extends TvMcpError {
+  // `attempts` lists the strategies that were tried, in order, so a client can see why every
+  // tier was unavailable.
+  constructor(message: string, attempts?: string[]) {
+    super(
+      'CAPABILITY_UNAVAILABLE',
+      message,
+      attempts === undefined ? {} : { details: { attempts } },
+    );
+    this.name = 'CapabilityError';
+  }
+}
+
+export function isTvMcpError(err: unknown): err is TvMcpError {
+  // instanceof, not a shape check: a look-alike object from a page or a client must never be
+  // trusted as a payload we meant to expose.
+  return err instanceof TvMcpError;
+}
+
+// Pure on purpose. The message of an unexpected error can carry file paths, selectors or page
+// data, so clients only get a generic one and the caller logs the original.
+export function toErrorPayload(err: unknown): ErrorPayload {
+  if (isTvMcpError(err)) {
+    return err.toPayload();
+  }
+  return { code: 'INTERNAL', message: 'Unexpected error' };
+}
