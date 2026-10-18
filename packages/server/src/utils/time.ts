@@ -2,9 +2,14 @@ import { TvMcpError } from '../core/errors.js';
 
 // Numbers above this are Unix milliseconds and the rest are seconds (design spec 5.1). As seconds
 // it is the year 5138 and as milliseconds it is March 1973, so a timestamp for any date after 1973
-// is read correctly whichever unit it is in. The price is that milliseconds for an earlier date
-// would be read as seconds.
+// is read correctly whichever unit it is in.
 const MILLISECONDS_ABOVE = 1e11;
+
+// The earliest time a number can stand for: 1973-03-03T09:46:40Z, which is MILLISECONDS_ABOVE read
+// as milliseconds. A smaller number is far more likely to be a year (2024) or a compact date
+// (20240131) than a moment in the early 1970s, and taking it for a timestamp would quietly ask for
+// the wrong range. Earlier times are still available as ISO 8601 strings.
+const MIN_TIMESTAMP_SECONDS = MILLISECONDS_ABOVE / 1000;
 
 // 9999-12-31T23:59:59Z, the last second with a four-digit year. Date prints later ones with an
 // expanded year such as +010000, which parseTimeInput does not read back.
@@ -14,24 +19,33 @@ const ACCEPTED_FORMS_HINT =
   'Use an ISO 8601 date or date-time, for example 2024-01-31 or 2024-01-31T10:00:00Z, or a Unix ' +
   'timestamp in seconds or milliseconds. A date or date-time without an offset is read as UTC.';
 
-// Digits only. A bare number is a timestamp even when it looks like a year ("2024") or a compact
-// date ("20240131"); dates must be written with hyphens.
+// Digits only. Such a string is handled exactly like the number it spells, lower limit included, so
+// "2024" and "20240131" are refused with advice instead of being read as dates or as times in 1970.
 const NUMERIC_PATTERN = /^\d+(?:\.\d+)?$/;
 
 // Only these shapes are read. Date.parse accepts many looser ones as well, such as "2024-1-5" or
-// even "1", and reads them as local time.
+// even "1", and reads them as local time. RFC 3339 section 5.6 also allows a single space for the
+// T and a lowercase t or z, which people paste from logs and spreadsheets, so those are read too.
 const DATE = String.raw`(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})`;
-const CLOCK = String.raw`T(?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.\d+)?)?`;
-const OFFSET = String.raw`(?:Z|(?<sign>[+-])(?<offsetHour>\d{2})(?::?(?<offsetMinute>\d{2}))?)`;
+const CLOCK = String.raw`[Tt ](?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2})(?:\.\d+)?)?`;
+const OFFSET = String.raw`(?:[Zz]|(?<sign>[+-])(?<offsetHour>\d{2})(?::?(?<offsetMinute>\d{2}))?)`;
 const ISO_PATTERN = new RegExp(`^${DATE}(?:${CLOCK}${OFFSET}?)?$`);
 
-function invalid(input: string | number, reason: string): never {
+function invalid(input: string | number, reason: string, hint = ACCEPTED_FORMS_HINT): never {
   // A string is quoted so that a typo or stray whitespace stands out. A number is printed as it
   // is, because JSON would turn NaN and Infinity into null.
   const shown = typeof input === 'string' ? JSON.stringify(input) : String(input);
-  throw new TvMcpError('INVALID_INPUT', `Invalid time ${shown}: ${reason}`, {
-    hint: ACCEPTED_FORMS_HINT,
-  });
+  throw new TvMcpError('INVALID_INPUT', `Invalid time ${shown}: ${reason}`, { hint });
+}
+
+// The hint for a number that is too small, which is nearly always a year or a compact date. It is
+// quoted in either case, so a client that sent the number 2024 sees the same advice as one that
+// sent the text "2024".
+function yearLikeHint(input: string | number): string {
+  return (
+    `${JSON.stringify(String(input))} looks like a year or compact date; use an ISO 8601 date ` +
+    'such as 2024-01-31 (or a Unix timestamp in seconds/milliseconds)'
+  );
 }
 
 function clockSeconds(hours: number, minutes: number, seconds = 0): number {
@@ -46,12 +60,21 @@ function fromTimestamp(value: number, input: string | number): number {
   if (!Number.isFinite(value)) {
     return invalid(input, 'it is not a finite number');
   }
-  // A negative number is nearly always a slip, such as a bad subtraction or a -1 placeholder. A
-  // date before 1970 is still possible to ask for, as an ISO 8601 string.
+  // A negative number is nearly always a slip, such as a bad subtraction or a -1 placeholder, so
+  // it gets its own message instead of the year-like advice below.
   if (value < 0) {
     return invalid(input, 'a Unix timestamp cannot be negative');
   }
-  return checkRange(Math.floor(value > MILLISECONDS_ABOVE ? value / 1000 : value), input);
+  const seconds = Math.floor(value > MILLISECONDS_ABOVE ? value / 1000 : value);
+  if (seconds < MIN_TIMESTAMP_SECONDS) {
+    return invalid(
+      input,
+      `it is below ${String(MIN_TIMESTAMP_SECONDS)} seconds (${toIso(MIN_TIMESTAMP_SECONDS)}), ` +
+        'the earliest time that can be given as a number',
+      yearLikeHint(input),
+    );
+  }
+  return checkRange(seconds, input);
 }
 
 // Without an offset a date-time is UTC, not the local time of this machine as in Date.parse:

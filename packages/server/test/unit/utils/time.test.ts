@@ -29,9 +29,72 @@ test('parseTimeInput accepts Unix seconds', () => {
   expect(parseTimeInput(1700000000)).toBe(1700000000);
 });
 
-test('parseTimeInput accepts zero, the Unix epoch', () => {
-  expect(parseTimeInput(0)).toBe(0);
-  expect(parseTimeInput('0')).toBe(0);
+// The earliest time a number can stand for is 1973-03-03T09:46:40Z: 1e8 seconds, which is also
+// 1e11 milliseconds. Below it a number is far likelier to be a year or a compact date than a moment
+// in the early 1970s, so it is refused instead of being read as a time minutes after the epoch.
+test('parseTimeInput rejects year-like numbers', () => {
+  for (const input of [2024, '2024']) {
+    const error = rejectionOf(input);
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.hint).toContain('"2024" looks like a year or compact date');
+    expect(error.hint).toContain('ISO 8601 date such as 2024-01-31');
+    expect(error.hint).toContain('Unix timestamp in seconds/milliseconds');
+  }
+});
+
+test('parseTimeInput rejects compact dates', () => {
+  for (const input of [20240131, '20240131']) {
+    const error = rejectionOf(input);
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.hint).toContain('"20240131" looks like a year or compact date');
+    expect(error.hint).toContain('ISO 8601 date such as 2024-01-31');
+  }
+});
+
+// A negative number is a different mistake from a year, and the advice for a year would not fit it.
+test('parseTimeInput says that a negative number is negative, not year-like', () => {
+  for (const input of [-1, -2024, -1700000000000]) {
+    const error = rejectionOf(input);
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.message).toContain('negative');
+    expect(error.hint).not.toContain('looks like a year');
+  }
+});
+
+test.each([
+  ['zero', 0],
+  ['zero as text', '0'],
+  ['one second', 1],
+  ['one day of seconds', 86400],
+  ['the largest 8-digit number', 99999999],
+  ['a fraction just under the limit', 99999999.9],
+  ['text just under the limit', '99999999'],
+])('parseTimeInput rejects %s as below the earliest time a number can be', (_label, input) => {
+  const error = rejectionOf(input);
+
+  expect(error.code).toBe('INVALID_INPUT');
+  expect(error.message).toContain('1973-03-03T09:46:40Z');
+  expect(error.hint).toContain('looks like a year or compact date');
+});
+
+test('parseTimeInput accepts the earliest time that can be given as a number', () => {
+  expect(parseTimeInput(1e8)).toBe(1e8);
+  expect(parseTimeInput('100000000')).toBe(1e8);
+  // One millisecond past 1e11, because 1e11 itself is read as seconds.
+  expect(parseTimeInput(1e11 + 1)).toBe(1e8);
+  expect(parseTimeInput('1973-03-03T09:46:40Z')).toBe(1e8);
+});
+
+// Numbers stop at 1973, but a time that was spelled out is deliberate, so the early 1970s remain
+// available as ISO 8601 strings.
+test('parseTimeInput reads times before 1973 from ISO 8601 strings', () => {
+  expect(parseTimeInput('1970-01-01')).toBe(0);
+  expect(parseTimeInput('1970-01-02T00:00:00Z')).toBe(86400);
+  expect(parseTimeInput('1972-12-31')).toBe(94608000);
+  expect(parseTimeInput('1973-01-01')).toBe(94694400);
 });
 
 test('parseTimeInput treats values above 1e11 as milliseconds', () => {
@@ -82,6 +145,23 @@ test('parseTimeInput reads a date-time without an offset as UTC', () => {
   expect(parseTimeInput('2024-01-31T10:00:00')).toBe(1706695200);
   expect(parseTimeInput('2024-01-31T10:00')).toBe(1706695200);
   expect(parseTimeInput('2024-01-31T10:00:00')).toBe(parseTimeInput('2024-01-31T10:00:00Z'));
+});
+
+// RFC 3339 section 5.6 lets a reader use a space for the T "for the sake of readability", and
+// lowercase t and z, which is what people paste from logs and spreadsheets.
+test('parseTimeInput accepts a space separator', () => {
+  expect(parseTimeInput('2023-11-14 22:13:20Z')).toBe(1700000000);
+  expect(parseTimeInput('2023-11-15 05:13:20+07:00')).toBe(1700000000);
+  // Without an offset it is UTC, exactly as with a T.
+  expect(parseTimeInput('2024-01-31 10:00:00')).toBe(1706695200);
+  expect(parseTimeInput('2024-01-31 10:00')).toBe(1706695200);
+});
+
+test('parseTimeInput accepts lowercase t and z', () => {
+  expect(parseTimeInput('2023-11-14t22:13:20z')).toBe(1700000000);
+  expect(parseTimeInput('2023-11-14t22:13:20Z')).toBe(1700000000);
+  expect(parseTimeInput('2023-11-14T22:13:20z')).toBe(1700000000);
+  expect(parseTimeInput('2023-11-15t05:13:20+07:00')).toBe(1700000000);
 });
 
 test('parseTimeInput ignores whitespace around an ISO string', () => {
@@ -152,11 +232,16 @@ test.each([
   ['a day-first date', '31-01-2024'],
   ['month names', 'Jan 31 2024'],
   ['an hour without minutes', '2024-01-31T10'],
-  ['a space where the T belongs', '2024-01-31 10:00:00'],
-  ['a lowercase t', '2024-01-31t10:00:00Z'],
+  ['two spaces between the date and the time', '2024-01-31  10:00:00'],
+  ['a tab between the date and the time', '2024-01-31\t10:00:00'],
+  ['a space next to the T', '2024-01-31 T10:00:00'],
+  ['another letter between the date and the time', '2024-01-31x10:00:00'],
+  ['a separator with no time after it', '2024-01-31T'],
+  ['a space before the offset', '2024-01-31T10:00:00 Z'],
   ['a fraction without digits', '2024-01-31T10:00:00.Z'],
   ['text after the date', '2024-01-31abc'],
   ['an offset on a date without a time', '2024-01-31Z'],
+  ['a lowercase z on a date without a time', '2024-01-31z'],
   ['an exponent', '1e9'],
   ['a hexadecimal number', '0x10'],
   ['a signed number', '-5'],
