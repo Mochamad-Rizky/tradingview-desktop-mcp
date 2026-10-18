@@ -199,7 +199,8 @@ describe('clickElement over CDP', () => {
 
 describe('typeText over CDP', () => {
   test('looks at the focus, then inserts the text', async () => {
-    const { server, page } = await openPage(createFakeDomWindow(chart()));
+    const field = fakeElement({ tag: 'input', id: 'symbol-search-input' });
+    const { server, page } = await openPage(createFakeDomWindow(chart([field]), { focus: field }));
 
     await typeText(page, 'NASDAQ:AAPL');
 
@@ -226,17 +227,67 @@ describe('typeText over CDP', () => {
     expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
   });
 
-  test('inserts the text when focus is on a container that holds trading buttons', async () => {
+  test('types into a field in a container that holds trading buttons', async () => {
     const group = fakeElement({
       matches: ['[data-name="buy-sell-buttons"]'],
       children: [fakeElement({ tag: 'button', matches: [BUY] })],
     });
-    const pane = fakeElement({ matches: ['[data-qa-id="pane"]'], children: [group] });
-    const { server, page } = await openPage(createFakeDomWindow([pane], { focus: pane }));
+    const field = fakeElement({ tag: 'input', id: 'note' });
+    const pane = fakeElement({ matches: ['[data-qa-id="pane"]'], children: [group, field] });
+    const { server, page } = await openPage(createFakeDomWindow([pane], { focus: field }));
 
     await typeText(page, 'NASDAQ:AAPL');
 
     expect(methodsOf(server)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+  });
+
+  test('types into a focused search input and into a contenteditable element', async () => {
+    const search = fakeElement({ tag: 'input', attributes: { type: 'search' } });
+    const editor = fakeElement({ contentEditable: true });
+    const first = await openPage(createFakeDomWindow([search, editor], { focus: search }));
+    const second = await openPage(createFakeDomWindow([search, editor], { focus: editor }));
+
+    await typeText(first.page, 'NASDAQ:AAPL');
+    await typeText(second.page, 'plot(close)');
+
+    expect(methodsOf(first.server)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+    expect(methodsOf(second.server)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+  });
+
+  test('refuses when focus is not an editable element', async () => {
+    const button = fakeElement({ tag: 'button', id: 'header-toolbar-symbol-search' });
+    const pane = fakeElement({ attributes: { 'data-qa-id': 'pane' } });
+    const { server, page } = await openPage(createFakeDomWindow([button, pane], { focus: pane }));
+
+    const error = await failureOf(typeText(page, 'NASDAQ:AAPL'));
+
+    expect(error.toPayload()).toEqual({
+      code: 'NOT_AVAILABLE',
+      message:
+        'Cannot type text: the focus is on `div[data-qa-id="pane"]`, which is not a text field',
+      hint: 'Focus a text field first, for example click the symbol search box.',
+      details: { action: 'typeText', focused: 'div[data-qa-id="pane"]' },
+    });
+    // The lookup of the focus is all the page ever saw.
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('refuses when a trading field kept the caret and the focus is on a safe button', async () => {
+    // Chrome types at the caret, which stays in a field after the focus moved on to a button.
+    const quantity = fakeElement({ tag: 'input', id: 'quantity' });
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      children: [quantity],
+    });
+    const button = fakeElement({ tag: 'button', matches: [SYMBOL_SEARCH] });
+    const { server, page } = await openPage(
+      createFakeDomWindow([group, button], { focus: button }),
+    );
+
+    const error = await failureOf(typeText(page, '1000'));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
   });
 
   test('fails closed without a DOM', async () => {
@@ -384,7 +435,10 @@ describe('pressKey over CDP', () => {
 });
 
 test('drives the symbol search: click the button, type the symbol, press Enter', async () => {
-  const { server, page } = await openPage(createFakeDomWindow(chart()));
+  // The dialog that the click opens puts the focus in its text field. The fake page does not
+  // open dialogs, so the field has the focus from the start.
+  const field = fakeElement({ tag: 'input', id: 'symbol-search-input' });
+  const { server, page } = await openPage(createFakeDomWindow(chart([field]), { focus: field }));
 
   await clickElement(page, SYMBOL_SEARCH);
   await typeText(page, 'NASDAQ:MSFT');

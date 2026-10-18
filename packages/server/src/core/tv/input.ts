@@ -10,15 +10,13 @@ import type { TvWindow } from './tv-window.js';
 // A click is refused when its target, or whatever would take the click, belongs to a broker
 // trading control (UNSAFE_SELECTORS). Key presses land on the element that has the focus, and
 // Enter on a focused button clicks it, so they are refused while that element is a trading
-// control or sits inside one. Text is checked the same way. A page that cannot say what has the
-// focus is refused too.
+// control or sits inside one. Text is typed only into a focused text field that is no trading
+// control, because the caret can be somewhere else than the focus (see typeText). A page that
+// cannot say what has the focus is refused too.
 //
-// That leaves two gaps. First, text is inserted at the caret, and a field keeps the caret when
-// the focus moves on to a button or a container: Chrome then still inserts the text into that
-// field and gives it the focus back. A trading field that lost the focus that way can receive
-// text, and the check of the focused element cannot see it. Second, TradingView may bind trading
-// actions to hotkeys that work wherever the focus is. The notes record none, so a key chord can
-// still reach one.
+// That leaves one gap. TradingView may bind trading actions to hotkeys that work wherever the
+// focus is. The notes record none, so a key chord can still reach one, and the check of the
+// focused element cannot see it.
 
 // A page the helpers can act on: the debugging session of a chart tab, to send input events to,
 // and the bridge that runs page functions in it. Only these two members are used, so any handle
@@ -111,8 +109,8 @@ export function describeElement(
 }
 
 // What a key press or a text needs to know about the element that has the focus. A key lands on
-// it, and text lands at the caret, which is in the focused field unless the focus moved on
-// without it (see the header):
+// it, and text lands at the caret, which is known to be in the focused element only when that is
+// a text field:
 // - unsafe: whether the focused element matches one of `unsafeSelectors` or sits inside one that
 //   does. Unlike for a click, what it holds does not count. Key events go to the focused element
 //   and not to its descendants, and the pane of the chart, where the focus usually is, always
@@ -120,6 +118,9 @@ export function describeElement(
 //   the chart. A container that activates a button in it by itself, as a toolbar can through
 //   aria-activedescendant, is therefore not caught. The body and the html element are safe, and
 //   so is a page where no element has the focus.
+// - editable: whether the focused element is a text field: an input of a type that takes text
+//   (text, search, email, url, tel, password or number, which includes a missing or an unknown
+//   type, as a page reports those as text), a textarea, or a content-editable element.
 // - focused: the element in a few words for the error that refuses it, its tag followed by its id,
 //   data-qa-id and data-name when it has them. Empty when no element has the focus.
 // A page that cannot say what has the focus answers NOT_AVAILABLE, so that nothing is sent to a
@@ -131,7 +132,7 @@ export function describeElement(
 export function describeFocusedElement(
   win: TvWindow,
   unsafeSelectors: string[],
-): { unsafe: boolean; focused: string } | PageErrorSentinel {
+): { unsafe: boolean; editable: boolean; focused: string } | PageErrorSentinel {
   // A page always has a document, but a fake of one or a frame that is still loading may not.
   const doc = win.document as TvWindow['document'] | undefined;
   const active = doc?.activeElement;
@@ -148,7 +149,7 @@ export function describeFocusedElement(
     throw new Error('describeFocusedElement needs the selectors to treat as unsafe');
   }
   if (active === null) {
-    return { unsafe: false, focused: '' };
+    return { unsafe: false, editable: false, focused: '' };
   }
 
   let focused = active.localName;
@@ -165,10 +166,21 @@ export function describeFocusedElement(
   }
   focused = focused.slice(0, 120);
 
+  // Only an input has a type that says whether it takes text, but other elements report one too (a
+  // link reports its type attribute), so the tag is checked first.
+  const textTypes = ['text', 'search', 'email', 'url', 'tel', 'password', 'number'];
+  const editable =
+    (active.localName === 'input' &&
+      'type' in active &&
+      typeof active.type === 'string' &&
+      textTypes.includes(active.type)) ||
+    active.localName === 'textarea' ||
+    ('isContentEditable' in active && active.isContentEditable === true);
+
   const unsafeList = unsafeSelectors.join(', ');
   // closest starts at the element itself, so it also covers an element that matches. The body and
   // the html element match nothing and sit inside nothing, so they come out safe.
-  return { unsafe: active.closest(unsafeList) !== null, focused };
+  return { unsafe: active.closest(unsafeList) !== null, editable, focused };
 }
 
 // Clicks the center of the first element that matches `selector`. The element is looked up anew on
@@ -227,11 +239,16 @@ export async function clickElement(page: InputPage, selector: string): Promise<v
 }
 
 // A key lands on whatever has the focus, and Enter on a focused button clicks it. Text lands at
-// the caret, which is usually in the focused field. So the focus is looked at first, and a
-// trading control that has it refuses the input before anything is sent. A page that cannot say
-// what has the focus is refused as well: this fails closed.
-async function assertFocusIsSafe(page: InputPage, action: 'pressKey' | 'typeText'): Promise<void> {
-  const { unsafe, focused } = await page.bridge.evaluate(describeFocusedElement, [
+// the caret, which is known to be in the focused element only when that is a text field. So the
+// focus is looked at first, and a trading control that has it refuses the input before anything
+// is sent. A page that cannot say what has the focus is refused as well: this fails closed. What
+// the page said about the element is handed back, for the caller that needs more than the
+// verdict.
+async function assertFocusIsSafe(
+  page: InputPage,
+  action: 'pressKey' | 'typeText',
+): Promise<{ focused: string; editable: boolean }> {
+  const { unsafe, editable, focused } = await page.bridge.evaluate(describeFocusedElement, [
     [...UNSAFE_SELECTORS],
   ]);
   if (unsafe) {
@@ -244,18 +261,36 @@ async function assertFocusIsSafe(page: InputPage, action: 'pressKey' | 'typeText
       },
     );
   }
+  return { focused, editable };
 }
 
 // Inserts text at the caret, as an emoji picker or an input method would: no key events, so a
-// shortcut of the page does not see the letters. The caret is in the focused field, unless the
-// focus moved on to something that cannot take text and left the caret behind in the field it
-// came from. Empty text is a no-op that does not even look at the page. Refused while a trading
-// control has the focus.
+// shortcut of the page does not see the letters.
+//
+// The caret is not where the focus is. A field keeps the caret when the focus moves on to a button
+// or a container, and Chrome then still types into that field and gives it the focus back (seen
+// in Chrome 155, also after a real click on a button). So the focused element says nothing about
+// where the text would go, unless it is a text field itself: the caret is then in it. That is the
+// only place text is sent to, and only when it is no trading control. A focused button, a
+// container, the body or no element at all is NOT_AVAILABLE. Empty text is a no-op that does not
+// even look at the page.
 export async function typeText(page: InputPage, text: string): Promise<void> {
   if (text === '') {
     return;
   }
-  await assertFocusIsSafe(page, 'typeText');
+  const { focused, editable } = await assertFocusIsSafe(page, 'typeText');
+  if (!editable) {
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      focused === ''
+        ? 'Cannot type text: no element has the focus'
+        : `Cannot type text: the focus is on \`${focused}\`, which is not a text field`,
+      {
+        hint: 'Focus a text field first, for example click the symbol search box.',
+        details: { action: 'typeText', focused },
+      },
+    );
+  }
   await page.session.send('Input.insertText', { text });
 }
 

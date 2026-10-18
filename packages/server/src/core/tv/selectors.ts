@@ -142,6 +142,7 @@ export const SELECTORS = {
 // one of them, on anything that holds one, on anything inside one, or on anything one lies over
 // at the point of the click, is refused. Keys and text are refused while the focus is on one of
 // them or inside one, but not for what the focused element merely holds, such as the chart pane.
+// Text is also typed only into a focused text field.
 //
 // The notes add "anything inside a broker order ticket", but a ticket has no stable selector yet.
 // Until one is recorded from a live broker session, a ticket is covered only through the buttons

@@ -383,7 +383,11 @@ describe('describeFocusedElement', () => {
     });
     const win = createFakeDomWindow([buy], { focus: buy });
 
-    expect(focusOf(win)).toEqual({ unsafe: true, focused: 'button[data-name="buy-order-button"]' });
+    expect(focusOf(win)).toEqual({
+      unsafe: true,
+      editable: false,
+      focused: 'button[data-name="buy-order-button"]',
+    });
   });
 
   test.each(UNSAFE_SELECTORS)('flags a focused element that matches %s', (selector) => {
@@ -403,7 +407,11 @@ describe('describeFocusedElement', () => {
     });
     const win = createFakeDomWindow([pane], { focus: pane });
 
-    expect(focusOf(win)).toEqual({ unsafe: false, focused: 'div[data-qa-id="pane"]' });
+    expect(focusOf(win)).toEqual({
+      unsafe: false,
+      editable: false,
+      focused: 'div[data-qa-id="pane"]',
+    });
   });
 
   test('flags a focused element that sits inside an unsafe control, however deep', () => {
@@ -414,7 +422,7 @@ describe('describeFocusedElement', () => {
     });
     const win = createFakeDomWindow([group], { focus: field });
 
-    expect(focusOf(win)).toEqual({ unsafe: true, focused: 'input' });
+    expect(focusOf(win)).toEqual({ unsafe: true, editable: true, focused: 'input' });
   });
 
   test('does not flag the chart canvas, whatever else the page holds', () => {
@@ -422,7 +430,11 @@ describe('describeFocusedElement', () => {
     const ticket = fakeElement({ children: [fakeElement({ matches: [BUY] })] });
     const win = createFakeDomWindow([canvas, ticket], { focus: canvas });
 
-    expect(focusOf(win)).toEqual({ unsafe: false, focused: 'canvas[data-name="pane-canvas"]' });
+    expect(focusOf(win)).toEqual({
+      unsafe: false,
+      editable: false,
+      focused: 'canvas[data-name="pane-canvas"]',
+    });
   });
 
   test('counts the body and the html element as safe, although they hold the whole page', () => {
@@ -432,10 +444,12 @@ describe('describeFocusedElement', () => {
 
     expect(focusOf(createFakeDomWindow([control], { focus: body }))).toEqual({
       unsafe: false,
+      editable: false,
       focused: 'body',
     });
     expect(focusOf(createFakeDomWindow([control], { focus: html }))).toEqual({
       unsafe: false,
+      editable: false,
       focused: 'html',
     });
   });
@@ -444,20 +458,20 @@ describe('describeFocusedElement', () => {
     // The default of the fake: the body, which holds the trading control.
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
 
-    expect(focusOf(win)).toEqual({ unsafe: false, focused: 'body' });
+    expect(focusOf(win)).toEqual({ unsafe: false, editable: false, focused: 'body' });
   });
 
   test('counts no focused element at all as safe', () => {
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })], { focus: null });
 
-    expect(focusOf(win)).toEqual({ unsafe: false, focused: '' });
+    expect(focusOf(win)).toEqual({ unsafe: false, editable: false, focused: '' });
   });
 
   test('describes the element by its tag, id, data-qa-id and data-name, in that order', () => {
     const describe = (element: FakeElement) =>
       focusOf(createFakeDomWindow([element], { focus: element }));
 
-    expect(describe(fakeElement())).toEqual({ unsafe: false, focused: 'div' });
+    expect(describe(fakeElement())).toEqual({ unsafe: false, editable: false, focused: 'div' });
     expect(describe(fakeElement({ tag: 'span', id: 'label' }))).toMatchObject({
       focused: 'span#label',
     });
@@ -486,6 +500,55 @@ describe('describeFocusedElement', () => {
     };
 
     expect(focused).toBe(`div#${'x'.repeat(116)}`);
+  });
+
+  test.each<[string, boolean, FakeElementOptions]>([
+    ['an input without a type', true, { tag: 'input' }],
+    ['an input of type text', true, { tag: 'input', attributes: { type: 'text' } }],
+    ['an input of type search', true, { tag: 'input', attributes: { type: 'search' } }],
+    ['an input of type email', true, { tag: 'input', attributes: { type: 'email' } }],
+    ['an input of type url', true, { tag: 'input', attributes: { type: 'url' } }],
+    ['an input of type tel', true, { tag: 'input', attributes: { type: 'tel' } }],
+    ['an input of type password', true, { tag: 'input', attributes: { type: 'password' } }],
+    ['an input of type number', true, { tag: 'input', attributes: { type: 'number' } }],
+    [
+      'an input of type SEARCH, in capitals',
+      true,
+      { tag: 'input', attributes: { type: 'SEARCH' } },
+    ],
+    // A page treats a type it does not know as text.
+    ['an input of a type nobody knows', true, { tag: 'input', attributes: { type: 'foo' } }],
+    ['a textarea', true, { tag: 'textarea' }],
+    ['a content-editable div', true, { contentEditable: true }],
+    ['an input of type checkbox', false, { tag: 'input', attributes: { type: 'checkbox' } }],
+    ['an input of type radio', false, { tag: 'input', attributes: { type: 'radio' } }],
+    ['an input of type button', false, { tag: 'input', attributes: { type: 'button' } }],
+    ['an input of type submit', false, { tag: 'input', attributes: { type: 'submit' } }],
+    ['an input of type reset', false, { tag: 'input', attributes: { type: 'reset' } }],
+    ['an input of type file', false, { tag: 'input', attributes: { type: 'file' } }],
+    ['an input of type range', false, { tag: 'input', attributes: { type: 'range' } }],
+    ['an input of type color', false, { tag: 'input', attributes: { type: 'color' } }],
+    ['an input of type date', false, { tag: 'input', attributes: { type: 'date' } }],
+    ['an input of type time', false, { tag: 'input', attributes: { type: 'time' } }],
+    ['an input of type hidden', false, { tag: 'input', attributes: { type: 'hidden' } }],
+    ['a button', false, { tag: 'button' }],
+    ['a select', false, { tag: 'select' }],
+    // A link reports its type attribute as a type, which is no reason to type into it.
+    ['a link with a type attribute of text', false, { tag: 'a', attributes: { type: 'text' } }],
+    ['a canvas', false, { tag: 'canvas' }],
+    ['a div', false, {}],
+  ])('reports %s as editable: %s', (_label, editable, options) => {
+    const element = fakeElement(options);
+    const win = createFakeDomWindow([element], { focus: element });
+
+    expect(focusOf(win)).toMatchObject({ unsafe: false, editable });
+  });
+
+  test('reports a trading field as both unsafe and editable', () => {
+    const field = fakeElement({ tag: 'input', matches: [BUY] });
+    const win = createFakeDomWindow([field], { focus: field });
+
+    expect(focusOf(win)).toMatchObject({ unsafe: true, editable: true });
   });
 
   test('returns NOT_AVAILABLE, and does not throw, when the page cannot say what has the focus', () => {
@@ -746,8 +809,14 @@ describe('clickElement', () => {
 });
 
 describe('typeText', () => {
+  // A page whose focus is on a text field, which is where typeText needs it to be.
+  function pageWithFocusedField(handleInput?: (command: SentCommand) => unknown): FakePage {
+    const field = fakeElement({ tag: 'input', id: 'symbol-search-input' });
+    return pageWith([field], { focus: field }, handleInput);
+  }
+
   test('inserts the text with Input.insertText', async () => {
-    const { page, input } = pageWith([]);
+    const { page, input } = pageWithFocusedField();
 
     await expect(typeText(page, 'NASDAQ:AAPL')).resolves.toBeUndefined();
 
@@ -762,7 +831,7 @@ describe('typeText', () => {
     '  padded  ',
     '0',
   ])('inserts %j as it is', async (text) => {
-    const { page, input } = pageWith([]);
+    const { page, input } = pageWithFocusedField();
 
     await typeText(page, text);
 
@@ -779,11 +848,48 @@ describe('typeText', () => {
 
   test('passes on the error of the session', async () => {
     const timeout = new TimeoutError('CDP Input.insertText on PAGE1', 5000);
-    const { page } = pageWith([], {}, () => {
+    const { page } = pageWithFocusedField(() => {
       throw timeout;
     });
 
     await expect(typeText(page, 'x')).rejects.toBe(timeout);
+  });
+
+  test('types into a focused search input', async () => {
+    const search = fakeElement({
+      tag: 'input',
+      id: 'symbol-search-input',
+      attributes: { type: 'search' },
+    });
+    const { page, sent } = pageWith([search], { focus: search });
+
+    await typeText(page, 'NASDAQ:AAPL');
+
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+  });
+
+  test('types into a contenteditable element', async () => {
+    const editor = fakeElement({ id: 'editor', contentEditable: true });
+    const { page, sent } = pageWith([editor], { focus: editor });
+
+    await typeText(page, 'plot(close)');
+
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+  });
+
+  test('types into a field in a container that holds trading buttons', async () => {
+    // What the container holds does not matter, only the field that has the focus.
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      children: [fakeElement({ tag: 'button', matches: [BUY] })],
+    });
+    const field = fakeElement({ tag: 'input', id: 'note' });
+    const pane = fakeElement({ matches: ['[data-qa-id="pane"]'], children: [group, field] });
+    const { page, sent } = pageWith([pane], { focus: field });
+
+    await typeText(page, 'NASDAQ:AAPL');
+
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate', 'Input.insertText']);
   });
 
   test('refuses when focus is inside a buy-sell control', async () => {
@@ -804,26 +910,77 @@ describe('typeText', () => {
     expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
   });
 
-  test('inserts the text when focus is on a container that holds trading buttons', async () => {
-    const group = fakeElement({
-      matches: ['[data-name="buy-sell-buttons"]'],
-      children: [fakeElement({ tag: 'button', matches: [BUY] })],
+  test('refuses when focus is not an editable element', async () => {
+    // Input.insertText types at the caret, which is only known to be in the focused element when
+    // that element is a text field.
+    const button = fakeElement({ tag: 'button', id: 'header-toolbar-symbol-search' });
+    const pane = fakeElement({
+      attributes: { 'data-qa-id': 'pane' },
+      children: [fakeElement({ tag: 'input', id: 'inside-the-pane' })],
     });
-    const pane = fakeElement({ matches: ['[data-qa-id="pane"]'], children: [group] });
-    const { page, sent } = pageWith([pane], { focus: pane });
+    const canvas = fakeElement({ tag: 'canvas', attributes: { 'data-name': 'pane-canvas' } });
+    const checkbox = fakeElement({ tag: 'input', id: 'agree', attributes: { type: 'checkbox' } });
+    const everything = [button, pane, canvas, checkbox];
+    const cases: [string, FakeDomOptions, string][] = [
+      ['a button', { focus: button }, 'button#header-toolbar-symbol-search'],
+      ['the body, which has the focus when nothing else has it', {}, 'body'],
+      ['a container that holds a text field', { focus: pane }, 'div[data-qa-id="pane"]'],
+      ['a canvas', { focus: canvas }, 'canvas[data-name="pane-canvas"]'],
+      ['a checkbox', { focus: checkbox }, 'input#agree'],
+      ['no element at all', { focus: null }, ''],
+    ];
 
-    await typeText(page, 'NASDAQ:AAPL');
+    for (const [label, options, focused] of cases) {
+      const { page, sent, input } = pageWith(everything, options);
 
-    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+      const error = await failureOf(typeText(page, 'NASDAQ:AAPL'));
+
+      expect(error.code, label).toBe('NOT_AVAILABLE');
+      expect(error.details, label).toEqual({ action: 'typeText', focused });
+      expect(error.message, label).toBe(
+        focused === ''
+          ? 'Cannot type text: no element has the focus'
+          : `Cannot type text: the focus is on \`${focused}\`, which is not a text field`,
+      );
+      expect(error.hint, label).toBe(
+        'Focus a text field first, for example click the symbol search box.',
+      );
+      expect(input(), label).toEqual([]);
+      expect(
+        sent.map(({ method }) => method),
+        label,
+      ).toEqual(['Runtime.evaluate']);
+    }
   });
 
-  test('inserts the text when a field that is no trading control has the focus', async () => {
-    const field = fakeElement({ tag: 'input', id: 'symbol-search' });
-    const { page, sent } = pageWith([field], { focus: field });
+  test('refuses when a trading field kept the caret and the focus is on a safe button', async () => {
+    // In Chrome a field keeps the caret when the focus moves on to a button, and Input.insertText
+    // types into the field that has the caret, not into the focused element (observed in Chrome
+    // 155, also after a real click on a toolbar button). The text must not reach the order
+    // quantity that way, so the fake session plays Chrome's part and records what the field gets.
+    const quantity = fakeElement({ tag: 'input', id: 'quantity' });
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      children: [quantity],
+    });
+    const toolbarButton = fakeElement({ tag: 'button', id: 'header-toolbar-symbol-search' });
+    const reachedTheField: string[] = [];
+    const { page, input } = pageWith(
+      [group, toolbarButton],
+      { focus: toolbarButton },
+      ({ method, params }) => {
+        if (method === 'Input.insertText') {
+          reachedTheField.push((params as { text: string }).text);
+        }
+        return {};
+      },
+    );
 
-    await typeText(page, 'NASDAQ:AAPL');
+    const error = await failureOf(typeText(page, '1000'));
 
-    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(reachedTheField).toEqual([]);
+    expect(input()).toEqual([]);
   });
 
   test('fails closed without a DOM', async () => {
@@ -1262,14 +1419,15 @@ describe('keys and text while a trading control has the focus', () => {
   test('look at the focus again for every key and every text', async () => {
     const canvas = fakeElement({ tag: 'canvas', matches: [PANE] });
     const buy = fakeElement({ tag: 'button', matches: [BUY] });
-    const win = createFakeDomWindow([canvas, buy], { focus: canvas });
+    const field = fakeElement({ tag: 'input', id: 'symbol-search-input' });
+    const win = createFakeDomWindow([canvas, buy, field], { focus: canvas });
     const { page, input } = pageOver(win);
 
     await pressKey(page, 'Escape');
     dom(win).document.activeElement = buy;
     const refusedKey = await failureOf(pressKey(page, 'Escape'));
     const refusedText = await failureOf(typeText(page, 'x'));
-    dom(win).document.activeElement = canvas;
+    dom(win).document.activeElement = field;
     await typeText(page, 'x');
 
     expect(refusedKey.details).toMatchObject({ action: 'pressKey' });
