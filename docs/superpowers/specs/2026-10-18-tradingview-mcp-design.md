@@ -46,18 +46,18 @@ flowchart TB
 
 ## 3. Technology choices
 
-| Concern | Choice | Reason |
-| --- | --- | --- |
-| Language | TypeScript 6.0.x, `strict`, no `any`, ESM | typescript-eslint 8 supports `<6.1`; 7.x (native compiler) is not supported by the lint toolchain yet |
-| MCP | `@modelcontextprotocol/sdk` 1.32.x with `zod` 4 | Latest SDK; accepts zod `^3.25 \|\| ^4` |
-| CDP client | **`chrome-remote-interface`** 0.34 with `devtools-protocol` types, wrapped behind our `CdpSession` interface | Thin raw-protocol client; connects to any target by ID, including the `file://` window chrome. Puppeteer auto-attaches to every target, and TradingView exposes page targets that never answer `Runtime.evaluate`, which risks hangs. Puppeteer's browser-management layer adds weight we do not use. The wrapper keeps the library swappable and makes the client trivial to fake. |
-| HTTP | `node:http` plus a small router | Full control over auth, Origin and Host checks, and SSE, without a framework |
-| Logging | `pino` to file descriptor 2 | Structured logs that never touch stdout (stdio protocol channel) |
-| CLI | `node:util.parseArgs`, `picocolors` | No heavy CLI framework; colorful banner on stderr |
-| Build | `tsup` (server), Vite (dashboard) | As specified |
-| Tests | Vitest 5 + `@vitest/coverage-v8`, React Testing Library, MSW, Playwright | As specified |
-| Node | Runtime `engines: >=20.19`; development Node ≥22.22 (`.nvmrc` = 24) | Current tsup, Vitest, lint-staged, commitlint, and MSW require Node 22+. Runtime dependencies support Node 20, and CI smoke-tests the built package on Node 20. |
-| Package name | `tradingview-desktop-mcp` (pending approval) | `tradingview-mcp` is taken on npm; this name is free and runs as `npx -y tradingview-desktop-mcp` |
+| Concern      | Choice                                                                                                       | Reason                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language     | TypeScript 6.0.x, `strict`, no `any`, ESM                                                                    | typescript-eslint 8 supports `<6.1`; 7.x (native compiler) is not supported by the lint toolchain yet                                                                                                                                                                                                                                                                               |
+| MCP          | `@modelcontextprotocol/sdk` 1.32.x with `zod` 4                                                              | Latest SDK; accepts zod `^3.25 \|\| ^4`                                                                                                                                                                                                                                                                                                                                             |
+| CDP client   | **`chrome-remote-interface`** 0.34 with `devtools-protocol` types, wrapped behind our `CdpSession` interface | Thin raw-protocol client; connects to any target by ID, including the `file://` window chrome. Puppeteer auto-attaches to every target, and TradingView exposes page targets that never answer `Runtime.evaluate`, which risks hangs. Puppeteer's browser-management layer adds weight we do not use. The wrapper keeps the library swappable and makes the client trivial to fake. |
+| HTTP         | `node:http` plus a small router                                                                              | Full control over auth, Origin and Host checks, and SSE, without a framework                                                                                                                                                                                                                                                                                                        |
+| Logging      | `pino` to file descriptor 2                                                                                  | Structured logs that never touch stdout (stdio protocol channel)                                                                                                                                                                                                                                                                                                                    |
+| CLI          | `node:util.parseArgs`, `picocolors`                                                                          | No heavy CLI framework; colorful banner on stderr                                                                                                                                                                                                                                                                                                                                   |
+| Build        | `tsup` (server), Vite (dashboard)                                                                            | As specified                                                                                                                                                                                                                                                                                                                                                                        |
+| Tests        | Vitest 5 + `@vitest/coverage-v8`, React Testing Library, MSW, Playwright                                     | As specified                                                                                                                                                                                                                                                                                                                                                                        |
+| Node         | Runtime `engines: >=20.19`; development Node ≥22.22 (`.nvmrc` = 24)                                          | Current tsup, Vitest, lint-staged, commitlint, and MSW require Node 22+. Runtime dependencies support Node 20, and CI smoke-tests the built package on Node 20.                                                                                                                                                                                                                     |
+| Package name | `tradingview-desktop-mcp` (pending approval)                                                                 | `tradingview-mcp` is taken on npm; this name is free and runs as `npx -y tradingview-desktop-mcp`                                                                                                                                                                                                                                                                                   |
 
 ## 4. Repository layout
 
@@ -117,7 +117,16 @@ MCP `image` content block in front of the JSON block.
 Failure: `isError: true` with
 
 ```json
-{ "ok": false, "error": { "code": "PLAN_LIMIT", "message": "…", "hint": "…", "details": { "feature": "INDICATORS_ON_CHART", "limit": 2 } }, "meta": { "durationMs": 8 } }
+{
+  "ok": false,
+  "error": {
+    "code": "PLAN_LIMIT",
+    "message": "…",
+    "hint": "…",
+    "details": { "feature": "INDICATORS_ON_CHART", "limit": 2 }
+  },
+  "meta": { "durationMs": 8 }
+}
 ```
 
 Error codes: `TV_NOT_INSTALLED`, `TV_NOT_RUNNING`, `RESTART_REQUIRED`, `LAUNCH_FAILED`, `CDP_UNREACHABLE`,
@@ -155,69 +164,69 @@ test fakes share one contract.
 
 Inputs are summarized; `?` marks optional fields. "Limit" names the plan feature checked first.
 
-| Domain | Tool | Inputs | Notes |
-| --- | --- | --- | --- |
-| App | `app_launch` | `restart?`, `port?` | Spawns with `--remote-debugging-port`; `RESTART_REQUIRED` when running without it |
-| | `app_health` | — | CDP, chart target, `TradingViewApi` readiness, build info, capabilities |
-| | `app_discover` | — | Install path, process state, classified CDP targets |
-| | `app_get_ui_state` | — | Open panels and dialogs, fullscreen, replay toolbar, Pine editor |
-| | `app_reconnect` | `reloadTab?` | Drops and re-resolves sessions; `reloadTab` uses `TVD.reloadTab()` |
-| Chart | `chart_get_state` | `chartIndex?` | Symbol, timeframe, type, visible range, studies, drawing count, layout |
-| | `chart_set_symbol` | `symbol`, `chartIndex?` | Detects unknown symbols |
-| | `chart_set_timeframe` | `timeframe`, `chartIndex?` | Aliases normalized (`1h` → `60`, `1d` → `1D`; lowercase `m` = minutes, uppercase `M` = months) |
-| | `chart_set_type` | `type` | Named enum mapped to chart style IDs |
-| | `chart_get_visible_range` | — | |
-| | `chart_set_visible_range` | `from`+`to` or `preset` | T2 `zoomToBarsRange`; presets via T3 |
-| | `chart_scroll_to_date` | `date`, `align?` | T2 `scrollToBar`, T3 go-to-date |
-| Market data | `data_get_ohlcv` | `count?` (≤5000), `from?`, `to?`, `chartIndex?` | From loaded bars; loads more history within the plan's limit |
-| | `data_get_quote` | `symbol?` | Chart symbol via `quotes()`; others via the quote session |
-| | `data_get_symbol_info` | `symbol?` | |
-| | `data_search_symbols` | `query`, `exchange?`, `type?`, `limit?` | |
-| | `data_get_market_depth` | `symbol?`, `levels?` | `NOT_AVAILABLE` without entitlement |
-| Indicators | `indicator_list` | — | Studies with visibility and inputs |
-| | `indicator_search` | `query`, `limit?` | Built-in metadata |
-| | `indicator_add` | `name`, `inputs?`, `overlay?` | Limit `INDICATORS_ON_CHART` |
-| | `indicator_remove` | `id` | |
-| | `indicator_set_inputs` | `id`, `inputs` | Validated against `getInputsInfo()` |
-| | `indicator_set_visibility` | `id`, `visible` | |
-| | `indicator_get_values` | `id`, `count?`, `at?` | Plot titles mapped to values |
-| Pine | `pine_new` | `type?`, `source?` | |
-| | `pine_open` | `scriptId?` or `name?` | |
-| | `pine_get_source` / `pine_set_source` | — / `source` | |
-| | `pine_compile` | `addToChart?` | Limit `INDICATORS_ON_CHART` when adding |
-| | `pine_smart_compile` | `source?`, `maxAttempts?`, `applyFixes?` | Compile, apply deterministic fixes, retry; returns attempts and diff |
-| | `pine_get_errors` | — | Line, column, message, severity |
-| | `pine_get_console` | `limit?` | Compiler console and script `log.*` output |
-| | `pine_save` | `name?` | Limit `SAVED_PINE_SCRIPTS` |
-| | `pine_list_scripts` | — | |
-| | `pine_analyze` | `source?` | Local static analysis; works offline |
-| Pine outputs | `pine_get_lines`, `pine_get_labels`, `pine_get_boxes`, `pine_get_tables` | `studyId?`, `limit?` | From study `graphics()` and `tables()` |
-| Strategy | `strategy_get_results` | `studyId?` | Performance summary (all, long, short) |
-| | `strategy_get_trades` | `studyId?`, `limit?`, `offset?` | |
-| | `strategy_get_equity` | `studyId?`, `maxPoints?` | Downsampled curve |
-| Drawings | `drawing_create` | `shape`, `points`, `text?`, `style?` | Curated shape enum with point-count validation |
-| | `drawing_list` / `drawing_get` | — / `id` | |
-| | `drawing_remove` | `id` | |
-| | `drawing_clear_all` | `scope` (`created_by_mcp` \| `all`), `confirm?` | `all` requires `confirm: true` |
-| Alerts | `alert_create` | `symbol?`, `condition`, `price`, `message?`, `expiration?` | Limit `SERVER_SIDE_ALERTS` |
-| | `alert_list` | `status?` | |
-| | `alert_delete` | `alertIds` | Explicit IDs only; no "delete all" |
-| Watchlist | `watchlist_list` | — | All lists |
-| | `watchlist_get` | `listId?` | Default: active list |
-| | `watchlist_add` / `watchlist_add_bulk` / `watchlist_remove` | `symbol` / `symbols` / `symbols`, `listId?` | Watchlist symbol limit |
-| Layouts and panes | `layout_list`, `layout_new`, `layout_switch` | — / `name` / `layoutId` | Limit `CHART_STORAGE` for new layouts |
-| | `pane_list` | — | Charts in the layout, and panes per chart |
-| | `pane_set_layout` | `layout` | Limit `MULTIPLE_CHARTS` |
-| | `pane_focus`, `pane_set_symbol` | `chartIndex` / `chartIndex`, `symbol` | |
-| Tabs | `tab_list`, `tab_new`, `tab_switch`, `tab_close` | — / — / `tabId` or `index` / `tabId` or `index` | Refuses to close the last tab |
-| Replay | `replay_start` | `date?` (ISO, Unix, `first`, `random`) | |
-| | `replay_step` | `bars?` (≤500) | |
-| | `replay_autoplay` | `enabled`, `speed?` | Speeds from `autoplayDelayList()` |
-| | `replay_status`, `replay_stop` | — | |
-| | `replay_trade` | `action` (`buy`, `sell`, `close`), `quantity?` | Paper trades; refused unless replay is active |
-| Screenshot | `screenshot_capture` | `target?` (`chart`, `page`, `window`), `format?`, `maxWidth?` | Returns MCP image content |
-| Low-level UI | `ui_click`, `ui_hover`, `ui_type_text`, `ui_press_key`, `ui_scroll`, `ui_find_element`, `ui_open_panel`, `ui_fullscreen`, `ui_evaluate` | selector, text, or coordinates; `target?` (`chart`, `window`) | Unsafe-target guard; `ui_evaluate` opt-in |
-| Batch | `batch_run` | `steps[]` (≤20), `stopOnError?` | No nesting |
+| Domain            | Tool                                                                                                                                    | Inputs                                                        | Notes                                                                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| App               | `app_launch`                                                                                                                            | `restart?`, `port?`                                           | Spawns with `--remote-debugging-port`; `RESTART_REQUIRED` when running without it              |
+|                   | `app_health`                                                                                                                            | —                                                             | CDP, chart target, `TradingViewApi` readiness, build info, capabilities                        |
+|                   | `app_discover`                                                                                                                          | —                                                             | Install path, process state, classified CDP targets                                            |
+|                   | `app_get_ui_state`                                                                                                                      | —                                                             | Open panels and dialogs, fullscreen, replay toolbar, Pine editor                               |
+|                   | `app_reconnect`                                                                                                                         | `reloadTab?`                                                  | Drops and re-resolves sessions; `reloadTab` uses `TVD.reloadTab()`                             |
+| Chart             | `chart_get_state`                                                                                                                       | `chartIndex?`                                                 | Symbol, timeframe, type, visible range, studies, drawing count, layout                         |
+|                   | `chart_set_symbol`                                                                                                                      | `symbol`, `chartIndex?`                                       | Detects unknown symbols                                                                        |
+|                   | `chart_set_timeframe`                                                                                                                   | `timeframe`, `chartIndex?`                                    | Aliases normalized (`1h` → `60`, `1d` → `1D`; lowercase `m` = minutes, uppercase `M` = months) |
+|                   | `chart_set_type`                                                                                                                        | `type`                                                        | Named enum mapped to chart style IDs                                                           |
+|                   | `chart_get_visible_range`                                                                                                               | —                                                             |                                                                                                |
+|                   | `chart_set_visible_range`                                                                                                               | `from`+`to` or `preset`                                       | T2 `zoomToBarsRange`; presets via T3                                                           |
+|                   | `chart_scroll_to_date`                                                                                                                  | `date`, `align?`                                              | T2 `scrollToBar`, T3 go-to-date                                                                |
+| Market data       | `data_get_ohlcv`                                                                                                                        | `count?` (≤5000), `from?`, `to?`, `chartIndex?`               | From loaded bars; loads more history within the plan's limit                                   |
+|                   | `data_get_quote`                                                                                                                        | `symbol?`                                                     | Chart symbol via `quotes()`; others via the quote session                                      |
+|                   | `data_get_symbol_info`                                                                                                                  | `symbol?`                                                     |                                                                                                |
+|                   | `data_search_symbols`                                                                                                                   | `query`, `exchange?`, `type?`, `limit?`                       |                                                                                                |
+|                   | `data_get_market_depth`                                                                                                                 | `symbol?`, `levels?`                                          | `NOT_AVAILABLE` without entitlement                                                            |
+| Indicators        | `indicator_list`                                                                                                                        | —                                                             | Studies with visibility and inputs                                                             |
+|                   | `indicator_search`                                                                                                                      | `query`, `limit?`                                             | Built-in metadata                                                                              |
+|                   | `indicator_add`                                                                                                                         | `name`, `inputs?`, `overlay?`                                 | Limit `INDICATORS_ON_CHART`                                                                    |
+|                   | `indicator_remove`                                                                                                                      | `id`                                                          |                                                                                                |
+|                   | `indicator_set_inputs`                                                                                                                  | `id`, `inputs`                                                | Validated against `getInputsInfo()`                                                            |
+|                   | `indicator_set_visibility`                                                                                                              | `id`, `visible`                                               |                                                                                                |
+|                   | `indicator_get_values`                                                                                                                  | `id`, `count?`, `at?`                                         | Plot titles mapped to values                                                                   |
+| Pine              | `pine_new`                                                                                                                              | `type?`, `source?`                                            |                                                                                                |
+|                   | `pine_open`                                                                                                                             | `scriptId?` or `name?`                                        |                                                                                                |
+|                   | `pine_get_source` / `pine_set_source`                                                                                                   | — / `source`                                                  |                                                                                                |
+|                   | `pine_compile`                                                                                                                          | `addToChart?`                                                 | Limit `INDICATORS_ON_CHART` when adding                                                        |
+|                   | `pine_smart_compile`                                                                                                                    | `source?`, `maxAttempts?`, `applyFixes?`                      | Compile, apply deterministic fixes, retry; returns attempts and diff                           |
+|                   | `pine_get_errors`                                                                                                                       | —                                                             | Line, column, message, severity                                                                |
+|                   | `pine_get_console`                                                                                                                      | `limit?`                                                      | Compiler console and script `log.*` output                                                     |
+|                   | `pine_save`                                                                                                                             | `name?`                                                       | Limit `SAVED_PINE_SCRIPTS`                                                                     |
+|                   | `pine_list_scripts`                                                                                                                     | —                                                             |                                                                                                |
+|                   | `pine_analyze`                                                                                                                          | `source?`                                                     | Local static analysis; works offline                                                           |
+| Pine outputs      | `pine_get_lines`, `pine_get_labels`, `pine_get_boxes`, `pine_get_tables`                                                                | `studyId?`, `limit?`                                          | From study `graphics()` and `tables()`                                                         |
+| Strategy          | `strategy_get_results`                                                                                                                  | `studyId?`                                                    | Performance summary (all, long, short)                                                         |
+|                   | `strategy_get_trades`                                                                                                                   | `studyId?`, `limit?`, `offset?`                               |                                                                                                |
+|                   | `strategy_get_equity`                                                                                                                   | `studyId?`, `maxPoints?`                                      | Downsampled curve                                                                              |
+| Drawings          | `drawing_create`                                                                                                                        | `shape`, `points`, `text?`, `style?`                          | Curated shape enum with point-count validation                                                 |
+|                   | `drawing_list` / `drawing_get`                                                                                                          | — / `id`                                                      |                                                                                                |
+|                   | `drawing_remove`                                                                                                                        | `id`                                                          |                                                                                                |
+|                   | `drawing_clear_all`                                                                                                                     | `scope` (`created_by_mcp` \| `all`), `confirm?`               | `all` requires `confirm: true`                                                                 |
+| Alerts            | `alert_create`                                                                                                                          | `symbol?`, `condition`, `price`, `message?`, `expiration?`    | Limit `SERVER_SIDE_ALERTS`                                                                     |
+|                   | `alert_list`                                                                                                                            | `status?`                                                     |                                                                                                |
+|                   | `alert_delete`                                                                                                                          | `alertIds`                                                    | Explicit IDs only; no "delete all"                                                             |
+| Watchlist         | `watchlist_list`                                                                                                                        | —                                                             | All lists                                                                                      |
+|                   | `watchlist_get`                                                                                                                         | `listId?`                                                     | Default: active list                                                                           |
+|                   | `watchlist_add` / `watchlist_add_bulk` / `watchlist_remove`                                                                             | `symbol` / `symbols` / `symbols`, `listId?`                   | Watchlist symbol limit                                                                         |
+| Layouts and panes | `layout_list`, `layout_new`, `layout_switch`                                                                                            | — / `name` / `layoutId`                                       | Limit `CHART_STORAGE` for new layouts                                                          |
+|                   | `pane_list`                                                                                                                             | —                                                             | Charts in the layout, and panes per chart                                                      |
+|                   | `pane_set_layout`                                                                                                                       | `layout`                                                      | Limit `MULTIPLE_CHARTS`                                                                        |
+|                   | `pane_focus`, `pane_set_symbol`                                                                                                         | `chartIndex` / `chartIndex`, `symbol`                         |                                                                                                |
+| Tabs              | `tab_list`, `tab_new`, `tab_switch`, `tab_close`                                                                                        | — / — / `tabId` or `index` / `tabId` or `index`               | Refuses to close the last tab                                                                  |
+| Replay            | `replay_start`                                                                                                                          | `date?` (ISO, Unix, `first`, `random`)                        |                                                                                                |
+|                   | `replay_step`                                                                                                                           | `bars?` (≤500)                                                |                                                                                                |
+|                   | `replay_autoplay`                                                                                                                       | `enabled`, `speed?`                                           | Speeds from `autoplayDelayList()`                                                              |
+|                   | `replay_status`, `replay_stop`                                                                                                          | —                                                             |                                                                                                |
+|                   | `replay_trade`                                                                                                                          | `action` (`buy`, `sell`, `close`), `quantity?`                | Paper trades; refused unless replay is active                                                  |
+| Screenshot        | `screenshot_capture`                                                                                                                    | `target?` (`chart`, `page`, `window`), `format?`, `maxWidth?` | Returns MCP image content                                                                      |
+| Low-level UI      | `ui_click`, `ui_hover`, `ui_type_text`, `ui_press_key`, `ui_scroll`, `ui_find_element`, `ui_open_panel`, `ui_fullscreen`, `ui_evaluate` | selector, text, or coordinates; `target?` (`chart`, `window`) | Unsafe-target guard; `ui_evaluate` opt-in                                                      |
+| Batch             | `batch_run`                                                                                                                             | `steps[]` (≤20), `stopOnError?`                               | No nesting                                                                                     |
 
 Resources: `tradingview://app/health`, `tradingview://chart/state`, `tradingview://chart/ohlcv`,
 `tradingview://pine/source`, `tradingview://pine/errors`, `tradingview://strategy/report`,
@@ -242,33 +251,33 @@ Prompts: `analyze_current_chart`, `write_and_backtest_strategy`, `debug_pine_scr
 
 ## 9. Configuration
 
-| Env var | CLI flag | Default |
-| --- | --- | --- |
-| `TV_CDP_HOST` | `--cdp-host` | `127.0.0.1` (loopback only) |
-| `TV_CDP_PORT` | `--cdp-port` | `9222` |
-| `TV_APP_PATH` | `--app-path` | auto-detect |
-| `TV_LAUNCH_TIMEOUT_MS` | — | `60000` |
-| `TV_CALL_TIMEOUT_MS` | — | `15000` |
-| `TV_MCP_LOG_LEVEL` | `--log-level` | `info` |
-| `TV_MCP_TRANSPORT` | `--transport` | `stdio` |
-| `TV_MCP_HTTP_HOST` / `TV_MCP_HTTP_PORT` | `--host` / `--port` | `127.0.0.1` / `8787` |
-| `TV_MCP_AUTH_TOKEN` | — | required for HTTP |
-| `TV_MCP_PROFILE` / `TV_MCP_TOOLS` | `--profile` / `--tools` | `full` / all |
-| `TV_MCP_ALLOW_EVAL` | `--allow-eval` | `false` |
-| `TV_MCP_DASHBOARD` | `--dashboard` / `--no-dashboard` | on in HTTP mode, off in stdio mode |
+| Env var                                 | CLI flag                         | Default                            |
+| --------------------------------------- | -------------------------------- | ---------------------------------- |
+| `TV_CDP_HOST`                           | `--cdp-host`                     | `127.0.0.1` (loopback only)        |
+| `TV_CDP_PORT`                           | `--cdp-port`                     | `9222`                             |
+| `TV_APP_PATH`                           | `--app-path`                     | auto-detect                        |
+| `TV_LAUNCH_TIMEOUT_MS`                  | —                                | `60000`                            |
+| `TV_CALL_TIMEOUT_MS`                    | —                                | `15000`                            |
+| `TV_MCP_LOG_LEVEL`                      | `--log-level`                    | `info`                             |
+| `TV_MCP_TRANSPORT`                      | `--transport`                    | `stdio`                            |
+| `TV_MCP_HTTP_HOST` / `TV_MCP_HTTP_PORT` | `--host` / `--port`              | `127.0.0.1` / `8787`               |
+| `TV_MCP_AUTH_TOKEN`                     | —                                | required for HTTP                  |
+| `TV_MCP_PROFILE` / `TV_MCP_TOOLS`       | `--profile` / `--tools`          | `full` / all                       |
+| `TV_MCP_ALLOW_EVAL`                     | `--allow-eval`                   | `false`                            |
+| `TV_MCP_DASHBOARD`                      | `--dashboard` / `--no-dashboard` | on in HTTP mode, off in stdio mode |
 
 Precedence: CLI flag over environment variable over default. Subcommands: `launch` (start TradingView with the debug
 port), `doctor` (health report), `config <client>` (print a client configuration snippet).
 
 ## 10. Testing strategy
 
-| Level | Runner | Scope | Runs in CI |
-| --- | --- | --- | --- |
-| Unit | Vitest | Pure logic, schemas, mappers, page functions against fake `TvWindow` objects, launcher with injected OS dependencies | yes |
-| Integration | Vitest | Real server with SDK clients over in-memory, stdio, and Streamable HTTP transports, against a **fake CDP server**. Its `Runtime.evaluate` runs the real serialized page functions inside a `vm` context backed by a fixture-driven fake TradingView window. | yes |
-| MCP E2E | Vitest, `TV_E2E=1` | Real TradingView Desktop | local only |
-| Dashboard unit | Vitest + RTL + MSW | Components, hooks, API client | yes |
-| Dashboard E2E | Playwright | Against a mocked server in CI; against the real server locally | yes (mocked) |
+| Level          | Runner             | Scope                                                                                                                                                                                                                                                       | Runs in CI   |
+| -------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| Unit           | Vitest             | Pure logic, schemas, mappers, page functions against fake `TvWindow` objects, launcher with injected OS dependencies                                                                                                                                        | yes          |
+| Integration    | Vitest             | Real server with SDK clients over in-memory, stdio, and Streamable HTTP transports, against a **fake CDP server**. Its `Runtime.evaluate` runs the real serialized page functions inside a `vm` context backed by a fixture-driven fake TradingView window. | yes          |
+| MCP E2E        | Vitest, `TV_E2E=1` | Real TradingView Desktop                                                                                                                                                                                                                                    | local only   |
+| Dashboard unit | Vitest + RTL + MSW | Components, hooks, API client                                                                                                                                                                                                                               | yes          |
+| Dashboard E2E  | Playwright         | Against a mocked server in CI; against the real server locally                                                                                                                                                                                              | yes (mocked) |
 
 - **Coverage:** ≥80% lines, branches, functions, and statements over `packages/server/src` from unit and
   integration tests combined, enforced in CI.
@@ -288,13 +297,13 @@ Badges: CI status (GitHub Actions) and coverage (Codecov, which requires enablin
 
 ## 12. Roadmap
 
-| Plan | Scope | Ends with |
-| --- | --- | --- |
-| 1. Foundation | Monorepo, tooling, core, transports, registry, `batch_run`, **App** and **Chart** domains, test harness, E2E harness, `scripts/re`, CI | Push to `main` |
-| 2. Data and Pine | Market data, Indicators, Pine, Pine outputs, Strategy Tester, plan limits module; resources `chart/ohlcv`, `pine/source`, `pine/errors`, `strategy/report`; prompts `analyze_current_chart`, `multi_timeframe_review`, `write_and_backtest_strategy`, `debug_pine_script` | Push |
-| 3. Interaction | Drawings, Alerts, Watchlist, Layouts and panes, Tabs, Replay, Screenshot, Low-level UI; resource `watchlist/active`; prompt `replay_practice_session` | Push |
-| 4. Dashboard | React dashboard, dashboard API, component tests, Playwright | Push |
-| 5. Docs and release | README with tutorials for every client, generated tool reference, `docs/testing.md` final, troubleshooting, publish setup, final verification against real TradingView | Push |
+| Plan                | Scope                                                                                                                                                                                                                                                                     | Ends with      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| 1. Foundation       | Monorepo, tooling, core, transports, registry, `batch_run`, **App** and **Chart** domains, test harness, E2E harness, `scripts/re`, CI                                                                                                                                    | Push to `main` |
+| 2. Data and Pine    | Market data, Indicators, Pine, Pine outputs, Strategy Tester, plan limits module; resources `chart/ohlcv`, `pine/source`, `pine/errors`, `strategy/report`; prompts `analyze_current_chart`, `multi_timeframe_review`, `write_and_backtest_strategy`, `debug_pine_script` | Push           |
+| 3. Interaction      | Drawings, Alerts, Watchlist, Layouts and panes, Tabs, Replay, Screenshot, Low-level UI; resource `watchlist/active`; prompt `replay_practice_session`                                                                                                                     | Push           |
+| 4. Dashboard        | React dashboard, dashboard API, component tests, Playwright                                                                                                                                                                                                               | Push           |
+| 5. Docs and release | README with tutorials for every client, generated tool reference, `docs/testing.md` final, troubleshooting, publish setup, final verification against real TradingView                                                                                                    | Push           |
 
 Each plan is written right before it starts, so the open questions from reverse-engineering §12 are answered by
 then. Commits are small and conventional, with one commit or more per domain.

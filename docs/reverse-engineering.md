@@ -32,30 +32,30 @@ described here, and every fallback chain follows the tier model in [§9](#9-fall
 
 ### 1.1 Analyzed build
 
-| Item                  | Value                                                         |
-| --------------------- | ------------------------------------------------------------- |
-| Desktop app           | TradingView Desktop **3.4.1** (build `3.4.1.8194`)            |
-| Bundle identifier     | `com.tradingview.tradingviewapp.desktop` (URL scheme `tradingview://`) |
-| Runtime               | Electron **41.7.1**, Chromium 146.0.7680.216, V8 14.6, CDP 1.3 |
-| User agent suffix     | `TradingView/3.4.1 … Electron/41.7.1 … TVDesktop/3.4.1`       |
-| Web app               | `https://www.tradingview.com/chart/<layoutId>/`, `BUILD_TIME` 2026-10-16T17:55:37 |
-| Host OS               | macOS (Darwin 25.5), universal binary (x86_64 + arm64)        |
-| `app.asar` SHA-256    | `d85cda843523e29e83ba5ecc5eb5a660761c813d66386a387719504c79c6ec50` |
+| Item               | Value                                                                             |
+| ------------------ | --------------------------------------------------------------------------------- |
+| Desktop app        | TradingView Desktop **3.4.1** (build `3.4.1.8194`)                                |
+| Bundle identifier  | `com.tradingview.tradingviewapp.desktop` (URL scheme `tradingview://`)            |
+| Runtime            | Electron **41.7.1**, Chromium 146.0.7680.216, V8 14.6, CDP 1.3                    |
+| User agent suffix  | `TradingView/3.4.1 … Electron/41.7.1 … TVDesktop/3.4.1`                           |
+| Web app            | `https://www.tradingview.com/chart/<layoutId>/`, `BUILD_TIME` 2026-10-16T17:55:37 |
+| Host OS            | macOS (Darwin 25.5), universal binary (x86_64 + arm64)                            |
+| `app.asar` SHA-256 | `d85cda843523e29e83ba5ecc5eb5a660761c813d66386a387719504c79c6ec50`                |
 
 The desktop shell and the web app version independently: the shell is 3.4.1, but the chart UI is the live
 tradingview.com bundle, which was rebuilt two days before this analysis.
 
 ### 1.2 Techniques
 
-| Technique | Tool | What it established |
-| --- | --- | --- |
-| Electron fuse inspection | REA `inspect_electron_fuses` | Which debugging switches the binary honors |
-| Static application graph of `app.asar` | REA `analyze_javascript_application` | Main process, preloads, IPC channels, BrowserView usage |
-| CDP target discovery | REA `list_browser_targets`, `list_electron_targets` | Which renderers are reachable and how they are typed |
-| Passive page inspection | REA `inspect_electron_page` | Window-chrome DOM structure and scripts |
-| Viewport capture | REA `capture_web_screenshot` | That `Page.captureScreenshot` works on a tab's BrowserView |
-| Read-only runtime introspection | CDP `Runtime.evaluate` probes | Global objects, method names and arity, method bodies via `Function.prototype.toString`, values of side-effect-free getters |
-| Bundle source search | CDP `Debugger.getScriptSource` (already-loaded scripts, no refetch) | Internal services, signatures, and data shapes |
+| Technique                              | Tool                                                                | What it established                                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Electron fuse inspection               | REA `inspect_electron_fuses`                                        | Which debugging switches the binary honors                                                                                  |
+| Static application graph of `app.asar` | REA `analyze_javascript_application`                                | Main process, preloads, IPC channels, BrowserView usage                                                                     |
+| CDP target discovery                   | REA `list_browser_targets`, `list_electron_targets`                 | Which renderers are reachable and how they are typed                                                                        |
+| Passive page inspection                | REA `inspect_electron_page`                                         | Window-chrome DOM structure and scripts                                                                                     |
+| Viewport capture                       | REA `capture_web_screenshot`                                        | That `Page.captureScreenshot` works on a tab's BrowserView                                                                  |
+| Read-only runtime introspection        | CDP `Runtime.evaluate` probes                                       | Global objects, method names and arity, method bodies via `Function.prototype.toString`, values of side-effect-free getters |
+| Bundle source search                   | CDP `Debugger.getScriptSource` (already-loaded scripts, no refetch) | Internal services, signatures, and data shapes                                                                              |
 
 REA runtime tools are deliberately passive and never evaluate page JavaScript, so deeper introspection used small
 read-only probes (see [§14](#14-reproducing-the-analysis)). The probes never invoked mutating methods. The only
@@ -66,14 +66,14 @@ one symbol search for `AAPL` (identical to typing in the search box), and resolv
 
 REA Evidence IDs are scoped to the analysis session; they are listed so findings can be traced back to the raw records.
 
-| Finding | Evidence | Type |
-| --- | --- | --- |
-| Fuse states | `ev_dc6c0330…a59ccf` | observed, shipped artifact |
-| `app.asar` application graph (parent) | `ev_bb48e6e1…64fd07` | derived, static (coverage partial; see limits below) |
-| CDP page targets (https) | `ev_f775eaf2…d939531f` | observed, runtime |
-| CDP page targets (file://) | `ev_601333ca…1cb02665` | observed, runtime |
-| Window-chrome DOM | `ev_0249a2a3…c95a53` | observed, runtime |
-| Chart viewport screenshot | `ev_de72f97e…8cf563f` | observed, runtime |
+| Finding                               | Evidence               | Type                                                 |
+| ------------------------------------- | ---------------------- | ---------------------------------------------------- |
+| Fuse states                           | `ev_dc6c0330…a59ccf`   | observed, shipped artifact                           |
+| `app.asar` application graph (parent) | `ev_bb48e6e1…64fd07`   | derived, static (coverage partial; see limits below) |
+| CDP page targets (https)              | `ev_f775eaf2…d939531f` | observed, runtime                                    |
+| CDP page targets (file://)            | `ev_601333ca…1cb02665` | observed, runtime                                    |
+| Window-chrome DOM                     | `ev_0249a2a3…c95a53`   | observed, runtime                                    |
+| Chart viewport screenshot             | `ev_de72f97e…8cf563f`  | observed, runtime                                    |
 
 Static coverage limits: the ASAR graph parsed 60 JavaScript files (1,908 modules) but relationship expansion for the
 large bundles (`index.js`, the shell bundles, and the preloads) exceeded REA's result budget, so complete static facts
@@ -121,12 +121,12 @@ flowchart LR
 
 ### 2.2 Renderers and preloads
 
-| Renderer | Isolation | Preload | Exposes |
-| --- | --- | --- | --- |
-| Chart tab (`https://www.tradingview.com/chart/…`) | `contextIsolation` on | `platform-preload.js`, `target-tvd-host-preload.js` | `window.TVD` (35 members), `window.__SENTRY_IPC__` |
-| Window chrome (`app/window/index.html`) | **`nodeIntegration: true`, `contextIsolation: false`** | — | full Node.js (`require` is defined) |
-| Menu (`app/menu`) | Node integration | `menu-handler-preload.js` | `window.hideMenu()` → `tvd:hide-menu` |
-| Two-factor window | — | `two-fa-preload.js` | CSS only |
+| Renderer                                          | Isolation                                              | Preload                                             | Exposes                                            |
+| ------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------- | -------------------------------------------------- |
+| Chart tab (`https://www.tradingview.com/chart/…`) | `contextIsolation` on                                  | `platform-preload.js`, `target-tvd-host-preload.js` | `window.TVD` (35 members), `window.__SENTRY_IPC__` |
+| Window chrome (`app/window/index.html`)           | **`nodeIntegration: true`, `contextIsolation: false`** | —                                                   | full Node.js (`require` is defined)                |
+| Menu (`app/menu`)                                 | Node integration                                       | `menu-handler-preload.js`                           | `window.hideMenu()` → `tvd:hide-menu`              |
+| Two-factor window                                 | —                                                      | `two-fa-preload.js`                                 | CSS only                                           |
 
 `platform-preload.js` also injects CSS that hides web-only chrome (`.tv-header`, `.tv-footer`,
 `.i-hidden-on-tvdesktop`), proxies `sessionStorage` through IPC, and applies the scrollbar theme.
@@ -143,12 +143,12 @@ window chrome's DOM instead ([§5.6](#56-window-chrome-tabs)).
 
 ### 2.4 `window.TVD` (desktop bridge inside the chart page)
 
-| Category | Members | Use in `tradingview-mcp` |
-| --- | --- | --- |
-| Read-only state | `getTheme`, `getThemeSetting`, `getActiveWatchlistId`, `crosshairSyncEnabled` | Allowed |
-| Shell actions | `reloadTab`, `openNewWindow`, `openSettings`, `setTitle`, `layoutChange`, `layoutRestored`, `setFocusPineEditor` | `reloadTab` only, as a last-resort recovery step |
-| **Credentials** | `getCredentials`, `setCredentials`, `insertCredentialsText`, `signIn` | **Never.** Also denylisted inside `ui_evaluate` |
-| Telemetry and debug | `log`, `sendToSentry`, `*AutosaveDialogDebug`, screen-capture hooks | Never |
+| Category            | Members                                                                                                          | Use in `tradingview-mcp`                         |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Read-only state     | `getTheme`, `getThemeSetting`, `getActiveWatchlistId`, `crosshairSyncEnabled`                                    | Allowed                                          |
+| Shell actions       | `reloadTab`, `openNewWindow`, `openSettings`, `setTitle`, `layoutChange`, `layoutRestored`, `setFocusPineEditor` | `reloadTab` only, as a last-resort recovery step |
+| **Credentials**     | `getCredentials`, `setCredentials`, `insertCredentialsText`, `signIn`                                            | **Never.** Also denylisted inside `ui_evaluate`  |
+| Telemetry and debug | `log`, `sendToSentry`, `*AutosaveDialogDebug`, screen-capture hooks                                              | Never                                            |
 
 ---
 
@@ -156,15 +156,15 @@ window chrome's DOM instead ([§5.6](#56-window-chrome-tabs)).
 
 ### 3.1 Fuses
 
-| Fuse | State | Implication |
-| --- | --- | --- |
-| `RunAsNode` | enabled | `ELECTRON_RUN_AS_NODE` works (security note in [§11](#11-security-considerations)) |
-| `EnableCookieEncryption` | disabled | — |
-| `EnableNodeOptionsEnvironmentVariable` | enabled | — |
-| `EnableNodeCliInspectArguments` | enabled | `--inspect` would be honored for the main process (not used) |
-| `EnableEmbeddedAsarIntegrityValidation` | disabled | — |
-| `OnlyLoadAppFromAsar` | disabled | — |
-| `GrantFileProtocolExtraPrivileges` | enabled | — |
+| Fuse                                    | State    | Implication                                                                        |
+| --------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
+| `RunAsNode`                             | enabled  | `ELECTRON_RUN_AS_NODE` works (security note in [§11](#11-security-considerations)) |
+| `EnableCookieEncryption`                | disabled | —                                                                                  |
+| `EnableNodeOptionsEnvironmentVariable`  | enabled  | —                                                                                  |
+| `EnableNodeCliInspectArguments`         | enabled  | `--inspect` would be honored for the main process (not used)                       |
+| `EnableEmbeddedAsarIntegrityValidation` | disabled | —                                                                                  |
+| `OnlyLoadAppFromAsar`                   | disabled | —                                                                                  |
+| `GrantFileProtocolExtraPrivileges`      | enabled  | —                                                                                  |
 
 `--remote-debugging-port` is a Chromium switch that no fuse governs, and a bounded search of `index.js` found no
 code that inspects or strips it. The analyzed instance was running with `--remote-debugging-port=9222`, and every
@@ -173,14 +173,14 @@ intentionally unused: it would grant more privilege than needed.
 
 ### 3.2 Targets exposed on the debug port
 
-| Target | Type | Notes |
-| --- | --- | --- |
-| `https://www.tradingview.com/chart/<layoutId>/` | `page` | One per tab (BrowserView). **The primary target.** |
-| `file://…/app.asar/app/window/index.html?rendererInitialData=…` | `page` | Window chrome with the tab strip; `remoteServiceInstanceId` ends in `tvd:tabbed-window` |
-| `file://…/app/tooltip/…`, `…/renderer-services/drag-service/…`, `…/browser-api-container/…` | `page` | Helpers; ignore |
-| Two pages with an empty URL and title | `page` | **`Runtime.evaluate` never returns** (no execution context). Must be skipped. |
-| doubleclick, reCAPTCHA, googlesyndication | `iframe` | Ads and anti-abuse frames inside the chart page; ignore |
-| Service worker | `worker` | Ignore |
+| Target                                                                                      | Type     | Notes                                                                                   |
+| ------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------- |
+| `https://www.tradingview.com/chart/<layoutId>/`                                             | `page`   | One per tab (BrowserView). **The primary target.**                                      |
+| `file://…/app.asar/app/window/index.html?rendererInitialData=…`                             | `page`   | Window chrome with the tab strip; `remoteServiceInstanceId` ends in `tvd:tabbed-window` |
+| `file://…/app/tooltip/…`, `…/renderer-services/drag-service/…`, `…/browser-api-container/…` | `page`   | Helpers; ignore                                                                         |
+| Two pages with an empty URL and title                                                       | `page`   | **`Runtime.evaluate` never returns** (no execution context). Must be skipped.           |
+| doubleclick, reCAPTCHA, googlesyndication                                                   | `iframe` | Ads and anti-abuse frames inside the chart page; ignore                                 |
+| Service worker                                                                              | `worker` | Ignore                                                                                  |
 
 **Target selection rule:** `type === "page"` and the URL matches `^https://([a-z0-9-]+\.)?tradingview\.com/chart/`.
 When several tabs exist, prefer the one whose `document.visibilityState === "visible"` (the only tab observed reported
@@ -207,56 +207,56 @@ All paths below are evaluated inside the chart page through `Runtime.evaluate`.
 
 ### 4.1 Globals of interest
 
-| Global | Kind | Purpose |
-| --- | --- | --- |
-| `TradingViewApi` | object (64 own members) | Superset of the Charting Library / Trading Platform widget API. **Main entry point.** |
-| `_exposed_chartWidgetCollection` | object | All chart widgets of the layout, layout type, locks, fullscreen, snapshots |
-| `TVD` | object | Desktop bridge ([§2.4](#24-windowtvd-desktop-bridge-inside-the-chart-page)) |
-| `TradingView` | object | `headerToolbar`, `bottomWidgetBar` (no registered widgets at observation time), `isFeatureEnabled`, `defaultProperties` |
-| `widgetbar` | object | Right-hand widget bar: `watchlist`, `alerts`, `object_tree`, `datawindow`, `pine_logs`, `hotlist`, `news`, `detail` |
-| `getQuoteSessionInstance()` | function | Shared quote session; `_symbol_data[proName].values` caches live quotes |
-| `studyMarket` | object | The "Indicators, metrics, and strategies" dialog (`show`, `hide`, `visible`) |
-| `TVSettings`, `TVLocalStorage` | objects | App settings and namespaced storage (`getValue`, `getJSON`, `getItem`, …) |
-| `webpackChunktradingview` | array | Webpack JSONP chunk list; gateway to the module registry ([§4.7](#47-webpack-module-registry)) |
-| `TVScript` | object | Pine version helpers (`TranslatorLastVersion`, `extractVersion`, `canUpgradeVersion`) |
-| `is_authenticated`, `user` | boolean, object | Session identity. **Never returned by any tool.** |
+| Global                           | Kind                    | Purpose                                                                                                                 |
+| -------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `TradingViewApi`                 | object (64 own members) | Superset of the Charting Library / Trading Platform widget API. **Main entry point.**                                   |
+| `_exposed_chartWidgetCollection` | object                  | All chart widgets of the layout, layout type, locks, fullscreen, snapshots                                              |
+| `TVD`                            | object                  | Desktop bridge ([§2.4](#24-windowtvd-desktop-bridge-inside-the-chart-page))                                             |
+| `TradingView`                    | object                  | `headerToolbar`, `bottomWidgetBar` (no registered widgets at observation time), `isFeatureEnabled`, `defaultProperties` |
+| `widgetbar`                      | object                  | Right-hand widget bar: `watchlist`, `alerts`, `object_tree`, `datawindow`, `pine_logs`, `hotlist`, `news`, `detail`     |
+| `getQuoteSessionInstance()`      | function                | Shared quote session; `_symbol_data[proName].values` caches live quotes                                                 |
+| `studyMarket`                    | object                  | The "Indicators, metrics, and strategies" dialog (`show`, `hide`, `visible`)                                            |
+| `TVSettings`, `TVLocalStorage`   | objects                 | App settings and namespaced storage (`getValue`, `getJSON`, `getItem`, …)                                               |
+| `webpackChunktradingview`        | array                   | Webpack JSONP chunk list; gateway to the module registry ([§4.7](#47-webpack-module-registry))                          |
+| `TVScript`                       | object                  | Pine version helpers (`TranslatorLastVersion`, `extractVersion`, `canUpgradeVersion`)                                   |
+| `is_authenticated`, `user`       | boolean, object         | Session identity. **Never returned by any tool.**                                                                       |
 
 ### 4.2 `TradingViewApi`
 
 Signatures below come from method bodies; parameters marked `?` are optional.
 
-| Domain | Members |
-| --- | --- |
-| Charts | `activeChart()`, `chart(index = 0)`, `charts()`, `chartsCount()`, `activeChartIndex()`, `setActiveChart(index)`, `changeSymbol(symbol, interval, onLoaded?)`, `getSymbolInterval(cb?) → {symbol, interval}`, `getIntervals()`, `supportedChartTypes()` |
-| Layout | `layout()` (for example `"s"`), `setLayout(type, {withUndo}?)`, `layoutName()`, `layoutId()`, `getSavedCharts(cb?) → Promise<records>`, `loadChartFromServer(record)`, `loadLayoutFromServerByLayoutId(id, …)`, `createNewLayout(name) → layoutId \| null`, `saveChartToServer(onOk?, onFail?, opts?)`, `hasChartChanges()`, `unloadUnusedCharts()` |
-| Sub-APIs | `replayApi() → Promise<ReplayApi>`, `pineEditorApi()`, `alerts()`, `alertService()` |
-| Search | `searchSymbols({text, exchange, type}) → {symbols_remaining, symbols[]}` |
-| Drawing state | `selectLineTool(name, …)`, `selectedLineTool()`, `hideAllDrawingTools()`, `lockAllDrawingTools()`, `hideAllIndicators()`, `drawOnAllCharts(bool)` |
-| History | `undo()`, `redo()`, `undoRedoState()`, `clearUndoHistory()` |
-| View | `startFullscreen()`, `exitFullscreen()`, `takeClientScreenshot(opts?)` (local render), `takeScreenshot()` (server snapshot) |
-| Connection | `isConnected()`, `connect()`, `disconnect()`, `onConnectionStatusChanged(cb)` |
-| Events | `subscribe(event, cb)`, `unsubscribe(event, cb)` |
+| Domain        | Members                                                                                                                                                                                                                                                                                                                                             |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Charts        | `activeChart()`, `chart(index = 0)`, `charts()`, `chartsCount()`, `activeChartIndex()`, `setActiveChart(index)`, `changeSymbol(symbol, interval, onLoaded?)`, `getSymbolInterval(cb?) → {symbol, interval}`, `getIntervals()`, `supportedChartTypes()`                                                                                              |
+| Layout        | `layout()` (for example `"s"`), `setLayout(type, {withUndo}?)`, `layoutName()`, `layoutId()`, `getSavedCharts(cb?) → Promise<records>`, `loadChartFromServer(record)`, `loadLayoutFromServerByLayoutId(id, …)`, `createNewLayout(name) → layoutId \| null`, `saveChartToServer(onOk?, onFail?, opts?)`, `hasChartChanges()`, `unloadUnusedCharts()` |
+| Sub-APIs      | `replayApi() → Promise<ReplayApi>`, `pineEditorApi()`, `alerts()`, `alertService()`                                                                                                                                                                                                                                                                 |
+| Search        | `searchSymbols({text, exchange, type}) → {symbols_remaining, symbols[]}`                                                                                                                                                                                                                                                                            |
+| Drawing state | `selectLineTool(name, …)`, `selectedLineTool()`, `hideAllDrawingTools()`, `lockAllDrawingTools()`, `hideAllIndicators()`, `drawOnAllCharts(bool)`                                                                                                                                                                                                   |
+| History       | `undo()`, `redo()`, `undoRedoState()`, `clearUndoHistory()`                                                                                                                                                                                                                                                                                         |
+| View          | `startFullscreen()`, `exitFullscreen()`, `takeClientScreenshot(opts?)` (local render), `takeScreenshot()` (server snapshot)                                                                                                                                                                                                                         |
+| Connection    | `isConnected()`, `connect()`, `disconnect()`, `onConnectionStatusChanged(cb)`                                                                                                                                                                                                                                                                       |
+| Events        | `subscribe(event, cb)`, `unsubscribe(event, cb)`                                                                                                                                                                                                                                                                                                    |
 
 **Disabled or stubbed in this build** (observed from method bodies):
 
-| Member | Behavior | Replacement |
-| --- | --- | --- |
-| `activeChart().exportData()` | `Promise.reject("Data export is not supported")` | Read `mainSeries().bars()` ([§4.4](#44-chart-model-internals)) |
-| `activeChart().setVisibleRange()` | throws `Error("Not implemented")` | Core time scale `zoomToBarsRange` ([§4.4](#44-chart-model-internals)) |
-| `watchlist()`, `widgetbar()`, `getStudiesList()`, `getStudyInputs()` | delegate to an internal stub | Webpack services or DOM |
-| `alertService()` | returns `null` (constructor-injected service absent on this page) | Alerts REST service ([§4.7](#47-webpack-module-registry)) |
-| `takeScreenshot()` | uploads a snapshot to TradingView servers | Local capture only |
+| Member                                                               | Behavior                                                          | Replacement                                                           |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `activeChart().exportData()`                                         | `Promise.reject("Data export is not supported")`                  | Read `mainSeries().bars()` ([§4.4](#44-chart-model-internals))        |
+| `activeChart().setVisibleRange()`                                    | throws `Error("Not implemented")`                                 | Core time scale `zoomToBarsRange` ([§4.4](#44-chart-model-internals)) |
+| `watchlist()`, `widgetbar()`, `getStudiesList()`, `getStudyInputs()` | delegate to an internal stub                                      | Webpack services or DOM                                               |
+| `alertService()`                                                     | returns `null` (constructor-injected service absent on this page) | Alerts REST service ([§4.7](#47-webpack-module-registry))             |
+| `takeScreenshot()`                                                   | uploads a snapshot to TradingView servers                         | Local capture only                                                    |
 
 ### 4.3 Chart widget API (`activeChart()`)
 
-| Area | Members |
-| --- | --- |
-| Read state | `symbol()`, `symbolExt() → {symbol, full_name, exchange, description, type, pro_name, typespecs, delay}`, `resolution()`, `chartType()` (`1` = candles), `marketStatus()`, `getVisibleRange() → {from, to}` (Unix seconds), `getVisibleBarsRange()`, `getVisiblePriceRange()`, `getTimezone()`, `replayStatus()` |
-| Change state | `setSymbol(symbol, {dataReady?, doNotActivateChart?})`, `setResolution(res, {…})`, `setChartType(type)`, `setTimeFrame({val, res})`, `setTimezone(tz)`, `executeActionById(id)` |
-| Studies | `getAllStudies() → [{id, name}]`, `getStudyById(id) → IStudyApi`, `createStudy(name, forceOverlay, lock, inputs, overrides, options)`, `removeEntity(id, {disableUndo}?)`, `removeAllStudies()` |
-| Drawings | `getAllShapes() → [{id, name}]`, `getShapeById(id) → ILineDataSourceApi`, `createShape(point, options)`, `createMultipointShape(points, options)`, `createAnchoredShape(position, options)`, `removeAllShapes()`, `getLineToolsState()` |
-| Structure | `getPanes() → IPaneApi[]`, `getSeries()`, `getTimeScale()`, `chartModel()`, `chartWidget()` |
-| Subscriptions | `onDataLoaded()`, `onSymbolChanged()`, `onIntervalChanged()`, `onVisibleRangeChanged()`, `onChartTypeChanged()`, `crossHairMoved()`, `dataReady(cb)`, `whenChartReady(cb)` |
+| Area          | Members                                                                                                                                                                                                                                                                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read state    | `symbol()`, `symbolExt() → {symbol, full_name, exchange, description, type, pro_name, typespecs, delay}`, `resolution()`, `chartType()` (`1` = candles), `marketStatus()`, `getVisibleRange() → {from, to}` (Unix seconds), `getVisibleBarsRange()`, `getVisiblePriceRange()`, `getTimezone()`, `replayStatus()` |
+| Change state  | `setSymbol(symbol, {dataReady?, doNotActivateChart?})`, `setResolution(res, {…})`, `setChartType(type)`, `setTimeFrame({val, res})`, `setTimezone(tz)`, `executeActionById(id)`                                                                                                                                  |
+| Studies       | `getAllStudies() → [{id, name}]`, `getStudyById(id) → IStudyApi`, `createStudy(name, forceOverlay, lock, inputs, overrides, options)`, `removeEntity(id, {disableUndo}?)`, `removeAllStudies()`                                                                                                                  |
+| Drawings      | `getAllShapes() → [{id, name}]`, `getShapeById(id) → ILineDataSourceApi`, `createShape(point, options)`, `createMultipointShape(points, options)`, `createAnchoredShape(position, options)`, `removeAllShapes()`, `getLineToolsState()`                                                                          |
+| Structure     | `getPanes() → IPaneApi[]`, `getSeries()`, `getTimeScale()`, `chartModel()`, `chartWidget()`                                                                                                                                                                                                                      |
+| Subscriptions | `onDataLoaded()`, `onSymbolChanged()`, `onIntervalChanged()`, `onVisibleRangeChanged()`, `onChartTypeChanged()`, `crossHairMoved()`, `dataReady(cb)`, `whenChartReady(cb)`                                                                                                                                       |
 
 `createStudy` resolves `name` case-insensitively against study descriptions from the study metadata repository and
 accepts `options.checkLimit`, which applies the plan's per-chart indicator limit. **`tradingview-mcp` always passes
@@ -276,25 +276,25 @@ The model is reachable at `activeChart()._chartWidget.model()` (verified). The p
 `chartModel()` likely return the same objects (to be verified). Property names are not minified, which makes these paths
 more stable than their underscore prefix suggests.
 
-| Path | Returns |
-| --- | --- |
-| `….model().mainSeries().bars()` | Bar container: `size()`, `firstIndex()`, `lastIndex()`, `valueAt(i) → [time, open, high, low, close, volume]`, `search(time)`, `range()`, `each()` |
-| `….mainSeries().symbolInfo()` | 51 fields: `name`, `full_name`, `pro_name`, `exchange`, `listed_exchange`, `description`, `type`, `typespecs`, `currency_code`, `pricescale`, `minmov`, `pointvalue`, `session`, `subsessions`, `timezone`, `has_intraday`, `has_extended_hours`, `is_replayable`, `variable_tick_size`, `isin`, … |
-| `….mainSeries().quotes()` | Live quote: `last_price`, `bid`, `ask`, `bid_size`, `ask_size`, `change`, `change_percent`, `low_price`, `lp_time`, `currency_code`, plus fundamentals |
-| `….model().model().getStudyById(id)` | Study core: `data()` (rows `[time, plot_0, …, plot_n]`), `metaInfo().plots` (`{id, type}`), `graphics()` (Pine drawings), `tables()` (Pine tables), `logs()` (Pine logs), `isPine()`, `hasCompileError()`, `performance()` |
-| Strategy study core | `reportData() → {performance: {all: {netProfit, totalTrades, numberOfWiningTrades, largestWinTrade, …}}, currency, position, filledOrders, …}`, `ordersData()` (= `filledOrders`), `barsIndexes()` |
-| `….model().model().timeScale()` | Core time scale: `zoomToBarsRange(from, to)`, `scrollToBar(index)`, `scrollToRealtime()`, `scrollToFirstBar()`, `setBarSpacing()`, `setRightOffset()`, `timePointToIndex(time)`, `indexToTimePoint(i)`, `logicalRange()`, `requestMoreHistoryPoints()` |
+| Path                                 | Returns                                                                                                                                                                                                                                                                                            |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `….model().mainSeries().bars()`      | Bar container: `size()`, `firstIndex()`, `lastIndex()`, `valueAt(i) → [time, open, high, low, close, volume]`, `search(time)`, `range()`, `each()`                                                                                                                                                 |
+| `….mainSeries().symbolInfo()`        | 51 fields: `name`, `full_name`, `pro_name`, `exchange`, `listed_exchange`, `description`, `type`, `typespecs`, `currency_code`, `pricescale`, `minmov`, `pointvalue`, `session`, `subsessions`, `timezone`, `has_intraday`, `has_extended_hours`, `is_replayable`, `variable_tick_size`, `isin`, … |
+| `….mainSeries().quotes()`            | Live quote: `last_price`, `bid`, `ask`, `bid_size`, `ask_size`, `change`, `change_percent`, `low_price`, `lp_time`, `currency_code`, plus fundamentals                                                                                                                                             |
+| `….model().model().getStudyById(id)` | Study core: `data()` (rows `[time, plot_0, …, plot_n]`), `metaInfo().plots` (`{id, type}`), `graphics()` (Pine drawings), `tables()` (Pine tables), `logs()` (Pine logs), `isPine()`, `hasCompileError()`, `performance()`                                                                         |
+| Strategy study core                  | `reportData() → {performance: {all: {netProfit, totalTrades, numberOfWiningTrades, largestWinTrade, …}}, currency, position, filledOrders, …}`, `ordersData()` (= `filledOrders`), `barsIndexes()`                                                                                                 |
+| `….model().model().timeScale()`      | Core time scale: `zoomToBarsRange(from, to)`, `scrollToBar(index)`, `scrollToRealtime()`, `scrollToFirstBar()`, `setBarSpacing()`, `setRightOffset()`, `timePointToIndex(time)`, `indexToTimePoint(i)`, `logicalRange()`, `requestMoreHistoryPoints()`                                             |
 
 Observed: 300 bars were loaded for a daily chart. Older history loads on demand (`requestMoreData`, or scrolling).
 
 ### 4.5 Replay API (`await TradingViewApi.replayApi()`)
 
-| Group | Members |
-| --- | --- |
-| Availability | `isReplayAvailable()` (watched value, `true` on a daily chart), `isReadyToPlay()`, `replayResolutions()`, `currentReplayResolution()` |
-| Lifecycle | `selectDate(unixMs)` (enables replay mode, then selects the date), `selectFirstAvailableDate()`, `selectRandomDate()`, `stopReplay()`, `goToRealtime()`, `leaveReplay({skipConfirm, onLeave})`, `showReplayToolbar()`, `hideReplayToolbar()` |
-| Playback | `doStep()`, `toggleAutoplay()`, `isAutoplayStarted()`, `changeAutoplayDelay(ms)`, `autoplayDelayList()` (100 ms to 10 s, labeled 10x to 0.1x), `currentDate()`, `isReplayStarted()` |
-| Paper trading | `buy(qty)`, `sell(qty)` (market orders in the replay trading model), `closePosition()`, `position()`, `realizedPL()`, `currency()` |
+| Group         | Members                                                                                                                                                                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Availability  | `isReplayAvailable()` (watched value, `true` on a daily chart), `isReadyToPlay()`, `replayResolutions()`, `currentReplayResolution()`                                                                                                        |
+| Lifecycle     | `selectDate(unixMs)` (enables replay mode, then selects the date), `selectFirstAvailableDate()`, `selectRandomDate()`, `stopReplay()`, `goToRealtime()`, `leaveReplay({skipConfirm, onLeave})`, `showReplayToolbar()`, `hideReplayToolbar()` |
+| Playback      | `doStep()`, `toggleAutoplay()`, `isAutoplayStarted()`, `changeAutoplayDelay(ms)`, `autoplayDelayList()` (100 ms to 10 s, labeled 10x to 0.1x), `currentDate()`, `isReplayStarted()`                                                          |
+| Paper trading | `buy(qty)`, `sell(qty)` (market orders in the replay trading model), `closePosition()`, `position()`, `realizedPL()`, `currency()`                                                                                                           |
 
 Many getters return watched values; read them with `.value()`.
 
@@ -308,17 +308,17 @@ Both save methods check the plan's paywall before writing.
 
 **Editor facade** (registered per placement through `registerOpenPineEditor(placement, {getFacade})`):
 
-| Member | Behavior |
-| --- | --- |
-| `awaitEditorReady()` | Resolves when the Monaco editor is mounted |
-| `openNewScript(type = "indicator")` | Opens a template (`indicator`, `strategy`, `library`) and clears the console |
-| `setScript(source)`, `setNewScript(source)` | Replace the editor content |
-| `getSource()` | Current editor text |
-| `addToChart()` | Compile and add; picks the new-draft, unsaved-version, or saved-version path automatically |
-| `updateOnChart()` | Recompile an existing script on the chart |
-| `saveScript(name?)` | Save (requires sign-in; plan limits apply) |
-| `openScript({scriptIdPart, …}, line?)`, `openLastOrDraft()` | Open saved scripts |
-| `isModified()`, `isDraft()`, `getScriptIdVersion()` | Editor state |
+| Member                                                      | Behavior                                                                                   |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `awaitEditorReady()`                                        | Resolves when the Monaco editor is mounted                                                 |
+| `openNewScript(type = "indicator")`                         | Opens a template (`indicator`, `strategy`, `library`) and clears the console               |
+| `setScript(source)`, `setNewScript(source)`                 | Replace the editor content                                                                 |
+| `getSource()`                                               | Current editor text                                                                        |
+| `addToChart()`                                              | Compile and add; picks the new-draft, unsaved-version, or saved-version path automatically |
+| `updateOnChart()`                                           | Recompile an existing script on the chart                                                  |
+| `saveScript(name?)`                                         | Save (requires sign-in; plan limits apply)                                                 |
+| `openScript({scriptIdPart, …}, line?)`, `openLastOrDraft()` | Open saved scripts                                                                         |
+| `isModified()`, `isDraft()`, `getScriptIdVersion()`         | Editor state                                                                               |
 
 The editor state is a Redux Toolkit store. Compile and save thunks return `{compileErrors, metaInfo, success}`, and
 console messages persist in `TVLocalStorage` under `console_messages_key` (next to `editor_console_open` and
@@ -336,7 +336,13 @@ handle. The registry can be reached read-only:
 
 ```js
 let req;
-window.webpackChunktradingview.push([[`tvmcp_${Date.now()}`], {}, (r) => { req = r; }]);
+window.webpackChunktradingview.push([
+  [`tvmcp_${Date.now()}`],
+  {},
+  (r) => {
+    req = r;
+  },
+]);
 // req.m: module factories (8,947 observed), req.c: instantiated module cache (6,903 observed)
 ```
 
@@ -348,16 +354,16 @@ Rules for `tradingview-mcp`:
    factory.
 3. Cache resolved handles per page load, and re-resolve after navigation.
 
-| Export name | Provides |
-| --- | --- |
-| `getAlertsRestApi()` | Alerts REST client: `listAlerts`, `getAlerts`, `createAlert`, `modifyRestartAlert(s)`, `deleteAlerts`, `stopAlerts`, `restartAlerts`, `cloneAlerts`, `listFires`, `deleteFires` (endpoints `/list_alerts`, `/create_alert`, `/delete_alerts`, …) |
-| `ChartAlertsFacade` | Chart-level alert helpers (`getAlerts`, `deleteAlert(s)`, `restartAlert`, `getAlertSync`) |
-| `translateScriptAsync`, `translateScriptAsync2`, `requestUserScripts`, `getPineSourceCode`, `saveNew`, `saveNext`, `getVersions`, `requestBuiltinScripts` | Pine facade client |
-| `getOpenPineEditor(placement)` | Registry of open editors (`"bottom"`, `"dialog"`) |
-| `getActiveStrategyReportData`, `getBacktestingStrategyFacade` | Strategy Tester report selector and facade (lazy) |
-| `getCustomLists`, `getCustomListById`, `getGlobalActiveSymbolList`, `initSymbolListService`, `getWatchlistSymbolsLimit`, `MAX_WATCHLIST_LENGTH` | Watchlist selectors, service, and limits (the backing store is created lazily by the watchlist widget) |
-| `ProductFeatures`, `getConfig(feature)` | Plan limits ([§7](#7-plan-limits)) |
-| `QuoteSession`, `getQuotePrice` | Quote sessions for symbols other than the chart's |
+| Export name                                                                                                                                               | Provides                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `getAlertsRestApi()`                                                                                                                                      | Alerts REST client: `listAlerts`, `getAlerts`, `createAlert`, `modifyRestartAlert(s)`, `deleteAlerts`, `stopAlerts`, `restartAlerts`, `cloneAlerts`, `listFires`, `deleteFires` (endpoints `/list_alerts`, `/create_alert`, `/delete_alerts`, …) |
+| `ChartAlertsFacade`                                                                                                                                       | Chart-level alert helpers (`getAlerts`, `deleteAlert(s)`, `restartAlert`, `getAlertSync`)                                                                                                                                                        |
+| `translateScriptAsync`, `translateScriptAsync2`, `requestUserScripts`, `getPineSourceCode`, `saveNew`, `saveNext`, `getVersions`, `requestBuiltinScripts` | Pine facade client                                                                                                                                                                                                                               |
+| `getOpenPineEditor(placement)`                                                                                                                            | Registry of open editors (`"bottom"`, `"dialog"`)                                                                                                                                                                                                |
+| `getActiveStrategyReportData`, `getBacktestingStrategyFacade`                                                                                             | Strategy Tester report selector and facade (lazy)                                                                                                                                                                                                |
+| `getCustomLists`, `getCustomListById`, `getGlobalActiveSymbolList`, `initSymbolListService`, `getWatchlistSymbolsLimit`, `MAX_WATCHLIST_LENGTH`           | Watchlist selectors, service, and limits (the backing store is created lazily by the watchlist widget)                                                                                                                                           |
+| `ProductFeatures`, `getConfig(feature)`                                                                                                                   | Plan limits ([§7](#7-plan-limits))                                                                                                                                                                                                               |
+| `QuoteSession`, `getQuotePrice`                                                                                                                           | Quote sessions for symbols other than the chart's                                                                                                                                                                                                |
 
 The in-app watchlist client calls `/api/v1/symbols_list/custom/{id}/append/`, `…/remove/`, `…/replace/`,
 `/api/v1/symbols_list/active/`, and `/api/v1/symbols_list/all/`. The alerts client surfaces server-enforced errors
@@ -395,16 +401,16 @@ example `iconButton-3Lt7-uhL`) change on every build and are never used.
 
 ### 5.3 Buttons (`data-name`)
 
-| Purpose | Selector |
-| --- | --- |
-| Indicators dialog | `[data-name="open-indicators-dialog"]` |
-| Pine Editor | `[data-name="pine-dialog-button"]` |
-| Alerts panel / object tree | `[data-name="alerts"]`, `[data-name="object_tree"]` |
-| Go to date | `[data-name="go-to-date"]` |
-| Date range presets | `[data-name="date-range-tab-1D"]` … `5D`, `1M`, `3M`, `6M`, `YTD`, `12M`, `60M`, `ALL` |
-| Drawing toolbar | `[data-name="linetool-group-trend-line"]`, `…-gann-and-fibonacci`, `…-geometric-shapes`, `…-annotation`, `…-patterns`, `…-prediction-and-measurement`, `…-cursors`, `…-font-icons`, `[data-name="removeAllDrawingTools"]`, `[data-name="hide-all"]`, `[data-name="lock-all"]`, `[data-name="magnet-button"]` |
-| Right toolbar and widget bar | `[data-name="right-toolbar"]`, `[data-name="widgetbar-wrap"]`, `[data-name="widgetbar-pages-with-tabs"]` |
-| Panels | `[data-name="toggle-maximize-button"]`, `[data-name="toggle-visibility-button"]` |
+| Purpose                      | Selector                                                                                                                                                                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Indicators dialog            | `[data-name="open-indicators-dialog"]`                                                                                                                                                                                                                                                                       |
+| Pine Editor                  | `[data-name="pine-dialog-button"]`                                                                                                                                                                                                                                                                           |
+| Alerts panel / object tree   | `[data-name="alerts"]`, `[data-name="object_tree"]`                                                                                                                                                                                                                                                          |
+| Go to date                   | `[data-name="go-to-date"]`                                                                                                                                                                                                                                                                                   |
+| Date range presets           | `[data-name="date-range-tab-1D"]` … `5D`, `1M`, `3M`, `6M`, `YTD`, `12M`, `60M`, `ALL`                                                                                                                                                                                                                       |
+| Drawing toolbar              | `[data-name="linetool-group-trend-line"]`, `…-gann-and-fibonacci`, `…-geometric-shapes`, `…-annotation`, `…-patterns`, `…-prediction-and-measurement`, `…-cursors`, `…-font-icons`, `[data-name="removeAllDrawingTools"]`, `[data-name="hide-all"]`, `[data-name="lock-all"]`, `[data-name="magnet-button"]` |
+| Right toolbar and widget bar | `[data-name="right-toolbar"]`, `[data-name="widgetbar-wrap"]`, `[data-name="widgetbar-pages-with-tabs"]`                                                                                                                                                                                                     |
+| Panels                       | `[data-name="toggle-maximize-button"]`, `[data-name="toggle-visibility-button"]`                                                                                                                                                                                                                             |
 
 ### 5.4 Legend, panes, and control bar (`data-qa-id`)
 
@@ -428,13 +434,13 @@ The low-level UI tools refuse targets that match these selectors or contain them
 
 Target: `file://…/app/window/index.html`.
 
-| Element | Selector |
-| --- | --- |
-| Tab | `div.tab[draggable="true"][id]` (the id is a UUID; text is `<symbol> <price> <change> / <layout name>`) |
-| Active tab | `div.tab.active` |
-| New tab | `button.create-new-tab-button` (`aria-label="New tab"`) |
-| New window | `#new-window-button` |
-| Main menu | `#main-menu-button` |
+| Element    | Selector                                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------------------- |
+| Tab        | `div.tab[draggable="true"][id]` (the id is a UUID; text is `<symbol> <price> <change> / <layout name>`) |
+| Active tab | `div.tab.active`                                                                                        |
+| New tab    | `button.create-new-tab-button` (`aria-label="New tab"`)                                                 |
+| New window | `#new-window-button`                                                                                    |
+| Main menu  | `#main-menu-button`                                                                                     |
 
 This renderer has Node integration. `tradingview-mcp` only reads its DOM and dispatches input events; it never calls
 `require` there.
@@ -446,42 +452,42 @@ This renderer has Node integration. `tradingview-mcp` only reads its DOM and dis
 Status legend: ✅ verified at runtime (read-only) · 🔎 verified statically (method body or bundle) · ❓ to verify during implementation.
 Tiers: **T1** public JS API · **T2** internal model or webpack service · **T3** DOM · **T4** keyboard ([§9](#9-fallback-strategy)).
 
-| Domain | Capability | Primary | Fallbacks | Status |
-| --- | --- | --- | --- | --- |
-| Connection | launch | Spawn binary with `--remote-debugging-port`, honoring the single-instance lock | — | ✅ flag works · ❓ launcher |
-| | health / discover | `/json/version`, `/json/list`, `TradingViewApi.isConnected()` | — | ✅ |
-| | UI state | Widget bar, bottom area, open dialogs in `#overlap-manager-root` | T3 | 🔎 |
-| | reconnect | Re-resolve target, reattach; `TradingViewApi.connect()` | `TVD.reloadTab()` | 🔎 |
-| Chart | get state | `symbol()`, `resolution()`, `chartType()`, `getVisibleRange()`, studies, shapes, layout | — | ✅ |
-| | set symbol / timeframe / type | `setSymbol`, `setResolution`, `setChartType` (T1) | Header toolbar (T3), typing a symbol or interval on the chart (T4) | 🔎 |
-| | set visible range | Core time scale `zoomToBarsRange` after mapping times to bar indices (T2) | Date range presets (T3) | ✅ T1 disabled · ❓ T2 |
-| | scroll to date | `timeScale().scrollToBar(index)` (T2) | Go-to-date dialog (T3) | ❓ |
-| Market data | OHLCV | `mainSeries().bars().valueAt(i)` (T2) | — | ✅ (`exportData` disabled) |
-| | quote | `mainSeries().quotes()` (T2) | Quote session cache | ✅ |
-| | symbol info | `mainSeries().symbolInfo()`, `symbolExt()` | — | ✅ |
-| | symbol search | `searchSymbols({text, exchange, type})` | Symbol search dialog (T3) | ✅ |
-| | market depth | `depthCreateSession` (T2) | `NOT_AVAILABLE` | ❓ entitlement-dependent |
-| Indicators | search | Study metadata repository / `allStudiesMetadata()` (T2) | Indicators dialog search (T3) | 🔎 (`getStudiesList` stubbed) |
-| | add / remove | `createStudy(…, {checkLimit: true})`, `removeEntity(id)` | Indicators dialog (T3) | 🔎 |
-| | set inputs / visibility | `getStudyById(id).setInputValues()`, `setVisible()` | Legend actions (T3) | 🔎 (`getInputValues` ✅) |
-| | read values | Study core `data().valueAt(i)` + `metaInfo().plots` (T2) | Data window values (T3) | ✅ |
-| Pine | new / open / get / set source | Editor facade `openNewScript`, `openScript`, `getSource`, `setScript` | Monaco through the DOM (T3) | 🔎 |
-| | compile | Facade `addToChart()` / `updateOnChart()` | Compile-only `translateScriptAsync` (T2) | 🔎 |
-| | errors / console | Thunk `compileErrors`, `console_messages_key`, study `logs()` | `pine_logs` widget (T3) | 🔎 · ❓ marker details |
-| | save / list | Facade `saveScript`, `pineEditorApi().listSavedScripts()` | — | 🔎 (paywall-checked) |
-| | smart compile / static analysis | Server-side logic on top of compile results | — | design |
-| Pine outputs | lines, labels, boxes, tables | Study core `graphics()`, `tables()` (T2) | — | 🔎 · ❓ primitive shapes |
-| Strategy Tester | results / trades / equity | `reportData()` of the strategy study; `getActiveStrategyReportData` (T2) | Strategy Tester panel (T3) | 🔎 · ❓ trade and equity keys |
-| Drawings | create | `createShape` / `createMultipointShape` | Drawing toolbar (T3) | 🔎 |
-| | list / get / remove / clear | `getAllShapes()` ✅, `getShapeById()`, `removeEntity()`, `removeAllShapes()` | Object tree (T3) | ✅ / 🔎 |
-| Alerts | list / create / delete | `getAlertsRestApi()` (T2) | Alert dialog and alerts panel (T3) | 🔎 · ❓ create payload |
-| Watchlist | get / add / bulk / remove | Symbol-list service and selectors (T2); `TVD.getActiveWatchlistId()` | Watchlist widget rows (T3) | 🔎 · ❓ store wiring |
-| Layouts and panes | list / new / switch | `getSavedCharts()`, `createNewLayout()`, `loadChartFromServer()` | Layouts menu (T3) | 🔎 (plan-limited) |
-| | panes / multi-chart / focus / pane symbol | `getPanes()`, `setLayout(type)`, `setActiveChart(i)`, `chart(i).setSymbol()` | Layout setup menu (T3) | 🔎 (plan-limited) |
-| Tabs | list / new / switch / close | Window-chrome DOM + chart targets | Shortcuts (T4) | ✅ selectors · ❓ switching and closing |
-| Replay | start / step / autoplay / status / stop / trade | Replay API ([§4.5](#45-replay-api-await-tradingviewapireplayapi)) | Replay toolbar (T3) | ✅ availability · 🔎 actions |
-| Screenshot | chart / window | CDP `Page.captureScreenshot` on the chart target | `takeClientScreenshot()` canvas | ✅ (REA capture) |
-| Low-level UI | click, hover, type, keys, scroll, find, panels, fullscreen, evaluate | CDP `Input.*`, `Runtime.evaluate`, `startFullscreen()` | — | standard CDP |
+| Domain            | Capability                                                           | Primary                                                                                 | Fallbacks                                                          | Status                                  |
+| ----------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------- |
+| Connection        | launch                                                               | Spawn binary with `--remote-debugging-port`, honoring the single-instance lock          | —                                                                  | ✅ flag works · ❓ launcher             |
+|                   | health / discover                                                    | `/json/version`, `/json/list`, `TradingViewApi.isConnected()`                           | —                                                                  | ✅                                      |
+|                   | UI state                                                             | Widget bar, bottom area, open dialogs in `#overlap-manager-root`                        | T3                                                                 | 🔎                                      |
+|                   | reconnect                                                            | Re-resolve target, reattach; `TradingViewApi.connect()`                                 | `TVD.reloadTab()`                                                  | 🔎                                      |
+| Chart             | get state                                                            | `symbol()`, `resolution()`, `chartType()`, `getVisibleRange()`, studies, shapes, layout | —                                                                  | ✅                                      |
+|                   | set symbol / timeframe / type                                        | `setSymbol`, `setResolution`, `setChartType` (T1)                                       | Header toolbar (T3), typing a symbol or interval on the chart (T4) | 🔎                                      |
+|                   | set visible range                                                    | Core time scale `zoomToBarsRange` after mapping times to bar indices (T2)               | Date range presets (T3)                                            | ✅ T1 disabled · ❓ T2                  |
+|                   | scroll to date                                                       | `timeScale().scrollToBar(index)` (T2)                                                   | Go-to-date dialog (T3)                                             | ❓                                      |
+| Market data       | OHLCV                                                                | `mainSeries().bars().valueAt(i)` (T2)                                                   | —                                                                  | ✅ (`exportData` disabled)              |
+|                   | quote                                                                | `mainSeries().quotes()` (T2)                                                            | Quote session cache                                                | ✅                                      |
+|                   | symbol info                                                          | `mainSeries().symbolInfo()`, `symbolExt()`                                              | —                                                                  | ✅                                      |
+|                   | symbol search                                                        | `searchSymbols({text, exchange, type})`                                                 | Symbol search dialog (T3)                                          | ✅                                      |
+|                   | market depth                                                         | `depthCreateSession` (T2)                                                               | `NOT_AVAILABLE`                                                    | ❓ entitlement-dependent                |
+| Indicators        | search                                                               | Study metadata repository / `allStudiesMetadata()` (T2)                                 | Indicators dialog search (T3)                                      | 🔎 (`getStudiesList` stubbed)           |
+|                   | add / remove                                                         | `createStudy(…, {checkLimit: true})`, `removeEntity(id)`                                | Indicators dialog (T3)                                             | 🔎                                      |
+|                   | set inputs / visibility                                              | `getStudyById(id).setInputValues()`, `setVisible()`                                     | Legend actions (T3)                                                | 🔎 (`getInputValues` ✅)                |
+|                   | read values                                                          | Study core `data().valueAt(i)` + `metaInfo().plots` (T2)                                | Data window values (T3)                                            | ✅                                      |
+| Pine              | new / open / get / set source                                        | Editor facade `openNewScript`, `openScript`, `getSource`, `setScript`                   | Monaco through the DOM (T3)                                        | 🔎                                      |
+|                   | compile                                                              | Facade `addToChart()` / `updateOnChart()`                                               | Compile-only `translateScriptAsync` (T2)                           | 🔎                                      |
+|                   | errors / console                                                     | Thunk `compileErrors`, `console_messages_key`, study `logs()`                           | `pine_logs` widget (T3)                                            | 🔎 · ❓ marker details                  |
+|                   | save / list                                                          | Facade `saveScript`, `pineEditorApi().listSavedScripts()`                               | —                                                                  | 🔎 (paywall-checked)                    |
+|                   | smart compile / static analysis                                      | Server-side logic on top of compile results                                             | —                                                                  | design                                  |
+| Pine outputs      | lines, labels, boxes, tables                                         | Study core `graphics()`, `tables()` (T2)                                                | —                                                                  | 🔎 · ❓ primitive shapes                |
+| Strategy Tester   | results / trades / equity                                            | `reportData()` of the strategy study; `getActiveStrategyReportData` (T2)                | Strategy Tester panel (T3)                                         | 🔎 · ❓ trade and equity keys           |
+| Drawings          | create                                                               | `createShape` / `createMultipointShape`                                                 | Drawing toolbar (T3)                                               | 🔎                                      |
+|                   | list / get / remove / clear                                          | `getAllShapes()` ✅, `getShapeById()`, `removeEntity()`, `removeAllShapes()`            | Object tree (T3)                                                   | ✅ / 🔎                                 |
+| Alerts            | list / create / delete                                               | `getAlertsRestApi()` (T2)                                                               | Alert dialog and alerts panel (T3)                                 | 🔎 · ❓ create payload                  |
+| Watchlist         | get / add / bulk / remove                                            | Symbol-list service and selectors (T2); `TVD.getActiveWatchlistId()`                    | Watchlist widget rows (T3)                                         | 🔎 · ❓ store wiring                    |
+| Layouts and panes | list / new / switch                                                  | `getSavedCharts()`, `createNewLayout()`, `loadChartFromServer()`                        | Layouts menu (T3)                                                  | 🔎 (plan-limited)                       |
+|                   | panes / multi-chart / focus / pane symbol                            | `getPanes()`, `setLayout(type)`, `setActiveChart(i)`, `chart(i).setSymbol()`            | Layout setup menu (T3)                                             | 🔎 (plan-limited)                       |
+| Tabs              | list / new / switch / close                                          | Window-chrome DOM + chart targets                                                       | Shortcuts (T4)                                                     | ✅ selectors · ❓ switching and closing |
+| Replay            | start / step / autoplay / status / stop / trade                      | Replay API ([§4.5](#45-replay-api-await-tradingviewapireplayapi))                       | Replay toolbar (T3)                                                | ✅ availability · 🔎 actions            |
+| Screenshot        | chart / window                                                       | CDP `Page.captureScreenshot` on the chart target                                        | `takeClientScreenshot()` canvas                                    | ✅ (REA capture)                        |
+| Low-level UI      | click, hover, type, keys, scroll, find, panels, fullscreen, evaluate | CDP `Input.*`, `Runtime.evaluate`, `startFullscreen()`                                  | —                                                                  | standard CDP                            |
 
 ---
 
@@ -489,17 +495,17 @@ Tiers: **T1** public JS API · **T2** internal model or webpack service · **T3*
 
 Limits come from `getConfig(ProductFeatures.<NAME>).limit`. Values observed on the analysis account (Basic plan):
 
-| Feature | Limit | Impact |
-| --- | --- | --- |
-| `INDICATORS_ON_CHART` | 2 | `indicator_add` and adding a strategy fail once the chart holds 2 studies |
-| `CHART_STORAGE` | 1 | `layout_new` is blocked when one layout is already saved |
-| `MULTIPLE_CHARTS` | 1 | Multi-chart layouts (`pane_set_layout`) are unavailable |
-| `SERVER_SIDE_ALERTS` | 3 | `alert_create` fails beyond 3 active alerts |
-| `SAVED_PINE_SCRIPTS` | 1 | `pine_save` of a new script can be refused |
-| `STUDY_TEMPLATES` | 1 | — |
-| `WATCHLIST_SYMBOLS` | 30 | Tiered watchlist limits were feature-flagged off; `getWatchlistSymbolsLimit()` returned 1000 |
-| `HISTORICAL_BARS` | 5 | Caps loadable history |
-| `SIMULTANEOUS_CONNECTIONS` / `BACKEND_CONNECTIONS` | 1 / 2 | Avoid opening extra data sessions |
+| Feature                                            | Limit | Impact                                                                                       |
+| -------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------- |
+| `INDICATORS_ON_CHART`                              | 2     | `indicator_add` and adding a strategy fail once the chart holds 2 studies                    |
+| `CHART_STORAGE`                                    | 1     | `layout_new` is blocked when one layout is already saved                                     |
+| `MULTIPLE_CHARTS`                                  | 1     | Multi-chart layouts (`pane_set_layout`) are unavailable                                      |
+| `SERVER_SIDE_ALERTS`                               | 3     | `alert_create` fails beyond 3 active alerts                                                  |
+| `SAVED_PINE_SCRIPTS`                               | 1     | `pine_save` of a new script can be refused                                                   |
+| `STUDY_TEMPLATES`                                  | 1     | —                                                                                            |
+| `WATCHLIST_SYMBOLS`                                | 30    | Tiered watchlist limits were feature-flagged off; `getWatchlistSymbolsLimit()` returned 1000 |
+| `HISTORICAL_BARS`                                  | 5     | Caps loadable history                                                                        |
+| `SIMULTANEOUS_CONNECTIONS` / `BACKEND_CONNECTIONS` | 1 / 2 | Avoid opening extra data sessions                                                            |
 
 Tools check the relevant limit **before** acting and return a typed `PLAN_LIMIT` error naming the feature and limit,
 rather than triggering the app's paywall dialog. Server-side limit errors are passed through unchanged. Nothing tries
@@ -509,18 +515,18 @@ to work around a limit.
 
 ## 8. Stability risks
 
-| Risk | Likelihood | Mitigation |
-| --- | --- | --- |
-| The web app redeploys independently of the desktop version | High | Capability probe at connect time; `app_health` reports degraded tools; record `BUILD_TIME` in results |
-| Internal method renamed or removed | Medium | Feature detection before every T2 call, with a fallback to T3 or T4 |
-| Public API members stubbed (`exportData`, `setVisibleRange`) | Observed | T2 replacements |
-| Lazy modules not loaded yet (Pine editor chunk, alerts service, backtesting, watchlist store) | High | Trigger loading through the UI path (open the panel) or report `NOT_AVAILABLE` with a hint; never execute uncached factories |
-| Unresponsive or blank targets | Observed | Strict target filter, per-call timeouts |
-| Overlays (ads, upsell toasts, paywall dialogs) intercepting clicks | Observed | Prefer T1/T2; T3 dismisses known overlays first |
-| Single-instance lock swallows the debug flag | Observed (static) | Detect and require explicit restart consent |
-| Layout autosave persists every chart change | High | Tools change only what they are asked to; E2E tests clean up exactly what they create |
-| Hashed CSS classes | Certain | Never used as selectors |
-| Windows MSIX packaging blocks launching with flags | Reported by prior art | Platform-specific launcher, `TV_APP_PATH` override, documented manual launch |
+| Risk                                                                                          | Likelihood            | Mitigation                                                                                                                   |
+| --------------------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| The web app redeploys independently of the desktop version                                    | High                  | Capability probe at connect time; `app_health` reports degraded tools; record `BUILD_TIME` in results                        |
+| Internal method renamed or removed                                                            | Medium                | Feature detection before every T2 call, with a fallback to T3 or T4                                                          |
+| Public API members stubbed (`exportData`, `setVisibleRange`)                                  | Observed              | T2 replacements                                                                                                              |
+| Lazy modules not loaded yet (Pine editor chunk, alerts service, backtesting, watchlist store) | High                  | Trigger loading through the UI path (open the panel) or report `NOT_AVAILABLE` with a hint; never execute uncached factories |
+| Unresponsive or blank targets                                                                 | Observed              | Strict target filter, per-call timeouts                                                                                      |
+| Overlays (ads, upsell toasts, paywall dialogs) intercepting clicks                            | Observed              | Prefer T1/T2; T3 dismisses known overlays first                                                                              |
+| Single-instance lock swallows the debug flag                                                  | Observed (static)     | Detect and require explicit restart consent                                                                                  |
+| Layout autosave persists every chart change                                                   | High                  | Tools change only what they are asked to; E2E tests clean up exactly what they create                                        |
+| Hashed CSS classes                                                                            | Certain               | Never used as selectors                                                                                                      |
+| Windows MSIX packaging blocks launching with flags                                            | Reported by prior art | Platform-specific launcher, `TV_APP_PATH` override, documented manual launch                                                 |
 
 ---
 
@@ -544,11 +550,11 @@ and never returns session or identity data.
 
 ## 10. Platform support and install detection
 
-| OS | Candidate locations | Status |
-| --- | --- | --- |
-| macOS | `/Applications/TradingView.app/Contents/MacOS/TradingView`, `~/Applications/TradingView.app/…` | ✅ verified |
+| OS      | Candidate locations                                                                                                                                                                                | Status                                 |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| macOS   | `/Applications/TradingView.app/Contents/MacOS/TradingView`, `~/Applications/TradingView.app/…`                                                                                                     | ✅ verified                            |
 | Windows | MSIX: `(Get-AppxPackage -Name TradingView.Desktop).InstallLocation\TradingView.exe`; classic installer: `%LOCALAPPDATA%\TradingView\TradingView.exe`, `%ProgramFiles%\TradingView\TradingView.exe` | ❓ not verifiable on the analysis host |
-| Linux | `/opt/TradingView/tradingview`, `/usr/bin/tradingview`, `/snap/bin/tradingview`, Flatpak `com.tradingview.TradingView` | ❓ not verifiable on the analysis host |
+| Linux   | `/opt/TradingView/tradingview`, `/usr/bin/tradingview`, `/snap/bin/tradingview`, Flatpak `com.tradingview.TradingView`                                                                             | ❓ not verifiable on the analysis host |
 
 `TV_APP_PATH` always overrides detection. Prior art reports that launching an MSIX install directly from
 `WindowsApps` fails with `EACCES` on some Windows builds, and that the debug port sometimes never binds under COM

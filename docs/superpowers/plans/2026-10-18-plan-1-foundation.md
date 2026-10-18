@@ -37,11 +37,13 @@
 ### Task 1: Monorepo scaffold and quality tooling
 
 **Files:**
+
 - Create: `package.json`, `pnpm-workspace.yaml`, `tsconfig.base.json`, `eslint.config.js`, `.prettierrc.json`, `.prettierignore`, `.editorconfig`, `.gitignore`, `.nvmrc`, `commitlint.config.js`, `.lintstagedrc.json`, `.husky/pre-commit`, `.husky/commit-msg`, `LICENSE`
 - Create: `packages/server/package.json`, `packages/server/tsconfig.json`, `packages/server/tsup.config.ts`, `packages/server/vitest.config.ts`, `packages/server/src/index.ts`, `packages/server/src/version.ts`
 - Test: `packages/server/test/unit/version.test.ts`
 
 **Interfaces:**
+
 - Produces: `export const VERSION: string` in `src/version.ts` (read from `package.json` at build time through a JSON import); root scripts `lint`, `typecheck`, `format`, `test`, `test:unit`, `test:integration`, `test:e2e`, `test:coverage`, `build`.
 
 - [ ] **Step 1: Create the workspace config.** Root `package.json`: `"private": true`, `"type": "module"`, `"packageManager": "pnpm@12.14.0"`, `"engines": {"node": ">=22.22"}`. Scripts delegate with `pnpm -r --if-present <script>`. `pnpm-workspace.yaml` lists `packages/*`. `tsconfig.base.json`: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`, `module`/`moduleResolution` `NodeNext`, `target` `ES2022`, `lib` `["ES2023", "DOM"]` (page functions use DOM types).
@@ -75,12 +77,14 @@ git commit -m "chore: scaffold pnpm monorepo with TypeScript, ESLint, Prettier a
 ### Task 2: Errors, JSON types, result envelope, logger, and event bus
 
 **Files:**
+
 - Create: `src/utils/json.ts`, `src/core/errors.ts`, `src/core/result.ts`, `src/core/logger.ts`, `src/core/events.ts`
 - Test: `test/unit/core/errors.test.ts`, `test/unit/core/result.test.ts`, `test/unit/core/logger.test.ts`, `test/unit/core/events.test.ts`
 
 (All `src/` and `test/` paths in this plan are relative to `packages/server/`.)
 
 **Interfaces:**
+
 - Produces:
   - `type JsonPrimitive = string | number | boolean | null`, `type JsonValue = JsonPrimitive | JsonValue[] | { [k: string]: JsonValue }`, `type JsonObject = { [k: string]: JsonValue }`
   - `type ErrorCode` = the 16 codes of spec §5.2; `interface ErrorPayload { code: ErrorCode; message: string; hint?: string; details?: JsonObject }`
@@ -98,8 +102,16 @@ git commit -m "chore: scaffold pnpm monorepo with TypeScript, ESLint, Prettier a
 
 ```ts
 test('TvMcpError carries code, hint and details', () => {
-  const e = new TvMcpError('TARGET_NOT_FOUND', 'No chart tab', { hint: 'Open a chart', details: { tabs: 0 } });
-  expect(e.toPayload()).toEqual({ code: 'TARGET_NOT_FOUND', message: 'No chart tab', hint: 'Open a chart', details: { tabs: 0 } });
+  const e = new TvMcpError('TARGET_NOT_FOUND', 'No chart tab', {
+    hint: 'Open a chart',
+    details: { tabs: 0 },
+  });
+  expect(e.toPayload()).toEqual({
+    code: 'TARGET_NOT_FOUND',
+    message: 'No chart tab',
+    hint: 'Open a chart',
+    details: { tabs: 0 },
+  });
 });
 test('toErrorPayload maps unknown errors to INTERNAL without leaking the stack', () => {
   const p = toErrorPayload(new Error('boom'));
@@ -107,11 +119,18 @@ test('toErrorPayload maps unknown errors to INTERNAL without leaking the stack',
   expect(JSON.stringify(p)).not.toContain('at ');
 });
 test('PlanLimitError exposes feature and limit', () => {
-  expect(new PlanLimitError('INDICATORS_ON_CHART', 2).toPayload().details).toEqual({ feature: 'INDICATORS_ON_CHART', limit: 2 });
+  expect(new PlanLimitError('INDICATORS_ON_CHART', 2).toPayload().details).toEqual({
+    feature: 'INDICATORS_ON_CHART',
+    limit: 2,
+  });
 });
 test('toSuccessResult mirrors the payload in text and structuredContent', () => {
   const r = toSuccessResult({ a: 1 }, { via: 'api', durationMs: 5 });
-  expect(r.structuredContent).toEqual({ ok: true, data: { a: 1 }, meta: { via: 'api', durationMs: 5 } });
+  expect(r.structuredContent).toEqual({
+    ok: true,
+    data: { a: 1 },
+    meta: { via: 'api', durationMs: 5 },
+  });
   expect(JSON.parse((r.content[0] as { text: string }).text)).toEqual(r.structuredContent);
 });
 test('toErrorResult sets isError and the error code', () => {
@@ -119,8 +138,12 @@ test('toErrorResult sets isError and the error code', () => {
   expect(r.isError).toBe(true);
   expect(r.structuredContent).toMatchObject({ ok: false, error: { code: 'TIMEOUT' } });
 });
-test('logger writes to the given destination and never to stdout', () => { /* spy on process.stdout.write; assert not called; assert destination received one JSON line */ });
-test('ToolEventBus keeps the most recent 500 events and notifies subscribers', () => { /* emit 501 events; recent() has 500; subscriber called 501 times; unsubscribe stops calls */ });
+test('logger writes to the given destination and never to stdout', () => {
+  /* spy on process.stdout.write; assert not called; assert destination received one JSON line */
+});
+test('ToolEventBus keeps the most recent 500 events and notifies subscribers', () => {
+  /* emit 501 events; recent() has 500; subscriber called 501 times; unsubscribe stops calls */
+});
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail.** Run: `pnpm -C packages/server vitest run --project unit test/unit/core`. Expected: FAIL, modules not found.
@@ -133,10 +156,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 3: Configuration from environment and CLI flags
 
 **Files:**
+
 - Create: `src/config/schema.ts`, `src/config/load.ts`, `.env.example` (repository root)
 - Test: `test/unit/config/load.test.ts`
 
 **Interfaces:**
+
 - Consumes: `TvMcpError` (Task 2).
 - Produces:
   - `type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | 'silent'`, `type Profile = 'core' | 'full' | 'readonly'`, `type CliCommand = 'serve' | 'launch' | 'doctor' | 'config'`
@@ -161,10 +186,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 4: Timeout, retry, and time utilities
 
 **Files:**
+
 - Create: `src/utils/timeout.ts`, `src/utils/retry.ts`, `src/utils/time.ts`
 - Test: `test/unit/utils/timeout.test.ts`, `test/unit/utils/retry.test.ts`, `test/unit/utils/time.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T>` (rejects with `TimeoutError(label, ms)` and clears its timer); `function sleep(ms: number): Promise<void>`
   - `interface RetryOptions { retries: number; baseDelayMs: number; maxDelayMs: number; shouldRetry: (err: unknown) => boolean; sleep?: (ms: number) => Promise<void>; random?: () => number }`; `function retry<T>(fn: (attempt: number) => Promise<T>, options: RetryOptions): Promise<T>` (exponential backoff with full jitter)
@@ -189,11 +216,13 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 5: Test harness: fake CDP server and fake TradingView window
 
 **Files:**
+
 - Create: `test/helpers/fake-cdp/server.ts`, `test/helpers/fake-tv/fixture.ts`, `test/helpers/fake-tv/window.ts`, `test/helpers/fake-tv/synthetic-bars.ts`
 - Create: `test/fixtures/cdp/targets.macos-3.4.1.json` (observed target list from reverse-engineering §3.2 with the layout ID replaced by `FIXTURE1`), `test/fixtures/tv/chart-basic.json`, `test/fixtures/png/1x1.png`
 - Test: `test/unit/helpers/fake-cdp-server.test.ts`, `test/unit/helpers/fake-tv-window.test.ts`
 
 **Interfaces:**
+
 - Produces (test-only):
   - `interface FakeTarget { id: string; type: string; title: string; url: string; behavior: 'page' | 'silent'; window?: () => object; handlers?: Record<string, (params: unknown) => unknown> }`
   - `function startFakeCdpServer(options: { targets: FakeTarget[] }): Promise<FakeCdpServer>`; `interface FakeCdpServer { host: '127.0.0.1'; port: number; calls: { targetId: string; method: string; params: unknown }[]; setTargets(targets: FakeTarget[]): void; dropConnections(): void; close(): Promise<void> }`
@@ -220,10 +249,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 6: CDP discovery and target classification
 
 **Files:**
+
 - Create: `src/core/cdp/types.ts`, `src/core/cdp/discovery.ts`, `src/core/cdp/targets.ts`
 - Test: `test/unit/core/cdp/targets.test.ts`, `test/integration/cdp-discovery.test.ts`
 
 **Interfaces:**
+
 - Consumes: `TvMcpError`, `withTimeout` (Tasks 2 and 4); `startFakeCdpServer` (Task 5).
 - Produces:
   - `interface CdpTargetInfo { id: string; type: string; title: string; url: string; webSocketDebuggerUrl?: string; parentId?: string }`
@@ -249,10 +280,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 7: CDP session adapter on chrome-remote-interface
 
 **Files:**
+
 - Create: `src/core/cdp/cri-connector.ts` (and add `CdpSession`, `CdpConnector` to `src/core/cdp/types.ts`)
 - Test: `test/integration/cri-connector.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CdpTargetInfo` (Task 6), `withTimeout` (Task 4), fake CDP server (Task 5).
 - Produces:
   - `interface CdpSession { readonly targetId: string; readonly isClosed: boolean; send<M extends keyof ProtocolMapping.Commands>(method: M, params?: ProtocolMapping.Commands[M]['paramsType'][0], options?: { timeoutMs?: number }): Promise<ProtocolMapping.Commands[M]['returnType']>; onClose(listener: () => void): void; close(): Promise<void> }`
@@ -272,10 +305,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 8: Page bridge, TvWindow contract, and serializability guard
 
 **Files:**
+
 - Create: `src/core/tv/tv-window.ts`, `src/core/tv/page-bridge.ts`, `src/core/tv/page-functions.ts` (registry of all page functions, used only by the guard test)
 - Test: `test/unit/core/tv/page-bridge.test.ts`, `test/unit/core/tv/page-functions.serializable.test.ts`, `test/integration/page-bridge.test.ts`
 
 **Interfaces:**
+
 - Consumes: `CdpSession` (Task 7), errors (Task 2).
 - Produces:
   - `TvWindow` and nested interfaces (`TradingViewApiLike`, `ChartWidgetApiLike`, `StudyApiLike`, `ChartWidgetLike`, `ChartModelLike`, `SeriesLike`, `BarsLike`, `TimeScaleLike`, `TvdLike`), covering exactly the members from reverse-engineering §4.2 to §4.4. All are optional at the top level (`TradingViewApi?`), because the page may not be ready.
@@ -301,10 +336,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 9: Input helpers and the unsafe-target guard
 
 **Files:**
+
 - Create: `src/core/tv/selectors.ts`, `src/core/tv/input.ts`
 - Test: `test/unit/core/tv/input.test.ts`, `test/integration/input.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PageHandle` shape `{ session: CdpSession; bridge: PageBridge }` (formally defined in Task 10; use a local structural type here).
 - Produces:
   - `export const SELECTORS` (reverse-engineering §5.1 to §5.6, keyed by purpose, for example `SELECTORS.header.symbolSearch = '#header-toolbar-symbol-search'`)
@@ -327,10 +364,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 10: Connection manager and health
 
 **Files:**
+
 - Create: `src/core/connection.ts`
 - Test: `test/integration/connection.test.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 6 to 8; `retry` (Task 4).
 - Produces:
   - `interface PageHandle { target: CdpTargetInfo; session: CdpSession; bridge: PageBridge }`
@@ -355,10 +394,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 11: Install discovery, process control, and launcher
 
 **Files:**
+
 - Create: `src/core/launcher/install.ts`, `src/core/launcher/process.ts`, `src/core/launcher/launch.ts`
 - Test: `test/unit/core/launcher/install.test.ts`, `test/unit/core/launcher/launch.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ConnectionManager.health()` (Task 10), `TvMcpError` (Task 2), `sleep` (Task 4).
 - Produces:
   - `interface InstallDeps { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; exists(path: string): boolean; execFile(cmd: string, args: string[], options?: { timeoutMs?: number }): Promise<string> }`
@@ -389,10 +430,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 12: Tier runner and capability probe
 
 **Files:**
+
 - Create: `src/core/tv/tiers.ts`, `src/core/tv/capabilities.ts`
 - Test: `test/unit/core/tv/tiers.test.ts`, `test/unit/core/tv/capabilities.test.ts`
 
 **Interfaces:**
+
 - Consumes: errors (Task 2), `PageFunction` (Task 8), fake window (Task 5).
 - Produces:
   - `interface Strategy<T> { tier: Tier; name: string; run(): Promise<T> }`; `function runWithFallback<T>(strategies: Strategy<T>[], logger: Logger): Promise<{ value: T; via: Tier }>`
@@ -414,11 +457,13 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 13: Tool registry, MCP server factory, `batch_run`, and resources framework
 
 **Files:**
+
 - Create: `src/tools/types.ts`, `src/tools/registry.ts`, `src/tools/index.ts` (`export const allTools: AnyToolDefinition[]`, starting with `batchTools`), `src/tools/batch/index.ts`, `src/resources/index.ts`, `src/server.ts`
 - Modify: `src/index.ts` (export `createMcpServer`, `loadConfig`, and public types)
 - Test: `test/unit/tools/registry.test.ts`, `test/integration/server.test.ts`, `test/helpers/mcp-client.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 2, 3, 10, 11, 12.
 - Produces:
   - `type Domain` (spec §5.1 prefixes without the underscore)
@@ -447,10 +492,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 14: Transports and CLI
 
 **Files:**
+
 - Create: `src/transports/stdio.ts`, `src/transports/http.ts`, `src/transports/http-security.ts`, `src/cli.ts`, `src/cli/banner.ts`
 - Test: `test/unit/transports/http-security.test.ts`, `test/integration/stdio.test.ts`, `test/integration/http.test.ts`
 
 **Interfaces:**
+
 - Consumes: `createMcpServer` (Task 13), `loadConfig` (Task 3), `createLogger` (Task 2), launcher and connection (Tasks 10 and 11).
 - Produces:
   - `function startStdioTransport(server: McpServer): Promise<void>`
@@ -473,11 +520,13 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 15: App domain tools
 
 **Files:**
+
 - Create: `src/tools/app/index.ts`, `src/tools/app/page.ts`
 - Modify: `src/tools/index.ts` (aggregate `allTools`), `src/core/tv/page-functions.ts`
 - Test: `test/unit/tools/app/page.test.ts`, `test/integration/tools/app.test.ts`
 
 **Interfaces:**
+
 - Consumes: `defineTool`, `ToolContext` (Task 13); `Launcher` (Task 11); `ConnectionManager` (Task 10); `probeCapabilities` (Task 12); `SELECTORS` (Task 9).
 - Produces: `export const appTools` with `app_launch`, `app_health`, `app_discover`, `app_get_ui_state`, `app_reconnect` (inputs as in spec §7); page functions `readAppInfo(win): { buildTime: string | null; connected: boolean; layoutType: string | null; url: string }` and `readUiState(win): { rightPanel: { open: boolean; activeWidget: string | null }; bottomPanelOpen: boolean; dialogs: string[]; fullscreen: boolean; replayToolbarVisible: boolean; pineEditorOpen: boolean }`.
 
@@ -494,11 +543,13 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 16: Chart domain tools and chart state resource
 
 **Files:**
+
 - Create: `src/tools/chart/index.ts`, `src/tools/chart/page.ts`, `src/tools/chart/mappers.ts`
 - Modify: `src/tools/index.ts`, `src/resources/index.ts`, `src/core/tv/page-functions.ts`
 - Test: `test/unit/tools/chart/mappers.test.ts`, `test/unit/tools/chart/page.test.ts`, `test/integration/tools/chart.test.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 4, 8, 9, 10, 12, 13.
 - Produces:
   - `function normalizeTimeframe(input: string): string` (aliases: `1m`/`1min` → `1`, `15m` → `15`, `1h` → `60`, `4h` → `240`, `1d`/`D` → `1D`, `1w` → `1W`, `1M` → `1M`, `30s` → `30S`, `100T`, `1000R`; anything else is `INVALID_INPUT` listing accepted forms)
@@ -520,12 +571,14 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 17: E2E harness, reverse-engineering probes, fixture recorder, and testing docs
 
 **Files:**
+
 - Create: `test/e2e/setup.ts`, `test/e2e/app.e2e.test.ts`, `test/e2e/chart.e2e.test.ts`
 - Create: `scripts/re/probe.ts`, `scripts/re/record-fixtures.ts`, `scripts/re/scrub.ts`, `scripts/re/README.md`
 - Create: `docs/testing.md`
 - Test: `test/unit/scripts/scrub.test.ts`
 
 **Interfaces:**
+
 - Consumes: `createMcpServer`, `connectInMemoryClient`, page functions.
 - Produces:
   - `function e2eEnabled(): boolean` (`process.env.TV_E2E === '1'`); `interface ChartSnapshot { symbol: string; resolution: string; chartType: number; visibleRange: { from: number; to: number } }`; `function snapshotChart(client: Client): Promise<ChartSnapshot>`; `function restoreChart(client: Client, snapshot: ChartSnapshot): Promise<void>` (plan-limit-aware skipping arrives in Plan 2 together with the plan limits module)
@@ -546,10 +599,12 @@ test('ToolEventBus keeps the most recent 500 events and notifies subscribers', (
 ### Task 18: CI workflow, README stub, and first push
 
 **Files:**
+
 - Create: `.github/workflows/ci.yml`, `README.md` (stub with badges and a "work in progress" note), `CONTRIBUTING.md` (commit conventions and local setup), `SECURITY.md`
 - Create: `scripts/smoke-node20.mjs` (spawns the built CLI with `--transport stdio`, sends `initialize` and `tools/list`, and asserts that `app_health` is listed)
 
 **Interfaces:**
+
 - Consumes: root scripts (Task 1) and the built CLI (Task 14).
 
 - [ ] **Step 1: Write the workflow.** Job `verify` on `ubuntu-latest` with Node 24: checkout → `pnpm/action-setup` → `actions/setup-node` with pnpm cache → `pnpm install --frozen-lockfile` → `pnpm lint` → `pnpm typecheck` → `pnpm test:unit` → `pnpm test:integration` → `pnpm test:coverage` (fails under 80%) → `pnpm build` → upload `packages/server/dist` and the coverage report. Job `runtime-node20` needs `verify`: download `dist`, set up Node 20, `npm install --omit=dev` inside `packages/server`, then `node scripts/smoke-node20.mjs`. Triggers: `push` and `pull_request`.
