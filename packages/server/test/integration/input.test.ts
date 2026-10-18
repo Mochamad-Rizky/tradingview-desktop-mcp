@@ -198,14 +198,41 @@ describe('clickElement over CDP', () => {
 });
 
 describe('typeText over CDP', () => {
-  test('inserts the text', async () => {
+  test('looks at the focus, then inserts the text', async () => {
     const { server, page } = await openPage(createFakeDomWindow(chart()));
 
     await typeText(page, 'NASDAQ:AAPL');
 
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate', 'Input.insertText']);
     expect(inputOf(server)).toEqual([
       { method: 'Input.insertText', params: { text: 'NASDAQ:AAPL' } },
     ]);
+  });
+
+  test('refuses when focus is inside a buy-sell control', async () => {
+    const field = fakeElement({ tag: 'input', id: 'quantity' });
+    const group = fakeElement({ matches: ['[data-name="buy-sell-buttons"]'], children: [field] });
+    const { server, page } = await openPage(createFakeDomWindow(chart([group]), { focus: field }));
+
+    const error = await failureOf(typeText(page, 'NASDAQ:AAPL'));
+
+    expect(error.toPayload()).toEqual({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message: expect.stringContaining('`input#quantity`') as unknown,
+      hint: expect.any(String) as unknown,
+      details: { action: 'typeText', focused: 'input#quantity' },
+    });
+    // The lookup of the focus is all the page ever saw.
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('fails closed without a DOM', async () => {
+    const { server, page } = await openPage(createFakeTvWindow(loadTvFixture()));
+
+    const error = await failureOf(typeText(page, 'NASDAQ:AAPL'));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
   });
 
   test('sends nothing for empty text', async () => {
@@ -223,6 +250,11 @@ describe('pressKey over CDP', () => {
 
     await pressKey(page, 'Enter');
 
+    expect(methodsOf(server)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
     expect(inputOf(server)).toEqual([
       {
         method: 'Input.dispatchKeyEvent',
@@ -267,6 +299,57 @@ describe('pressKey over CDP', () => {
     expect(error.code).toBe('INVALID_INPUT');
     expect(server.calls).toEqual([]);
   });
+
+  test('refuses when a trading button has focus', async () => {
+    const buy = fakeElement({
+      tag: 'button',
+      matches: [BUY],
+      attributes: { 'data-name': 'buy-order-button' },
+    });
+    const { server, page } = await openPage(createFakeDomWindow(chart([buy]), { focus: buy }));
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+
+    expect(error.toPayload()).toEqual({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message: expect.stringContaining('`button[data-name="buy-order-button"]`') as unknown,
+      hint: expect.any(String) as unknown,
+      details: { action: 'pressKey', focused: 'button[data-name="buy-order-button"]' },
+    });
+    // Not a key down and not a key up: the lookup of the focus is all the page ever saw.
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('proceeds when the chart canvas has focus', async () => {
+    const canvas = fakeElement({
+      tag: 'canvas',
+      matches: [PANE],
+      rect: box(0, 100, 800, 400),
+      attributes: { 'data-name': 'pane-canvas' },
+    });
+    // A trading control elsewhere on the page does not matter: only what has the focus does.
+    const ticket = fakeElement({ matches: [BUY], rect: box(900, 20, 60, 30) });
+    const { server, page } = await openPage(
+      createFakeDomWindow([canvas, ticket], { focus: canvas }),
+    );
+
+    await pressKey(page, 'Enter');
+
+    expect(methodsOf(server)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+  });
+
+  test('fails closed without a DOM', async () => {
+    const { server, page } = await openPage(createFakeTvWindow(loadTvFixture()));
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
+  });
 });
 
 test('drives the symbol search: click the button, type the symbol, press Enter', async () => {
@@ -276,12 +359,16 @@ test('drives the symbol search: click the button, type the symbol, press Enter',
   await typeText(page, 'NASDAQ:MSFT');
   await pressKey(page, 'Enter');
 
+  // Each step looks at the page first: the target of the click, then the focus for the text, then
+  // the focus for the key.
   expect(methodsOf(server)).toEqual([
     'Runtime.evaluate',
     'Input.dispatchMouseEvent',
     'Input.dispatchMouseEvent',
     'Input.dispatchMouseEvent',
+    'Runtime.evaluate',
     'Input.insertText',
+    'Runtime.evaluate',
     'Input.dispatchKeyEvent',
     'Input.dispatchKeyEvent',
   ]);

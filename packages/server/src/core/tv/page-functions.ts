@@ -1,4 +1,4 @@
-import { describeElement } from './input.js';
+import { describeElement, describeFocusedElement } from './input.js';
 import { readVisibilityState } from './probes.js';
 
 // Every function the page bridge sends into the page, so that the serializability test checks
@@ -6,5 +6,6 @@ import { readVisibilityState } from './probes.js';
 // functions adds them here.
 export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   describeElement,
+  describeFocusedElement,
   readVisibilityState,
 };

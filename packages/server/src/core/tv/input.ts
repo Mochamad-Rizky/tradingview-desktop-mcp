@@ -7,10 +7,14 @@ import type { TvWindow } from './tv-window.js';
 // Real input for the places the chart API does not reach: a click, text and key presses sent to
 // the page over CDP, so the page sees them as it sees a user.
 //
-// Only a click is guarded. It is refused when its target, or whatever would take the click,
-// belongs to a broker trading control (UNSAFE_SELECTORS). Text and keys go to whatever has the
-// focus and are not checked, so a caller that has focused a trading control can still press Enter
-// on it. The tools built on these helpers have to account for that.
+// A click is refused when its target, or whatever would take the click, belongs to a broker
+// trading control (UNSAFE_SELECTORS). Text and key presses land on the element that has the
+// focus, and Enter on a focused button clicks it, so they are refused while that element belongs
+// to a trading control. A page that cannot say what has the focus is refused too.
+//
+// That leaves one gap. TradingView may bind trading actions to hotkeys that work wherever the
+// focus is. The notes record none, so a key chord can still reach one, and the focus check cannot
+// see it.
 
 // A page the helpers can act on: the debugging session of a chart tab, to send input events to,
 // and the bridge that runs page functions in it. Only these two members are used, so any handle
@@ -102,6 +106,70 @@ export function describeElement(
   return { found: true, visible, unsafe, rect };
 }
 
+// What a key press or a text needs to know about the element that has the focus, which is where
+// they land. It is judged like the target of a click:
+// - unsafe: whether the focused element matches one of `unsafeSelectors`, holds an element that
+//   does, or sits inside one that does. Holding one counts as it does for a click: a focused
+//   toolbar or menu can activate a button in it, through aria-activedescendant or key handling of
+//   its own, while the focus stays on the container. The body and the html element are no focus
+//   at all: they hold the whole page, so they would always hold a trading control that is on it.
+//   For the same reason a page where no element has the focus is safe.
+// - focused: the element in a few words for the error that refuses it, its tag followed by its id,
+//   data-qa-id and data-name when it has them. Empty when no element has the focus.
+// A page that cannot say what has the focus answers NOT_AVAILABLE, so that nothing is sent to a
+// page that cannot be checked.
+//
+// A focus inside an iframe or a shadow root is reported as the iframe or the host, so a trading
+// control in there is not seen, the same as for clicks. An empty list of selectors is refused, as
+// in describeElement.
+export function describeFocusedElement(
+  win: TvWindow,
+  unsafeSelectors: string[],
+): { unsafe: boolean; focused: string } | PageErrorSentinel {
+  // A page always has a document, but a fake of one or a frame that is still loading may not.
+  const doc = win.document as TvWindow['document'] | undefined;
+  const active = doc?.activeElement;
+  if (active === undefined) {
+    return {
+      __tvmcpError: {
+        code: 'NOT_AVAILABLE',
+        message: 'The page cannot say which element has the focus',
+        hint: 'Make sure the target is a loaded TradingView page, not a blank or helper page.',
+      },
+    };
+  }
+  if (unsafeSelectors.length === 0) {
+    throw new Error('describeFocusedElement needs the selectors to treat as unsafe');
+  }
+  if (active === null) {
+    return { unsafe: false, focused: '' };
+  }
+
+  let focused = active.localName;
+  if (active.id !== '') {
+    focused += `#${active.id}`;
+  }
+  const qaId = active.getAttribute('data-qa-id');
+  if (qaId !== null) {
+    focused += `[data-qa-id="${qaId}"]`;
+  }
+  const name = active.getAttribute('data-name');
+  if (name !== null) {
+    focused += `[data-name="${name}"]`;
+  }
+  focused = focused.slice(0, 120);
+
+  if (active.localName === 'body' || active.localName === 'html') {
+    return { unsafe: false, focused };
+  }
+  const unsafeList = unsafeSelectors.join(', ');
+  // closest starts at the element itself, so it also covers an element that matches.
+  return {
+    unsafe: active.closest(unsafeList) !== null || active.querySelector(unsafeList) !== null,
+    focused,
+  };
+}
+
 // Clicks the center of the first element that matches `selector`. The element is looked up anew on
 // every call and nothing is cached, because the page moves between calls. The lookup comes first
 // and nothing is sent to the page before it says the target is safe, so a refused click does not
@@ -157,12 +225,33 @@ export async function clickElement(page: InputPage, selector: string): Promise<v
   });
 }
 
+// Keys and text land on whatever has the focus, and Enter on a focused button clicks it. So the
+// focus is looked at first, and a trading control that has it refuses the input before anything
+// is sent. A page that cannot say what has the focus is refused as well: this fails closed.
+async function assertFocusIsSafe(page: InputPage, action: 'pressKey' | 'typeText'): Promise<void> {
+  const { unsafe, focused } = await page.bridge.evaluate(describeFocusedElement, [
+    [...UNSAFE_SELECTORS],
+  ]);
+  if (unsafe) {
+    throw new TvMcpError(
+      'UNSAFE_ACTION_BLOCKED',
+      `Refusing to ${action === 'pressKey' ? 'press a key' : 'type text'}: the focus is on \`${focused}\`, which is part of a broker trading control or holds one`,
+      {
+        hint: 'Trading controls are off limits to this server. Move the focus to another element first, or use the TradingView window yourself.',
+        details: { action, focused },
+      },
+    );
+  }
+}
+
 // Inserts text where the focus is, as an emoji picker or an input method would: no key events, so
-// a shortcut of the page does not see the letters. Nothing is sent for empty text.
+// a shortcut of the page does not see the letters. Empty text is a no-op that does not even look
+// at the page. Refused while a trading control has the focus.
 export async function typeText(page: InputPage, text: string): Promise<void> {
   if (text === '') {
     return;
   }
+  await assertFocusIsSafe(page, 'typeText');
   await page.session.send('Input.insertText', { text });
 }
 
@@ -241,6 +330,9 @@ function describeKey(key: string, shifted: boolean): KeyDescription | undefined 
 // types nothing, so Control and A reaches the shortcuts of the page without typing an "a". The
 // editing shortcuts of the browser itself, such as select all, do not run for events sent this
 // way.
+//
+// The key and the modifiers are checked first, so a request that cannot be sent never costs a
+// lookup. Then the focus is looked at, and the key is refused while a trading control has it.
 export async function pressKey(
   page: InputPage,
   key: string,
@@ -264,6 +356,7 @@ export async function pressKey(
       details: { key },
     });
   }
+  await assertFocusIsSafe(page, 'pressKey');
 
   const event = {
     modifiers: mask,

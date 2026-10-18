@@ -429,8 +429,10 @@ example `iconButton-3Lt7-uhL`) change on every build and are never used.
 `[data-name="buy-order-button"]`, `[data-name="sell-order-button"]`, `[data-name="buy-sell-buttons"]`,
 `[data-qa-id="trade-button"]`, `#header-toolbar-trade-desktop`, and anything inside a broker order ticket.
 The low-level UI tools refuse a click on a target that matches one of these selectors, contains one, sits inside one, or
-has one over the point where the click would land. An order ticket has no stable selector yet, so it is covered only
-through the buttons inside it that match. Keyboard input is not checked against these selectors.
+has one over the point where the click would land. They also refuse key presses and text while the focused element
+matches one, contains one or sits inside one, and while the page cannot say what has the focus. An order ticket has no
+stable selector yet, so it is covered only through the buttons inside it that match. Whether TradingView binds trading
+hotkeys is not known, so a key chord can still reach one.
 
 ### 5.6 Window chrome (tabs)
 

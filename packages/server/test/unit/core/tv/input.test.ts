@@ -4,6 +4,7 @@ import { TimeoutError } from '../../../../src/core/errors.js';
 import {
   clickElement,
   describeElement,
+  describeFocusedElement,
   pressKey,
   typeText,
   type InputPage,
@@ -18,6 +19,7 @@ import {
   createFakeDomWindow,
   fakeElement,
   type FakeDomOptions,
+  type FakeDomWindow,
   type FakeElement,
   type FakeElementOptions,
   type FakeRect,
@@ -114,6 +116,11 @@ function pageWith(
   handleInput?: (command: SentCommand) => unknown,
 ): FakePage {
   return pageOver(createFakeDomWindow(elements, options), handleInput);
+}
+
+// The window as the fake really is, with its own elements, so that a test can move the focus.
+function dom(win: TvWindow): FakeDomWindow {
+  return win as unknown as FakeDomWindow;
 }
 
 function mouseEvent(type: string, x: number, y: number): SentCommand {
@@ -362,6 +369,148 @@ describe('describeElement', () => {
   });
 });
 
+describe('describeFocusedElement', () => {
+  // As the bridge calls it: with the real list of selectors to refuse.
+  function focusOf(win: TvWindow) {
+    return describeFocusedElement(win, [...UNSAFE_SELECTORS]);
+  }
+
+  test('flags a trading button that has the focus, and says which element it is', () => {
+    const buy = fakeElement({
+      tag: 'button',
+      matches: [BUY],
+      attributes: { 'data-name': 'buy-order-button' },
+    });
+    const win = createFakeDomWindow([buy], { focus: buy });
+
+    expect(focusOf(win)).toEqual({ unsafe: true, focused: 'button[data-name="buy-order-button"]' });
+  });
+
+  test.each(UNSAFE_SELECTORS)('flags a focused element that matches %s', (selector) => {
+    const control = fakeElement({ matches: [selector] });
+    const win = createFakeDomWindow([control], { focus: control });
+
+    expect(focusOf(win)).toMatchObject({ unsafe: true });
+  });
+
+  test('flags a focused element that holds an unsafe control, however deep', () => {
+    // From a focused toolbar the arrow keys can move the focus on to the button in it.
+    const control = fakeElement({ matches: [TRADE_BUTTON] });
+    const toolbar = fakeElement({
+      children: [fakeElement({ children: [fakeElement({ children: [control] })] })],
+    });
+    const win = createFakeDomWindow([toolbar], { focus: toolbar });
+
+    expect(focusOf(win)).toMatchObject({ unsafe: true });
+  });
+
+  test('flags a focused element that sits inside an unsafe control', () => {
+    const field = fakeElement({ tag: 'input' });
+    const group = fakeElement({ matches: ['[data-name="buy-sell-buttons"]'], children: [field] });
+    const win = createFakeDomWindow([group], { focus: field });
+
+    expect(focusOf(win)).toEqual({ unsafe: true, focused: 'input' });
+  });
+
+  test('does not flag the chart canvas, whatever else the page holds', () => {
+    const canvas = fakeElement({ tag: 'canvas', attributes: { 'data-name': 'pane-canvas' } });
+    const ticket = fakeElement({ children: [fakeElement({ matches: [BUY] })] });
+    const win = createFakeDomWindow([canvas, ticket], { focus: canvas });
+
+    expect(focusOf(win)).toEqual({ unsafe: false, focused: 'canvas[data-name="pane-canvas"]' });
+  });
+
+  test('counts the body and the html element as no focus, although they hold the whole page', () => {
+    const control = fakeElement({ matches: [BUY] });
+    const body = fakeElement({ tag: 'body', children: [control] });
+    const html = fakeElement({ tag: 'html', children: [body] });
+
+    expect(focusOf(createFakeDomWindow([control], { focus: body }))).toEqual({
+      unsafe: false,
+      focused: 'body',
+    });
+    expect(focusOf(createFakeDomWindow([control], { focus: html }))).toEqual({
+      unsafe: false,
+      focused: 'html',
+    });
+  });
+
+  test('counts the body that a page focuses when nothing else has the focus as safe', () => {
+    // The default of the fake: the body, which holds the trading control.
+    const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
+
+    expect(focusOf(win)).toEqual({ unsafe: false, focused: 'body' });
+  });
+
+  test('counts no focused element at all as safe', () => {
+    const win = createFakeDomWindow([fakeElement({ matches: [BUY] })], { focus: null });
+
+    expect(focusOf(win)).toEqual({ unsafe: false, focused: '' });
+  });
+
+  test('describes the element by its tag, id, data-qa-id and data-name, in that order', () => {
+    const describe = (element: FakeElement) =>
+      focusOf(createFakeDomWindow([element], { focus: element }));
+
+    expect(describe(fakeElement())).toEqual({ unsafe: false, focused: 'div' });
+    expect(describe(fakeElement({ tag: 'span', id: 'label' }))).toMatchObject({
+      focused: 'span#label',
+    });
+    expect(describe(fakeElement({ attributes: { 'data-qa-id': 'legend' } }))).toMatchObject({
+      focused: 'div[data-qa-id="legend"]',
+    });
+    expect(describe(fakeElement({ attributes: { 'data-name': 'alerts' } }))).toMatchObject({
+      focused: 'div[data-name="alerts"]',
+    });
+    expect(
+      describe(
+        fakeElement({
+          tag: 'input',
+          id: 'qty',
+          attributes: { 'data-name': 'quantity', 'data-qa-id': 'qty-input', title: 'ignored' },
+        }),
+      ),
+    ).toMatchObject({ focused: 'input#qty[data-qa-id="qty-input"][data-name="quantity"]' });
+  });
+
+  test('cuts a descriptor that is longer than 120 characters', () => {
+    const element = fakeElement({ id: 'x'.repeat(300) });
+
+    const { focused } = focusOf(createFakeDomWindow([element], { focus: element })) as {
+      focused: string;
+    };
+
+    expect(focused).toBe(`div#${'x'.repeat(116)}`);
+  });
+
+  test('returns NOT_AVAILABLE, and does not throw, when the page cannot say what has the focus', () => {
+    const windows = {
+      'a document without activeElement': createFakeDomWindow(chart(), {
+        without: ['activeElement'],
+      }),
+      // The shared fake of a chart tab models the chart API and has no DOM at all.
+      'the shared fake of a chart tab': createFakeTvWindow(loadTvFixture()),
+      'a window without a document': {} as unknown as TvWindow,
+    };
+
+    for (const [label, win] of Object.entries(windows)) {
+      expect(focusOf(win), label).toEqual({
+        __tvmcpError: {
+          code: 'NOT_AVAILABLE',
+          message: expect.stringContaining('focus') as unknown,
+          hint: expect.any(String) as unknown,
+        },
+      });
+    }
+  });
+
+  test('refuses to judge without the selectors to treat as unsafe', () => {
+    const win = createFakeDomWindow(chart());
+
+    expect(() => describeFocusedElement(win, [])).toThrow(/unsafe/);
+  });
+});
+
 describe('clickElement', () => {
   test('refuses unsafe targets with UNSAFE_ACTION_BLOCKED', async () => {
     const { page, input } = pageWith([
@@ -593,11 +742,11 @@ describe('clickElement', () => {
 
 describe('typeText', () => {
   test('inserts the text with Input.insertText', async () => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await expect(typeText(page, 'NASDAQ:AAPL')).resolves.toBeUndefined();
 
-    expect(sent).toEqual([{ method: 'Input.insertText', params: { text: 'NASDAQ:AAPL' } }]);
+    expect(input()).toEqual([{ method: 'Input.insertText', params: { text: 'NASDAQ:AAPL' } }]);
   });
 
   test.each([
@@ -608,14 +757,14 @@ describe('typeText', () => {
     '  padded  ',
     '0',
   ])('inserts %j as it is', async (text) => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await typeText(page, text);
 
-    expect(sent).toEqual([{ method: 'Input.insertText', params: { text } }]);
+    expect(input()).toEqual([{ method: 'Input.insertText', params: { text } }]);
   });
 
-  test('sends nothing for empty text', async () => {
+  test('sends nothing, and does not look at the page, for empty text', async () => {
     const { page, sent } = pageWith([]);
 
     await expect(typeText(page, '')).resolves.toBeUndefined();
@@ -630,6 +779,51 @@ describe('typeText', () => {
     });
 
     await expect(typeText(page, 'x')).rejects.toBe(timeout);
+  });
+
+  test('refuses when focus is inside a buy-sell control', async () => {
+    const field = fakeElement({ tag: 'input', id: 'quantity' });
+    const group = fakeElement({ matches: ['[data-name="buy-sell-buttons"]'], children: [field] });
+    const { page, sent, input } = pageWith([group], { focus: field });
+
+    const error = await failureOf(typeText(page, 'NASDAQ:AAPL'));
+
+    expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(error.details).toEqual({ action: 'typeText', focused: 'input#quantity' });
+    expect(error.message).toContain('type text');
+    expect(error.message).toContain('`input#quantity`');
+    expect(error.hint).toEqual(expect.any(String));
+    // The focus was looked at, and then nothing was sent to the page.
+    expect(input()).toEqual([]);
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('inserts the text when a field that is no trading control has the focus', async () => {
+    const field = fakeElement({ tag: 'input', id: 'symbol-search' });
+    const { page, sent } = pageWith([field], { focus: field });
+
+    await typeText(page, 'NASDAQ:AAPL');
+
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+  });
+
+  test('fails closed without a DOM', async () => {
+    const windows = {
+      'a document without activeElement': createFakeDomWindow(chart(), {
+        without: ['activeElement'],
+      }),
+      'the shared fake of a chart tab': createFakeTvWindow(loadTvFixture()),
+      'a window without a document': {} as unknown as TvWindow,
+    };
+
+    for (const [label, win] of Object.entries(windows)) {
+      const { page, input } = pageOver(win);
+
+      const error = await failureOf(typeText(page, 'NASDAQ:AAPL'));
+
+      expect(error.code, label).toBe('NOT_AVAILABLE');
+      expect(input(), label).toEqual([]);
+    }
   });
 });
 
@@ -652,11 +846,11 @@ describe('pressKey', () => {
   }
 
   test("sends keyDown and keyUp with Enter's key codes", async () => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await expect(pressKey(page, 'Enter')).resolves.toBeUndefined();
 
-    expect(sent).toEqual([keyDown('Enter', 'Enter', 13, '\r'), keyUp('Enter', 'Enter', 13)]);
+    expect(input()).toEqual([keyDown('Enter', 'Enter', 13, '\r'), keyUp('Enter', 'Enter', 13)]);
   });
 
   test.each([
@@ -673,11 +867,11 @@ describe('pressKey', () => {
     ['End', 35],
     ['Home', 36],
   ])('sends %s as a raw key with virtual key code %i and no text', async (key, keyCode) => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await pressKey(page, key);
 
-    expect(sent).toEqual([keyDown(key, key, keyCode), keyUp(key, key, keyCode)]);
+    expect(input()).toEqual([keyDown(key, key, keyCode), keyUp(key, key, keyCode)]);
   });
 
   test.each(
@@ -688,14 +882,14 @@ describe('pressKey', () => {
   )(
     'sends the letter %s with virtual key code %i, and its upper case form likewise',
     async (letter, keyCode) => {
-      const { page, sent } = pageWith([]);
+      const { page, input } = pageWith([]);
       const upper = letter.toUpperCase();
       const code = `Key${upper}`;
 
       await pressKey(page, letter);
       await pressKey(page, upper);
 
-      expect(sent).toEqual([
+      expect(input()).toEqual([
         keyDown(letter, code, keyCode, letter),
         keyUp(letter, code, keyCode),
         keyDown(upper, code, keyCode, upper),
@@ -707,11 +901,11 @@ describe('pressKey', () => {
   test.each(
     Array.from({ length: 10 }, (_, index): [string, number] => [String(index), 48 + index]),
   )('sends the digit %s with virtual key code %i', async (digit, keyCode) => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await pressKey(page, digit);
 
-    expect(sent).toEqual([
+    expect(input()).toEqual([
       keyDown(digit, `Digit${digit}`, keyCode, digit),
       keyUp(digit, `Digit${digit}`, keyCode),
     ]);
@@ -728,31 +922,31 @@ describe('pressKey', () => {
     [['Alt', 'Meta'], 5],
     [['Alt', 'Control', 'Meta', 'Shift'], 15],
   ])('sends the modifiers %j as the bit field %i on both events', async (modifiers, mask) => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await pressKey(page, 'Escape', modifiers);
 
-    expect(sent).toEqual([
+    expect(input()).toEqual([
       keyDown('Escape', 'Escape', 27, undefined, mask),
       keyUp('Escape', 'Escape', 27, mask),
     ]);
   });
 
   test('counts a modifier once, however often it is listed', async () => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await pressKey(page, 'Tab', ['Shift', 'Shift', 'Control', 'Shift']);
 
-    expect(sent).toEqual([keyDown('Tab', 'Tab', 9, undefined, 10), keyUp('Tab', 'Tab', 9, 10)]);
+    expect(input()).toEqual([keyDown('Tab', 'Tab', 9, undefined, 10), keyUp('Tab', 'Tab', 9, 10)]);
   });
 
   test('upper-cases a letter held with Shift, the way a keyboard does', async () => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await pressKey(page, 'a', ['Shift']);
     await pressKey(page, 'A', ['Shift']);
 
-    expect(sent).toEqual([
+    expect(input()).toEqual([
       keyDown('A', 'KeyA', 65, 'A', 8),
       keyUp('A', 'KeyA', 65, 8),
       keyDown('A', 'KeyA', 65, 'A', 8),
@@ -761,11 +955,11 @@ describe('pressKey', () => {
   });
 
   test('leaves a digit as it is under Shift, because the symbol depends on the keyboard layout', async () => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await pressKey(page, '1', ['Shift']);
 
-    expect(sent).toEqual([keyDown('1', 'Digit1', 49, '1', 8), keyUp('1', 'Digit1', 49, 8)]);
+    expect(input()).toEqual([keyDown('1', 'Digit1', 49, '1', 8), keyUp('1', 'Digit1', 49, 8)]);
   });
 
   test.each<[string, KeyModifier[], number, string]>([
@@ -776,11 +970,11 @@ describe('pressKey', () => {
   ])(
     'sends a letter held with %s as a shortcut, without text to type',
     async (_label, modifiers, mask, key) => {
-      const { page, sent } = pageWith([]);
+      const { page, input } = pageWith([]);
 
       await pressKey(page, 'a', modifiers);
 
-      expect(sent).toEqual([
+      expect(input()).toEqual([
         keyDown(key, 'KeyA', 65, undefined, mask),
         keyUp(key, 'KeyA', 65, mask),
       ]);
@@ -788,13 +982,13 @@ describe('pressKey', () => {
   );
 
   test('sends Enter and a digit held with Control without text, and Enter with Shift with it', async () => {
-    const { page, sent } = pageWith([]);
+    const { page, input } = pageWith([]);
 
     await pressKey(page, 'Enter', ['Control']);
     await pressKey(page, '5', ['Alt']);
     await pressKey(page, 'Enter', ['Shift']);
 
-    expect(sent).toEqual([
+    expect(input()).toEqual([
       keyDown('Enter', 'Enter', 13, undefined, 2),
       keyUp('Enter', 'Enter', 13, 2),
       keyDown('5', 'Digit5', 53, undefined, 1),
@@ -826,7 +1020,7 @@ describe('pressKey', () => {
     '__proto__',
     'toString',
     'hasOwnProperty',
-  ])('rejects the key %j with INVALID_INPUT, and sends nothing', async (key) => {
+  ])('rejects the key %j with INVALID_INPUT, before it looks at the page', async (key) => {
     const { page, sent } = pageWith([]);
 
     const error = await failureOf(pressKey(page, key));
@@ -865,7 +1059,7 @@ describe('pressKey', () => {
   });
 
   test.each([['Ctrl'], ['shift'], ['constructor'], ['__proto__'], ['']])(
-    'rejects the modifier %j with INVALID_INPUT, and sends nothing',
+    'rejects the modifier %j with INVALID_INPUT, before it looks at the page',
     async (modifier) => {
       const { page, sent } = pageWith([]);
 
@@ -908,5 +1102,135 @@ describe('pressKey', () => {
     });
 
     await expect(pressKey(page, 'Enter')).rejects.toBe(timeout);
+  });
+
+  test('refuses when a trading button has focus', async () => {
+    const buy = fakeElement({
+      tag: 'button',
+      matches: [BUY],
+      attributes: { 'data-name': 'buy-order-button' },
+    });
+    const { page, sent, input } = pageWith([buy], { focus: buy });
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+
+    expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(error.details).toEqual({
+      action: 'pressKey',
+      focused: 'button[data-name="buy-order-button"]',
+    });
+    expect(error.message).toContain('press a key');
+    expect(error.message).toContain('`button[data-name="buy-order-button"]`');
+    expect(error.hint).toEqual(expect.any(String));
+    // Not a key down, and no key up either: the focus was looked at, and that is all.
+    expect(input()).toEqual([]);
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('refuses a shortcut as well', async () => {
+    const buy = fakeElement({ tag: 'button', matches: [BUY] });
+    const { page, input } = pageWith([buy], { focus: buy });
+
+    const error = await failureOf(pressKey(page, 'b', ['Alt', 'Shift']));
+
+    expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(input()).toEqual([]);
+  });
+
+  test('proceeds when the chart canvas has focus', async () => {
+    const canvas = fakeElement({
+      tag: 'canvas',
+      matches: [PANE],
+      attributes: { 'data-name': 'pane-canvas' },
+    });
+    // A trading control elsewhere on the page does not matter: only what has the focus does.
+    const ticket = fakeElement({ matches: [BUY], rect: box(900, 20, 60, 30) });
+    const { page, sent, input } = pageWith([canvas, ticket], { focus: canvas });
+
+    await pressKey(page, 'Enter');
+
+    expect(sent.map(({ method }) => method)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+    expect(input()).toEqual([keyDown('Enter', 'Enter', 13, '\r'), keyUp('Enter', 'Enter', 13)]);
+  });
+
+  test('proceeds when nothing is focused, which is the body', async () => {
+    const { page, input } = pageWith(chart([fakeElement({ matches: [BUY] })]));
+
+    await pressKey(page, 'Escape');
+
+    expect(input()).toHaveLength(2);
+  });
+
+  test('fails closed without a DOM', async () => {
+    const windows = {
+      'a document without activeElement': createFakeDomWindow(chart(), {
+        without: ['activeElement'],
+      }),
+      'the shared fake of a chart tab': createFakeTvWindow(loadTvFixture()),
+      'a window without a document': {} as unknown as TvWindow,
+    };
+
+    for (const [label, win] of Object.entries(windows)) {
+      const { page, input } = pageOver(win);
+
+      const error = await failureOf(pressKey(page, 'Enter'));
+
+      expect(error.code, label).toBe('NOT_AVAILABLE');
+      expect(input(), label).toEqual([]);
+    }
+  });
+});
+
+describe('keys and text while a trading control has the focus', () => {
+  const actions: [string, (page: InputPage) => Promise<void>][] = [
+    ['pressKey', (page) => pressKey(page, 'Enter')],
+    ['typeText', (page) => typeText(page, 'x')],
+  ];
+  const cases = actions.flatMap(([action, run]) =>
+    UNSAFE_SELECTORS.map((selector): [string, string, (page: InputPage) => Promise<void>] => [
+      action,
+      selector,
+      run,
+    ]),
+  );
+
+  test.each(cases)(
+    '%s refuses a focused element that matches %s',
+    async (action, selector, run) => {
+      const control = fakeElement({ matches: [selector] });
+      const { page, input } = pageWith([control], { focus: control });
+
+      const error = await failureOf(run(page));
+
+      expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+      expect(error.details).toMatchObject({ action });
+      expect(input()).toEqual([]);
+    },
+  );
+
+  test('look at the focus again for every key and every text', async () => {
+    const canvas = fakeElement({ tag: 'canvas', matches: [PANE] });
+    const buy = fakeElement({ tag: 'button', matches: [BUY] });
+    const win = createFakeDomWindow([canvas, buy], { focus: canvas });
+    const { page, input } = pageOver(win);
+
+    await pressKey(page, 'Escape');
+    dom(win).document.activeElement = buy;
+    const refusedKey = await failureOf(pressKey(page, 'Escape'));
+    const refusedText = await failureOf(typeText(page, 'x'));
+    dom(win).document.activeElement = canvas;
+    await typeText(page, 'x');
+
+    expect(refusedKey.details).toMatchObject({ action: 'pressKey' });
+    expect(refusedText.details).toMatchObject({ action: 'typeText' });
+    expect(input().map(({ method }) => method)).toEqual([
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+      'Input.insertText',
+    ]);
   });
 });
