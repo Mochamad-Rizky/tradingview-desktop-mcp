@@ -170,6 +170,21 @@ describe('describeElement', () => {
     expect(look(win, '[data-name="toolbar"]')).toMatchObject({ unsafe: true });
   });
 
+  test('does not look at what lies at the center of an element that is already unsafe', () => {
+    // The verdict is final, and what covers a trading control is of no interest.
+    const toolbar = fakeElement({
+      matches: ['[data-name="toolbar"]'],
+      children: [fakeElement({ matches: [TRADE_BUTTON], rect: box(700, 20, 60, 30) })],
+    });
+    const win = createFakeDomWindow([toolbar]);
+
+    expect(look(win, '[data-name="toolbar"]')).toMatchObject({
+      unsafe: true,
+      coverage: 'not-checked',
+      obscuredBy: '',
+    });
+  });
+
   test('flags an element that sits inside an unsafe control', () => {
     const label = fakeElement({ matches: ['[data-name="label"]'] });
     const control = fakeElement({
