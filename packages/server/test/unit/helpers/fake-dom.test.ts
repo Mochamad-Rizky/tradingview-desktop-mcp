@@ -104,6 +104,22 @@ describe('the fake DOM', () => {
     expect(document.elementFromPoint?.(500, 500)).toBeNull();
   });
 
+  test('moves when it is told to, and a hit follows it', () => {
+    const element = fakeElement({ rect: box(0, 0, 10, 10) });
+    const { document } = domOf(createFakeDomWindow([element]));
+
+    element.place(box(100, 100, 20, 20));
+
+    expect(element.getBoundingClientRect()).toMatchObject({
+      x: 100,
+      y: 100,
+      width: 20,
+      height: 20,
+    });
+    expect(document.elementFromPoint?.(5, 5)).toBeNull();
+    expect(document.elementFromPoint?.(105, 105)).toBe(element);
+  });
+
   test('contains itself and its descendants, and nothing else', () => {
     const deep = fakeElement();
     const inner = fakeElement({ children: [deep] });

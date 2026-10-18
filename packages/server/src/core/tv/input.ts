@@ -321,16 +321,20 @@ function centerOf(rect: { x: number; y: number; width: number; height: number })
 // and nothing is sent to the page before it says the target is safe, so a refused click does not
 // even move the mouse.
 //
-// A click is a lookup and then three events, so the page can change in between. That race is
-// inherent in clicking by coordinates, and the lookup narrows it as far as it can.
+// The mouse arrives before the button goes down, so that the page sees the pointer over the
+// element, which menus rely on. Arriving can change the page: a hover opens a flyout, often right
+// under the pointer, and that can cover the target or put a trading control where the click would
+// land. So the target is looked up a second time once the pointer is there, and the button goes
+// down only if that lookup is as clean as the first. When it is not, only the move has been sent.
+// The button then goes down where the second lookup found the target, which is the point it
+// judged. What changes after the second lookup is the race that remains, and it is inherent in
+// clicking by coordinates.
 export async function clickElement(page: InputPage, selector: string): Promise<void> {
-  const rect = clickableRect(selector, await lookUp(page, selector));
-
-  // The mouse arrives first so that the page sees the pointer over the element before the button
-  // goes down, which menus rely on.
-  const { x, y } = centerOf(rect);
   const { session } = page;
-  await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+  const arrival = centerOf(clickableRect(selector, await lookUp(page, selector)));
+  await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...arrival });
+
+  const { x, y } = centerOf(clickableRect(selector, await lookUp(page, selector)));
   await session.send('Input.dispatchMouseEvent', {
     type: 'mousePressed',
     x,

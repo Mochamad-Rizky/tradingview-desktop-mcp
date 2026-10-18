@@ -112,7 +112,7 @@ export class FakeElement {
   // Set by the parent when it is created, because children are built before their parent.
   parent: FakeElement | null = null;
   readonly #matches: ReadonlySet<string>;
-  readonly #rect: FakeRect;
+  #rect: FakeRect;
   readonly #attributes: ReadonlyMap<string, string>;
 
   constructor(options: FakeElementOptions = {}) {
@@ -140,6 +140,12 @@ export class FakeElement {
 
   getAttribute(name: string): string | null {
     return this.#attributes.get(name) ?? null;
+  }
+
+  // Moves the element, as a page does when its layout changes under the pointer. Only tests that
+  // need the page to change call it.
+  place(rect: FakeRect): void {
+    this.#rect = { ...rect };
   }
 
   getBoundingClientRect(): FakeRect & { left: number; top: number; right: number; bottom: number } {

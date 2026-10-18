@@ -989,7 +989,7 @@ describe('clickElement', () => {
     ]);
   });
 
-  test('sends the page one lookup and nothing but the three mouse events', async () => {
+  test('looks at the target before the pointer moves and again before the button goes down', async () => {
     const { page, sent } = pageWith(chart());
 
     await clickElement(page, SAVE);
@@ -997,9 +997,105 @@ describe('clickElement', () => {
     expect(sent.map(({ method }) => method)).toEqual([
       'Runtime.evaluate',
       'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
       'Input.dispatchMouseEvent',
       'Input.dispatchMouseEvent',
     ]);
+  });
+
+  describe('when the pointer arriving changes the page', () => {
+    // A hover that opens a flyout, or moves the target, is how the page changes between the first
+    // lookup and the press. The fake session plays the page: when the pointer moves it runs
+    // `change`, and the second lookup sees the result.
+    function afterTheMove(change: () => void) {
+      return ({ method, params }: SentCommand): unknown => {
+        if (
+          method === 'Input.dispatchMouseEvent' &&
+          (params as { type: string }).type === 'mouseMoved'
+        ) {
+          change();
+        }
+        return {};
+      };
+    }
+
+    test('stops with only the move sent when a trading control opens under the pointer', async () => {
+      const win = createFakeDomWindow(chart());
+      const buy = fakeElement({ tag: 'button', matches: [BUY], rect: box(100, 50, 40, 20) });
+      const { page, types, sent } = pageOver(
+        win,
+        afterTheMove(() => {
+          dom(win).document.elementFromPoint = () => buy;
+        }),
+      );
+
+      const error = await failureOf(clickElement(page, SAVE));
+
+      expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+      expect(error.details).toEqual({ selector: SAVE });
+      expect(types()).toEqual(['mouseMoved']);
+      expect(sent.map(({ method }) => method)).toEqual([
+        'Runtime.evaluate',
+        'Input.dispatchMouseEvent',
+        'Runtime.evaluate',
+      ]);
+    });
+
+    test('stops with only the move sent when a menu opens over the target', async () => {
+      // The menu item is in the overlap root from the start, but lies elsewhere until the pointer
+      // arrives.
+      const item = fakeElement({ id: 'menu-item', rect: box(500, 400, 40, 20) });
+      const win = createFakeDomWindow(chart([overlapRoot([item])]));
+      const { page, types } = pageOver(
+        win,
+        afterTheMove(() => {
+          dom(win).document.elementFromPoint = () => item;
+        }),
+      );
+
+      const error = await failureOf(clickElement(page, SAVE));
+
+      expect(error.code).toBe('NOT_AVAILABLE');
+      expect(error.details).toEqual({ selector: SAVE, obscuredBy: 'div#menu-item' });
+      expect(types()).toEqual(['mouseMoved']);
+    });
+
+    test('stops with only the move sent when the target is gone', async () => {
+      const win = createFakeDomWindow(chart());
+      const { page, types } = pageOver(
+        win,
+        afterTheMove(() => {
+          dom(win).document.querySelector = () => null;
+        }),
+      );
+
+      const error = await failureOf(clickElement(page, SAVE));
+
+      expect(error.code).toBe('NOT_AVAILABLE');
+      expect(error.details).toEqual({ selector: SAVE, found: false, visible: false });
+      expect(types()).toEqual(['mouseMoved']);
+    });
+
+    test('presses at the center the target has after the move, not where it was before', async () => {
+      const target = fakeElement({ matches: [SAVE], rect: box(100, 50, 40, 20) });
+      const win = createFakeDomWindow([target]);
+      const { page, input } = pageOver(
+        win,
+        afterTheMove(() => {
+          target.place(box(300, 80, 40, 20));
+        }),
+      );
+
+      await clickElement(page, SAVE);
+
+      // The pointer was moved to (120, 60), where the target was. The button goes down where the
+      // second lookup found it, (320, 90), which is also the point that lookup judged.
+      expect(input().map(({ params }) => params)).toEqual([
+        { type: 'mouseMoved', x: 120, y: 60 },
+        { type: 'mousePressed', x: 320, y: 90, button: 'left', clickCount: 1 },
+        { type: 'mouseReleased', x: 320, y: 90, button: 'left', clickCount: 1 },
+      ]);
+    });
   });
 
   test('reports an element that is not there as NOT_AVAILABLE, without any input', async () => {

@@ -9,6 +9,7 @@ import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
 import {
   createFakeDomWindow,
   fakeElement,
+  type FakeDomWindow,
   type FakeElement,
   type FakeRect,
 } from '../helpers/fake-tv/dom.js';
@@ -60,10 +61,17 @@ interface Page {
 
 // A session to the chart tab of the observed target list, which shows `win`, and the page bridge
 // on it, the way the connection manager hands them out.
-async function openPage(win: object): Promise<Page> {
-  const server = await startFakeCdpServer({
-    targets: loadTargetsFixture({ chartWindow: () => win }),
-  });
+async function openPage(
+  win: object,
+  handlers?: Record<string, (params: unknown) => unknown>,
+): Promise<Page> {
+  const targets = loadTargetsFixture({ chartWindow: () => win });
+  const chartTarget = targets.find((candidate) => candidate.id === CHART_ID);
+  if (chartTarget !== undefined && handlers !== undefined) {
+    // Answers of the chart tab for single commands: the page reacting to input.
+    chartTarget.handlers = handlers;
+  }
+  const server = await startFakeCdpServer({ targets });
   cleanups.push(() => server.close());
   const discovery = createHttpDiscovery({
     host: server.host,
@@ -105,9 +113,11 @@ describe('clickElement over CDP', () => {
 
     await clickElement(page, SYMBOL_SEARCH);
 
+    // The target is looked at before the pointer moves and again before the button goes down.
     expect(server.calls.map(({ targetId, method }) => [targetId, method])).toEqual([
       [CHART_ID, 'Runtime.evaluate'],
       [CHART_ID, 'Input.dispatchMouseEvent'],
+      [CHART_ID, 'Runtime.evaluate'],
       [CHART_ID, 'Input.dispatchMouseEvent'],
       [CHART_ID, 'Input.dispatchMouseEvent'],
     ]);
@@ -198,6 +208,30 @@ describe('clickElement over CDP', () => {
     expect(error.details).toEqual({ selector: PANE, obscuredBy: 'iframe#ad' });
     expect(methodsOf(covered.server)).toEqual(['Runtime.evaluate']);
     expect(inputOf(stackedOver.server)).toHaveLength(3);
+  });
+
+  test('stops after the move when a menu opens over the target as the pointer arrives', async () => {
+    const item = fakeElement({ id: 'menu-item', rect: box(500, 400, 40, 20) });
+    const win = createFakeDomWindow(chart([overlapRoot([item])]));
+    const { server, page } = await openPage(win, {
+      'Input.dispatchMouseEvent': (params) => {
+        if ((params as { type: string }).type === 'mouseMoved') {
+          // The hover opens a menu right under the pointer.
+          (win as unknown as FakeDomWindow).document.elementFromPoint = () => item;
+        }
+        return {};
+      },
+    });
+
+    const error = await failureOf(clickElement(page, SYMBOL_SEARCH));
+
+    expect(error.details).toEqual({ selector: SYMBOL_SEARCH, obscuredBy: 'div#menu-item' });
+    // The first lookup, the move, the second lookup: the button never went down.
+    expect(methodsOf(server)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+    ]);
   });
 
   test('refuses a target when the page cannot say what lies over it', async () => {
@@ -503,11 +537,12 @@ test('drives the symbol search: click the button, type the symbol, press Enter',
   await typeText(page, 'NASDAQ:MSFT');
   await pressKey(page, 'Enter');
 
-  // Each step looks at the page first: the target of the click, then the focus for the text, then
-  // the focus for the key.
+  // Each step looks at the page first: the target of the click, twice, around the move of the
+  // pointer, then the focus for the text, then the focus for the key.
   expect(methodsOf(server)).toEqual([
     'Runtime.evaluate',
     'Input.dispatchMouseEvent',
+    'Runtime.evaluate',
     'Input.dispatchMouseEvent',
     'Input.dispatchMouseEvent',
     'Runtime.evaluate',
