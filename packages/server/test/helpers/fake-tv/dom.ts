@@ -8,7 +8,8 @@ import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 // when it is one of them, character for character. That is enough to test what a page function
 // decides from the answers of matches, closest and querySelector, and it keeps the fake too small
 // to hide a bug of its own. The structure follows the DOM: closest starts at the element itself,
-// querySelector looks at descendants only, and a later element is painted over an earlier one.
+// querySelector looks at descendants only, a later element is painted over an earlier one, and the
+// body is focused, and holds the page, when nothing else has the focus.
 //
 // Like the shared fake window, these objects live in the host realm, so page code that runs in a
 // vm context must not use `instanceof` on them.
@@ -31,6 +32,12 @@ export interface FakeElementOptions {
   // Whether the element is part of the document. Defaults to true.
   connected?: boolean;
   children?: readonly FakeElement[];
+  // What the element reports about itself. The tag is in lower case and defaults to 'div'. The
+  // attributes answer getAttribute and do not make the element match a selector: that is what
+  // `matches` is for.
+  tag?: string;
+  id?: string;
+  attributes?: Readonly<Record<string, string>>;
 }
 
 export interface FakeComputedStyle {
@@ -58,10 +65,15 @@ export class FakeElement {
   readonly display: string;
   readonly visibility: string;
   readonly children: readonly FakeElement[];
+  readonly localName: string;
+  readonly tagName: string;
+  // Like the property of an element, an empty string when there is none.
+  readonly id: string;
   // Set by the parent when it is created, because children are built before their parent.
   parent: FakeElement | null = null;
   readonly #matches: ReadonlySet<string>;
   readonly #rect: FakeRect;
+  readonly #attributes: ReadonlyMap<string, string>;
 
   constructor(options: FakeElementOptions = {}) {
     this.#matches = new Set(options.matches);
@@ -70,9 +82,21 @@ export class FakeElement {
     this.visibility = options.visibility ?? 'visible';
     this.isConnected = options.connected ?? true;
     this.children = options.children ?? [];
+    this.localName = options.tag ?? 'div';
+    this.tagName = this.localName.toUpperCase();
+    this.id = options.id ?? '';
+    const attributes = new Map(Object.entries(options.attributes ?? {}));
+    if (options.id !== undefined) {
+      attributes.set('id', options.id);
+    }
+    this.#attributes = attributes;
     for (const child of this.children) {
       child.parent = this;
     }
+  }
+
+  getAttribute(name: string): string | null {
+    return this.#attributes.get(name) ?? null;
   }
 
   getBoundingClientRect(): FakeRect & { left: number; top: number; right: number; bottom: number } {
@@ -112,15 +136,22 @@ export interface FakeDomWindow {
     readonly visibilityState: 'visible';
     querySelector?: (selectors: string) => FakeElement | null;
     elementFromPoint?: (x: number, y: number) => FakeElement | null;
+    // Assignable, so that a test can move the focus.
+    activeElement?: FakeElement | null;
   };
   getComputedStyle?: (element: FakeElement) => FakeComputedStyle;
 }
 
-export type FakeDomMember = 'querySelector' | 'elementFromPoint' | 'getComputedStyle';
+export type FakeDomMember =
+  'querySelector' | 'elementFromPoint' | 'getComputedStyle' | 'activeElement';
 
 export interface FakeDomOptions {
   // Members to leave out, the way a page or a fake without them would be.
   without?: readonly FakeDomMember[];
+  // The element that has the focus: null for none at all. By default it is the body, as in a page
+  // where nothing was focused. The body is not part of the elements the window is built from, so
+  // it takes no part in elementFromPoint.
+  focus?: FakeElement | null;
 }
 
 function contains(rect: FakeRect, x: number, y: number): boolean {
@@ -154,6 +185,12 @@ export function createFakeDomWindow(
       display: element.display,
       visibility: element.visibility,
     });
+  }
+  if (!without.has('activeElement')) {
+    fakeWindow.document.activeElement =
+      options.focus === undefined
+        ? fakeElement({ tag: 'body', children: elements })
+        : options.focus;
   }
   return fakeWindow as unknown as TvWindow;
 }

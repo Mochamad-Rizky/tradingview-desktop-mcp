@@ -135,13 +135,54 @@ describe('the fake DOM', () => {
     expect(getComputedStyle?.(hidden)).toEqual({ display: 'none', visibility: 'hidden' });
   });
 
+  test('tells its tag, its id and the attributes it was given, like an element does', () => {
+    const button = fakeElement({
+      tag: 'button',
+      id: 'save',
+      attributes: { 'data-name': 'save-button' },
+    });
+    const plain = fakeElement();
+
+    expect([button.localName, button.tagName, button.id]).toEqual(['button', 'BUTTON', 'save']);
+    expect(button.getAttribute('data-name')).toBe('save-button');
+    expect(button.getAttribute('id')).toBe('save');
+    expect(button.getAttribute('data-qa-id')).toBeNull();
+    expect([plain.localName, plain.tagName, plain.id]).toEqual(['div', 'DIV', '']);
+    expect(plain.getAttribute('id')).toBeNull();
+  });
+
+  test('has the body focused unless it is told otherwise, and the body holds the page', () => {
+    const button = fakeElement({ matches: [BUTTON] });
+    const panel = fakeElement({ matches: [PANEL], children: [fakeElement()] });
+    const page = [button, panel];
+
+    const byDefault = domOf(createFakeDomWindow(page)).document.activeElement;
+    const onButton = domOf(createFakeDomWindow(page, { focus: button })).document.activeElement;
+    const nowhere = domOf(createFakeDomWindow(page, { focus: null })).document.activeElement;
+
+    expect(byDefault?.localName).toBe('body');
+    expect(byDefault?.querySelector(BUTTON)).toBe(button);
+    expect(byDefault?.querySelector(PANEL)).toBe(panel);
+    expect(onButton).toBe(button);
+    expect(nowhere).toBeNull();
+  });
+
+  test('moves the focus when a test assigns it', () => {
+    const button = fakeElement({ matches: [BUTTON] });
+    const { document } = domOf(createFakeDomWindow([button]));
+
+    document.activeElement = button;
+
+    expect(document.activeElement).toBe(button);
+  });
+
   test('can leave out the members a page or a fake might lack', () => {
     const element = fakeElement({ matches: [BUTTON] });
 
     const full = domOf(createFakeDomWindow([element]));
     const bare = domOf(
       createFakeDomWindow([element], {
-        without: ['querySelector', 'elementFromPoint', 'getComputedStyle'],
+        without: ['querySelector', 'elementFromPoint', 'getComputedStyle', 'activeElement'],
       }),
     );
     const partial = domOf(createFakeDomWindow([element], { without: ['elementFromPoint'] }));
@@ -149,9 +190,11 @@ describe('the fake DOM', () => {
     expect(typeof full.document.querySelector).toBe('function');
     expect(typeof full.document.elementFromPoint).toBe('function');
     expect(typeof full.getComputedStyle).toBe('function');
+    expect(full.document.activeElement).toBeDefined();
     expect(bare.document.querySelector).toBeUndefined();
     expect(bare.document.elementFromPoint).toBeUndefined();
     expect(bare.getComputedStyle).toBeUndefined();
+    expect(bare.document.activeElement).toBeUndefined();
     expect(bare.document.visibilityState).toBe('visible');
     expect(typeof partial.document.querySelector).toBe('function');
     expect(partial.document.elementFromPoint).toBeUndefined();
