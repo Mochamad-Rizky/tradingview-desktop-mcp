@@ -1,24 +1,36 @@
 import type { JsonObject } from '../utils/json.js';
 
-// A closed set (design spec 5.2): clients branch on these codes, so adding one is a contract
-// change that should show up in review, not a free-form string.
-export type ErrorCode =
-  | 'TV_NOT_INSTALLED'
-  | 'TV_NOT_RUNNING'
-  | 'RESTART_REQUIRED'
-  | 'LAUNCH_FAILED'
-  | 'CDP_UNREACHABLE'
-  | 'TARGET_NOT_FOUND'
-  | 'TIMEOUT'
-  | 'PAGE_EVALUATION_FAILED'
-  | 'CAPABILITY_UNAVAILABLE'
-  | 'NOT_AVAILABLE'
-  | 'PLAN_LIMIT'
-  | 'INVALID_INPUT'
-  | 'CONFIRMATION_REQUIRED'
-  | 'UNSAFE_ACTION_BLOCKED'
-  | 'AUTH_REQUIRED'
-  | 'INTERNAL';
+// A closed set, in spec order (design spec 5.2): clients branch on these codes, so adding one is a
+// contract change that should show up in review, not a free-form string. It is a value as well as
+// a type so that untrusted input, such as an error sentinel returned by a page function, can be
+// checked at runtime with isErrorCode.
+export const ERROR_CODES = [
+  'TV_NOT_INSTALLED',
+  'TV_NOT_RUNNING',
+  'RESTART_REQUIRED',
+  'LAUNCH_FAILED',
+  'CDP_UNREACHABLE',
+  'TARGET_NOT_FOUND',
+  'TIMEOUT',
+  'PAGE_EVALUATION_FAILED',
+  'CAPABILITY_UNAVAILABLE',
+  'NOT_AVAILABLE',
+  'PLAN_LIMIT',
+  'INVALID_INPUT',
+  'CONFIRMATION_REQUIRED',
+  'UNSAFE_ACTION_BLOCKED',
+  'AUTH_REQUIRED',
+  'INTERNAL',
+] as const;
+
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
+// A Set, not an object lookup: names every object inherits, such as "constructor", must not pass.
+const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set(ERROR_CODES);
+
+export function isErrorCode(value: unknown): value is ErrorCode {
+  return typeof value === 'string' && KNOWN_ERROR_CODES.has(value);
+}
 
 // The only error shape that leaves the server. It has no stack and no cause by construction.
 export interface ErrorPayload {

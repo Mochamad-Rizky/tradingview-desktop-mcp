@@ -1,11 +1,70 @@
 import {
   CapabilityError,
+  ERROR_CODES,
   PlanLimitError,
   TimeoutError,
   TvMcpError,
+  isErrorCode,
   isTvMcpError,
   toErrorPayload,
 } from '../../../src/core/errors.js';
+
+// The 16 codes of design spec 5.2, copied by hand so the assertions below do not depend on the
+// list under test.
+const SPEC_CODES = [
+  'TV_NOT_INSTALLED',
+  'TV_NOT_RUNNING',
+  'RESTART_REQUIRED',
+  'LAUNCH_FAILED',
+  'CDP_UNREACHABLE',
+  'TARGET_NOT_FOUND',
+  'TIMEOUT',
+  'PAGE_EVALUATION_FAILED',
+  'CAPABILITY_UNAVAILABLE',
+  'NOT_AVAILABLE',
+  'PLAN_LIMIT',
+  'INVALID_INPUT',
+  'CONFIRMATION_REQUIRED',
+  'UNSAFE_ACTION_BLOCKED',
+  'AUTH_REQUIRED',
+  'INTERNAL',
+];
+
+test('ERROR_CODES lists the 16 codes of the design spec, in spec order', () => {
+  expect([...ERROR_CODES]).toEqual(SPEC_CODES);
+});
+
+test.each(SPEC_CODES)('isErrorCode accepts %s', (code) => {
+  expect(isErrorCode(code)).toBe(true);
+});
+
+// The guard validates codes that come back from a page, so it must not be fooled by near misses,
+// by values that merely contain a code, or by names that every object inherits.
+test.each([
+  ['an unknown code', 'NOPE'],
+  ['a code in the wrong case', 'timeout'],
+  ['a code with surrounding whitespace', ' TIMEOUT'],
+  ['the empty string', ''],
+  ['an inherited object property name', 'constructor'],
+  ['undefined', undefined],
+  ['null', null],
+  ['a number', 42],
+  ['an object holding a code', { code: 'TIMEOUT' }],
+  ['an array holding a code', ['TIMEOUT']],
+])('isErrorCode rejects %s', (_label, value) => {
+  expect(isErrorCode(value)).toBe(false);
+});
+
+test('isErrorCode narrows an untrusted value so it can be used as a TvMcpError code', () => {
+  const untrusted: unknown = 'PLAN_LIMIT';
+
+  if (!isErrorCode(untrusted)) {
+    throw new Error('expected PLAN_LIMIT to be a known code');
+  }
+
+  // This compiles only because the guard narrows unknown to ErrorCode.
+  expect(new TvMcpError(untrusted, 'limit reached').code).toBe('PLAN_LIMIT');
+});
 
 test('TvMcpError carries code, hint and details', () => {
   const e = new TvMcpError('TARGET_NOT_FOUND', 'No chart tab', {
