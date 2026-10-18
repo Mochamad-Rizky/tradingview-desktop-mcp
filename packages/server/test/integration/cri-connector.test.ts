@@ -534,11 +534,12 @@ test('sends a command without params', async () => {
   ]);
 });
 
-test('maps a protocol error reply to CAPABILITY_UNAVAILABLE with the method and code', async () => {
+test('maps an unknown method (-32601) to CAPABILITY_UNAVAILABLE', async () => {
   const server = await startFakeCdp();
   const session = await connectTo(server, CHART_ID);
 
-  // The app does not implement this method, which is what an unsupported build looks like.
+  // The app does not implement this method, which is what an unsupported build looks like. It is
+  // refused before anything runs, so a caller with another strategy may go on to it.
   const error = await failureOf(session.send('Browser.getVersion'));
 
   expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
@@ -554,33 +555,59 @@ test('maps a protocol error reply to CAPABILITY_UNAVAILABLE with the method and 
   expect(session.isClosed).toBe(false);
 });
 
-test('puts the data of a protocol error into its message', async () => {
-  const server = await startFakeCdp([
-    {
-      id: 'HANDLED',
-      type: 'page',
-      title: '',
-      url: '',
-      behavior: 'page',
-      handlers: {
-        'Runtime.evaluate': () => {
-          throw new FakeCdpError(-32000, 'Cannot find context with specified id', 'context 7');
-        },
+// A page whose Runtime.evaluate is answered with the given protocol error.
+function pageFailingWith(code: number, message: string, data?: string): FakeTarget {
+  return {
+    id: 'HANDLED',
+    type: 'page',
+    title: '',
+    url: '',
+    behavior: 'page',
+    handlers: {
+      'Runtime.evaluate': () => {
+        throw new FakeCdpError(code, message, data);
       },
     },
+  };
+}
+
+test('maps other protocol errors to PAGE_EVALUATION_FAILED', async () => {
+  const server = await startFakeCdp([
+    pageFailingWith(-32000, 'Execution context was destroyed', 'context 7'),
   ]);
   const session = await connectTo(server, 'HANDLED');
 
+  // An answer like this can come after the command started to act, which is why it must not be
+  // taken for "the capability is missing": that would let a caller try the same action again by
+  // another route.
   const error = await failureOf(session.send('Runtime.evaluate', { expression: '1' }));
 
-  expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
-  expect(error.message).toContain('Cannot find context with specified id (context 7)');
+  expect(error.code).toBe('PAGE_EVALUATION_FAILED');
   expect(error.details).toEqual({
     method: 'Runtime.evaluate',
     code: -32000,
-    message: 'Cannot find context with specified id',
+    message: 'Execution context was destroyed',
   });
+  // What the app adds to the error is kept in the message.
+  expect(error.message).toContain('Execution context was destroyed (context 7)');
+  expect(error.message).toContain('HANDLED');
+  expect(error.cause).toBeInstanceOf(Error);
+  expect(session.isClosed).toBe(false);
 });
+
+// The standard JSON-RPC codes on both sides of -32601, so that only that code is told apart.
+test.each([-32700, -32600, -32602, -32603])(
+  'maps protocol error code %s to PAGE_EVALUATION_FAILED',
+  async (code) => {
+    const server = await startFakeCdp([pageFailingWith(code, 'Refused')]);
+    const session = await connectTo(server, 'HANDLED');
+
+    const error = await failureOf(session.send('Runtime.evaluate', { expression: '1' }));
+
+    expect(error.code).toBe('PAGE_EVALUATION_FAILED');
+    expect(error.details).toEqual({ method: 'Runtime.evaluate', code, message: 'Refused' });
+  },
+);
 
 test('passes an error of an unexpected kind through unchanged', async () => {
   const server = await startFakeCdp();

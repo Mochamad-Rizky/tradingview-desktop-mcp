@@ -37,8 +37,11 @@ export interface CdpSession {
   readonly isClosed: boolean;
   // Sends one protocol command and resolves with its result. The failures a caller can expect are
   // TvMcpErrors: TIMEOUT when the target does not answer in time, CDP_UNREACHABLE when the session
-  // is closed or its connection drops while the command is in flight, and CAPABILITY_UNAVAILABLE
-  // when the target answers with a protocol error (an unknown method, for instance).
+  // is closed or its connection drops while the command is in flight, CAPABILITY_UNAVAILABLE when
+  // the target has no such method, and PAGE_EVALUATION_FAILED for any other protocol error it
+  // answers with. Only CAPABILITY_UNAVAILABLE is raised before anything ran, which is why it is
+  // the only one of the two that a caller may fall through on. Both carry the method, the protocol
+  // error code and its message as their details.
   send<M extends keyof ProtocolMapping.Commands>(
     method: M,
     params?: ProtocolMapping.Commands[M]['paramsType'][0],

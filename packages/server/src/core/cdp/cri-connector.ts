@@ -144,8 +144,14 @@ function notCompleted(targetId: string, method: string, cause: unknown): TvMcpEr
   );
 }
 
-// The target answered, with an error. For a method the app does not implement that is "this
-// capability is not available", which callers with a fallback act on.
+// The error code of a target that has no such method.
+const METHOD_NOT_FOUND = -32601;
+
+// The target answered, with an error. A method the app does not implement is refused before it can
+// do anything, so that is "this capability is not available", which a caller with another strategy
+// acts on. Every other error may come after the command started to act (a context destroyed while
+// it ran, for one). It must not lead to the same action being tried another way, so it is
+// reported as a failure of the page, which no caller falls through on.
 function protocolFailure(
   response: CDP.SendError,
   cause: Error,
@@ -155,7 +161,7 @@ function protocolFailure(
   const { code, message, data } = response;
   const reason = data === undefined ? message : `${message} (${data})`;
   return new TvMcpError(
-    'CAPABILITY_UNAVAILABLE',
+    code === METHOD_NOT_FOUND ? 'CAPABILITY_UNAVAILABLE' : 'PAGE_EVALUATION_FAILED',
     `CDP ${method} failed on target ${targetId}: ${reason}`,
     { details: { method, code, message }, cause },
   );
