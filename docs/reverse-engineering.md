@@ -428,15 +428,18 @@ example `iconButton-3Lt7-uhL`) change on every build and are never used.
 
 `[data-name="buy-order-button"]`, `[data-name="sell-order-button"]`, `[data-name="buy-sell-buttons"]`,
 `[data-qa-id="trade-button"]`, `#header-toolbar-trade-desktop`, and anything inside a broker order ticket.
-The low-level UI tools refuse a click on a target that matches one of these selectors, contains one, sits inside one, or
-has one over the point where the click would land. They also refuse key presses and text while the focused element
-matches one or sits inside one, and while the page cannot say what has the focus. A focused element that only holds
-one, such as the chart pane, is not refused: key events go to the focused element and not to its descendants. Text is
-typed only into a focused text field (an input that takes text, a textarea or a content-editable element).
-Input.insertText types at the caret, and a field keeps the caret when the focus moves to a button or a container
-(observed in Chrome 155), so the focused element says nothing about where the text would go unless it is a text field
-itself. An order ticket has no stable selector yet, so it is covered only through the buttons inside it that match.
-Whether TradingView binds trading hotkeys is not known, so a key chord can still reach one.
+The low-level UI tools refuse a click on a target that matches one of these selectors, contains one, sits inside one,
+or has one over the point where the click would land. They also refuse a click when a dialog, a menu or a popup of the
+overlap root, or a frame, lies over that point, because the click would go to it and what it is cannot be told, and
+when the page cannot say what lies there. A layer of another kind stacked over the target, such as one of the canvases
+of the chart, does not stop a click. They refuse key presses and text while the focused element matches one or sits
+inside one, and while the page cannot say what has the focus. A focused element that only holds one, such as the chart
+pane, is not refused: key events go to the focused element and not to its descendants. Text is typed only into a
+focused text field (an input that takes text, a textarea or a content-editable element). Input.insertText types at the
+caret, and a field keeps the caret when the focus moves to a button or a container (observed in Chrome 155), so the
+focused element says nothing about where the text would go unless it is a text field itself. An order ticket has no
+stable selector yet, so it is covered only through the buttons inside it that match, and through the rule about what
+covers a click. Whether TradingView binds trading hotkeys is not known, so a key chord can still reach one.
 
 ### 5.6 Window chrome (tabs)
 

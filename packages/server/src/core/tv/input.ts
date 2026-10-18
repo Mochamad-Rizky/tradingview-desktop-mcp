@@ -1,7 +1,7 @@
 import type { CdpSession } from '../cdp/types.js';
 import { TvMcpError } from '../errors.js';
 import type { PageBridge, PageErrorSentinel } from './page-bridge.js';
-import { UNSAFE_SELECTORS } from './selectors.js';
+import { SELECTORS, UNSAFE_SELECTORS } from './selectors.js';
 import type { TvWindow } from './tv-window.js';
 
 // Real input for the places the chart API does not reach: a click, text and key presses sent to
@@ -36,21 +36,40 @@ export type KeyModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
 //   `unsafeSelectors`, holds an element that does, sits inside one that does, or, when it is
 //   visible, has such an element at the point a click on it would land on, for instance an order
 //   ticket floating over it.
+// - coverage: what lies at that point, which is judged for an element that is visible and not
+//   unsafe:
+//   - clear: the element, something inside it, or a layer stacked over it that is nothing special.
+//     The chart draws several canvases on top of each other, and a click on the one beneath
+//     reaches the page through the one on top, so a layer alone is no reason to refuse.
+//   - obscured: something else lies over the point, and it is a layer of `overlaySelectors` (a
+//     dialog, a menu or a popup, but not the portal itself) or a frame (iframe, frame, object or
+//     embed). The click would go to that, and what it is cannot be told: an order ticket has no
+//     selector, and a frame cannot be looked into. obscuredBy says what it is.
+//   - center-outside-viewport: no element is hit there, because the point is not on the page.
+//   - hit-test-unavailable: the page cannot say what is there.
+//   - not-checked: there is no element, or it is not visible, or it is unsafe.
+// - obscuredBy: the covering element in a few words, its tag followed by its id, data-qa-id and
+//   data-name when it has them. Empty unless the coverage is obscured.
 // - rect: its box in viewport pixels, as the page reports it.
 // It answers NOT_AVAILABLE on a page without a DOM, and INVALID_INPUT for a selector that is not
 // valid CSS.
 //
-// The caller passes the selectors to refuse, because a page function cannot import them. An empty
-// list is refused: it would let every element pass as safe.
+// The caller passes the selectors to refuse and the layers that cover a page, because a page
+// function cannot import them. An empty list of either is refused: with none, every element would
+// pass.
 export function describeElement(
   win: TvWindow,
   selector: string,
   unsafeSelectors: string[],
+  overlaySelectors: string[],
 ):
   | {
       found: boolean;
       visible: boolean;
       unsafe: boolean;
+      coverage:
+        'not-checked' | 'clear' | 'obscured' | 'center-outside-viewport' | 'hit-test-unavailable';
+      obscuredBy: string;
       rect?: { x: number; y: number; width: number; height: number };
     }
   | PageErrorSentinel {
@@ -67,6 +86,9 @@ export function describeElement(
   if (unsafeSelectors.length === 0) {
     throw new Error('describeElement needs the selectors to treat as unsafe');
   }
+  if (overlaySelectors.length === 0) {
+    throw new Error('describeElement needs the selectors of the layers that cover a page');
+  }
   let element: Element | null;
   try {
     element = doc.querySelector(selector);
@@ -82,7 +104,7 @@ export function describeElement(
     };
   }
   if (element === null) {
-    return { found: false, visible: false, unsafe: false };
+    return { found: false, visible: false, unsafe: false, coverage: 'not-checked', obscuredBy: '' };
   }
 
   const box = element.getBoundingClientRect();
@@ -96,16 +118,52 @@ export function describeElement(
   const unsafeList = unsafeSelectors.join(', ');
   // closest starts at the element itself, so it also covers an element that matches.
   let unsafe = element.closest(unsafeList) !== null || element.querySelector(unsafeList) !== null;
-  if (!unsafe && visible && typeof doc.elementFromPoint === 'function') {
-    // The same point clickElement uses. Only what the click would hit is judged, not what that
-    // holds: a large container that happens to hold a trading control somewhere is no reason.
-    const hit = doc.elementFromPoint(
-      Math.round(rect.x + rect.width / 2),
-      Math.round(rect.y + rect.height / 2),
-    );
-    unsafe = hit !== null && hit.closest(unsafeList) !== null;
+  let coverage:
+    'not-checked' | 'clear' | 'obscured' | 'center-outside-viewport' | 'hit-test-unavailable' =
+    'not-checked';
+  let obscuredBy = '';
+  if (!unsafe && visible) {
+    if (typeof doc.elementFromPoint !== 'function') {
+      coverage = 'hit-test-unavailable';
+    } else {
+      // The same point clickElement uses.
+      const hit = doc.elementFromPoint(
+        Math.round(rect.x + rect.width / 2),
+        Math.round(rect.y + rect.height / 2),
+      );
+      if (hit === null) {
+        coverage = 'center-outside-viewport';
+      } else if (hit.closest(unsafeList) !== null) {
+        // Only what the click would hit is judged, not what that holds: a large container that
+        // happens to hold a trading control somewhere is no reason.
+        unsafe = true;
+      } else {
+        coverage = 'clear';
+        // The portal that holds the dialogs is not a layer of itself, so hitting it is not being
+        // covered, and neither is hitting the element or something inside it.
+        const layer = hit.closest(overlaySelectors.join(', '));
+        const inLayer = layer !== null && layer !== hit;
+        const inFrame = ['iframe', 'frame', 'object', 'embed'].includes(hit.localName);
+        if (!element.contains(hit) && (inLayer || inFrame)) {
+          coverage = 'obscured';
+          obscuredBy = hit.localName;
+          if (hit.id !== '') {
+            obscuredBy += `#${hit.id}`;
+          }
+          const qaId = hit.getAttribute('data-qa-id');
+          if (qaId !== null) {
+            obscuredBy += `[data-qa-id="${qaId}"]`;
+          }
+          const name = hit.getAttribute('data-name');
+          if (name !== null) {
+            obscuredBy += `[data-name="${name}"]`;
+          }
+          obscuredBy = obscuredBy.slice(0, 120);
+        }
+      }
+    }
   }
-  return { found: true, visible, unsafe, rect };
+  return { found: true, visible, unsafe, coverage, obscuredBy, rect };
 }
 
 // What a key press or a text needs to know about the element that has the focus. A key lands on
@@ -183,19 +241,27 @@ export function describeFocusedElement(
   return { unsafe: active.closest(unsafeList) !== null, editable, focused };
 }
 
-// Clicks the center of the first element that matches `selector`. The element is looked up anew on
-// every call and nothing is cached, because the page moves between calls. The lookup comes first
-// and nothing is sent to the page before it says the target is safe, so a refused click does not
-// even move the mouse.
-//
-// A click is a lookup and then three events, so the page can change in between. That race is
-// inherent in clicking by coordinates, and the lookup narrows it as far as it can.
-export async function clickElement(page: InputPage, selector: string): Promise<void> {
-  const element = await page.bridge.evaluate(describeElement, [selector, [...UNSAFE_SELECTORS]]);
+// What describeElement says about an element, without the way it can fail.
+type ElementDescription = Exclude<ReturnType<typeof describeElement>, PageErrorSentinel>;
+
+function lookUp(page: InputPage, selector: string): Promise<ElementDescription> {
+  return page.bridge.evaluate(describeElement, [
+    selector,
+    [...UNSAFE_SELECTORS],
+    [SELECTORS.regions.overlapManagerRoot],
+  ]);
+}
+
+// The box of an element a click may go to, or the reason it may not. The unsafe verdict comes
+// first, so a trading control is reported as one even when it is also hidden or covered.
+function clickableRect(
+  selector: string,
+  element: ElementDescription,
+): NonNullable<ElementDescription['rect']> {
   if (element.unsafe) {
     throw new TvMcpError(
       'UNSAFE_ACTION_BLOCKED',
-      `Refusing to click \`${selector}\`: it is part of a broker trading control, holds one, or lies over one`,
+      `Refusing to click \`${selector}\`: it is part of a broker trading control, holds one, or has one over it`,
       {
         hint: 'Trading controls are off limits to this server. Place orders in the TradingView window yourself.',
         details: { selector },
@@ -215,11 +281,54 @@ export async function clickElement(page: InputPage, selector: string): Promise<v
       },
     );
   }
+  if (element.coverage === 'obscured') {
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      `The element \`${selector}\` is covered by \`${element.obscuredBy}\``,
+      {
+        hint: 'Close the dialog or menu that covers it first.',
+        details: { selector, obscuredBy: element.obscuredBy },
+      },
+    );
+  }
+  if (element.coverage !== 'clear') {
+    // The point of the click is off the page or the page cannot say what is there. Anything else
+    // that is not clear is refused the same way, so that an answer nobody expected cannot pass.
+    const offPage = element.coverage === 'center-outside-viewport';
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      offPage
+        ? `The center of \`${selector}\` is outside the visible part of the page`
+        : `The page cannot say what lies over \`${selector}\``,
+      {
+        hint: offPage
+          ? 'Bring the element into view first.'
+          : 'Make sure the target is a loaded TradingView page, not a blank or helper page.',
+        details: { selector, reason: offPage ? 'center-outside-viewport' : 'hit-test-unavailable' },
+      },
+    );
+  }
+  return rect;
+}
 
-  // Whole pixels, and the point describeElement judged. The mouse arrives first so that the page
-  // sees the pointer over the element before the button goes down, which menus rely on.
-  const x = Math.round(rect.x + rect.width / 2);
-  const y = Math.round(rect.y + rect.height / 2);
+// Whole pixels, which is also the point describeElement judged.
+function centerOf(rect: { x: number; y: number; width: number; height: number }) {
+  return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+}
+
+// Clicks the center of the first element that matches `selector`. The element is looked up anew on
+// every call and nothing is cached, because the page moves between calls. The lookup comes first
+// and nothing is sent to the page before it says the target is safe, so a refused click does not
+// even move the mouse.
+//
+// A click is a lookup and then three events, so the page can change in between. That race is
+// inherent in clicking by coordinates, and the lookup narrows it as far as it can.
+export async function clickElement(page: InputPage, selector: string): Promise<void> {
+  const rect = clickableRect(selector, await lookUp(page, selector));
+
+  // The mouse arrives first so that the page sees the pointer over the element before the button
+  // goes down, which menus rely on.
+  const { x, y } = centerOf(rect);
   const { session } = page;
   await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
   await session.send('Input.dispatchMouseEvent', {

@@ -8,8 +8,9 @@ import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 // when it is one of them, character for character. That is enough to test what a page function
 // decides from the answers of matches, closest and querySelector, and it keeps the fake too small
 // to hide a bug of its own. The structure follows the DOM: closest starts at the element itself,
-// querySelector looks at descendants only, a later element is painted over an earlier one, and the
-// body is focused, and holds the page, when nothing else has the focus.
+// querySelector looks at descendants only, a later element is painted over an earlier one, an
+// element that is not shown cannot be hit, and the body is focused, and holds the page, when
+// nothing else has the focus.
 //
 // Like the shared fake window, these objects live in the host realm, so page code that runs in a
 // vm context must not use `instanceof` on them.
@@ -155,6 +156,11 @@ export class FakeElement {
     return this.matches(selectors) ? this : (this.parent?.closest(selectors) ?? null);
   }
 
+  // Itself or a descendant, like Node.contains.
+  contains(other: FakeElement): boolean {
+    return this === other || this.children.some((child) => child.contains(other));
+  }
+
   // The first descendant, in document order, that matches. Never the element itself.
   querySelector(selectors: string): FakeElement | null {
     parseSelectorList(selectors);
@@ -190,13 +196,16 @@ export type FakeDomMember =
 export interface FakeDomOptions {
   // Members to leave out, the way a page or a fake without them would be.
   without?: readonly FakeDomMember[];
+  // The size of the viewport, which elementFromPoint answers null outside of, as a page does. By
+  // default there is no limit.
+  viewport?: { width: number; height: number };
   // The element that has the focus: null for none at all. By default it is the body, as in a page
   // where nothing was focused. The body is not part of the elements the window is built from, so
   // it takes no part in elementFromPoint.
   focus?: FakeElement | null;
 }
 
-function contains(rect: FakeRect, x: number, y: number): boolean {
+function rectContains(rect: FakeRect, x: number, y: number): boolean {
   return x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
 }
 
@@ -217,10 +226,25 @@ export function createFakeDomWindow(
     };
   }
   if (!without.has('elementFromPoint')) {
-    fakeWindow.document.elementFromPoint = (x, y) =>
-      all.findLast(
-        (element) => element.isConnected && contains(element.getBoundingClientRect(), x, y),
-      ) ?? null;
+    const { viewport } = options;
+    fakeWindow.document.elementFromPoint = (x, y) => {
+      if (
+        viewport !== undefined &&
+        (x < 0 || y < 0 || x >= viewport.width || y >= viewport.height)
+      ) {
+        return null;
+      }
+      // An element that is not shown has no box to hit.
+      return (
+        all.findLast(
+          (element) =>
+            element.isConnected &&
+            element.display !== 'none' &&
+            element.visibility !== 'hidden' &&
+            rectContains(element.getBoundingClientRect(), x, y),
+        ) ?? null
+      );
+    };
   }
   if (!without.has('getComputedStyle')) {
     fakeWindow.getComputedStyle = (element) => ({

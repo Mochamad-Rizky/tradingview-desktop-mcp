@@ -34,6 +34,15 @@ function box(x: number, y: number, width: number, height: number): FakeRect {
   return { x, y, width, height };
 }
 
+// The portal that dialogs and menus open in, holding `layers`. It has no box of its own.
+function overlapRoot(layers: FakeElement[]): FakeElement {
+  return fakeElement({
+    matches: [SELECTORS.regions.overlapManagerRoot],
+    rect: box(0, 0, 0, 0),
+    children: layers,
+  });
+}
+
 // The chart tab as the tests below want it: the symbol search button of the header toolbar, and
 // the canvas of the pane, plus whatever else a test puts on the page.
 function chart(extra: FakeElement[] = []): FakeElement[] {
@@ -152,6 +161,55 @@ describe('clickElement over CDP', () => {
     // The same page is still clickable where nothing unsafe lies.
     await clickElement(page, SYMBOL_SEARCH);
     expect(inputOf(server)).toHaveLength(3);
+  });
+
+  test('refuses a target that a dialog or a menu covers, and names what covers it', async () => {
+    const menu = fakeElement({
+      attributes: { 'data-name': 'context-menu' },
+      rect: box(350, 280, 100, 40),
+    });
+    const { server, page } = await openPage(createFakeDomWindow(chart([overlapRoot([menu])])));
+
+    const error = await failureOf(clickElement(page, PANE));
+
+    expect(error.toPayload()).toEqual({
+      code: 'NOT_AVAILABLE',
+      message: `The element \`${PANE}\` is covered by \`div[data-name="context-menu"]\``,
+      hint: 'Close the dialog or menu that covers it first.',
+      details: { selector: PANE, obscuredBy: 'div[data-name="context-menu"]' },
+    });
+    // The lookup is all the page ever saw: the mouse did not move.
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('refuses a target that a frame covers, and clicks one that a stacked canvas covers', async () => {
+    const ad = fakeElement({ tag: 'iframe', id: 'ad', rect: box(350, 280, 100, 40) });
+    const stacked = fakeElement({
+      tag: 'canvas',
+      matches: ['canvas[data-name="overlay-canvas"]'],
+      rect: box(0, 100, 800, 400),
+    });
+    const covered = await openPage(createFakeDomWindow(chart([ad])));
+    const stackedOver = await openPage(createFakeDomWindow(chart([stacked])));
+
+    const error = await failureOf(clickElement(covered.page, PANE));
+    await clickElement(stackedOver.page, PANE);
+
+    expect(error.details).toEqual({ selector: PANE, obscuredBy: 'iframe#ad' });
+    expect(methodsOf(covered.server)).toEqual(['Runtime.evaluate']);
+    expect(inputOf(stackedOver.server)).toHaveLength(3);
+  });
+
+  test('refuses a target when the page cannot say what lies over it', async () => {
+    const { server, page } = await openPage(
+      createFakeDomWindow(chart(), { without: ['elementFromPoint'] }),
+    );
+
+    const error = await failureOf(clickElement(page, SYMBOL_SEARCH));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.details).toEqual({ selector: SYMBOL_SEARCH, reason: 'hit-test-unavailable' });
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
   });
 
   test('reports an element that is not shown as NOT_AVAILABLE, and sends no input', async () => {

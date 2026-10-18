@@ -11,7 +11,7 @@ import {
   type KeyModifier,
 } from '../../../../src/core/tv/input.js';
 import { createPageBridge } from '../../../../src/core/tv/page-bridge.js';
-import { UNSAFE_SELECTORS } from '../../../../src/core/tv/selectors.js';
+import { SELECTORS, UNSAFE_SELECTORS } from '../../../../src/core/tv/selectors.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import { failureOf } from '../../../helpers/failure-of.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
@@ -32,6 +32,7 @@ const TRADE_BUTTON = '[data-qa-id="trade-button"]';
 const TRADE_IN_HEADER = '#header-toolbar-trade-desktop';
 const PANE = 'canvas[data-name="pane-canvas"]';
 const SAVE = '#header-toolbar-save-load';
+const OVERLAP_ROOT = SELECTORS.regions.overlapManagerRoot;
 
 function box(x: number, y: number, width: number, height: number): FakeRect {
   return { x, y, width, height };
@@ -46,9 +47,17 @@ function chart(extra: FakeElement[] = [], saveOptions: FakeElementOptions = {}):
   ];
 }
 
-// describeElement as the bridge calls it: with the real list of selectors to refuse.
+// The portal that dialogs and menus open in, holding `layers`. A portal has no box of its own by
+// default, so nothing hits it. Give it one to show that hitting the portal is not the same as being
+// covered by what it holds.
+function overlapRoot(layers: FakeElement[], rect: FakeRect = box(0, 0, 0, 0)): FakeElement {
+  return fakeElement({ matches: [OVERLAP_ROOT], rect, children: layers });
+}
+
+// describeElement as the bridge calls it: with the real lists of selectors to refuse and of the
+// layers that cover a page.
 function look(win: TvWindow, selector: string) {
-  return describeElement(win, selector, [...UNSAFE_SELECTORS]);
+  return describeElement(win, selector, [...UNSAFE_SELECTORS], [OVERLAP_ROOT]);
 }
 
 interface SentCommand {
@@ -136,6 +145,8 @@ describe('describeElement', () => {
       found: true,
       visible: true,
       unsafe: true,
+      coverage: 'not-checked',
+      obscuredBy: '',
       rect: box(300, 250, 80, 30),
     });
   });
@@ -199,26 +210,137 @@ describe('describeElement', () => {
 
   test('does not flag a safe element for an unsafe control elsewhere on the page', () => {
     // The ticket covers the center of the pane, but it is not a trading control itself, and the
-    // control it holds lies elsewhere: only what the click would hit counts.
+    // control it holds lies elsewhere: only what the click would hit counts as unsafe. Being
+    // covered is a different matter, and is reported on its own.
     const ticket = fakeElement({
-      matches: ['[data-name="order-ticket"]'],
+      attributes: { 'data-name': 'order-ticket' },
       rect: box(300, 250, 200, 100),
       children: [fakeElement({ matches: [BUY], rect: box(700, 20, 60, 30) })],
     });
-    const win = createFakeDomWindow(chart([ticket]));
+    const win = createFakeDomWindow(chart([overlapRoot([ticket])]));
 
-    expect(look(win, PANE)).toMatchObject({ found: true, visible: true, unsafe: false });
-    expect(look(win, SAVE)).toMatchObject({ unsafe: false });
+    expect(look(win, PANE)).toMatchObject({
+      found: true,
+      visible: true,
+      unsafe: false,
+      coverage: 'obscured',
+      obscuredBy: 'div[data-name="order-ticket"]',
+    });
+    expect(look(win, SAVE)).toMatchObject({ unsafe: false, coverage: 'clear', obscuredBy: '' });
   });
 
-  test('does not flag a safe element for a safe overlay at its center', () => {
-    const tooltip = fakeElement({
-      matches: ['[data-name="tooltip"]'],
+  test.each<[string, (layer: FakeElement) => FakeElement[]]>([
+    ['a dialog in the overlap root', (layer) => [overlapRoot([layer])]],
+    [
+      'a menu item deep in the overlap root',
+      (layer) => [overlapRoot([fakeElement({ children: [fakeElement({ children: [layer] })] })])],
+    ],
+  ])('reports a target that %s lies over as obscured', (_label, place) => {
+    const layer = fakeElement({ id: 'menu-item', rect: box(350, 280, 100, 40) });
+    const win = createFakeDomWindow(chart(place(layer)));
+
+    expect(look(win, PANE)).toMatchObject({
+      found: true,
+      visible: true,
+      unsafe: false,
+      coverage: 'obscured',
+      obscuredBy: 'div#menu-item',
+    });
+  });
+
+  test('names what covers the target by its tag, id, data-qa-id and data-name, cut at 120', () => {
+    const named = fakeElement({
+      tag: 'section',
+      id: 'popup',
+      attributes: { 'data-qa-id': 'popup-qa', 'data-name': 'popup-name' },
       rect: box(350, 280, 100, 40),
     });
-    const win = createFakeDomWindow(chart([tooltip]));
+    const long = fakeElement({ id: 'x'.repeat(300), rect: box(350, 280, 100, 40) });
 
-    expect(look(win, PANE)).toMatchObject({ unsafe: false });
+    expect(look(createFakeDomWindow(chart([overlapRoot([named])])), PANE)).toMatchObject({
+      obscuredBy: 'section#popup[data-qa-id="popup-qa"][data-name="popup-name"]',
+    });
+    expect(look(createFakeDomWindow(chart([overlapRoot([long])])), PANE)).toMatchObject({
+      obscuredBy: `div#${'x'.repeat(116)}`,
+    });
+  });
+
+  test.each(['iframe', 'frame', 'object', 'embed'])(
+    'reports a target covered by a <%s> as obscured',
+    (tag) => {
+      // The page cannot look into a frame, so whatever it shows there is out of sight.
+      const frame = fakeElement({ tag, id: 'ad', rect: box(350, 280, 100, 40) });
+      const win = createFakeDomWindow(chart([frame]));
+
+      expect(look(win, PANE)).toMatchObject({
+        unsafe: false,
+        coverage: 'obscured',
+        obscuredBy: `${tag}#ad`,
+      });
+    },
+  );
+
+  test('does not count an element stacked over the target outside the overlap root', () => {
+    // The chart draws several canvases on top of each other, and a click on the one underneath
+    // reaches the page through the one on top.
+    const stacked = fakeElement({
+      tag: 'canvas',
+      matches: ['canvas[data-name="overlay-canvas"]'],
+      rect: box(0, 100, 800, 400),
+    });
+    const win = createFakeDomWindow(chart([stacked]));
+
+    expect(look(win, PANE)).toMatchObject({ unsafe: false, coverage: 'clear', obscuredBy: '' });
+  });
+
+  test('does not count the target itself, what it holds, or the overlap root as covering', () => {
+    const inner = fakeElement({ rect: box(350, 280, 100, 40) });
+    const dialogButton = fakeElement({
+      matches: ['[data-name="dialog-button"]'],
+      rect: box(300, 250, 200, 100),
+      children: [inner],
+    });
+    // A portal as large as the page, which is what a hit on the portal itself would look like.
+    const portal = overlapRoot([dialogButton], box(0, 0, 1000, 700));
+    const win = createFakeDomWindow(chart([portal]));
+
+    // The inner element is what lies at the center of the button, and it is part of the button.
+    expect(look(win, '[data-name="dialog-button"]')).toMatchObject({ coverage: 'clear' });
+    // Nothing but the portal lies over the center of the header button, and the portal is not a
+    // layer of itself.
+    expect(look(win, SAVE)).toMatchObject({ coverage: 'clear', obscuredBy: '' });
+  });
+
+  test('reports a target in the overlap root that another layer of the root lies over', () => {
+    const button = fakeElement({
+      matches: ['[data-name="dialog-button"]'],
+      rect: box(300, 250, 200, 100),
+    });
+    const menu = fakeElement({ id: 'context-menu', rect: box(350, 280, 100, 40) });
+    const win = createFakeDomWindow(chart([overlapRoot([button, menu])]));
+
+    expect(look(win, '[data-name="dialog-button"]')).toMatchObject({
+      coverage: 'obscured',
+      obscuredBy: 'div#context-menu',
+    });
+  });
+
+  test('does not count a covering layer that is not shown', () => {
+    const hidden = fakeElement({ rect: box(350, 280, 100, 40), visibility: 'hidden' });
+    const gone = fakeElement({ rect: box(350, 280, 100, 40), display: 'none' });
+    const win = createFakeDomWindow(chart([overlapRoot([hidden, gone])]));
+
+    expect(look(win, PANE)).toMatchObject({ coverage: 'clear' });
+  });
+
+  test('reports the unsafe verdict, and not the covering, when the layer holds a trading control', () => {
+    const ticket = fakeElement({
+      rect: box(300, 250, 200, 100),
+      children: [fakeElement({ matches: [BUY], rect: box(350, 280, 100, 40) })],
+    });
+    const win = createFakeDomWindow(chart([overlapRoot([ticket])]));
+
+    expect(look(win, PANE)).toMatchObject({ unsafe: true, obscuredBy: '' });
   });
 
   test('judges the whole point a click would land on, the center rounded to whole pixels', () => {
@@ -251,17 +373,45 @@ describe('describeElement', () => {
 
     const win = createFakeDomWindow([hidden, flat, covering]);
 
-    expect(look(win, '[data-name="hidden"]')).toMatchObject({ visible: false, unsafe: false });
-    expect(look(win, '[data-name="flat"]')).toMatchObject({ visible: false, unsafe: false });
+    expect(look(win, '[data-name="hidden"]')).toMatchObject({
+      visible: false,
+      unsafe: false,
+      coverage: 'not-checked',
+    });
+    expect(look(win, '[data-name="flat"]')).toMatchObject({
+      visible: false,
+      unsafe: false,
+      coverage: 'not-checked',
+    });
   });
 
-  test('skips the check of what lies at the center when the page cannot say', () => {
+  test('reports that the click cannot be judged when the page cannot say what lies at the center', () => {
     const ticket = fakeElement({ matches: [BUY], rect: box(300, 250, 200, 100) });
     const win = createFakeDomWindow(chart([ticket]), { without: ['elementFromPoint'] });
 
-    expect(look(win, PANE)).toMatchObject({ visible: true, unsafe: false });
+    expect(look(win, PANE)).toMatchObject({
+      visible: true,
+      unsafe: false,
+      coverage: 'hit-test-unavailable',
+    });
     // What the element holds or sits in is still judged.
     expect(look(win, BUY)).toMatchObject({ unsafe: true });
+  });
+
+  test('reports that the click cannot be judged when the center is outside the viewport', () => {
+    const offscreen = fakeElement({
+      matches: ['[data-name="offscreen"]'],
+      rect: box(900, 50, 200, 20),
+    });
+    const win = createFakeDomWindow([offscreen], { viewport: { width: 1000, height: 700 } });
+
+    // The box is partly on the page, but its center, (1000, 60), is not.
+    expect(look(win, '[data-name="offscreen"]')).toMatchObject({
+      found: true,
+      visible: true,
+      unsafe: false,
+      coverage: 'center-outside-viewport',
+    });
   });
 
   test('reports an element that is not there as not found, without a box', () => {
@@ -269,7 +419,13 @@ describe('describeElement', () => {
 
     const missing = look(win, '[data-name="missing"]');
 
-    expect(missing).toEqual({ found: false, visible: false, unsafe: false });
+    expect(missing).toEqual({
+      found: false,
+      visible: false,
+      unsafe: false,
+      coverage: 'not-checked',
+      obscuredBy: '',
+    });
     expect(missing).not.toHaveProperty('rect');
   });
 
@@ -282,6 +438,8 @@ describe('describeElement', () => {
       found: true,
       visible: true,
       unsafe: false,
+      coverage: 'clear',
+      obscuredBy: '',
       rect: box(10.25, 20.75, 33.5, 17.125),
     });
   });
@@ -296,7 +454,14 @@ describe('describeElement', () => {
     const rect = options.rect ?? box(10, 10, 100, 40);
     const win = createFakeDomWindow([fakeElement({ matches: [SAVE], rect, ...options })]);
 
-    expect(look(win, SAVE)).toEqual({ found: true, visible: false, unsafe: false, rect });
+    expect(look(win, SAVE)).toEqual({
+      found: true,
+      visible: false,
+      unsafe: false,
+      coverage: 'not-checked',
+      obscuredBy: '',
+      rect,
+    });
   });
 
   test.each(['block', 'inline-block', 'flex', 'grid', 'inline'])(
@@ -365,7 +530,13 @@ describe('describeElement', () => {
   test('refuses to judge without the selectors to treat as unsafe', () => {
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
 
-    expect(() => describeElement(win, BUY, [])).toThrow(/unsafe/);
+    expect(() => describeElement(win, BUY, [], [OVERLAP_ROOT])).toThrow(/unsafe/);
+  });
+
+  test('refuses to judge without the selectors of the layers that cover a page', () => {
+    const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
+
+    expect(() => describeElement(win, BUY, [...UNSAFE_SELECTORS], [])).toThrow(/cover/);
   });
 });
 
@@ -589,7 +760,9 @@ describe('clickElement', () => {
 
     expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
     expect(error.details).toEqual({ selector: BUY });
-    expect(error.message).toContain(BUY);
+    expect(error.message).toBe(
+      `Refusing to click \`${BUY}\`: it is part of a broker trading control, holds one, or has one over it`,
+    );
     expect(error.hint).toEqual(expect.any(String));
     // Not one input event: not even a mouse move over the control.
     expect(input()).toEqual([]);
@@ -643,6 +816,123 @@ describe('clickElement', () => {
 
     expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
     expect(error.details).toEqual({ selector: PANE });
+    // The control lies over the target, and the message says so that way round.
+    expect(error.message).toBe(
+      `Refusing to click \`${PANE}\`: it is part of a broker trading control, holds one, or has one over it`,
+    );
+    expect(input()).toEqual([]);
+  });
+
+  test('refuses a target that a dialog or a menu covers, and names what covers it', async () => {
+    const menu = fakeElement({
+      attributes: { 'data-name': 'context-menu' },
+      rect: box(350, 280, 100, 40),
+    });
+    const { page, sent, input } = pageWith(chart([overlapRoot([menu])]));
+
+    const error = await failureOf(clickElement(page, PANE));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.details).toEqual({ selector: PANE, obscuredBy: 'div[data-name="context-menu"]' });
+    expect(error.message).toBe(
+      `The element \`${PANE}\` is covered by \`div[data-name="context-menu"]\``,
+    );
+    expect(error.hint).toBe('Close the dialog or menu that covers it first.');
+    // The page was looked at, and not so much as the mouse moved.
+    expect(input()).toEqual([]);
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('refuses a target that a floating order ticket covers, even if the ticket holds no unsafe selector', async () => {
+    // A ticket has no stable selector yet, so what covers the target is judged by being a layer of
+    // the overlap root and not by what it is.
+    const ticket = fakeElement({
+      attributes: { 'data-name': 'order-ticket' },
+      rect: box(300, 250, 200, 100),
+      children: [fakeElement({ tag: 'button', id: 'submit-order', rect: box(350, 280, 100, 40) })],
+    });
+    const { page, input } = pageWith(chart([overlapRoot([ticket])]));
+
+    const error = await failureOf(clickElement(page, PANE));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.details).toEqual({ selector: PANE, obscuredBy: 'button#submit-order' });
+    expect(input()).toEqual([]);
+  });
+
+  test.each(['iframe', 'frame', 'object', 'embed'])(
+    'refuses a target covered by a <%s>',
+    async (tag) => {
+      const frame = fakeElement({ tag, id: 'ad', rect: box(350, 280, 100, 40) });
+      const { page, input } = pageWith(chart([frame]));
+
+      const error = await failureOf(clickElement(page, PANE));
+
+      expect(error.code).toBe('NOT_AVAILABLE');
+      expect(error.details).toEqual({ selector: PANE, obscuredBy: `${tag}#ad` });
+      expect(input()).toEqual([]);
+    },
+  );
+
+  test('clicks a target that an unrelated element is stacked over', async () => {
+    const stacked = fakeElement({
+      tag: 'canvas',
+      matches: ['canvas[data-name="overlay-canvas"]'],
+      rect: box(0, 100, 800, 400),
+    });
+    const { page, input } = pageWith(chart([stacked]));
+
+    await clickElement(page, PANE);
+
+    expect(input()).toHaveLength(3);
+  });
+
+  test('reports an unsafe control as unsafe, not as covering, when a layer holds it over the target', async () => {
+    const ticket = fakeElement({
+      rect: box(300, 250, 200, 100),
+      children: [fakeElement({ matches: [BUY], rect: box(350, 280, 100, 40) })],
+    });
+    const { page, input } = pageWith(chart([overlapRoot([ticket])]));
+
+    const error = await failureOf(clickElement(page, PANE));
+
+    expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(input()).toEqual([]);
+  });
+
+  test('refuses a target when the page cannot say what lies over it', async () => {
+    const { page, sent, input } = pageWith(chart(), { without: ['elementFromPoint'] });
+
+    const error = await failureOf(clickElement(page, SAVE));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.details).toEqual({ selector: SAVE, reason: 'hit-test-unavailable' });
+    expect(error.message).toBe(`The page cannot say what lies over \`${SAVE}\``);
+    expect(error.hint).toBe(
+      'Make sure the target is a loaded TradingView page, not a blank or helper page.',
+    );
+    expect(input()).toEqual([]);
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('refuses a target whose center is outside the viewport', async () => {
+    const offscreen = fakeElement({
+      matches: ['[data-name="offscreen"]'],
+      rect: box(900, 50, 200, 20),
+    });
+    const { page, input } = pageWith([offscreen], { viewport: { width: 1000, height: 700 } });
+
+    const error = await failureOf(clickElement(page, '[data-name="offscreen"]'));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.details).toEqual({
+      selector: '[data-name="offscreen"]',
+      reason: 'center-outside-viewport',
+    });
+    expect(error.message).toBe(
+      'The center of `[data-name="offscreen"]` is outside the visible part of the page',
+    );
+    expect(error.hint).toBe('Bring the element into view first.');
     expect(input()).toEqual([]);
   });
 

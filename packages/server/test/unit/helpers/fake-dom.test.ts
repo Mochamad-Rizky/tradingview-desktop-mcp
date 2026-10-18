@@ -104,6 +104,42 @@ describe('the fake DOM', () => {
     expect(document.elementFromPoint?.(500, 500)).toBeNull();
   });
 
+  test('contains itself and its descendants, and nothing else', () => {
+    const deep = fakeElement();
+    const inner = fakeElement({ children: [deep] });
+    const outer = fakeElement({ children: [inner] });
+    const other = fakeElement();
+
+    expect(outer.contains(outer)).toBe(true);
+    expect(outer.contains(deep)).toBe(true);
+    expect(inner.contains(outer)).toBe(false);
+    expect(outer.contains(other)).toBe(false);
+  });
+
+  test('reports nothing at a point outside the viewport, if it has one', () => {
+    const element = fakeElement({ rect: box(900, 10, 200, 40) });
+    const clipped = domOf(
+      createFakeDomWindow([element], { viewport: { width: 1000, height: 700 } }),
+    );
+    const open = domOf(createFakeDomWindow([element]));
+
+    expect(clipped.document.elementFromPoint?.(950, 20)).toBe(element);
+    // Inside the box of the element, but past the right edge of the viewport.
+    expect(clipped.document.elementFromPoint?.(1000, 20)).toBeNull();
+    expect(clipped.document.elementFromPoint?.(-1, 20)).toBeNull();
+    expect(clipped.document.elementFromPoint?.(950, 700)).toBeNull();
+    expect(open.document.elementFromPoint?.(1000, 20)).toBe(element);
+  });
+
+  test('does not hit an element that is not shown', () => {
+    const below = fakeElement({ rect: box(0, 0, 100, 100) });
+    const hidden = fakeElement({ rect: box(0, 0, 100, 100), visibility: 'hidden' });
+    const gone = fakeElement({ rect: box(0, 0, 100, 100), display: 'none' });
+    const { document } = domOf(createFakeDomWindow([below, hidden, gone]));
+
+    expect(document.elementFromPoint?.(50, 50)).toBe(below);
+  });
+
   test('takes the left and top edges as inside the box and the right and bottom as outside', () => {
     const element = fakeElement({ rect: box(10, 20, 30, 40) });
     const { document } = domOf(createFakeDomWindow([element]));
