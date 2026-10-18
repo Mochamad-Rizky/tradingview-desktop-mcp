@@ -527,6 +527,28 @@ describe('pressKey over CDP', () => {
   });
 });
 
+test('runs calls that are made together one after the other, as the page would see them', async () => {
+  const { server, page } = await openPage(createFakeDomWindow(chart()));
+
+  // Tab moves the focus, and Enter lands wherever it ends up, so the second call must not look at
+  // the focus before the first has sent its keys.
+  await Promise.all([pressKey(page, 'Tab'), pressKey(page, 'Enter')]);
+
+  expect(methodsOf(server)).toEqual([
+    'Runtime.evaluate',
+    'Input.dispatchKeyEvent',
+    'Input.dispatchKeyEvent',
+    'Runtime.evaluate',
+    'Input.dispatchKeyEvent',
+    'Input.dispatchKeyEvent',
+  ]);
+  expect(
+    inputOf(server).map(
+      ({ params }) => `${(params as { type: string }).type} ${(params as { key: string }).key}`,
+    ),
+  ).toEqual(['rawKeyDown Tab', 'keyUp Tab', 'keyDown Enter', 'keyUp Enter']);
+});
+
 test('drives the symbol search: click the button, type the symbol, press Enter', async () => {
   // The dialog that the click opens puts the focus in its text field. The fake page does not
   // open dialogs, so the field has the focus from the start.

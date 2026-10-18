@@ -1814,3 +1814,209 @@ describe('keys and text while a trading control has the focus', () => {
     ]);
   });
 });
+
+describe('one call at a time per page', () => {
+  const methods = (sent: SentCommand[]) => sent.map(({ method }) => method);
+
+  // A session that answers an input event only when the test says so, to hold a call in the
+  // middle of its events.
+  function gatedPage(elements: FakeElement[] = [], options: FakeDomOptions = {}) {
+    const gates: (() => void)[] = [];
+    const answers = pageWith(elements, options, () => {
+      return new Promise((resolve) => {
+        gates.push(() => {
+          resolve({});
+        });
+      });
+    });
+    return { ...answers, answerNext: () => gates.shift()?.() };
+  }
+
+  test('does not start the lookup of a second key press before the first has sent its last event', async () => {
+    const { page, sent, answerNext } = gatedPage();
+
+    // The second key is Enter, which lands on whatever the first key leaves the focus on.
+    const tab = pressKey(page, 'Tab');
+    const enter = pressKey(page, 'Enter');
+    await settle();
+    expect(methods(sent)).toEqual(['Runtime.evaluate', 'Input.dispatchKeyEvent']);
+
+    answerNext();
+    await settle();
+    expect(methods(sent)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+
+    // Only when the last event of the first call has been answered does the second call begin.
+    answerNext();
+    await settle();
+    expect(methods(sent)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+    ]);
+
+    answerNext();
+    await settle();
+    answerNext();
+    await Promise.all([tab, enter]);
+    expect(methods(sent)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+  });
+
+  test('runs a click, a key press and a text one after the other, in the order they were made', async () => {
+    const button = fakeElement({ matches: [SAVE], rect: box(100, 50, 40, 20) });
+    const field = fakeElement({ tag: 'input', id: 'symbol-search-input' });
+    const { page, sent } = pageWith([button, field], { focus: field });
+
+    await Promise.all([
+      clickElement(page, SAVE),
+      pressKey(page, 'Escape'),
+      typeText(page, 'NASDAQ:AAPL'),
+    ]);
+
+    expect(methods(sent)).toEqual([
+      // The click: its lookup, the move, its second lookup, the press and the release.
+      'Runtime.evaluate',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      // The key press: the focus, then down and up.
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+      // The text: the focus, then the text.
+      'Runtime.evaluate',
+      'Input.insertText',
+    ]);
+  });
+
+  test('keeps the order of the calls, three key presses', async () => {
+    const { page, input } = pageWith([]);
+
+    await Promise.all([pressKey(page, 'Tab'), pressKey(page, 'Enter'), pressKey(page, 'Escape')]);
+
+    expect(input().map(({ params }) => (params as { key: string }).key)).toEqual([
+      'Tab',
+      'Tab',
+      'Enter',
+      'Enter',
+      'Escape',
+      'Escape',
+    ]);
+  });
+
+  test('lets the next call run when a call fails on an event', async () => {
+    const timeout = new TimeoutError('CDP Input.dispatchKeyEvent on PAGE1', 5000);
+    let failTheFirstEvent = true;
+    const { page, sent } = pageWith([], {}, () => {
+      if (failTheFirstEvent) {
+        failTheFirstEvent = false;
+        throw timeout;
+      }
+      return {};
+    });
+
+    const first = pressKey(page, 'Enter');
+    const second = pressKey(page, 'Escape');
+
+    await expect(first).rejects.toBe(timeout);
+    await expect(second).resolves.toBeUndefined();
+    expect(methods(sent)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+  });
+
+  test('lets the next call run when a call is refused at its lookup', async () => {
+    const { page, input } = pageWith(chart());
+
+    const refused = failureOf(clickElement(page, '[data-name="missing"]'));
+    const key = pressKey(page, 'Escape');
+
+    expect((await refused).code).toBe('NOT_AVAILABLE');
+    await expect(key).resolves.toBeUndefined();
+    expect(input()).toHaveLength(2);
+  });
+
+  test('lets the next call run when a click is refused for a trading control', async () => {
+    const { page, input } = pageWith([
+      fakeElement({ matches: [BUY], rect: box(300, 250, 80, 30) }),
+      fakeElement({ matches: [SAVE], rect: box(100, 50, 40, 20) }),
+    ]);
+
+    const refused = failureOf(clickElement(page, BUY));
+    const click = clickElement(page, SAVE);
+
+    expect((await refused).code).toBe('UNSAFE_ACTION_BLOCKED');
+    await expect(click).resolves.toBeUndefined();
+    expect(input()).toHaveLength(3);
+  });
+
+  test('does not make the calls of another page wait', async () => {
+    const busy = gatedPage();
+    const other = pageWith([]);
+
+    const stuck = pressKey(busy.page, 'Tab');
+    await settle();
+    // The first page is held in the middle of its events. The other page does not care.
+    await pressKey(other.page, 'Enter');
+
+    expect(methods(busy.sent)).toEqual(['Runtime.evaluate', 'Input.dispatchKeyEvent']);
+    expect(other.input()).toHaveLength(2);
+
+    busy.answerNext();
+    await settle();
+    busy.answerNext();
+    await stuck;
+  });
+
+  test('queues the calls of two handles that share a session', async () => {
+    const { page, sent, answerNext } = gatedPage();
+    const sameSession: InputPage = { session: page.session, bridge: page.bridge };
+
+    const first = pressKey(page, 'Tab');
+    const second = pressKey(sameSession, 'Enter');
+    await settle();
+    expect(methods(sent)).toEqual(['Runtime.evaluate', 'Input.dispatchKeyEvent']);
+
+    answerNext();
+    await settle();
+    answerNext();
+    await settle();
+    answerNext();
+    await settle();
+    answerNext();
+    await Promise.all([first, second]);
+  });
+
+  test('does not queue empty text, or a key that cannot be sent, behind a call in progress', async () => {
+    const { page, answerNext } = gatedPage();
+
+    const stuck = pressKey(page, 'Tab');
+    await settle();
+    // Neither of these touches the page, so neither has to wait for the call that holds it.
+    await expect(typeText(page, '')).resolves.toBeUndefined();
+    const refused = await failureOf(pressKey(page, 'F5'));
+
+    expect(refused.code).toBe('INVALID_INPUT');
+    answerNext();
+    await settle();
+    answerNext();
+    await stuck;
+  });
+});

@@ -439,9 +439,11 @@ the focus. A focused element that only holds one, such as the chart pane, is not
 element and not to its descendants. Text is typed only into a focused text field (an input that takes text, a textarea
 or a content-editable element). Input.insertText types at the caret, and a field keeps the caret when the focus moves
 to a button or a container (observed in Chrome 155), so the focused element says nothing about where the text would go
-unless it is a text field itself. An order ticket has no stable selector yet, so it is covered only through the
-buttons inside it that match, and through the rule about what covers a click. Whether TradingView binds trading
-hotkeys is not known, so a key chord can still reach one.
+unless it is a text field itself. The calls of one page run one at a time, so that no event is sent on a look that an
+earlier call has made stale: a Tab that moves the focus to a trade button, and an Enter that was cleared before it. An
+order ticket has no stable selector yet, so it is covered only through the buttons inside it that match, and through
+the rule about what covers a click. Whether TradingView binds trading hotkeys is not known, so a key chord can still
+reach one.
 
 ### 5.6 Window chrome (tabs)
 

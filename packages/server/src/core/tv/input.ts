@@ -14,6 +14,9 @@ import type { TvWindow } from './tv-window.js';
 // control, because the caret can be somewhere else than the focus (see typeText). A page that
 // cannot say what has the focus is refused too.
 //
+// The calls of one page run one at a time, because each rests on a lookup that another call
+// would otherwise change.
+//
 // That leaves one gap. TradingView may bind trading actions to hotkeys that work wherever the
 // focus is. The notes record none, so a key chord can still reach one, and the check of the
 // focused element cannot see it.
@@ -27,6 +30,27 @@ export interface InputPage {
 }
 
 export type KeyModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
+
+// Every call is a lookup of the page followed by events that rest on it, and two calls that
+// overlap can send an event on a lookup the other call has made stale: Tab moves the focus to a
+// trade button between the lookup that cleared an Enter and the Enter, and nothing ever looked at
+// the button. So the calls of one page queue. A call holds its turn from its first lookup to the
+// answer to its last event, and gives it up when it ends, however it ends. The queue belongs to
+// the session, so it goes away with the page.
+const queues = new WeakMap<CdpSession, Promise<void>>();
+
+function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
+  const turn = (queues.get(page.session) ?? Promise.resolve()).then(action);
+  // The next call waits for this one to end, and does not care how it ended.
+  queues.set(
+    page.session,
+    turn.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return turn;
+}
 
 // What a click needs to know about the first element that matches `selector`:
 // - found: whether there is one.
@@ -330,24 +354,26 @@ function centerOf(rect: { x: number; y: number; width: number; height: number })
 // judged. What changes after the second lookup is the race that remains, and it is inherent in
 // clicking by coordinates.
 export async function clickElement(page: InputPage, selector: string): Promise<void> {
-  const { session } = page;
-  const arrival = centerOf(clickableRect(selector, await lookUp(page, selector)));
-  await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...arrival });
+  await exclusively(page, async () => {
+    const { session } = page;
+    const arrival = centerOf(clickableRect(selector, await lookUp(page, selector)));
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...arrival });
 
-  const { x, y } = centerOf(clickableRect(selector, await lookUp(page, selector)));
-  await session.send('Input.dispatchMouseEvent', {
-    type: 'mousePressed',
-    x,
-    y,
-    button: 'left',
-    clickCount: 1,
-  });
-  await session.send('Input.dispatchMouseEvent', {
-    type: 'mouseReleased',
-    x,
-    y,
-    button: 'left',
-    clickCount: 1,
+    const { x, y } = centerOf(clickableRect(selector, await lookUp(page, selector)));
+    await session.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x,
+      y,
+      button: 'left',
+      clickCount: 1,
+    });
+    await session.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x,
+      y,
+      button: 'left',
+      clickCount: 1,
+    });
   });
 }
 
@@ -391,20 +417,22 @@ export async function typeText(page: InputPage, text: string): Promise<void> {
   if (text === '') {
     return;
   }
-  const { focused, editable } = await assertFocusIsSafe(page, 'typeText');
-  if (!editable) {
-    throw new TvMcpError(
-      'NOT_AVAILABLE',
-      focused === ''
-        ? 'Cannot type text: no element has the focus'
-        : `Cannot type text: the focus is on \`${focused}\`, which is not a text field`,
-      {
-        hint: 'Focus a text field first, for example click the symbol search box.',
-        details: { action: 'typeText', focused },
-      },
-    );
-  }
-  await page.session.send('Input.insertText', { text });
+  await exclusively(page, async () => {
+    const { focused, editable } = await assertFocusIsSafe(page, 'typeText');
+    if (!editable) {
+      throw new TvMcpError(
+        'NOT_AVAILABLE',
+        focused === ''
+          ? 'Cannot type text: no element has the focus'
+          : `Cannot type text: the focus is on \`${focused}\`, which is not a text field`,
+        {
+          hint: 'Focus a text field first, for example click the symbol search box.',
+          details: { action: 'typeText', focused },
+        },
+      );
+    }
+    await page.session.send('Input.insertText', { text });
+  });
 }
 
 // The bits of the modifiers field of an input event.
@@ -484,7 +512,8 @@ function describeKey(key: string, shifted: boolean): KeyDescription | undefined 
 // way.
 //
 // The key and the modifiers are checked first, so a request that cannot be sent never costs a
-// lookup. Then the focus is looked at, and the key is refused while a trading control has it.
+// lookup, or a wait for the call in progress. Then the focus is looked at, and the key is refused
+// while a trading control has it.
 export async function pressKey(
   page: InputPage,
   key: string,
@@ -508,7 +537,6 @@ export async function pressKey(
       details: { key },
     });
   }
-  await assertFocusIsSafe(page, 'pressKey');
 
   const event = {
     modifiers: mask,
@@ -517,9 +545,12 @@ export async function pressKey(
     windowsVirtualKeyCode: description.keyCode,
   };
   const text = (mask & SHORTCUT_MODIFIERS) === 0 ? description.text : undefined;
-  await page.session.send(
-    'Input.dispatchKeyEvent',
-    text === undefined ? { type: 'rawKeyDown', ...event } : { type: 'keyDown', ...event, text },
-  );
-  await page.session.send('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
+  await exclusively(page, async () => {
+    await assertFocusIsSafe(page, 'pressKey');
+    await page.session.send(
+      'Input.dispatchKeyEvent',
+      text === undefined ? { type: 'rawKeyDown', ...event } : { type: 'keyDown', ...event, text },
+    );
+    await page.session.send('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
+  });
 }
