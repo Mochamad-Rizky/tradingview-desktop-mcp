@@ -1,0 +1,641 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import vm from 'node:vm';
+import {
+  loadTvFixture,
+  parseTvStateFixture,
+  type TvStateFixture,
+} from '../../helpers/fake-tv/fixture.js';
+import { syntheticBars } from '../../helpers/fake-tv/synthetic-bars.js';
+import {
+  createFakeTvWindow,
+  inspectFakeWindow,
+  type FakeChartWidgetApi,
+  type FakeMainSeries,
+  type FakeTimeScale,
+  type FakeTradingViewApi,
+  type FakeTvWindow,
+} from '../../helpers/fake-tv/window.js';
+
+const DAY = 86_400;
+
+// Throws instead of returning undefined, so tests read the API without optional chaining.
+function apiOf(win: FakeTvWindow): FakeTradingViewApi {
+  if (!win.TradingViewApi) {
+    throw new Error('The fake window has no TradingViewApi');
+  }
+  return win.TradingViewApi;
+}
+
+function chartOf(win: FakeTvWindow): FakeChartWidgetApi {
+  return apiOf(win).activeChart();
+}
+
+function seriesOf(win: FakeTvWindow): FakeMainSeries {
+  return chartOf(win)._chartWidget.model().mainSeries();
+}
+
+function timeScaleOf(win: FakeTvWindow): FakeTimeScale {
+  return chartOf(win)._chartWidget.model().model().timeScale();
+}
+
+describe('syntheticBars', () => {
+  const spec = { count: 300, startTime: 1_704_153_600, stepSeconds: DAY, seed: 42 };
+
+  test('syntheticBars is deterministic and well-formed', () => {
+    const bars = syntheticBars(spec);
+
+    expect(syntheticBars(spec)).toEqual(bars);
+    expect(bars).toHaveLength(300);
+    const malformed = bars.filter(([time, open, high, low, close, volume], index) => {
+      const ohlc = [open, high, low, close];
+      return !(
+        time === spec.startTime + index * spec.stepSeconds &&
+        ohlc.every((price) => Number.isFinite(price) && price > 0) &&
+        high >= Math.max(open, close) &&
+        low <= Math.min(open, close) &&
+        Number.isInteger(volume) &&
+        volume >= 0
+      );
+    });
+    expect(malformed).toEqual([]);
+  });
+
+  test('gives different series for different seeds', () => {
+    const other = syntheticBars({ ...spec, seed: 8 });
+
+    expect(other).not.toEqual(syntheticBars(spec));
+    expect(other.map(([time]) => time)).toEqual(syntheticBars(spec).map(([time]) => time));
+  });
+
+  test('walks continuously: every bar opens at the previous close', () => {
+    const bars = syntheticBars(spec);
+
+    const gaps = bars.filter((bar, index) => {
+      const previous = bars[index - 1];
+      return previous !== undefined && bar[1] !== previous[4];
+    });
+    expect(gaps).toEqual([]);
+  });
+
+  test('keeps the invariants on long walks and many seeds', () => {
+    for (const seed of [0, 1, 99, 4_294_967_295, -3]) {
+      const bars = syntheticBars({ count: 5_000, startTime: 0, stepSeconds: 60, seed });
+
+      const broken = bars.filter(
+        ([, open, high, low, close, volume]) =>
+          !(
+            low > 0 &&
+            high >= Math.max(open, close) &&
+            low <= Math.min(open, close) &&
+            volume >= 0
+          ),
+      );
+      expect(broken, `seed ${String(seed)}`).toEqual([]);
+    }
+  });
+
+  test('is pinned, so a changed generator or an engine difference shows up here', () => {
+    const bars = syntheticBars(spec);
+
+    expect(bars[0]).toEqual([1_704_153_600, 100, 100.85, 99.15, 100.4, 7_027_606]);
+    expect(bars[299]).toEqual([1_729_987_200, 103.58, 103.72, 102.91, 103.42, 4_035_204]);
+  });
+
+  test('returns no bars for an empty spec', () => {
+    expect(syntheticBars({ ...spec, count: 0 })).toEqual([]);
+  });
+
+  test.each([
+    ['a negative count', { count: -1 }],
+    ['a fractional count', { count: 1.5 }],
+    ['a zero step', { stepSeconds: 0 }],
+    ['a negative step', { stepSeconds: -60 }],
+    ['a non-finite start', { startTime: Number.NaN }],
+    ['a non-finite seed', { seed: Number.POSITIVE_INFINITY }],
+  ])('rejects %s', (_label, change) => {
+    expect(() => syntheticBars({ ...spec, ...change })).toThrow(RangeError);
+  });
+});
+
+describe('the chart-basic fixture', () => {
+  test('describes the documented chart', () => {
+    const fixture = loadTvFixture();
+
+    expect(fixture).toMatchObject({
+      buildTime: '2026-10-16T17:55:37',
+      symbol: 'NASDAQ:AAPL',
+      resolution: '1D',
+      chartType: 1,
+      layout: { type: 's', chartsCount: 1, name: 'Fixture Layout', id: 'FIXTURE1' },
+      bars: { count: 300, stepSeconds: DAY },
+    });
+    expect(fixture.studies).toHaveLength(2);
+    expect(fixture.studies.every((study) => study.plots.length > 0)).toBe(true);
+    expect(fixture.shapes).toHaveLength(3);
+    expect(fixture.knownSymbols).toContain(fixture.symbol);
+    expect(fixture.intervals).toContain(fixture.resolution);
+  });
+
+  test('has a visible range that starts and ends on loaded bars', () => {
+    const fixture = loadTvFixture();
+    const times = syntheticBars(fixture.bars).map(([time]) => time);
+
+    expect(times).toContain(fixture.visibleRange.from);
+    expect(times).toContain(fixture.visibleRange.to);
+    expect(fixture.visibleRange.from).toBeLessThan(fixture.visibleRange.to);
+  });
+
+  test('has a quote that describes the last synthetic bar', () => {
+    const fixture = loadTvFixture();
+    const bars = syntheticBars(fixture.bars);
+    const last = bars[bars.length - 1];
+    const previous = bars[bars.length - 2];
+    if (!last || !previous) {
+      throw new Error('The fixture needs at least two bars');
+    }
+
+    expect(fixture.quote).toMatchObject({
+      last_price: last[4],
+      open_price: last[1],
+      high_price: last[2],
+      low_price: last[3],
+      volume: last[5],
+      lp_time: last[0],
+      prev_close_price: previous[4],
+      currency_code: 'USD',
+    });
+    expect(fixture.quote.change).toBeCloseTo(last[4] - previous[4], 2);
+  });
+
+  test('parseTvStateFixture rejects documents with a missing or mistyped member', () => {
+    const fixture = loadTvFixture();
+    const withoutLayout = Object.fromEntries(
+      Object.entries(fixture).filter(([key]) => key !== 'layout'),
+    );
+
+    expect(() => parseTvStateFixture(withoutLayout)).toThrow(/layout/);
+    expect(() => parseTvStateFixture({ ...fixture, chartType: '1' })).toThrow(/chartType/);
+    expect(() => parseTvStateFixture(null)).toThrow();
+    expect(parseTvStateFixture(JSON.parse(JSON.stringify(fixture)))).toEqual(fixture);
+  });
+
+  test('loads another fixture by name and fails clearly for a missing one', () => {
+    expect(loadTvFixture('chart-basic')).toEqual(loadTvFixture());
+    expect(() => loadTvFixture('does-not-exist')).toThrow(/does-not-exist/);
+  });
+});
+
+describe('createFakeTvWindow', () => {
+  const fixture = loadTvFixture();
+
+  test('exposes the TradingViewApi members the foundation uses, backed by the fixture', () => {
+    const api = apiOf(createFakeTvWindow(fixture));
+
+    expect(api.chartsCount()).toBe(1);
+    expect(api.activeChartIndex()).toBe(0);
+    expect(api.layout()).toBe('s');
+    expect(api.layoutName()).toBe('Fixture Layout');
+    expect(api.layoutId()).toBe('FIXTURE1');
+    expect(api.isConnected()).toBe(true);
+    expect(api.getIntervals()).toEqual(fixture.intervals);
+    const chart = api.activeChart();
+    expect(chart.symbol()).toBe('NASDAQ:AAPL');
+    expect(chart.resolution()).toBe('1D');
+    expect(chart.chartType()).toBe(1);
+    expect(chart.getVisibleRange()).toEqual(fixture.visibleRange);
+    expect(chart.getAllStudies()).toEqual(fixture.studies.map(({ id, name }) => ({ id, name })));
+    expect(chart.getAllShapes()).toEqual(fixture.shapes);
+  });
+
+  test('returns the same chart widget from activeChart() and chart(0)', () => {
+    const api = apiOf(createFakeTvWindow(fixture));
+
+    expect(api.chart(0)).toBe(api.activeChart());
+    expect(api.chart()).toBe(api.activeChart());
+    expect(api.activeChart()).toBe(api.activeChart());
+  });
+
+  test('chart(i) throws for every index but 0, with the message of the real build', () => {
+    const api = apiOf(createFakeTvWindow(fixture));
+
+    expect(() => api.chart(1)).toThrow(new Error('Incorrect index: 1'));
+    expect(() => api.chart(-1)).toThrow(new Error('Incorrect index: -1'));
+    expect(() => api.chart(0.5)).toThrow(new Error('Incorrect index: 0.5'));
+  });
+
+  test('setActiveChart sets and records the index, and refuses an index outside the layout', () => {
+    const twoCharts: TvStateFixture = {
+      ...fixture,
+      layout: { ...fixture.layout, chartsCount: 2 },
+    };
+    const win = createFakeTvWindow(twoCharts);
+    const api = apiOf(win);
+    const widget = api.activeChart();
+
+    api.setActiveChart(1);
+
+    expect(api.chartsCount()).toBe(2);
+    expect(api.activeChartIndex()).toBe(1);
+    expect(api.activeChart()).toBe(widget);
+    expect(() => {
+      api.setActiveChart(2);
+    }).toThrow(new Error('Incorrect index: 2'));
+    expect(api.activeChartIndex()).toBe(1);
+    expect(inspectFakeWindow(win).callsTo('TradingViewApi.setActiveChart')).toEqual([[1], [2]]);
+  });
+
+  test('returns copies, so a caller cannot change the fixture-backed state', () => {
+    const win = createFakeTvWindow(fixture);
+    const chart = chartOf(win);
+
+    chart.getAllStudies().pop();
+    chart.getAllShapes().length = 0;
+    apiOf(win).getIntervals().length = 0;
+    chart.getVisibleRange().from = 0;
+    const info = seriesOf(win).symbolInfo();
+    info.name = 'changed';
+    seriesOf(win).quotes().last_price = 0;
+
+    expect(chart.getAllStudies()).toHaveLength(2);
+    expect(chart.getAllShapes()).toHaveLength(3);
+    expect(apiOf(win).getIntervals()).toEqual(fixture.intervals);
+    expect(chart.getVisibleRange()).toEqual(fixture.visibleRange);
+    expect(seriesOf(win).symbolInfo()).toEqual(fixture.symbolInfo);
+    expect(seriesOf(win).quotes()).toEqual(fixture.quote);
+    expect(fixture).toEqual(loadTvFixture());
+  });
+
+  test('keeps windows independent of each other', async () => {
+    const first = createFakeTvWindow(fixture);
+    const second = createFakeTvWindow(fixture);
+
+    await chartOf(first).setSymbol('NASDAQ:MSFT');
+    await chartOf(first).setResolution('60');
+
+    expect(chartOf(second).symbol()).toBe('NASDAQ:AAPL');
+    expect(chartOf(second).resolution()).toBe('1D');
+  });
+
+  test('setVisibleRange throws Not implemented, like the real build, and is recorded', () => {
+    const win = createFakeTvWindow(fixture);
+
+    expect(() => chartOf(win).setVisibleRange({ from: 1, to: 2 })).toThrow(
+      new Error('Not implemented'),
+    );
+    expect(inspectFakeWindow(win).callsTo('chart.setVisibleRange')).toEqual([[{ from: 1, to: 2 }]]);
+    expect(chartOf(win).getVisibleRange()).toEqual(fixture.visibleRange);
+  });
+
+  describe('main series', () => {
+    test('exposes the bar container members verified on the real app', () => {
+      const bars = seriesOf(createFakeTvWindow(fixture)).bars();
+      const expected = syntheticBars(fixture.bars);
+
+      expect(bars.size()).toBe(300);
+      expect(bars.firstIndex()).toBe(0);
+      expect(bars.lastIndex()).toBe(299);
+      expect(bars.valueAt(0)).toEqual(expected[0]);
+      expect(bars.valueAt(150)).toEqual(expected[150]);
+      expect(bars.valueAt(299)).toEqual(expected[299]);
+      expect(bars.valueAt(300)).toBeNull();
+      expect(bars.valueAt(-1)).toBeNull();
+      expect(bars.valueAt(1.5)).toBeNull();
+    });
+
+    test('hands out copies of bars', () => {
+      const bars = seriesOf(createFakeTvWindow(fixture)).bars();
+
+      const bar = bars.valueAt(5);
+      bar?.fill(0);
+
+      expect(bars.valueAt(5)).toEqual(syntheticBars(fixture.bars)[5]);
+    });
+
+    test('does not model bars().search, whose behavior is unverified', () => {
+      const bars = seriesOf(createFakeTvWindow(fixture)).bars();
+
+      expect('search' in bars).toBe(false);
+    });
+
+    test('reports an empty bar container with null bounds', () => {
+      const empty = createFakeTvWindow({ ...fixture, bars: { ...fixture.bars, count: 0 } });
+      const bars = seriesOf(empty).bars();
+
+      expect(bars.size()).toBe(0);
+      expect(bars.firstIndex()).toBeNull();
+      expect(bars.lastIndex()).toBeNull();
+      expect(bars.valueAt(0)).toBeNull();
+      expect(timeScaleOf(empty).timePointToIndex(fixture.visibleRange.from)).toBeNull();
+      expect(timeScaleOf(empty).logicalRange()).toBeNull();
+    });
+
+    test('hands out the same model objects on every call, like the real widget', () => {
+      const widget = chartOf(createFakeTvWindow(fixture))._chartWidget;
+
+      expect(widget.model()).toBe(widget.model());
+      expect(widget.model().model()).toBe(widget.model().model());
+      expect(widget.model().mainSeries()).toBe(widget.model().mainSeries());
+      expect(widget.model().model().timeScale()).toBe(widget.model().model().timeScale());
+    });
+
+    test('returns the symbol info and the quote of the fixture', () => {
+      const series = seriesOf(createFakeTvWindow(fixture));
+
+      expect(series.symbolInfo()).toEqual(fixture.symbolInfo);
+      expect(series.quotes()).toEqual(fixture.quote);
+      expect(series.isSymbolInvalid()).toBe(false);
+    });
+  });
+
+  describe('time scale', () => {
+    const times = syntheticBars(loadTvFixture().bars).map(([time]) => time);
+    const timeAt = (index: number): number => {
+      const time = times[index];
+      if (time === undefined) {
+        throw new Error(`No bar at index ${String(index)}`);
+      }
+      return time;
+    };
+
+    test('maps a time to the index of the nearest bar', () => {
+      const scale = timeScaleOf(createFakeTvWindow(fixture));
+
+      expect(scale.timePointToIndex(timeAt(10))).toBe(10);
+      expect(scale.timePointToIndex(timeAt(10) + 100)).toBe(10);
+      expect(scale.timePointToIndex(timeAt(10) + 50_000)).toBe(11);
+      expect(scale.timePointToIndex(timeAt(10) - 50_000)).toBe(9);
+      expect(scale.timePointToIndex(timeAt(10) + DAY / 2)).toBe(10);
+      expect(scale.timePointToIndex(timeAt(0) - 5 * DAY)).toBe(0);
+      expect(scale.timePointToIndex(timeAt(299) + 5 * DAY)).toBe(299);
+    });
+
+    test('has no index for a time that is not a number', () => {
+      const scale = timeScaleOf(createFakeTvWindow(fixture));
+
+      expect(scale.timePointToIndex(Number.NaN)).toBeNull();
+      expect(scale.timePointToIndex(Number.POSITIVE_INFINITY)).toBeNull();
+    });
+
+    test('starts from the visible range of the fixture', () => {
+      const win = createFakeTvWindow(fixture);
+
+      expect(chartOf(win).getVisibleRange()).toEqual({ from: timeAt(200), to: timeAt(299) });
+      expect(timeScaleOf(win).logicalRange()).toEqual({ from: 200, to: 299 });
+    });
+
+    test('zoomToBarsRange moves the visible range to the bar times and records the call', () => {
+      const win = createFakeTvWindow(fixture);
+
+      timeScaleOf(win).zoomToBarsRange(250, 280);
+
+      expect(chartOf(win).getVisibleRange()).toEqual({ from: timeAt(250), to: timeAt(280) });
+      expect(timeScaleOf(win).logicalRange()).toEqual({ from: 250, to: 280 });
+      expect(inspectFakeWindow(win).callsTo('timeScale.zoomToBarsRange')).toEqual([[250, 280]]);
+    });
+
+    test('zoomToBarsRange stays within the loaded bars', () => {
+      const win = createFakeTvWindow(fixture);
+
+      timeScaleOf(win).zoomToBarsRange(-40, 500);
+
+      expect(chartOf(win).getVisibleRange()).toEqual({ from: timeAt(0), to: timeAt(299) });
+      expect(inspectFakeWindow(win).callsTo('timeScale.zoomToBarsRange')).toEqual([[-40, 500]]);
+    });
+
+    test('zoomToBarsRange rounds fractional indices to the nearest bar', () => {
+      const win = createFakeTvWindow(fixture);
+
+      timeScaleOf(win).zoomToBarsRange(10.4, 20.6);
+
+      expect(timeScaleOf(win).logicalRange()).toEqual({ from: 10, to: 21 });
+    });
+
+    test('zoomToBarsRange refuses an index that is not a number', () => {
+      const win = createFakeTvWindow(fixture);
+
+      expect(() => {
+        timeScaleOf(win).zoomToBarsRange(Number.NaN, 5);
+      }).toThrow(RangeError);
+      expect(chartOf(win).getVisibleRange()).toEqual(fixture.visibleRange);
+    });
+
+    test('scrollToBar records the call and leaves the range alone', () => {
+      const win = createFakeTvWindow(fixture);
+
+      timeScaleOf(win).scrollToBar(120);
+
+      expect(inspectFakeWindow(win).callsTo('timeScale.scrollToBar')).toEqual([[120]]);
+      expect(chartOf(win).getVisibleRange()).toEqual(fixture.visibleRange);
+    });
+  });
+
+  describe('changing the chart', () => {
+    test('setSymbol on a known symbol switches it and calls dataReady asynchronously', async () => {
+      const win = createFakeTvWindow(fixture);
+      const dataReady = vi.fn();
+
+      const done = chartOf(win).setSymbol('NASDAQ:MSFT', { dataReady });
+
+      expect(chartOf(win).symbol()).toBe('NASDAQ:MSFT');
+      expect(dataReady).not.toHaveBeenCalled();
+      await expect(done).resolves.toBe(true);
+      expect(dataReady).toHaveBeenCalledOnce();
+      expect(seriesOf(win).isSymbolInvalid()).toBe(false);
+      expect(inspectFakeWindow(win).callsTo('chart.setSymbol')).toEqual([
+        ['NASDAQ:MSFT', { dataReady }],
+      ]);
+    });
+
+    test('fake setSymbol marks unknown symbols invalid', async () => {
+      const win = createFakeTvWindow(fixture);
+      const unknown = vi.fn();
+      const known = vi.fn();
+
+      await chartOf(win).setSymbol('NOSUCH:SYMBOL', { dataReady: unknown });
+      await delay(20);
+
+      // The real app keeps the requested symbol and flags the series, and never reports ready.
+      expect(chartOf(win).symbol()).toBe('NOSUCH:SYMBOL');
+      expect(seriesOf(win).isSymbolInvalid()).toBe(true);
+      expect(unknown).not.toHaveBeenCalled();
+
+      await chartOf(win).setSymbol('NASDAQ:AAPL', { dataReady: known });
+
+      expect(chartOf(win).symbol()).toBe('NASDAQ:AAPL');
+      expect(seriesOf(win).isSymbolInvalid()).toBe(false);
+      expect(known).toHaveBeenCalledOnce();
+    });
+
+    test('setSymbol works without options', async () => {
+      const win = createFakeTvWindow(fixture);
+
+      await chartOf(win).setSymbol('NASDAQ:NVDA');
+      await chartOf(win).setSymbol('NOSUCH:SYMBOL');
+
+      expect(seriesOf(win).isSymbolInvalid()).toBe(true);
+    });
+
+    test('a dataReady callback that throws does not break the fake', async () => {
+      const win = createFakeTvWindow(fixture);
+
+      await chartOf(win).setSymbol('NASDAQ:MSFT', {
+        dataReady: () => {
+          throw new Error('callback failure');
+        },
+      });
+      await delay(5);
+
+      expect(chartOf(win).symbol()).toBe('NASDAQ:MSFT');
+    });
+
+    test('setResolution sets the resolution and calls dataReady asynchronously', async () => {
+      const win = createFakeTvWindow(fixture);
+      const dataReady = vi.fn();
+
+      const done = chartOf(win).setResolution('60', { dataReady });
+
+      expect(chartOf(win).resolution()).toBe('60');
+      expect(dataReady).not.toHaveBeenCalled();
+      await done;
+      expect(dataReady).toHaveBeenCalledOnce();
+      expect(inspectFakeWindow(win).callsTo('chart.setResolution')).toEqual([
+        ['60', { dataReady }],
+      ]);
+    });
+
+    test('setChartType sets the type and returns a resolved promise', async () => {
+      const win = createFakeTvWindow(fixture);
+
+      await expect(chartOf(win).setChartType(8)).resolves.toBeUndefined();
+
+      expect(chartOf(win).chartType()).toBe(8);
+      expect(inspectFakeWindow(win).callsTo('chart.setChartType')).toEqual([[8]]);
+    });
+  });
+
+  describe('page globals', () => {
+    test('exposes BUILD_TIME, the chart location and a visible document', () => {
+      const win = createFakeTvWindow(fixture);
+
+      expect(win.BUILD_TIME).toBe('2026-10-16T17:55:37');
+      expect(win.location).toMatchObject({
+        href: 'https://www.tradingview.com/chart/FIXTURE1/',
+        origin: 'https://www.tradingview.com',
+        hostname: 'www.tradingview.com',
+        pathname: '/chart/FIXTURE1/',
+      });
+      expect(win.document.visibilityState).toBe('visible');
+    });
+
+    test('takes the visibility state from the options', () => {
+      const hidden = createFakeTvWindow(fixture, { visibilityState: 'hidden' });
+
+      expect(hidden.document.visibilityState).toBe('hidden');
+      expect(inspectFakeWindow(hidden).state.visibilityState).toBe('hidden');
+    });
+
+    test('exposes an empty webpack chunk list and a TVD bridge that records reloadTab', () => {
+      const win = createFakeTvWindow(fixture);
+
+      win.TVD.reloadTab();
+
+      expect(win.webpackChunktradingview).toEqual([]);
+      expect(Array.isArray(win.webpackChunktradingview)).toBe(true);
+      expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
+    });
+
+    test('withoutApi omits TradingViewApi but keeps the rest of the page', () => {
+      const win = createFakeTvWindow(fixture, { withoutApi: true });
+
+      expect('TradingViewApi' in win).toBe(false);
+      expect(win.TradingViewApi).toBeUndefined();
+      expect(win.BUILD_TIME).toBe('2026-10-16T17:55:37');
+      expect(typeof win.TVD.reloadTab).toBe('function');
+      expect(win.webpackChunktradingview).toEqual([]);
+    });
+  });
+
+  describe('inspection', () => {
+    test('records mutating calls in order and exposes mutable state', async () => {
+      const win = createFakeTvWindow(fixture);
+      const fake = inspectFakeWindow(win);
+
+      await chartOf(win).setResolution('60');
+      await chartOf(win).setChartType(8);
+      timeScaleOf(win).scrollToBar(3);
+
+      expect(fake.calls.map((call) => call.name)).toEqual([
+        'chart.setResolution',
+        'chart.setChartType',
+        'timeScale.scrollToBar',
+      ]);
+      expect(fake.calls[1]).toEqual({ name: 'chart.setChartType', args: [8] });
+      expect(fake.state).toMatchObject({
+        symbol: 'NASDAQ:AAPL',
+        resolution: '60',
+        chartType: 8,
+        activeChartIndex: 0,
+        symbolInvalid: false,
+        connected: true,
+        visibilityState: 'visible',
+      });
+    });
+
+    test('lets a test flip the connection and visibility the page reads', () => {
+      const win = createFakeTvWindow(fixture);
+      const fake = inspectFakeWindow(win);
+
+      fake.state.connected = false;
+      fake.state.visibilityState = 'hidden';
+
+      expect(apiOf(win).isConnected()).toBe(false);
+      expect(win.document.visibilityState).toBe('hidden');
+    });
+
+    test('does not record reads', () => {
+      const win = createFakeTvWindow(fixture);
+
+      chartOf(win).symbol();
+      seriesOf(win).bars().valueAt(0);
+      timeScaleOf(win).timePointToIndex(0);
+
+      expect(inspectFakeWindow(win).calls).toEqual([]);
+    });
+
+    test('refuses objects that are not fake windows', () => {
+      expect(() => inspectFakeWindow({})).toThrow('not a fake TradingView window');
+    });
+  });
+
+  describe('as the window of a vm context', () => {
+    test('can be evaluated in a fresh context, like a page function guard does', () => {
+      const win = createFakeTvWindow(fixture);
+
+      const symbol: unknown = vm.runInNewContext('window.TradingViewApi.activeChart().symbol()', {
+        window: win,
+      });
+      const size: unknown = vm.runInNewContext(
+        '((win) => win.TradingViewApi.activeChart()._chartWidget.model().mainSeries().bars().size())(window)',
+        { window: win },
+      );
+
+      expect(symbol).toBe('NASDAQ:AAPL');
+      expect(size).toBe(300);
+    });
+
+    test('works with a promise created inside the context', async () => {
+      const win = createFakeTvWindow(fixture);
+      const source = `(async (win) => {
+        const chart = win.TradingViewApi.activeChart();
+        await new Promise((resolve) => { chart.setSymbol('NASDAQ:MSFT', { dataReady: () => resolve(true) }); });
+        return chart.symbol();
+      })(window)`;
+
+      const result: unknown = await (vm.runInNewContext(source, {
+        window: win,
+      }) as Promise<unknown>);
+
+      expect(result).toBe('NASDAQ:MSFT');
+    });
+  });
+});

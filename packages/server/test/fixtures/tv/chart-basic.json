@@ -1,0 +1,88 @@
+{
+  "buildTime": "2026-10-16T17:55:37",
+  "symbol": "NASDAQ:AAPL",
+  "resolution": "1D",
+  "chartType": 1,
+  "visibleRange": { "from": 1721433600, "to": 1729987200 },
+  "studies": [
+    { "id": "STUDY01", "name": "Moving Average", "plots": ["plot_0"] },
+    { "id": "STUDY02", "name": "Relative Strength Index", "plots": ["plot_0"] }
+  ],
+  "shapes": [
+    { "id": "SHAPE01", "name": "trend_line" },
+    { "id": "SHAPE02", "name": "horizontal_line" },
+    { "id": "SHAPE03", "name": "rectangle" }
+  ],
+  "layout": { "type": "s", "chartsCount": 1, "name": "Fixture Layout", "id": "FIXTURE1" },
+  "intervals": [
+    "1",
+    "3",
+    "5",
+    "15",
+    "30",
+    "45",
+    "60",
+    "120",
+    "180",
+    "240",
+    "1D",
+    "1W",
+    "1M",
+    "3M",
+    "6M",
+    "12M"
+  ],
+  "knownSymbols": [
+    "NASDAQ:AAPL",
+    "NASDAQ:MSFT",
+    "NASDAQ:NVDA",
+    "NYSE:IBM",
+    "BINANCE:BTCUSDT",
+    "FX:EURUSD"
+  ],
+  "symbolInfo": {
+    "name": "AAPL",
+    "full_name": "NASDAQ:AAPL",
+    "pro_name": "NASDAQ:AAPL",
+    "exchange": "NASDAQ",
+    "listed_exchange": "NASDAQ",
+    "description": "Apple Inc.",
+    "type": "stock",
+    "typespecs": ["common"],
+    "currency_code": "USD",
+    "pricescale": 100,
+    "minmov": 1,
+    "pointvalue": 1,
+    "session": "0930-1600",
+    "subsessions": [
+      {
+        "id": "regular",
+        "description": "Regular trading hours",
+        "private": false,
+        "session": "0930-1600"
+      }
+    ],
+    "timezone": "America/New_York",
+    "has_intraday": true,
+    "has_extended_hours": true,
+    "is_replayable": true,
+    "variable_tick_size": ""
+  },
+  "quote": {
+    "last_price": 103.42,
+    "bid": 103.41,
+    "ask": 103.43,
+    "bid_size": 100,
+    "ask_size": 200,
+    "change": -0.16,
+    "change_percent": -0.15,
+    "open_price": 103.58,
+    "high_price": 103.72,
+    "low_price": 102.91,
+    "prev_close_price": 103.58,
+    "volume": 4035204,
+    "lp_time": 1729987200,
+    "currency_code": "USD"
+  },
+  "bars": { "count": 300, "startTime": 1704153600, "stepSeconds": 86400, "seed": 42 }
+}

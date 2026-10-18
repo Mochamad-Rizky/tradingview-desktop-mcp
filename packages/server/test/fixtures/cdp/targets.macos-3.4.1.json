@@ -1,0 +1,71 @@
+[
+  {
+    "id": "EE67363DAA56C9940A709061CFAA2FFF",
+    "type": "page",
+    "title": "index.html?rendererInitialData=%7B&quot;remoteServiceInstanceId&quot;%3A&quot;fixture-tvd%3Atabbed-window&quot;%7D",
+    "url": "file:///Applications/TradingView.app/Contents/Resources/app.asar/app/window/index.html?rendererInitialData=%7B%22remoteServiceInstanceId%22%3A%22fixture-tvd%3Atabbed-window%22%7D"
+  },
+  {
+    "id": "BBB144A7827AE55CBA0E74986FC9574C",
+    "type": "page",
+    "title": "Live stock, index, futures, Forex and Bitcoin charts on TradingView",
+    "url": "https://www.tradingview.com/chart/FIXTURE1/"
+  },
+  {
+    "id": "45FA12C67FCC102BC635696179137865",
+    "type": "iframe",
+    "title": "https://cm.g.doubleclick.net/partnerpixels?url=https%3A%2F%2Fwww.tradingview.com%2Fchart%2FFIXTURE1%2F",
+    "url": "https://cm.g.doubleclick.net/partnerpixels?url=https%3A%2F%2Fwww.tradingview.com%2Fchart%2FFIXTURE1%2F",
+    "parentId": "BBB144A7827AE55CBA0E74986FC9574C"
+  },
+  {
+    "id": "359029838B634FA51337C41A946372CD",
+    "type": "iframe",
+    "title": "https://www.google.com/recaptcha/api2/aframe",
+    "url": "https://www.google.com/recaptcha/api2/aframe",
+    "parentId": "BBB144A7827AE55CBA0E74986FC9574C"
+  },
+  {
+    "id": "A0290DCF69763ECAA55FA54875AD50A1",
+    "type": "iframe",
+    "title": "https://ee1fff44120e6ddcebbb40756db9a57a.safeframe.googlesyndication.com/safeframe/1-0-45/html/container.html",
+    "url": "https://ee1fff44120e6ddcebbb40756db9a57a.safeframe.googlesyndication.com/safeframe/1-0-45/html/container.html",
+    "parentId": "BBB144A7827AE55CBA0E74986FC9574C"
+  },
+  {
+    "id": "0621E0BEA8DA2CEEE3C6E3AFFD3C3229",
+    "type": "page",
+    "title": "index.html?rendererInitialData=%7B&quot;remoteServiceInstanceId&quot;%3A&quot;fixture-tvd%3Atabbed-window&quot;%7D",
+    "url": "file:///Applications/TradingView.app/Contents/Resources/app.asar/app/tooltip/index.html?rendererInitialData=%7B%22remoteServiceInstanceId%22%3A%22fixture-tvd%3Atabbed-window%22%7D"
+  },
+  {
+    "id": "D4FA899CB58B76FCEDDAC2E1E63735B2",
+    "type": "page",
+    "title": "",
+    "url": ""
+  },
+  {
+    "id": "B8F925F86CC032DD97DED7C12AB73A28",
+    "type": "page",
+    "title": "index.html",
+    "url": "file:///Applications/TradingView.app/Contents/Resources/app.asar/app/browser-api-container/index.html"
+  },
+  {
+    "id": "ABC65E8C0B5768A7D97D910867C78382",
+    "type": "page",
+    "title": "index.html",
+    "url": "file:///Applications/TradingView.app/Contents/Resources/app.asar/app/renderer-services/drag-service/index.html"
+  },
+  {
+    "id": "80A80E86AF3E47B46C0E0C0A748CFC57",
+    "type": "page",
+    "title": "",
+    "url": ""
+  },
+  {
+    "id": "98698293B7D146D1E80957D68A04BDD7",
+    "type": "worker",
+    "title": "",
+    "url": ""
+  }
+]
