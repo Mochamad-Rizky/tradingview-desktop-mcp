@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+.superpowers/
+.env
+.env.local
+*.log
+.DS_Store

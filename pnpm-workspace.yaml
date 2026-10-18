@@ -1,0 +1,7 @@
+packages:
+  - 'packages/*'
+
+# pnpm blocks dependency build scripts until they are reviewed. esbuild (used by tsup) only runs a
+# postinstall that validates and speeds up its prebuilt platform binary.
+allowBuilds:
+  esbuild: true
