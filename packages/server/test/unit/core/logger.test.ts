@@ -53,17 +53,38 @@ test('logger drops records below the configured level', () => {
   ]);
 });
 
-// pino writes through file descriptors, which bypasses process.stdout.write, so the stdout spy
-// above cannot catch a logger that defaults to fd 1. Stdout carries JSON-RPC in stdio mode.
-test('logger defaults to stderr (file descriptor 2) when no destination is given', () => {
+// Stands in for the destination the logger asks pino to open when it is given none, and keeps
+// the real stderr out of the test output. The options the logger passes are the contract here.
+function interceptDefaultDestination() {
   const { lines, destination } = collectLines();
   const open = vi
     .spyOn(pino, 'destination')
     .mockReturnValue(destination as unknown as ReturnType<typeof pino.destination>);
+  return {
+    lines,
+    requestedOptions: () => open.mock.calls[0]?.[0],
+  };
+}
+
+// pino writes through file descriptors, which bypasses process.stdout.write, so the stdout spy
+// above cannot catch a logger that defaults to fd 1. Stdout carries JSON-RPC in stdio mode.
+test('logger defaults to stderr (file descriptor 2) when no destination is given', () => {
+  const { lines, requestedOptions } = interceptDefaultDestination();
 
   createLogger({ level: 'info' }).info('hello');
 
-  expect(open).toHaveBeenCalledWith(2);
+  expect(requestedOptions()).toMatchObject({ dest: 2 });
   expect(lines).toHaveLength(1);
   expect(parseLine(lines[0])).toMatchObject({ msg: 'hello' });
+});
+
+// pino's destination is asynchronous unless asked otherwise. The CLI banner and fatal errors are
+// written straight to stderr, so an asynchronous logger would print its lines after them, and it
+// would leave lines in a buffer if the process dies.
+test('logger writes to stderr synchronously by default', () => {
+  const { requestedOptions } = interceptDefaultDestination();
+
+  createLogger({ level: 'info' });
+
+  expect(requestedOptions()).toMatchObject({ sync: true });
 });

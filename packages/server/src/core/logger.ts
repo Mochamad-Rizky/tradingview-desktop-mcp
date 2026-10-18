@@ -12,5 +12,9 @@ export function createLogger(options: {
 }): Logger {
   // Stdout carries JSON-RPC in stdio mode, and pino writes to it when it is not given a
   // destination, so every logger gets one explicitly and the default is stderr.
-  return pino({ level: options.level }, options.destination ?? pino.destination(STDERR_FD));
+  // The default is synchronous because the CLI banner and fatal errors are written straight to
+  // stderr: an asynchronous destination would print log lines after them, and would leave lines in
+  // its buffer if the process dies before the next tick.
+  const destination = options.destination ?? pino.destination({ dest: STDERR_FD, sync: true });
+  return pino({ level: options.level }, destination);
 }
