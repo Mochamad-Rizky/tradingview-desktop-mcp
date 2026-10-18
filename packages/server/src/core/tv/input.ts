@@ -8,13 +8,17 @@ import type { TvWindow } from './tv-window.js';
 // the page over CDP, so the page sees them as it sees a user.
 //
 // A click is refused when its target, or whatever would take the click, belongs to a broker
-// trading control (UNSAFE_SELECTORS). Text and key presses land on the element that has the
-// focus, and Enter on a focused button clicks it, so they are refused while that element belongs
-// to a trading control. A page that cannot say what has the focus is refused too.
+// trading control (UNSAFE_SELECTORS). Key presses land on the element that has the focus, and
+// Enter on a focused button clicks it, so they are refused while that element is a trading
+// control or sits inside one. Text is checked the same way. A page that cannot say what has the
+// focus is refused too.
 //
-// That leaves one gap. TradingView may bind trading actions to hotkeys that work wherever the
-// focus is. The notes record none, so a key chord can still reach one, and the focus check cannot
-// see it.
+// That leaves two gaps. First, text is inserted at the caret, and a field keeps the caret when
+// the focus moves on to a button or a container: Chrome then still inserts the text into that
+// field and gives it the focus back. A trading field that lost the focus that way can receive
+// text, and the check of the focused element cannot see it. Second, TradingView may bind trading
+// actions to hotkeys that work wherever the focus is. The notes record none, so a key chord can
+// still reach one.
 
 // A page the helpers can act on: the debugging session of a chart tab, to send input events to,
 // and the bridge that runs page functions in it. Only these two members are used, so any handle
@@ -106,14 +110,16 @@ export function describeElement(
   return { found: true, visible, unsafe, rect };
 }
 
-// What a key press or a text needs to know about the element that has the focus, which is where
-// they land. It is judged like the target of a click:
-// - unsafe: whether the focused element matches one of `unsafeSelectors`, holds an element that
-//   does, or sits inside one that does. Holding one counts as it does for a click: a focused
-//   toolbar or menu can activate a button in it, through aria-activedescendant or key handling of
-//   its own, while the focus stays on the container. The body and the html element are no focus
-//   at all: they hold the whole page, so they would always hold a trading control that is on it.
-//   For the same reason a page where no element has the focus is safe.
+// What a key press or a text needs to know about the element that has the focus. A key lands on
+// it, and text lands at the caret, which is in the focused field unless the focus moved on
+// without it (see the header):
+// - unsafe: whether the focused element matches one of `unsafeSelectors` or sits inside one that
+//   does. Unlike for a click, what it holds does not count. Key events go to the focused element
+//   and not to its descendants, and the pane of the chart, where the focus usually is, always
+//   holds the buy and sell buttons shown on it, so counting them would refuse every key aimed at
+//   the chart. A container that activates a button in it by itself, as a toolbar can through
+//   aria-activedescendant, is therefore not caught. The body and the html element are safe, and
+//   so is a page where no element has the focus.
 // - focused: the element in a few words for the error that refuses it, its tag followed by its id,
 //   data-qa-id and data-name when it has them. Empty when no element has the focus.
 // A page that cannot say what has the focus answers NOT_AVAILABLE, so that nothing is sent to a
@@ -159,15 +165,10 @@ export function describeFocusedElement(
   }
   focused = focused.slice(0, 120);
 
-  if (active.localName === 'body' || active.localName === 'html') {
-    return { unsafe: false, focused };
-  }
   const unsafeList = unsafeSelectors.join(', ');
-  // closest starts at the element itself, so it also covers an element that matches.
-  return {
-    unsafe: active.closest(unsafeList) !== null || active.querySelector(unsafeList) !== null,
-    focused,
-  };
+  // closest starts at the element itself, so it also covers an element that matches. The body and
+  // the html element match nothing and sit inside nothing, so they come out safe.
+  return { unsafe: active.closest(unsafeList) !== null, focused };
 }
 
 // Clicks the center of the first element that matches `selector`. The element is looked up anew on
@@ -225,9 +226,10 @@ export async function clickElement(page: InputPage, selector: string): Promise<v
   });
 }
 
-// Keys and text land on whatever has the focus, and Enter on a focused button clicks it. So the
-// focus is looked at first, and a trading control that has it refuses the input before anything
-// is sent. A page that cannot say what has the focus is refused as well: this fails closed.
+// A key lands on whatever has the focus, and Enter on a focused button clicks it. Text lands at
+// the caret, which is usually in the focused field. So the focus is looked at first, and a
+// trading control that has it refuses the input before anything is sent. A page that cannot say
+// what has the focus is refused as well: this fails closed.
 async function assertFocusIsSafe(page: InputPage, action: 'pressKey' | 'typeText'): Promise<void> {
   const { unsafe, focused } = await page.bridge.evaluate(describeFocusedElement, [
     [...UNSAFE_SELECTORS],
@@ -235,7 +237,7 @@ async function assertFocusIsSafe(page: InputPage, action: 'pressKey' | 'typeText
   if (unsafe) {
     throw new TvMcpError(
       'UNSAFE_ACTION_BLOCKED',
-      `Refusing to ${action === 'pressKey' ? 'press a key' : 'type text'}: the focus is on \`${focused}\`, which is part of a broker trading control or holds one`,
+      `Refusing to ${action === 'pressKey' ? 'press a key' : 'type text'}: the focus is on \`${focused}\`, which is part of a broker trading control`,
       {
         hint: 'Trading controls are off limits to this server. Move the focus to another element first, or use the TradingView window yourself.',
         details: { action, focused },
@@ -244,9 +246,11 @@ async function assertFocusIsSafe(page: InputPage, action: 'pressKey' | 'typeText
   }
 }
 
-// Inserts text where the focus is, as an emoji picker or an input method would: no key events, so
-// a shortcut of the page does not see the letters. Empty text is a no-op that does not even look
-// at the page. Refused while a trading control has the focus.
+// Inserts text at the caret, as an emoji picker or an input method would: no key events, so a
+// shortcut of the page does not see the letters. The caret is in the focused field, unless the
+// focus moved on to something that cannot take text and left the caret behind in the field it
+// came from. Empty text is a no-op that does not even look at the page. Refused while a trading
+// control has the focus.
 export async function typeText(page: InputPage, text: string): Promise<void> {
   if (text === '') {
     return;

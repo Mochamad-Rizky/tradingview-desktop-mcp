@@ -430,9 +430,12 @@ example `iconButton-3Lt7-uhL`) change on every build and are never used.
 `[data-qa-id="trade-button"]`, `#header-toolbar-trade-desktop`, and anything inside a broker order ticket.
 The low-level UI tools refuse a click on a target that matches one of these selectors, contains one, sits inside one, or
 has one over the point where the click would land. They also refuse key presses and text while the focused element
-matches one, contains one or sits inside one, and while the page cannot say what has the focus. An order ticket has no
-stable selector yet, so it is covered only through the buttons inside it that match. Whether TradingView binds trading
-hotkeys is not known, so a key chord can still reach one.
+matches one or sits inside one, and while the page cannot say what has the focus. A focused element that only holds
+one, such as the chart pane, is not refused: key events go to the focused element and not to its descendants. Text
+is inserted at the caret, and a field keeps the caret when the focus moves to a button or a container (observed in
+Chrome 155), so a trading field that lost the focus that way can still receive text. An order ticket has no stable
+selector yet, so it is covered only through the buttons inside it that match. Whether TradingView binds trading hotkeys
+is not known, so a key chord can still reach one.
 
 ### 5.6 Window chrome (tabs)
 

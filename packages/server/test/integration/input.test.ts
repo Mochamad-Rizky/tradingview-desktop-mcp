@@ -226,6 +226,19 @@ describe('typeText over CDP', () => {
     expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
   });
 
+  test('inserts the text when focus is on a container that holds trading buttons', async () => {
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      children: [fakeElement({ tag: 'button', matches: [BUY] })],
+    });
+    const pane = fakeElement({ matches: ['[data-qa-id="pane"]'], children: [group] });
+    const { server, page } = await openPage(createFakeDomWindow([pane], { focus: pane }));
+
+    await typeText(page, 'NASDAQ:AAPL');
+
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate', 'Input.insertText']);
+  });
+
   test('fails closed without a DOM', async () => {
     const { server, page } = await openPage(createFakeTvWindow(loadTvFixture()));
 
@@ -334,6 +347,24 @@ describe('pressKey over CDP', () => {
     );
 
     await pressKey(page, 'Enter');
+
+    expect(methodsOf(server)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+  });
+
+  test('proceeds when focus is on a container that holds trading buttons', async () => {
+    // The pane of the chart holds the buy and sell buttons shown on it, and the keys go to the pane.
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      children: [fakeElement({ tag: 'button', matches: [BUY] })],
+    });
+    const pane = fakeElement({ matches: ['[data-qa-id="pane"]'], children: [group] });
+    const { server, page } = await openPage(createFakeDomWindow([pane], { focus: pane }));
+
+    await pressKey(page, 'Escape');
 
     expect(methodsOf(server)).toEqual([
       'Runtime.evaluate',

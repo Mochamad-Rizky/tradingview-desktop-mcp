@@ -393,20 +393,25 @@ describe('describeFocusedElement', () => {
     expect(focusOf(win)).toMatchObject({ unsafe: true });
   });
 
-  test('flags a focused element that holds an unsafe control, however deep', () => {
-    // From a focused toolbar the arrow keys can move the focus on to the button in it.
+  test('does not flag a focused element that only holds an unsafe control, however deep', () => {
+    // Key events go to the focused element and not to its descendants, and the pane of the chart,
+    // where the focus usually is, always holds the buy and sell buttons shown on it.
     const control = fakeElement({ matches: [TRADE_BUTTON] });
-    const toolbar = fakeElement({
+    const pane = fakeElement({
+      attributes: { 'data-qa-id': 'pane' },
       children: [fakeElement({ children: [fakeElement({ children: [control] })] })],
     });
-    const win = createFakeDomWindow([toolbar], { focus: toolbar });
+    const win = createFakeDomWindow([pane], { focus: pane });
 
-    expect(focusOf(win)).toMatchObject({ unsafe: true });
+    expect(focusOf(win)).toEqual({ unsafe: false, focused: 'div[data-qa-id="pane"]' });
   });
 
-  test('flags a focused element that sits inside an unsafe control', () => {
+  test('flags a focused element that sits inside an unsafe control, however deep', () => {
     const field = fakeElement({ tag: 'input' });
-    const group = fakeElement({ matches: ['[data-name="buy-sell-buttons"]'], children: [field] });
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      children: [fakeElement({ children: [fakeElement({ children: [field] })] })],
+    });
     const win = createFakeDomWindow([group], { focus: field });
 
     expect(focusOf(win)).toEqual({ unsafe: true, focused: 'input' });
@@ -420,7 +425,7 @@ describe('describeFocusedElement', () => {
     expect(focusOf(win)).toEqual({ unsafe: false, focused: 'canvas[data-name="pane-canvas"]' });
   });
 
-  test('counts the body and the html element as no focus, although they hold the whole page', () => {
+  test('counts the body and the html element as safe, although they hold the whole page', () => {
     const control = fakeElement({ matches: [BUY] });
     const body = fakeElement({ tag: 'body', children: [control] });
     const html = fakeElement({ tag: 'html', children: [body] });
@@ -790,12 +795,26 @@ describe('typeText', () => {
 
     expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
     expect(error.details).toEqual({ action: 'typeText', focused: 'input#quantity' });
-    expect(error.message).toContain('type text');
-    expect(error.message).toContain('`input#quantity`');
+    expect(error.message).toBe(
+      'Refusing to type text: the focus is on `input#quantity`, which is part of a broker trading control',
+    );
     expect(error.hint).toEqual(expect.any(String));
     // The focus was looked at, and then nothing was sent to the page.
     expect(input()).toEqual([]);
     expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('inserts the text when focus is on a container that holds trading buttons', async () => {
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      children: [fakeElement({ tag: 'button', matches: [BUY] })],
+    });
+    const pane = fakeElement({ matches: ['[data-qa-id="pane"]'], children: [group] });
+    const { page, sent } = pageWith([pane], { focus: pane });
+
+    await typeText(page, 'NASDAQ:AAPL');
+
+    expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate', 'Input.insertText']);
   });
 
   test('inserts the text when a field that is no trading control has the focus', async () => {
@@ -1119,12 +1138,40 @@ describe('pressKey', () => {
       action: 'pressKey',
       focused: 'button[data-name="buy-order-button"]',
     });
-    expect(error.message).toContain('press a key');
-    expect(error.message).toContain('`button[data-name="buy-order-button"]`');
+    expect(error.message).toBe(
+      'Refusing to press a key: the focus is on `button[data-name="buy-order-button"]`, which is part of a broker trading control',
+    );
     expect(error.hint).toEqual(expect.any(String));
     // Not a key down, and no key up either: the focus was looked at, and that is all.
     expect(input()).toEqual([]);
     expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('proceeds when focus is on a container that holds trading buttons', async () => {
+    // The pane of the chart holds the buy and sell buttons shown on it. Keys go to the pane and
+    // not to the buttons, so they are not refused. Refusing them would refuse every key aimed at
+    // the chart.
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      children: [
+        fakeElement({ tag: 'button', matches: [BUY] }),
+        fakeElement({ tag: 'button', matches: ['[data-name="sell-order-button"]'] }),
+      ],
+    });
+    const pane = fakeElement({ matches: ['[data-qa-id="pane"]'], children: [group] });
+    const { page, sent, input } = pageWith([pane], { focus: pane });
+
+    await pressKey(page, 'Escape');
+
+    expect(sent.map(({ method }) => method)).toEqual([
+      'Runtime.evaluate',
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+    expect(input().map(({ params }) => (params as { type: string }).type)).toEqual([
+      'rawKeyDown',
+      'keyUp',
+    ]);
   });
 
   test('refuses a shortcut as well', async () => {
