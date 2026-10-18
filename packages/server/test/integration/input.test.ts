@@ -517,6 +517,27 @@ describe('pressKey over CDP', () => {
     ]);
   });
 
+  test('refuses when the focus is in a frame or a shadow root, which cannot be looked into', async () => {
+    const frame = fakeElement({ tag: 'iframe', id: 'ad' });
+    const host = fakeElement({ id: 'host', shadowFocus: fakeElement({ tag: 'input' }) });
+    const inFrame = await openPage(createFakeDomWindow([frame, host], { focus: frame }));
+    const inShadow = await openPage(createFakeDomWindow([frame, host], { focus: host }));
+
+    const keyInFrame = await failureOf(pressKey(inFrame.page, 'Enter'));
+    const textInShadow = await failureOf(typeText(inShadow.page, 'NASDAQ:AAPL'));
+
+    expect(keyInFrame.toPayload()).toEqual({
+      code: 'NOT_AVAILABLE',
+      message:
+        'Cannot press a key: the focus is inside `iframe#ad`, which this server cannot look into',
+      hint: 'Move the focus to an element of the page itself first.',
+      details: { action: 'pressKey', focused: 'iframe#ad' },
+    });
+    expect(textInShadow.details).toEqual({ action: 'typeText', focused: 'div#host' });
+    expect(methodsOf(inFrame.server)).toEqual(['Runtime.evaluate']);
+    expect(methodsOf(inShadow.server)).toEqual(['Runtime.evaluate']);
+  });
+
   test('fails closed without a DOM', async () => {
     const { server, page } = await openPage(createFakeTvWindow(loadTvFixture()));
 

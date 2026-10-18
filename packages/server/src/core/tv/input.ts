@@ -203,18 +203,18 @@ export function describeElement(
 // - editable: whether the focused element is a text field: an input of a type that takes text
 //   (text, search, email, url, tel, password or number, which includes a missing or an unknown
 //   type, as a page reports those as text), a textarea, or a content-editable element.
+// - opaque: whether the focus is somewhere the page cannot look into. In a frame (iframe, frame,
+//   object or embed), or in the shadow tree of an element whose shadow root holds the focus,
+//   activeElement names the frame or the host, and what really has the focus is out of sight, so a
+//   trading control in there would not be seen. A closed shadow root cannot be told from none.
 // - focused: the element in a few words for the error that refuses it, its tag followed by its id,
 //   data-qa-id and data-name when it has them. Empty when no element has the focus.
 // A page that cannot say what has the focus answers NOT_AVAILABLE, so that nothing is sent to a
-// page that cannot be checked.
-//
-// A focus inside an iframe or a shadow root is reported as the iframe or the host, so a trading
-// control in there is not seen, the same as for clicks. An empty list of selectors is refused, as
-// in describeElement.
+// page that cannot be checked. An empty list of selectors is refused, as in describeElement.
 export function describeFocusedElement(
   win: TvWindow,
   unsafeSelectors: string[],
-): { unsafe: boolean; editable: boolean; focused: string } | PageErrorSentinel {
+): { unsafe: boolean; editable: boolean; opaque: boolean; focused: string } | PageErrorSentinel {
   // A page always has a document, but a fake of one or a frame that is still loading may not.
   const doc = win.document as TvWindow['document'] | undefined;
   const active = doc?.activeElement;
@@ -231,7 +231,7 @@ export function describeFocusedElement(
     throw new Error('describeFocusedElement needs the selectors to treat as unsafe');
   }
   if (active === null) {
-    return { unsafe: false, editable: false, focused: '' };
+    return { unsafe: false, editable: false, opaque: false, focused: '' };
   }
 
   let focused = active.localName;
@@ -259,10 +259,14 @@ export function describeFocusedElement(
     active.localName === 'textarea' ||
     ('isContentEditable' in active && active.isContentEditable === true);
 
+  const opaque =
+    ['iframe', 'frame', 'object', 'embed'].includes(active.localName) ||
+    (active.shadowRoot?.activeElement ?? null) !== null;
+
   const unsafeList = unsafeSelectors.join(', ');
   // closest starts at the element itself, so it also covers an element that matches. The body and
   // the html element match nothing and sit inside nothing, so they come out safe.
-  return { unsafe: active.closest(unsafeList) !== null, editable, focused };
+  return { unsafe: active.closest(unsafeList) !== null, editable, opaque, focused };
 }
 
 // What describeElement says about an element, without the way it can fail.
@@ -380,14 +384,14 @@ export async function clickElement(page: InputPage, selector: string): Promise<v
 // A key lands on whatever has the focus, and Enter on a focused button clicks it. Text lands at
 // the caret, which is known to be in the focused element only when that is a text field. So the
 // focus is looked at first, and a trading control that has it refuses the input before anything
-// is sent. A page that cannot say what has the focus is refused as well: this fails closed. What
-// the page said about the element is handed back, for the caller that needs more than the
-// verdict.
+// is sent. A page that cannot say what has the focus is refused as well, and so is a focus in a
+// frame or a shadow root: this fails closed. What the page said about the element is handed back,
+// for the caller that needs more than the verdict.
 async function assertFocusIsSafe(
   page: InputPage,
   action: 'pressKey' | 'typeText',
 ): Promise<{ focused: string; editable: boolean }> {
-  const { unsafe, editable, focused } = await page.bridge.evaluate(describeFocusedElement, [
+  const { unsafe, editable, opaque, focused } = await page.bridge.evaluate(describeFocusedElement, [
     [...UNSAFE_SELECTORS],
   ]);
   if (unsafe) {
@@ -396,6 +400,16 @@ async function assertFocusIsSafe(
       `Refusing to ${action === 'pressKey' ? 'press a key' : 'type text'}: the focus is on \`${focused}\`, which is part of a broker trading control`,
       {
         hint: 'Trading controls are off limits to this server. Move the focus to another element first, or use the TradingView window yourself.',
+        details: { action, focused },
+      },
+    );
+  }
+  if (opaque) {
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      `Cannot ${action === 'pressKey' ? 'press a key' : 'type text'}: the focus is inside \`${focused}\`, which this server cannot look into`,
+      {
+        hint: 'Move the focus to an element of the page itself first.',
         details: { action, focused },
       },
     );

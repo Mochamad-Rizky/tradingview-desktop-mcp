@@ -434,11 +434,13 @@ overlap root, or a frame, lies over that point, because the click would go to it
 when the page cannot say what lies there. A layer of another kind stacked over the target, such as one of the canvases
 of the chart, does not stop a click. The target is looked at once more after the pointer has moved onto it, because a
 hover can open a menu there, and the button goes down only if the second look is as clean as the first. They refuse
-key presses and text while the focused element matches one or sits inside one, and while the page cannot say what has
-the focus. A focused element that only holds one, such as the chart pane, is not refused: key events go to the focused
-element and not to its descendants. Text is typed only into a focused text field (an input that takes text, a textarea
-or a content-editable element). Input.insertText types at the caret, and a field keeps the caret when the focus moves
-to a button or a container (observed in Chrome 155), so the focused element says nothing about where the text would go
+key presses and text while the focused element matches one or sits inside one, while the page cannot say what has the
+focus, and while the focus is inside a frame or a shadow root, where document.activeElement names only the frame or
+the host and what really has the focus cannot be seen (a closed shadow root cannot be told from none). A focused
+element that only holds one, such as the chart pane, is not refused: key events go to the focused element and not to
+its descendants. Text is typed only into a focused text field (an input that takes text, a textarea or a
+content-editable element). Input.insertText types at the caret, and a field keeps the caret when the focus moves to a
+button or a container (observed in Chrome 155), so the focused element says nothing about where the text would go
 unless it is a text field itself. The calls of one page run one at a time, so that no event is sent on a look that an
 earlier call has made stale: a Tab that moves the focus to a trade button, and an Enter that was cleared before it. An
 order ticket has no stable selector yet, so it is covered only through the buttons inside it that match, and through

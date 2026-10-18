@@ -42,6 +42,9 @@ export interface FakeElementOptions {
   // Whether the element is content-editable, which is what isContentEditable reports. Defaults to
   // false.
   contentEditable?: boolean;
+  // Makes the element the host of a shadow root, and says which element in it has the focus, null
+  // for none. Without this the element has no shadow root, as most elements have none.
+  shadowFocus?: FakeElement | null;
 }
 
 export interface FakeComputedStyle {
@@ -106,6 +109,7 @@ export class FakeElement {
   // Like the property of an element, an empty string when there is none.
   readonly id: string;
   readonly isContentEditable: boolean;
+  readonly shadowRoot: { activeElement: FakeElement | null } | null;
   // The property of an input is its type normalized, so it is never empty. On any other element
   // the property reflects the attribute, as it does on a link, and is empty without one.
   readonly type: string;
@@ -131,6 +135,8 @@ export class FakeElement {
     }
     this.#attributes = attributes;
     this.isContentEditable = options.contentEditable ?? false;
+    this.shadowRoot =
+      options.shadowFocus === undefined ? null : { activeElement: options.shadowFocus };
     const typeAttribute = attributes.get('type');
     this.type = this.localName === 'input' ? inputType(typeAttribute) : (typeAttribute ?? '');
     for (const child of this.children) {

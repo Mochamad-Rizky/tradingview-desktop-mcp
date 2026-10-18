@@ -557,6 +557,7 @@ describe('describeFocusedElement', () => {
     expect(focusOf(win)).toEqual({
       unsafe: true,
       editable: false,
+      opaque: false,
       focused: 'button[data-name="buy-order-button"]',
     });
   });
@@ -581,6 +582,7 @@ describe('describeFocusedElement', () => {
     expect(focusOf(win)).toEqual({
       unsafe: false,
       editable: false,
+      opaque: false,
       focused: 'div[data-qa-id="pane"]',
     });
   });
@@ -593,7 +595,12 @@ describe('describeFocusedElement', () => {
     });
     const win = createFakeDomWindow([group], { focus: field });
 
-    expect(focusOf(win)).toEqual({ unsafe: true, editable: true, focused: 'input' });
+    expect(focusOf(win)).toEqual({
+      unsafe: true,
+      editable: true,
+      opaque: false,
+      focused: 'input',
+    });
   });
 
   test('does not flag the chart canvas, whatever else the page holds', () => {
@@ -604,6 +611,7 @@ describe('describeFocusedElement', () => {
     expect(focusOf(win)).toEqual({
       unsafe: false,
       editable: false,
+      opaque: false,
       focused: 'canvas[data-name="pane-canvas"]',
     });
   });
@@ -616,11 +624,13 @@ describe('describeFocusedElement', () => {
     expect(focusOf(createFakeDomWindow([control], { focus: body }))).toEqual({
       unsafe: false,
       editable: false,
+      opaque: false,
       focused: 'body',
     });
     expect(focusOf(createFakeDomWindow([control], { focus: html }))).toEqual({
       unsafe: false,
       editable: false,
+      opaque: false,
       focused: 'html',
     });
   });
@@ -629,20 +639,30 @@ describe('describeFocusedElement', () => {
     // The default of the fake: the body, which holds the trading control.
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
 
-    expect(focusOf(win)).toEqual({ unsafe: false, editable: false, focused: 'body' });
+    expect(focusOf(win)).toEqual({
+      unsafe: false,
+      editable: false,
+      opaque: false,
+      focused: 'body',
+    });
   });
 
   test('counts no focused element at all as safe', () => {
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })], { focus: null });
 
-    expect(focusOf(win)).toEqual({ unsafe: false, editable: false, focused: '' });
+    expect(focusOf(win)).toEqual({ unsafe: false, editable: false, opaque: false, focused: '' });
   });
 
   test('describes the element by its tag, id, data-qa-id and data-name, in that order', () => {
     const describe = (element: FakeElement) =>
       focusOf(createFakeDomWindow([element], { focus: element }));
 
-    expect(describe(fakeElement())).toEqual({ unsafe: false, editable: false, focused: 'div' });
+    expect(describe(fakeElement())).toEqual({
+      unsafe: false,
+      editable: false,
+      opaque: false,
+      focused: 'div',
+    });
     expect(describe(fakeElement({ tag: 'span', id: 'label' }))).toMatchObject({
       focused: 'span#label',
     });
@@ -713,6 +733,54 @@ describe('describeFocusedElement', () => {
     const win = createFakeDomWindow([element], { focus: element });
 
     expect(focusOf(win)).toMatchObject({ unsafe: false, editable });
+  });
+
+  test.each(['iframe', 'frame', 'object', 'embed'])(
+    'reports a focus on a <%s> as one that cannot be judged',
+    (tag) => {
+      // The page cannot look into a frame, so what has the focus in there is out of sight.
+      const frame = fakeElement({ tag, id: 'ad' });
+      const win = createFakeDomWindow([frame], { focus: frame });
+
+      expect(focusOf(win)).toEqual({
+        unsafe: false,
+        editable: false,
+        opaque: true,
+        focused: `${tag}#ad`,
+      });
+    },
+  );
+
+  test('reports a focus held inside a shadow root as one that cannot be judged', () => {
+    const inner = fakeElement({ tag: 'input' });
+    const host = fakeElement({ id: 'host', shadowFocus: inner });
+    const win = createFakeDomWindow([host], { focus: host });
+
+    expect(focusOf(win)).toEqual({
+      unsafe: false,
+      editable: false,
+      opaque: true,
+      focused: 'div#host',
+    });
+  });
+
+  test('does not mind a shadow root that holds no focus, or an element that has none', () => {
+    const quiet = fakeElement({ id: 'quiet', shadowFocus: null });
+    const plain = fakeElement({ id: 'plain' });
+
+    expect(focusOf(createFakeDomWindow([quiet], { focus: quiet }))).toMatchObject({
+      opaque: false,
+    });
+    expect(focusOf(createFakeDomWindow([plain], { focus: plain }))).toMatchObject({
+      opaque: false,
+    });
+  });
+
+  test('reports a focus on a trading control in a frame as unsafe and as one that cannot be judged', () => {
+    const frame = fakeElement({ tag: 'iframe', matches: [BUY] });
+    const win = createFakeDomWindow([frame], { focus: frame });
+
+    expect(focusOf(win)).toMatchObject({ unsafe: true, opaque: true });
   });
 
   test('reports a trading field as both unsafe and editable', () => {
@@ -1296,6 +1364,41 @@ describe('typeText', () => {
     expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
   });
 
+  test.each(['iframe', 'frame', 'object', 'embed'])(
+    'refuses when the focus is on a <%s>, which cannot be looked into',
+    async (tag) => {
+      const frame = fakeElement({ tag, id: 'ad' });
+      const { page, sent, input } = pageWith([frame], { focus: frame });
+
+      const error = await failureOf(typeText(page, 'NASDAQ:AAPL'));
+
+      expect(error.code).toBe('NOT_AVAILABLE');
+      expect(error.details).toEqual({ action: 'typeText', focused: `${tag}#ad` });
+      expect(error.message).toBe(
+        `Cannot type text: the focus is inside \`${tag}#ad\`, which this server cannot look into`,
+      );
+      expect(error.hint).toBe('Move the focus to an element of the page itself first.');
+      expect(input()).toEqual([]);
+      expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
+    },
+  );
+
+  test('refuses when the focus is inside a shadow root, which cannot be looked into', async () => {
+    // Even if the host is an input, what has the focus is something in its shadow tree.
+    const host = fakeElement({
+      tag: 'input',
+      id: 'host',
+      shadowFocus: fakeElement({ tag: 'input' }),
+    });
+    const { page, input } = pageWith([host], { focus: host });
+
+    const error = await failureOf(typeText(page, 'NASDAQ:AAPL'));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.details).toEqual({ action: 'typeText', focused: 'input#host' });
+    expect(input()).toEqual([]);
+  });
+
   test('refuses when focus is not an editable element', async () => {
     // Input.insertText types at the caret, which is only known to be in the focused element when
     // that element is a text field.
@@ -1706,6 +1809,36 @@ describe('pressKey', () => {
     ]);
   });
 
+  test.each(['iframe', 'frame', 'object', 'embed'])(
+    'refuses when the focus is on a <%s>, which cannot be looked into',
+    async (tag) => {
+      const frame = fakeElement({ tag, id: 'ad' });
+      const { page, sent, input } = pageWith([frame], { focus: frame });
+
+      const error = await failureOf(pressKey(page, 'Enter'));
+
+      expect(error.code).toBe('NOT_AVAILABLE');
+      expect(error.details).toEqual({ action: 'pressKey', focused: `${tag}#ad` });
+      expect(error.message).toBe(
+        `Cannot press a key: the focus is inside \`${tag}#ad\`, which this server cannot look into`,
+      );
+      expect(error.hint).toBe('Move the focus to an element of the page itself first.');
+      expect(input()).toEqual([]);
+      expect(sent.map(({ method }) => method)).toEqual(['Runtime.evaluate']);
+    },
+  );
+
+  test('refuses when the focus is inside a shadow root, which cannot be looked into', async () => {
+    const host = fakeElement({ id: 'host', shadowFocus: fakeElement({ tag: 'button' }) });
+    const { page, input } = pageWith([host], { focus: host });
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.details).toEqual({ action: 'pressKey', focused: 'div#host' });
+    expect(input()).toEqual([]);
+  });
+
   test('refuses a shortcut as well', async () => {
     const buy = fakeElement({ tag: 'button', matches: [BUY] });
     const { page, input } = pageWith([buy], { focus: buy });
@@ -1790,6 +1923,19 @@ describe('keys and text while a trading control has the focus', () => {
       expect(input()).toEqual([]);
     },
   );
+
+  test('say that a trading control is unsafe even when the focus is in a frame inside it', async () => {
+    const frame = fakeElement({ tag: 'iframe', id: 'ad' });
+    const group = fakeElement({ matches: ['[data-name="buy-sell-buttons"]'], children: [frame] });
+    const { page, input } = pageWith([group], { focus: frame });
+
+    const key = await failureOf(pressKey(page, 'Enter'));
+    const text = await failureOf(typeText(page, 'x'));
+
+    expect(key.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(text.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(input()).toEqual([]);
+  });
 
   test('look at the focus again for every key and every text', async () => {
     const canvas = fakeElement({ tag: 'canvas', matches: [PANE] });

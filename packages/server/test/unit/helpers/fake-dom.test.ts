@@ -222,6 +222,16 @@ describe('the fake DOM', () => {
     expect(fakeElement().type).toBe('');
   });
 
+  test('has no shadow root unless it is given one, and a shadow root reports its own focus', () => {
+    const inner = fakeElement();
+    const host = fakeElement({ shadowFocus: inner });
+    const emptyHost = fakeElement({ shadowFocus: null });
+
+    expect(fakeElement().shadowRoot).toBeNull();
+    expect(host.shadowRoot?.activeElement).toBe(inner);
+    expect(emptyHost.shadowRoot?.activeElement).toBeNull();
+  });
+
   test('is content-editable only when it is told so', () => {
     expect(fakeElement().isContentEditable).toBe(false);
     expect(fakeElement({ contentEditable: false }).isContentEditable).toBe(false);
