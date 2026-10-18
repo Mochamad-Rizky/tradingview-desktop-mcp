@@ -272,8 +272,9 @@ describe('typeText over CDP', () => {
     expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
   });
 
-  test('refuses when a trading field kept the caret and the focus is on a safe button', async () => {
-    // Chrome types at the caret, which stays in a field after the focus moved on to a button.
+  test('refuses when the focus is on a safe button, even with a trading field on the page', async () => {
+    // Chrome types at the caret, which can stay in a trading field after the focus moved on to a
+    // button. No caret is modeled here: no text is sent while the focus is on a button.
     const quantity = fakeElement({ tag: 'input', id: 'quantity' });
     const group = fakeElement({
       matches: ['[data-name="buy-sell-buttons"]'],

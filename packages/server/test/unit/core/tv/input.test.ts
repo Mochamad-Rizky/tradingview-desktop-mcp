@@ -953,33 +953,22 @@ describe('typeText', () => {
     }
   });
 
-  test('refuses when a trading field kept the caret and the focus is on a safe button', async () => {
-    // In Chrome a field keeps the caret when the focus moves on to a button, and Input.insertText
-    // types into the field that has the caret, not into the focused element (observed in Chrome
-    // 155, also after a real click on a toolbar button). The text must not reach the order
-    // quantity that way, so the fake session plays Chrome's part and records what the field gets.
+  test('refuses when the focus is on a safe button, even with a trading field on the page', async () => {
+    // Chrome types at the caret, and a field keeps the caret when the focus moves on to a button
+    // (seen in Chrome 155, also after a real click on a toolbar button), so text could still reach
+    // a trading field. Nothing here models a caret. The test shows that no text is sent while the
+    // focus is on a button, which is what keeps the text away from such a field.
     const quantity = fakeElement({ tag: 'input', id: 'quantity' });
     const group = fakeElement({
       matches: ['[data-name="buy-sell-buttons"]'],
       children: [quantity],
     });
     const toolbarButton = fakeElement({ tag: 'button', id: 'header-toolbar-symbol-search' });
-    const reachedTheField: string[] = [];
-    const { page, input } = pageWith(
-      [group, toolbarButton],
-      { focus: toolbarButton },
-      ({ method, params }) => {
-        if (method === 'Input.insertText') {
-          reachedTheField.push((params as { text: string }).text);
-        }
-        return {};
-      },
-    );
+    const { page, input } = pageWith([group, toolbarButton], { focus: toolbarButton });
 
     const error = await failureOf(typeText(page, '1000'));
 
     expect(error.code).toBe('NOT_AVAILABLE');
-    expect(reachedTheField).toEqual([]);
     expect(input()).toEqual([]);
   });
 
