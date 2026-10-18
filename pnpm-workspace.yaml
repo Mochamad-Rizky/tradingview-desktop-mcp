@@ -5,3 +5,10 @@ packages:
 # postinstall that validates and speeds up its prebuilt platform binary.
 allowBuilds:
   esbuild: true
+
+# @types/node follows the published runtime floor (Node 20.19), so type-checking rejects newer
+# Node APIs in src. Vitest 5 lists only @types/node ^22 || >=24 as its optional peer (the Node
+# versions it runs on), which would print a peer warning on every install.
+peerDependencyRules:
+  allowedVersions:
+    'vitest>@types/node': '20'
