@@ -34,10 +34,13 @@ export interface FakeElementOptions {
   children?: readonly FakeElement[];
   // What the element reports about itself. The tag is in lower case and defaults to 'div'. The
   // attributes answer getAttribute and do not make the element match a selector: that is what
-  // `matches` is for.
+  // `matches` is for. The type attribute also decides the type property, the way it does in a page.
   tag?: string;
   id?: string;
   attributes?: Readonly<Record<string, string>>;
+  // Whether the element is content-editable, which is what isContentEditable reports. Defaults to
+  // false.
+  contentEditable?: boolean;
 }
 
 export interface FakeComputedStyle {
@@ -46,6 +49,38 @@ export interface FakeComputedStyle {
 }
 
 const DEFAULT_RECT: FakeRect = { x: 10, y: 10, width: 100, height: 40 };
+
+// The types an input can have. A page reports any other value of the attribute, and a missing one,
+// as 'text'.
+const INPUT_TYPES: ReadonlySet<string> = new Set([
+  'button',
+  'checkbox',
+  'color',
+  'date',
+  'datetime-local',
+  'email',
+  'file',
+  'hidden',
+  'image',
+  'month',
+  'number',
+  'password',
+  'radio',
+  'range',
+  'reset',
+  'search',
+  'submit',
+  'tel',
+  'text',
+  'time',
+  'url',
+  'week',
+]);
+
+function inputType(attribute: string | undefined): string {
+  const type = attribute?.toLowerCase() ?? '';
+  return INPUT_TYPES.has(type) ? type : 'text';
+}
 
 // What the fake accepts as a selector: a comma-separated list whose parts are not empty and whose
 // attribute brackets are closed. Anything else throws the SyntaxError a browser throws. Commas
@@ -69,6 +104,10 @@ export class FakeElement {
   readonly tagName: string;
   // Like the property of an element, an empty string when there is none.
   readonly id: string;
+  readonly isContentEditable: boolean;
+  // The property of an input is its type normalized, so it is never empty. On any other element
+  // the property reflects the attribute, as it does on a link, and is empty without one.
+  readonly type: string;
   // Set by the parent when it is created, because children are built before their parent.
   parent: FakeElement | null = null;
   readonly #matches: ReadonlySet<string>;
@@ -90,6 +129,9 @@ export class FakeElement {
       attributes.set('id', options.id);
     }
     this.#attributes = attributes;
+    this.isContentEditable = options.contentEditable ?? false;
+    const typeAttribute = attributes.get('type');
+    this.type = this.localName === 'input' ? inputType(typeAttribute) : (typeAttribute ?? '');
     for (const child of this.children) {
       child.parent = this;
     }

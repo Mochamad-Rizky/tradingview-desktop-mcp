@@ -151,6 +151,31 @@ describe('the fake DOM', () => {
     expect(plain.getAttribute('id')).toBeNull();
   });
 
+  test('reports the type of an input like a page does: normalized, and text when unknown', () => {
+    const typeOf = (attributes?: Record<string, string>) =>
+      fakeElement({ tag: 'input', ...(attributes === undefined ? {} : { attributes }) }).type;
+
+    expect(typeOf()).toBe('text');
+    expect(typeOf({ type: 'search' })).toBe('search');
+    expect(typeOf({ type: 'SEARCH' })).toBe('search');
+    expect(typeOf({ type: 'checkbox' })).toBe('checkbox');
+    expect(typeOf({ type: 'datetime-local' })).toBe('datetime-local');
+    expect(typeOf({ type: 'foo' })).toBe('text');
+    expect(typeOf({ type: '' })).toBe('text');
+  });
+
+  test('reports the type attribute of any other element as it is, like a link does', () => {
+    expect(fakeElement({ tag: 'a', attributes: { type: 'text' } }).type).toBe('text');
+    expect(fakeElement({ tag: 'button' }).type).toBe('');
+    expect(fakeElement().type).toBe('');
+  });
+
+  test('is content-editable only when it is told so', () => {
+    expect(fakeElement().isContentEditable).toBe(false);
+    expect(fakeElement({ contentEditable: false }).isContentEditable).toBe(false);
+    expect(fakeElement({ contentEditable: true }).isContentEditable).toBe(true);
+  });
+
   test('has the body focused unless it is told otherwise, and the body holds the page', () => {
     const button = fakeElement({ matches: [BUTTON] });
     const panel = fakeElement({ matches: [PANEL], children: [fakeElement()] });
