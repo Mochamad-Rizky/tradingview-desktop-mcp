@@ -64,10 +64,13 @@ export class TvMcpError extends Error {
 }
 
 export class PlanLimitError extends TvMcpError {
-  // A message reported by TradingView itself is relayed unchanged (design spec 5.3, rule 3).
-  constructor(feature: string, limit: number, message?: string) {
+  // A message reported by TradingView itself is relayed unchanged (design spec 5.3, rule 3), and
+  // so is the hint of the page function that detected the limit.
+  constructor(feature: string, limit: number, message?: string, hint?: string) {
     super('PLAN_LIMIT', message ?? `Plan limit reached for ${feature} (limit: ${String(limit)})`, {
       details: { feature, limit },
+      // Left out, not set to undefined, to stay valid under exactOptionalPropertyTypes.
+      ...(hint === undefined ? {} : { hint }),
     });
     this.name = 'PlanLimitError';
   }

@@ -60,6 +60,42 @@ test('PlanLimitError relays a server-provided message unchanged', () => {
   expect(e.message).toBe('You can only add 2 indicators');
 });
 
+test('PlanLimitError puts a given hint in the payload next to its details', () => {
+  const e = new PlanLimitError(
+    'INDICATORS_ON_CHART',
+    2,
+    'You can only add 2 indicators',
+    'Remove an indicator before adding another',
+  );
+
+  expect(e.toPayload()).toStrictEqual({
+    code: 'PLAN_LIMIT',
+    message: 'You can only add 2 indicators',
+    hint: 'Remove an indicator before adding another',
+    details: { feature: 'INDICATORS_ON_CHART', limit: 2 },
+  });
+});
+
+test('PlanLimitError keeps its generated message when only a hint is given', () => {
+  const payload = new PlanLimitError(
+    'INDICATORS_ON_CHART',
+    2,
+    undefined,
+    'Remove an indicator before adding another',
+  ).toPayload();
+
+  expect(payload.hint).toBe('Remove an indicator before adding another');
+  expect(payload.message).toContain('INDICATORS_ON_CHART');
+});
+
+test('PlanLimitError payload has no hint key when none was given', () => {
+  const withGeneratedMessage = new PlanLimitError('INDICATORS_ON_CHART', 2);
+  const withGivenMessage = new PlanLimitError('INDICATORS_ON_CHART', 2, 'custom message');
+
+  expect(withGeneratedMessage.toPayload()).not.toHaveProperty('hint');
+  expect(withGivenMessage.toPayload()).not.toHaveProperty('hint');
+});
+
 test('TimeoutError reports TIMEOUT with the label and duration', () => {
   const e = new TimeoutError('Runtime.evaluate', 5000);
 
