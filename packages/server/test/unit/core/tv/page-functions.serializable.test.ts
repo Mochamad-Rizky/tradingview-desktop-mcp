@@ -120,6 +120,7 @@ const registered = Object.entries(pageFunctions);
 test('registers the page functions, so the checks below are not vacuous', () => {
   expect(registered.length).toBeGreaterThan(0);
   expect(Object.keys(pageFunctions)).toContain('readVisibilityState');
+  expect(Object.keys(pageFunctions)).toContain('describeElement');
   for (const [name, fn] of registered) {
     expect(typeof fn, name).toBe('function');
   }

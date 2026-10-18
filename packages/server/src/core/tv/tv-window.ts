@@ -21,7 +21,15 @@ export interface TvWindow {
   // The webpack chunk list, the way into the module registry (notes, section 4.7). Typed as a
   // plain list because nothing pushes to it yet.
   webpackChunktradingview?: unknown[];
-  document: Pick<Document, 'visibilityState'>;
+  // A real page has all of these. The DOM members are optional because the shared fake window
+  // models the chart API and no DOM, so page code checks for a member before it relies on it.
+  // querySelector is declared with the one signature page code uses: the DOM lib types it with a
+  // deprecated overload as well, and the linter reports any reference to a member like that.
+  document: Pick<Document, 'visibilityState'> & {
+    querySelector?(selectors: string): Element | null;
+    elementFromPoint?(x: number, y: number): Element | null;
+  };
+  getComputedStyle?: Window['getComputedStyle'];
   location: Pick<
     Location,
     'href' | 'origin' | 'protocol' | 'host' | 'hostname' | 'pathname' | 'search' | 'hash'
