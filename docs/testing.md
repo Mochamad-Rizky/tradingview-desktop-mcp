@@ -72,16 +72,27 @@ The end-to-end suites work on the user's own, logged-in app, so they follow thes
 
 - **What they may change:** the symbol, the timeframe, the chart type and the visible range of the
   active chart. Nothing else.
+- **What they check first:** before its first change, the chart suite checks by reading only that
+  the chart API has every member the chart tools use (`symbol`, `resolution`, `chartType`,
+  `getVisibleRange` and the three setters of the active chart, `zoomToBarsRange` of the time scale,
+  and the bar container), and that the chart can be put back as it is: the symbol and the timeframe
+  pass the input checks of `chart_set_symbol` and `chart_set_timeframe`, the chart type has a name
+  `chart_set_type` takes (id 11 and ids the tools do not know have none), and the visible range is
+  two times `chart_set_visible_range` takes, the earlier first. If either check fails, every test is
+  skipped with the reason and nothing is changed.
 - **How they restore it:** a suite takes a snapshot of those four (through `chart_get_state`) and of
-  the zoom of the time scale before its first test. Every test that changes the chart restores it in
-  a `finally` block, and asserts that the symbol, timeframe and chart type are back and that the
-  visible range is within one bar of where it was. After the last test the suite restores again
-  through the tools, then puts the zoom back exactly (bar spacing and right offset, which the tools
-  can only set to the nearest bar). Restoring runs whether the tests passed or failed.
+  the zoom of the time scale before its first test. Every test that changes the chart restores it
+  first thing after it ends, and asserts that the symbol, timeframe and chart type are back and that
+  the visible range is within one bar of where it was; a restore that fails after a failed test is
+  logged next to the test's own failure, which stays the one reported. After the last test the
+  suite restores again through the tools, then puts the zoom back exactly (bar spacing and right
+  offset, which the tools can only set to the nearest bar), each step tried whatever the other did.
+  Restoring runs whether the tests passed or failed.
 - **What they never touch:** drawings (no `drawing_clear_all`), indicators, alerts, layouts and
   layout switching, the Pine Editor, replay, watchlists, and anything that trades. They never click
-  or press keys (the tools take the chart API, and the interface fallbacks are covered by the
-  integration tests), never reload the tab, and never quit, launch or restart TradingView.
+  or press keys: the check above makes the chart tools take the chart API, so none of them falls
+  back to the interface (whose strategies the integration tests cover). They never reload the tab,
+  and never quit, launch or restart TradingView.
 - **The layout autosave** of TradingView saves the changed chart while a suite runs; the restore
   saves it back as it was.
 - **Plan limits:** a test that would exceed a limit of the user's plan is to be skipped with the

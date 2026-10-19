@@ -1,9 +1,26 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { z } from 'zod';
 import { loadConfig } from '../../src/config/load.js';
-import type { TvWindow } from '../../src/core/tv/tv-window.js';
+import type {
+  BarsLike,
+  ChartWidgetApiLike,
+  TimeScaleLike,
+  TvWindow,
+} from '../../src/core/tv/tv-window.js';
 import { createMcpServer } from '../../src/server.js';
-import { CHART_TYPE_NAMES_BY_ID } from '../../src/tools/chart/mappers.js';
+import {
+  chartSetSymbol,
+  chartSetTimeframe,
+  chartSetType,
+  chartSetVisibleRange,
+} from '../../src/tools/chart/index.js';
+import {
+  CHART_TYPE_NAMES_BY_ID,
+  normalizeTimeframe,
+  sameResolution,
+} from '../../src/tools/chart/mappers.js';
 import type { ToolContext } from '../../src/tools/types.js';
+import { parseTimeInput } from '../../src/utils/time.js';
 import { callTool, connectInMemoryClient, textOf } from '../helpers/mcp-client.js';
 import { quietLogger } from '../helpers/tool-context.js';
 
@@ -12,12 +29,14 @@ import { quietLogger } from '../helpers/tool-context.js';
 // and TV_CDP_PORT (127.0.0.1:9222 by default).
 //
 // A suite may change only the symbol, the timeframe, the chart type and the visible range of the
-// active chart. It snapshots them before its first test and restores them after its last one,
-// whether its tests passed or not, and a test that changes more than one of them restores them
-// itself as well. Restoring goes through the tools, so it is tested too; afterwards the zoom of the
-// view is put back exactly through the time scale, because the tools set a range in whole bars.
-// Nothing else of the app is touched: no drawing, indicator, alert, layout, Pine script, replay,
-// watchlist or trading control, and the app is never reloaded, quit or started.
+// active chart. Before it changes anything it checks, by reading only, that the chart API has what
+// the tools use (so that no tool falls back to clicks or typing) and that the chart can be put back
+// as it is (restorabilityProblems), and it skips its tests when either fails. It snapshots the four
+// before its first test and restores them after every test and after its last one, whether the
+// tests passed or not. Restoring goes through the tools, so it is tested too; afterwards the zoom
+// of the view is put back exactly through the time scale, because the tools set a range in whole
+// bars. Nothing else of the app is touched: no drawing, indicator, alert, layout, Pine script,
+// replay, watchlist or trading control, and the app is never reloaded, quit or started.
 
 export function e2eEnabled(): boolean {
   return process.env.TV_E2E === '1';
@@ -104,10 +123,86 @@ export async function readChartState(client: Client): Promise<ChartState> {
   return (await callOk<ChartState>(client, 'chart_get_state')).data;
 }
 
+// Whether `args` pass the input schema of a tool, as the registry parses them.
+function accepts(shape: z.ZodRawShape, args: Record<string, unknown>): boolean {
+  return z.object(shape).safeParse(args).success;
+}
+
+// A time the time tools take as it is: parseTimeInput gives back the same Unix seconds.
+function takenAsIs(time: number): boolean {
+  try {
+    return parseTimeInput(time) === time;
+  } catch {
+    return false;
+  }
+}
+
+// Why the chart could not be put back as `state` describes it, one reason each, or none. restoreChart
+// hands these values to chart_set_symbol, chart_set_timeframe, chart_set_type and
+// chart_set_visible_range, so each must pass the tool's own input schema and the checks its handler
+// makes: a symbol that is not blank, a timeframe normalizeTimeframe reads as the same one, a chart
+// type with a name (id 11 and any id the tools do not know have none), and a range of two times the
+// tools take as they are, the earlier first.
+export function restorabilityProblems(
+  state: Pick<ChartState, 'symbol' | 'resolution' | 'chartType' | 'visibleRange'>,
+): string[] {
+  const problems: string[] = [];
+  if (
+    !accepts(chartSetSymbol.inputSchema, { symbol: state.symbol }) ||
+    state.symbol.trim() === ''
+  ) {
+    problems.push(`chart_set_symbol does not take the symbol ${JSON.stringify(state.symbol)}`);
+  }
+  let timeframe: string | undefined;
+  try {
+    timeframe = normalizeTimeframe(state.resolution);
+  } catch {
+    timeframe = undefined;
+  }
+  if (
+    !accepts(chartSetTimeframe.inputSchema, { timeframe: state.resolution }) ||
+    timeframe === undefined ||
+    !sameResolution(timeframe, state.resolution)
+  ) {
+    problems.push(
+      `chart_set_timeframe does not take the timeframe ${JSON.stringify(state.resolution)}`,
+    );
+  }
+  const type = CHART_TYPE_NAMES_BY_ID[String(state.chartType)];
+  if (type === undefined || !accepts(chartSetType.inputSchema, { type })) {
+    problems.push(`chart_set_type has no name for the chart type ${String(state.chartType)}`);
+  }
+  const range = state.visibleRange;
+  if (range === null) {
+    problems.push('the chart reports no visible range');
+  } else if (
+    !accepts(chartSetVisibleRange.inputSchema, { from: range.from, to: range.to }) ||
+    !takenAsIs(range.from) ||
+    !takenAsIs(range.to) ||
+    !(range.from < range.to)
+  ) {
+    problems.push(
+      `chart_set_visible_range does not take the range from ${String(range.from)} to ${String(range.to)}`,
+    );
+  }
+  return problems;
+}
+
+// What snapshotChart throws for a chart it could not put back as it is.
+export class UnrestorableChartError extends Error {
+  constructor(readonly problems: string[]) {
+    super(`The chart could not be put back as it is: ${problems.join('; ')}`);
+    this.name = 'UnrestorableChartError';
+  }
+}
+
+// What the chart shows, for restoreChart to put back. A state restoreChart could not put back is
+// refused with UnrestorableChartError, before anything is changed.
 export async function snapshotChart(client: Client): Promise<ChartSnapshot> {
   const state = await readChartState(client);
-  if (state.visibleRange === null) {
-    throw new Error('The chart reports no visible range; wait until it has loaded its data');
+  const problems = restorabilityProblems(state);
+  if (problems.length > 0 || state.visibleRange === null) {
+    throw new UnrestorableChartError(problems);
   }
   return {
     symbol: state.symbol,
@@ -115,6 +210,56 @@ export async function snapshotChart(client: Client): Promise<ChartSnapshot> {
     chartType: state.chartType,
     visibleRange: { from: state.visibleRange.from, to: state.visibleRange.to },
   };
+}
+
+// The members of the active chart the chart tools use, through the chart API and the time scale,
+// that the page lacks. Without one, a tool would fall back to clicks and typing in the interface,
+// or have no way at all, so a suite that finds any missing does not run. It only reads.
+export function missingChartMembers(win: TvWindow): string[] {
+  const missing: string[] = [];
+  let chart: Partial<ChartWidgetApiLike> | undefined;
+  try {
+    chart = win.TradingViewApi?.activeChart();
+  } catch {
+    chart = undefined;
+  }
+  const api = [
+    'symbol',
+    'resolution',
+    'chartType',
+    'getVisibleRange',
+    'setSymbol',
+    'setResolution',
+    'setChartType',
+  ] as const;
+  for (const name of api) {
+    if (typeof chart?.[name] !== 'function') {
+      missing.push(`activeChart().${name}`);
+    }
+  }
+  let scale: Partial<TimeScaleLike> | undefined;
+  let bars: Partial<BarsLike> | undefined;
+  try {
+    const model = chart?._chartWidget?.model();
+    scale = model?.model().timeScale();
+    bars = model?.mainSeries().bars();
+  } catch {
+    scale = undefined;
+  }
+  if (typeof scale?.zoomToBarsRange !== 'function') {
+    missing.push('timeScale().zoomToBarsRange');
+  }
+  for (const name of ['firstIndex', 'lastIndex', 'valueAt'] as const) {
+    if (typeof bars?.[name] !== 'function') {
+      missing.push(`bars().${name}`);
+    }
+  }
+  return missing;
+}
+
+export async function findMissingChartMembers(ctx: ToolContext): Promise<string[]> {
+  const page = await ctx.connection.chartPage();
+  return page.bridge.evaluate(missingChartMembers, []);
 }
 
 // Puts the chart back as `snapshot` describes it, through the tools: the symbol, the timeframe and
