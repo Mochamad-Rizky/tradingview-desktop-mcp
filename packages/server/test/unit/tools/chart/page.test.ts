@@ -533,6 +533,20 @@ describe('setSymbolViaApi', () => {
     });
   });
 
+  test('setSymbolViaApi reports no listing when the symbol info of the series cannot be read', async () => {
+    const make = chart(({ series }) => {
+      Object.assign(series, {
+        symbolInfo: () => {
+          throw new Error('Not resolved yet');
+        },
+      });
+    });
+
+    const { result } = await resultOf(setSymbolViaApi, ['NASDAQ:MSFT', null, 5000], make);
+
+    expect(result).toMatchObject({ symbol: 'NASDAQ:MSFT', changed: true, listing: null });
+  });
+
   test('setSymbolViaApi does not trust the listing of a series flagged for an unknown symbol', async () => {
     const make = chart(({ series }) => {
       Object.assign(series, {
