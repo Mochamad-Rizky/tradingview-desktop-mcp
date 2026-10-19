@@ -38,6 +38,8 @@ export default defineConfig({
           name: 'e2e',
           include: ['test/e2e/**/*.e2e.test.ts'],
           testTimeout: 120_000,
+          // The snapshot and the restore around a suite switch symbols and wait for their data.
+          hookTimeout: 120_000,
           // E2E tests drive one real TradingView window, so files must never overlap.
           fileParallelism: false,
         },
