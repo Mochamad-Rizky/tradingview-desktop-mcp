@@ -10,6 +10,7 @@ import { createMcpServer, createServerDeps, type ServerDeps } from '../../src/se
 import { appTools } from '../../src/tools/app/index.js';
 import { batchTools } from '../../src/tools/batch/index.js';
 import { chartTools } from '../../src/tools/chart/index.js';
+import { dataTools } from '../../src/tools/data/index.js';
 import { createToolRegistry, registerToolsWithServer } from '../../src/tools/registry.js';
 import { defineTool, type ToolRegistry } from '../../src/tools/types.js';
 import { startFakeCdpServer } from '../helpers/fake-cdp/server.js';
@@ -28,10 +29,12 @@ import {
 } from '../helpers/tool-context.js';
 
 const HEALTH_URI = 'tradingview://app/health';
-// What a server offers when nothing narrows its tools: the tools of the app and of the chart, then
-// the batch.
+// What a server offers when nothing narrows its tools: the tools of the app, of the chart and of
+// market data, then the batch. Market depth is the one data tool outside the core profile.
 const APP_TOOL_NAMES = appTools.map(({ name }) => name);
 const CHART_TOOL_NAMES = chartTools.map(({ name }) => name);
+const DATA_TOOL_NAMES = dataTools.map(({ name }) => name);
+const CORE_DATA_TOOL_NAMES = DATA_TOOL_NAMES.filter((name) => name !== 'data_get_market_depth');
 
 // Everything a test starts is closed here, newest first, so a client goes before its server and a
 // connection manager before the fake app it talks to.
@@ -124,6 +127,7 @@ test('lists registered tools with descriptions and input schemas', async () => {
   expect(tools.map(({ name }) => name)).toEqual([
     ...APP_TOOL_NAMES,
     ...CHART_TOOL_NAMES,
+    ...DATA_TOOL_NAMES,
     'batch_run',
   ]);
   expect(tools.find(({ name }) => name === 'batch_run')).toMatchObject({
@@ -563,6 +567,7 @@ test('createMcpServer creates the dependencies it is not given', () => {
   expect(registry.list().map(({ name }) => name)).toEqual([
     ...APP_TOOL_NAMES,
     ...CHART_TOOL_NAMES,
+    ...DATA_TOOL_NAMES,
     'batch_run',
   ]);
 });
@@ -578,6 +583,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
   expect(toolsOf({ profile: 'core' })).toEqual([
     ...APP_TOOL_NAMES,
     ...CHART_TOOL_NAMES,
+    ...CORE_DATA_TOOL_NAMES,
     'batch_run',
   ]);
   expect(toolsOf({ profile: 'full', toolPatterns: ['batch_*'] })).toEqual(['batch_run']);
@@ -594,6 +600,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     'app_get_plan_limits',
     'chart_get_state',
     'chart_get_visible_range',
+    ...DATA_TOOL_NAMES,
   ]);
   expect(lines).toEqual([]);
 

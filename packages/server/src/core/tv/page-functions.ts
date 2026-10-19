@@ -10,6 +10,15 @@ import {
   setSymbolViaApi,
   zoomToTimeRange,
 } from '../../tools/chart/page.js';
+import {
+  readBarRows,
+  readCachedQuote,
+  readChartQuote,
+  readChartSymbolInfo,
+  readHistory,
+  requestHistory,
+  searchSymbolsViaApi,
+} from '../../tools/data/page.js';
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
@@ -31,14 +40,20 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   probeCapabilities,
   readAppInfo,
   readAppState,
+  readBarRows,
   readChartLayout,
+  readChartQuote,
   readChartSnapshot,
   readChartState,
+  readChartSymbolInfo,
+  readHistory,
   readUiState,
   readVisibilityState,
   readVisibleRange,
   reloadTab,
+  requestHistory,
   scrollToTime,
+  searchSymbolsViaApi,
   setChartTypeViaApi,
   setResolutionViaApi,
   setSymbolViaApi,
@@ -51,5 +66,6 @@ export const pageLibFunctions: Record<
   string,
   (win: TvWindow, lib: PageLib, ...args: never[]) => unknown
 > = {
+  readCachedQuote,
   readPlanLimits,
 };

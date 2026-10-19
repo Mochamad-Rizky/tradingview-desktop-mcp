@@ -35,19 +35,20 @@ import {
 // The tools that read and change what a chart shows (design spec 7, domain Chart): its symbol,
 // timeframe, type and visible range.
 
-// How every time input of the chart tools is described, word for word.
-const TIME_INPUT =
+// How every time input of the chart tools is described, word for word. The other domains that take
+// times or a chart index use these three as well.
+export const TIME_INPUT =
   'ISO 8601 date/time (e.g. 2024-01-31 or 2024-01-31T10:00:00Z) or Unix timestamp in ' +
   'seconds/milliseconds; compact forms like 20240131 are rejected';
 
 // A time as a client sends it, taken as written: parseTimeInput reads it in the handler, because a
 // schema that converted it would convert its own output again when the registry parses the input a
 // second time.
-function timeInput() {
+export function timeInput() {
   return z.union([z.string().min(1).max(64), z.number()]);
 }
 
-function chartIndexInput() {
+export function chartIndexInput() {
   return z
     .number()
     .int()

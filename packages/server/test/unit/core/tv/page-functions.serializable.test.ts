@@ -193,6 +193,17 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   ]) {
     expect(Object.keys(pageFunctions)).toContain(name);
   }
+  for (const name of [
+    'readHistory',
+    'requestHistory',
+    'readBarRows',
+    'readChartQuote',
+    'readChartSymbolInfo',
+    'searchSymbolsViaApi',
+  ]) {
+    expect(Object.keys(pageFunctions)).toContain(name);
+  }
+  expect(Object.keys(pageLibFunctions)).toContain('readCachedQuote');
   for (const { name, fn } of registered) {
     expect(typeof fn, name).toBe('function');
   }
@@ -310,6 +321,21 @@ describe('the checks catch what they are meant to', () => {
     expect(misuses.every((message) => message.includes('findExport'))).toBe(true);
     // Called with the library, it does not.
     expect(await libMisusesIn(libCall(source))).toEqual([]);
+  });
+
+  test('the default fake windows carry the quote cache modules, so a lib function runs past its lookups', async () => {
+    function callsModuleHelperAfterQuoteLookup(win: TvWindow, lib: PageLib): string | null {
+      const found = ['QUOTE_FIELDS_CACHE', 'getQuoteSessionNoEnsure', 'quoteSessionAdapters'].map(
+        (name) => lib.findExport(name),
+      );
+      return found.includes(null) ? null : formatSymbol('x');
+    }
+    const source = callsModuleHelperAfterQuoteLookup.toString();
+
+    expect(await referenceErrorsIn(libCall(source))).toEqual([
+      'formatSymbol is not defined',
+      'formatSymbol is not defined',
+    ]);
   });
 
   test('the default fake windows carry the plan feature modules, so a lib function runs past its lookups', async () => {

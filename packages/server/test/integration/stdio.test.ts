@@ -16,6 +16,7 @@ import { ToolEventBus } from '../../src/core/events.js';
 import { createMcpServer } from '../../src/server.js';
 import { appTools } from '../../src/tools/app/index.js';
 import { chartTools } from '../../src/tools/chart/index.js';
+import { dataTools } from '../../src/tools/data/index.js';
 import { startStdioTransport } from '../../src/transports/stdio.js';
 import { startFakeCdpServer, type FakeCdpServer } from '../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
@@ -71,6 +72,7 @@ describe('startStdioTransport', () => {
     expect(tools.map(({ name }) => name)).toEqual([
       ...appTools.map(({ name }) => name),
       ...chartTools.map(({ name }) => name),
+      ...dataTools.map(({ name }) => name),
       'batch_run',
     ]);
   });
