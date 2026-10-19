@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
@@ -21,6 +22,12 @@ export default defineConfig(
     // Tooling configs are plain JavaScript outside any tsconfig, so type-aware rules cannot run.
     files: ['**/*.{js,mjs,cjs}'],
     extends: [tseslint.configs.disableTypeChecked],
+  },
+  {
+    // The scripts at the repository root are plain Node programs outside any package, so ESLint has
+    // to be told that process, console and the timers exist there.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: globals.node },
   },
   {
     files: ['packages/*/src/**/*.{ts,tsx}'],
