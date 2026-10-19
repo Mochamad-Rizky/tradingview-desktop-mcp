@@ -9,6 +9,9 @@ export default defineConfig({
       // The bin entry only hands the process to runCli, which the tests run in process. The tests
       // that start the built CLI do so in child processes, which coverage does not see.
       exclude: ['src/cli.ts'],
+      // The table is for the log, lcov.info is what Codecov reads (the lcov reporter writes an HTML
+      // report next to it), and the summary is the totals as JSON for scripts and badges.
+      reporter: ['text', 'lcov', 'json-summary'],
       thresholds: {
         lines: 80,
         branches: 80,
