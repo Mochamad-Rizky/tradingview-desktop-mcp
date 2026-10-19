@@ -838,6 +838,19 @@ describe('zoomToTimeRange', () => {
     expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[10, 20]]);
   });
 
+  test('zoomToTimeRange stays on the one bar of a chart that has loaded a single bar', async () => {
+    const single: TvStateFixture = { ...fixture, bars: { ...fixture.bars, count: 1 } };
+
+    const { win } = await resultOf(
+      zoomToTimeRange,
+      [barTime(0) - HOUR, barTime(0) + HOUR, null],
+      chart(undefined, single),
+    );
+
+    // Neither the bar before nor the bar after is loaded, so the range does not reach for them.
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[0, 0]]);
+  });
+
   test('zoomToTimeRange takes the earlier bar when a time lies halfway between two', async () => {
     const { win } = await resultOf(
       zoomToTimeRange,
@@ -997,14 +1010,100 @@ describe('scrollToTime', () => {
   test('scrollToTime scrolls to the last bar and says so for a time after it', async () => {
     const { result, win } = await resultOf(scrollToTime, [1_800_000_000, 'center', null], chart());
 
-    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[LAST - 49, LAST + 50]]);
+    // Centered, the view would reach 50 bars past the data, so it ends at the last bar instead.
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[LAST - 99, LAST]]);
     expect(result).toMatchObject({
       time: barTime(LAST),
       warnings: [
         `The chart has no bars after ${toIso(barTime(LAST))}; the chart was scrolled to the last bar`,
+        'The view was moved to stay within the loaded bars, so the bar is not at the center of it',
       ],
     });
   });
+
+  test.each([
+    ['the start', 10, 'center', [0, 99], 'the center'],
+    ['the end', 280, 'center', [200, 299], 'the center'],
+    ['the start, for the right edge', 30, 'right', [0, 99], 'the right edge'],
+    ['the end, for the left edge', 250, 'left', [200, 299], 'the left edge'],
+  ] as const)(
+    'scrollToTime keeps the view within the loaded bars at %s',
+    async (_case, index, align, indices, place) => {
+      const { result, win } = await resultOf(scrollToTime, [barTime(index), align, null], chart());
+
+      expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([indices]);
+      expect(result).toMatchObject({
+        time: barTime(index),
+        warnings: [
+          `The view was moved to stay within the loaded bars, so the bar is not at ${place} of it`,
+        ],
+      });
+    },
+  );
+
+  test('scrollToTime narrows a view that is wider than the loaded bars', async () => {
+    const make = chart(({ timeScale }) => {
+      Object.assign(timeScale, { logicalRange: () => ({ from: -100, to: 400 }) });
+    });
+
+    const { result, win } = await resultOf(scrollToTime, [barTime(150), 'center', null], make);
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[0, LAST]]);
+    expect(result).toMatchObject({
+      warnings: ['The chart has only 300 bars loaded, so the view was narrowed to them'],
+    });
+  });
+
+  test('scrollToTime stays on the one bar of a chart that has loaded a single bar', async () => {
+    const single: TvStateFixture = { ...fixture, bars: { ...fixture.bars, count: 1 } };
+
+    const { result, win } = await resultOf(
+      scrollToTime,
+      [barTime(0), 'center', null],
+      chart(undefined, single),
+    );
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[0, 0]]);
+    expect(result).toMatchObject({
+      time: barTime(0),
+      warnings: ['The chart has only 1 bar loaded, so the view was narrowed to them'],
+    });
+  });
+
+  // The logical range counts the empty space after the last bar, which the visible range mapped to
+  // loaded bars does not.
+  test('scrollToTime takes the width of the view from the logical range of the time scale', async () => {
+    const make = chart(({ timeScale }) => {
+      Object.assign(timeScale, { logicalRange: () => ({ from: 100.4, to: 140.6 }) });
+    });
+
+    const { win } = await resultOf(scrollToTime, [barTime(99), 'center', null], make);
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[79, 119]]);
+  });
+
+  test.each([
+    ['answers nothing', () => null],
+    ['answers ends that are not numbers', () => ({ from: '1', to: '2' })],
+    ['has its ends the wrong way round', () => ({ from: 10, to: 5 })],
+    [
+      'throws',
+      () => {
+        throw new Error('Not ready');
+      },
+    ],
+  ])(
+    'scrollToTime takes the width from the visible range when the logical range %s',
+    async (_case, logicalRange) => {
+      const make = chart(({ timeScale }) => {
+        Object.assign(timeScale, { logicalRange });
+      });
+
+      const { win } = await resultOf(scrollToTime, [barTime(99), 'center', null], make);
+
+      expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[50, 149]]);
+    },
+  );
 
   test('scrollToTime scrolls to the first loaded bar and says so for a time before it', async () => {
     const { result } = await resultOf(scrollToTime, [1_600_000_000, 'left', null], chart());
@@ -1036,8 +1135,8 @@ describe('scrollToTime', () => {
   });
 
   test('scrollToTime keeps a width of at least one bar', async () => {
-    const make = chart(({ chart: target }) => {
-      Object.assign(target, { getVisibleRange: () => ({ from: barTime(5), to: barTime(5) }) });
+    const make = chart(({ timeScale }) => {
+      Object.assign(timeScale, { logicalRange: () => ({ from: 5, to: 5 }) });
     });
 
     const { win } = await resultOf(scrollToTime, [barTime(40), 'left', null], make);
@@ -1045,9 +1144,10 @@ describe('scrollToTime', () => {
     expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[40, 41]]);
   });
 
-  test('scrollToTime is unavailable, before it acts, when the chart does not report its visible range', async () => {
-    const make = chart(({ chart: target }) => {
+  test('scrollToTime is unavailable, before it acts, when the chart reports neither range', async () => {
+    const make = chart(({ chart: target, timeScale }) => {
       Object.assign(target, { getVisibleRange: () => ({ from: null, to: null }) });
+      Object.assign(timeScale, { logicalRange: () => null });
     });
 
     const { error, win } = await failureOfBoth(scrollToTime, [barTime(40), 'center', null], make);

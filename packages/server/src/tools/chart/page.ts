@@ -564,11 +564,12 @@ export function zoomToTimeRange(
   let fromIndex = nearest(from);
   let toIndex = nearest(to);
   // Both ends on one bar would ask for a view without width, so the range gets the next bar too,
-  // or the one before at the end of the data.
+  // or the one before at the end of the data. A single loaded bar has neither, and the range stays
+  // on it rather than reaching an index outside the loaded bars.
   if (toIndex <= fromIndex) {
     if (fromIndex < last) {
       toIndex = fromIndex + 1;
-    } else {
+    } else if (toIndex > first) {
       fromIndex = toIndex - 1;
     }
   }
@@ -579,11 +580,13 @@ export function zoomToTimeRange(
 }
 
 // Moves the chart so that the bar nearest to `time` (Unix seconds) is at the left edge, the center
-// or the right edge of the view, and keeps the zoom: the view keeps its width in bars, which is read
-// from the visible range. It zooms the core time scale to the new range of indices, as
-// zoomToTimeRange does, because where scrollToBar puts a bar is not recorded. A time outside the
-// loaded bars goes to the first or the last of them, with a warning. Answers the time of the bar and
-// the visible range afterwards.
+// or the right edge of the view, and keeps the zoom: the view keeps its width in bars, read from the
+// logical range of the time scale, which counts the empty space after the last bar too, or else
+// from the visible range mapped to bars. It zooms the core time scale to the new range of indices,
+// as zoomToTimeRange does, because where scrollToBar puts a bar is not recorded. The new range stays
+// within the loaded bars: near either end the view is moved, and a view wider than the loaded bars
+// is narrowed to them, each with a warning. A time outside the loaded bars goes to the first or the
+// last of them, with a warning too. Answers the time of the bar and the visible range afterwards.
 export function scrollToTime(
   win: TvWindow,
   time: number,
@@ -650,18 +653,6 @@ export function scrollToTime(
       },
     };
   }
-  const view = attempt(() => chart?.getVisibleRange?.()) as
-    { from?: unknown; to?: unknown } | null | undefined;
-  const viewFrom = number(view?.from);
-  const viewTo = number(view?.to);
-  if (viewFrom === null || viewTo === null) {
-    return {
-      __tvmcpError: {
-        code: 'CAPABILITY_UNAVAILABLE',
-        message: 'The chart does not report its visible range, so the zoom to keep is not known',
-      },
-    };
-  }
   const iso = (seconds: number): string =>
     new Date(Math.floor(seconds) * 1000).toISOString().replace('.000Z', 'Z');
   const nearest = (target: number): number => {
@@ -696,15 +687,57 @@ export function scrollToTime(
       `The chart has no bars after ${iso(lastTime)}; the chart was scrolled to the last bar`,
     );
   }
+  // The logical range is the view in bar units; its shape is not recorded, so it is used only when
+  // it has the two ends as numbers.
+  const logical = attempt(() => scale.logicalRange()) as
+    { from?: unknown; to?: unknown } | null | undefined;
+  const logicalFrom = number(logical?.from);
+  const logicalTo = number(logical?.to);
+  let width: number;
+  if (logicalFrom !== null && logicalTo !== null && logicalTo >= logicalFrom) {
+    width = Math.round(logicalTo - logicalFrom);
+  } else {
+    const view = attempt(() => chart?.getVisibleRange?.()) as
+      { from?: unknown; to?: unknown } | null | undefined;
+    const viewFrom = number(view?.from);
+    const viewTo = number(view?.to);
+    if (viewFrom === null || viewTo === null) {
+      return {
+        __tvmcpError: {
+          code: 'CAPABILITY_UNAVAILABLE',
+          message:
+            'The chart reports neither a logical nor a visible range, so the zoom to keep is not known',
+        },
+      };
+    }
+    width = nearest(viewTo) - nearest(viewFrom);
+  }
+
   const index = nearest(time);
-  const width = Math.max(nearest(viewTo) - nearest(viewFrom), 1);
-  let left = index - Math.floor(width / 2);
+  const wanted = Math.max(width, 1);
+  const span = Math.min(wanted, last - first);
+  let left = index - Math.floor(span / 2);
   if (align === 'left') {
     left = index;
   } else if (align === 'right') {
-    left = index - width;
+    left = index - span;
   }
-  scale.zoomToBarsRange(left, left + width);
+  // Moves the range back inside the loaded bars; it fits, because it is no wider than they are.
+  const shift = Math.max(first - left, 0) - Math.max(left + span - last, 0);
+  left += shift;
+  if (span < wanted) {
+    const count = last - first + 1;
+    warnings.push(
+      `The chart has only ${String(count)} bar${count === 1 ? '' : 's'} loaded, so the view was narrowed to them`,
+    );
+  } else if (shift !== 0) {
+    const place =
+      align === 'left' ? 'the left edge' : align === 'right' ? 'the right edge' : 'the center';
+    warnings.push(
+      `The view was moved to stay within the loaded bars, so the bar is not at ${place} of it`,
+    );
+  }
+  scale.zoomToBarsRange(left, left + span);
   const shown = attempt(() => chart?.getVisibleRange?.()) as
     { from?: unknown; to?: unknown } | null | undefined;
   return { time: timeAt(index), from: number(shown?.from), to: number(shown?.to), warnings };

@@ -1289,9 +1289,19 @@ describe('chart_scroll_to_date', () => {
     const late = await callTool(client, 'chart_scroll_to_date', { date: '2026-01-01' });
 
     expect(dataOf(right)).toMatchObject({ align: 'right', from: barTime(0), to: barTime(99) });
-    expect(dataOf(late)).toMatchObject({ time: barTime(LAST) });
+    // The view ends at the last bar instead of reaching past the data.
+    expect(dataOf(late)).toMatchObject({
+      time: barTime(LAST),
+      from: barTime(LAST - 99),
+      to: barTime(LAST),
+    });
     expect(warningsOf(late)).toEqual([
       'The chart has no bars after 2024-10-27T00:00:00Z; the chart was scrolled to the last bar',
+      'The view was moved to stay within the loaded bars, so the bar is not at the center of it',
+    ]);
+    expect(inspectFakeWindow(win).callsTo('timeScale.zoomToBarsRange')).toEqual([
+      [0, 99],
+      [LAST - 99, LAST],
     ]);
     expect(inspectFakeWindow(win).callsTo('timeScale.scrollToBar')).toEqual([]);
   });
@@ -1311,15 +1321,9 @@ describe('chart_scroll_to_date', () => {
   test('chart_scroll_to_date warns about what the chart did not report after the scroll', async () => {
     const win = createFakeTvWindow(fixture);
     const { chart } = chartOf(win);
-    const range = chart.getVisibleRange.bind(chart);
-    let reads = 0;
-    Object.assign(chart, {
-      // The first read gives the width of the view; the one after the scroll fails.
-      getVisibleRange: () => {
-        reads += 1;
-        return reads === 1 ? range() : { from: Number.NaN, to: Number.NaN };
-      },
-    });
+    // The width of the view comes from the logical range of the time scale, so the visible range is
+    // only read after the scroll, and that read fails.
+    Object.assign(chart, { getVisibleRange: () => ({ from: Number.NaN, to: Number.NaN }) });
     const series = chart._chartWidget.model().mainSeries();
     const bars = series.bars();
     Object.assign(series, {
