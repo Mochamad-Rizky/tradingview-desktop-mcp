@@ -34,6 +34,10 @@ export interface FakeTvOverrides {
   // a US stock (seen on the app), which 48_600 models. Default 0, where both are the same, as for
   // intraday bars. The visible range of the fixture is given in the times of the rows.
   sessionOffsetSeconds?: number;
+  // How many time points the time scale keeps after the last bar, for the empty space a chart
+  // shows there; dozens were seen on the app. They follow the last bar by the bar step. Default
+  // 0: the time scale ends at the last bar.
+  futurePoints?: number;
 }
 
 export interface FakeBars {
@@ -48,6 +52,8 @@ export interface FakeTimeScale {
   scrollToBar(index: number): void;
   timePointToIndex(time: number): number | null;
   logicalRange(): { left(): number; right(): number } | null;
+  // The indices of the time points, bars and the points after them.
+  points(): { range(): { value(): { firstIndex: number; lastIndex: number } | null } };
 }
 
 export interface FakeMainSeries {
@@ -73,7 +79,7 @@ export interface FakeChartWidgetApi {
   setResolution(resolution: string, options?: FakeSetOptions): Promise<true>;
   setChartType(chartType: number): Promise<void>;
   setVisibleRange(range: { from: number; to: number }): never;
-  // The time the chart reports for the bar at an index, or null for an index without a bar.
+  // The time the chart reports for the time point at an index, or null for an index without one.
   _convertIndexToPublicTime(index: number): number | null;
   readonly _chartWidget: {
     model(): { mainSeries(): FakeMainSeries; model(): { timeScale(): FakeTimeScale } };
@@ -178,8 +184,20 @@ export function createFakeTvWindow(
   const bars = syntheticBars(fixture.bars);
   const times = bars.map((bar) => bar[0]);
   const offset = overrides.sessionOffsetSeconds ?? 0;
-  // The times the chart reports for the bars: getVisibleRange speaks in these.
-  const publicTimes = times.map((time) => time - offset);
+  const lastTime = times.at(-1);
+  // The times of the time points: the bars, then the points after the last one.
+  const pointTimes =
+    lastTime === undefined
+      ? []
+      : [
+          ...times,
+          ...Array.from(
+            { length: overrides.futurePoints ?? 0 },
+            (_, index) => lastTime + (index + 1) * fixture.bars.stepSeconds,
+          ),
+        ];
+  // The times the chart reports for the time points: getVisibleRange speaks in these.
+  const publicTimes = pointTimes.map((time) => time - offset);
   const knownSymbols = new Set(fixture.knownSymbols);
   const calls: FakeCall[] = [];
   const state: FakeTvState = {
@@ -238,19 +256,31 @@ export function createFakeTvWindow(
     }
     return low;
   };
-  const nearestIndex = (time: number): number | null => nearestIn(times, time);
 
   // The bars a page sees: none while the series is flagged for an unknown symbol.
   const loaded = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : bars);
+  // The time points a page sees, which go with the bars.
+  const points = (): readonly number[] => (loaded().length === 0 ? [] : publicTimes);
 
-  // The time the chart reports for the bar nearest to an index. A zoom past the loaded history
-  // stays on the loaded bars. The real time scale can reach beyond them, but there is no data to
-  // report a time for.
+  // What timePointToIndex answers on the app, for a time in the time base of the rows: the index of
+  // the first time point at or after the time, the last point for a time after every point, and
+  // null when there are no points or the time is not a number.
+  const firstPointAtOrAfter = (time: number): number | null => {
+    const internal = loaded().length === 0 ? [] : pointTimes;
+    if (internal.length === 0 || Number.isNaN(time)) {
+      return null;
+    }
+    const index = internal.findIndex((pointTime) => pointTime >= time);
+    return index === -1 ? internal.length - 1 : index;
+  };
+
+  // The time the chart reports for the time point nearest to an index. A zoom past the time points
+  // stays on them. The real time scale can reach beyond them, but there is no time to report.
   const timeAtClamped = (index: number): number => {
     if (Number.isNaN(index)) {
       throw new RangeError('Bar index must be a number');
     }
-    const clamped = Math.min(Math.max(Math.round(index), 0), times.length - 1);
+    const clamped = Math.min(Math.max(Math.round(index), 0), publicTimes.length - 1);
     return publicTimes[clamped] ?? Number.NaN;
   };
 
@@ -267,23 +297,30 @@ export function createFakeTvWindow(
   const timeScale: FakeTimeScale = {
     zoomToBarsRange(fromIndex, toIndex) {
       record('timeScale.zoomToBarsRange', [fromIndex, toIndex]);
-      if (loaded().length > 0) {
+      // The app ignores a range whose ends are the wrong way round.
+      if (loaded().length > 0 && !(toIndex < fromIndex)) {
         state.visibleRange = { from: timeAtClamped(fromIndex), to: timeAtClamped(toIndex) };
       }
     },
     scrollToBar(index) {
       record('timeScale.scrollToBar', [index]);
     },
-    timePointToIndex: nearestIndex,
+    timePointToIndex: firstPointAtOrAfter,
     // An object with left() and right(), the shape of the app's logical range.
     logicalRange() {
       if (loaded().length === 0) {
         return null;
       }
-      const from = nearestIn(publicTimes, state.visibleRange.from);
-      const to = nearestIn(publicTimes, state.visibleRange.to);
+      const from = nearestIn(points(), state.visibleRange.from);
+      const to = nearestIn(points(), state.visibleRange.to);
       return from === null || to === null ? null : { left: () => from, right: () => to };
     },
+    points: () => ({
+      range: () => ({
+        value: () =>
+          points().length === 0 ? null : { firstIndex: 0, lastIndex: points().length - 1 },
+      }),
+    }),
   };
 
   const mainSeries: FakeMainSeries = {
@@ -331,7 +368,7 @@ export function createFakeTvWindow(
       throw new Error('Not implemented');
     },
     _convertIndexToPublicTime: (index) =>
-      Number.isInteger(index) && loaded().length > 0 ? (publicTimes[index] ?? null) : null,
+      Number.isInteger(index) ? (points()[index] ?? null) : null,
     _chartWidget: { model: () => chartModel },
   };
 

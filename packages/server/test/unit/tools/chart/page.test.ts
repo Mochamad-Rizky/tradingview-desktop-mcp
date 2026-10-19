@@ -878,6 +878,58 @@ describe('zoomToTimeRange', () => {
     expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[250, 280]]);
   });
 
+  // The time scale keeps time points after the last bar for the empty space a chart shows there,
+  // and getVisibleRange reports a range that reaches into it.
+  const afterLast = (index: number): number => barTime(LAST) + (index - LAST) * DAY;
+  const WITH_SPACE: FakeTvOverrides = { futurePoints: 30 };
+
+  test('zoomToTimeRange lets a range end in the empty space after the last bar', async () => {
+    const { result, win } = await resultOf(
+      zoomToTimeRange,
+      [barTime(250), afterLast(LAST + 20), null],
+      chart(undefined, fixture, WITH_SPACE),
+    );
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[250, LAST + 20]]);
+    expect(result).toStrictEqual({ from: barTime(250), to: afterLast(LAST + 20), warnings: [] });
+  });
+
+  test('zoomToTimeRange clamps a range that ends past the time points after the last bar', async () => {
+    const { result, win } = await resultOf(
+      zoomToTimeRange,
+      [barTime(250), afterLast(LAST + 50), null],
+      chart(undefined, fixture, WITH_SPACE),
+    );
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[250, LAST + 30]]);
+    expect(result).toMatchObject({
+      warnings: [
+        `The chart reaches no further than ${toIso(afterLast(LAST + 30))}; the range was clamped`,
+      ],
+    });
+  });
+
+  test('zoomToTimeRange ends a range at the last bar on a build that does not say where its time points end', async () => {
+    const make = chart(
+      ({ timeScale }) => {
+        Reflect.deleteProperty(timeScale, 'points');
+      },
+      fixture,
+      WITH_SPACE,
+    );
+
+    const { result, win } = await resultOf(
+      zoomToTimeRange,
+      [barTime(250), afterLast(LAST + 20), null],
+      make,
+    );
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[250, LAST]]);
+    expect(result).toMatchObject({
+      warnings: [`The chart has no bars after ${toIso(barTime(LAST))}; the range was clamped`],
+    });
+  });
+
   test('zoomToTimeRange moves the chart at chartIndex', async () => {
     const { win } = await resultOf(zoomToTimeRange, [barTime(10), barTime(20), 0], chart());
 

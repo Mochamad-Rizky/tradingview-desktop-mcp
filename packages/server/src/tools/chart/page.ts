@@ -475,8 +475,10 @@ export function readVisibleRange(
 // in which getVisibleRange speaks too: the chart reports a daily bar as its day at 00:00 UTC, while
 // the row of the bar holds the start of its session, 13:30 UTC for a US stock (seen on the app), so
 // a search over the rows would land a day early. A build that cannot convert an index is searched
-// by its rows. A time before the first loaded bar or after the last one is clamped to it, with a
-// warning. Answers the visible range afterwards, and NOT_AVAILABLE while no bar is loaded.
+// by its rows. The start of a range is clamped to the loaded bars, and its end may reach into the
+// empty space the chart keeps after the last bar, as far as the time scale goes; a time beyond
+// either is clamped, with a warning. Answers the visible range afterwards, and NOT_AVAILABLE while
+// no bar is loaded.
 export function zoomToTimeRange(
   win: TvWindow,
   from: number,
@@ -552,16 +554,17 @@ export function zoomToTimeRange(
   // Whole seconds without milliseconds, the way the tools write every time.
   const iso = (time: number): string =>
     new Date(Math.floor(time) * 1000).toISOString().replace('.000Z', 'Z');
-  const nearest = (time: number): number => {
+  // The index from `first` to `upper` whose time is nearest to `time`, the earlier one on a tie.
+  const nearest = (time: number, upper: number): number => {
     if (!(time > firstTime)) {
       return first;
     }
-    if (!(time < lastTime)) {
-      return last;
+    if (!(time < timeAt(upper))) {
+      return upper;
     }
-    // The bar at `low` is earlier than `time`, and the bar at `high` is not.
+    // The point at `low` is earlier than `time`, and the point at `high` is not.
     let low = first;
-    let high = last;
+    let high = upper;
     while (high - low > 1) {
       const middle = Math.floor((low + high) / 2);
       if (timeAt(middle) < time) {
@@ -572,16 +575,36 @@ export function zoomToTimeRange(
     }
     return time - timeAt(low) <= timeAt(high) - time ? low : high;
   };
+  // The time scale keeps time points after the last bar for the empty space a chart shows there,
+  // and getVisibleRange reports a range that reaches into it (seen on the app). The end of a range
+  // may lie there too, so that a range read from the chart can be set again; only an end past the
+  // last of those points is clamped. A build that does not say where its time points end, or that
+  // cannot tell their times, ends a range at the last bar.
+  const points = attempt(() => scale.points?.().range().value()) as
+    { lastIndex?: unknown } | null | undefined;
+  const lastPoint = points?.lastIndex;
+  const reach =
+    typeof lastPoint === 'number' &&
+    Number.isInteger(lastPoint) &&
+    lastPoint > last &&
+    Number.isFinite(timeAt(lastPoint))
+      ? lastPoint
+      : last;
+  const reachTime = timeAt(reach);
 
   const warnings: string[] = [];
   if (from < firstTime) {
     warnings.push(`History before ${iso(firstTime)} is not loaded; the range was clamped`);
   }
-  if (to > lastTime) {
-    warnings.push(`The chart has no bars after ${iso(lastTime)}; the range was clamped`);
+  if (to > reachTime) {
+    warnings.push(
+      reach === last
+        ? `The chart has no bars after ${iso(lastTime)}; the range was clamped`
+        : `The chart reaches no further than ${iso(reachTime)}; the range was clamped`,
+    );
   }
-  let fromIndex = nearest(from);
-  let toIndex = nearest(to);
+  let fromIndex = nearest(from, last);
+  let toIndex = nearest(to, reach);
   // Both ends on one bar would ask for a view without width, so the range gets the next bar too,
   // or the one before at the end of the data. A single loaded bar has neither, and the range stays
   // on it rather than reaching an index outside the loaded bars.

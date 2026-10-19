@@ -155,10 +155,20 @@ export type BarRow = [
 export interface TimeScaleLike {
   zoomToBarsRange(fromIndex: number, toIndex: number): void;
   scrollToBar(index: number): void;
-  // The index of the bar at a time in Unix seconds.
+  // The index of the first time point at or after a time in Unix seconds, in the time base of the
+  // bar rows: the last point for a time after every point, and null without points (seen on the
+  // app). A time between two bars gives the later one.
   timePointToIndex(time: number): number | null;
+  // The indices of the time points: the bars, then the points the time scale keeps after the last
+  // bar for the empty space a chart shows there (dozens were seen). Internal, like the time
+  // scale.
+  points?(): TimePointsLike;
   // The view in bar units, or null before the chart has laid out its bars.
   logicalRange(): LogicalRangeLike | null;
+}
+
+export interface TimePointsLike {
+  range(): { value(): { firstIndex: number; lastIndex: number } | null };
 }
 
 // What logicalRange() answers on the app: left() and right() are the first and the last bar index

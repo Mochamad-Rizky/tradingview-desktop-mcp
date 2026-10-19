@@ -409,9 +409,11 @@ export const chartSetVisibleRange = defineTool({
   description:
     'Changes which period a chart shows. Give either from and to (the chart then shows the ' +
     'loaded bars nearest to them), or a preset of the date range bar under the chart, not both. ' +
-    'A range is set through the time scale of the chart; a time before the first loaded bar or ' +
-    'after the last one is clamped to the loaded bars, with a warning, because TradingView loads ' +
-    'older history only on demand. A preset is clicked in the date range bar of the active chart, ' +
+    'A range is set through the time scale of the chart. Its end may lie in the empty space the ' +
+    'chart keeps after the last bar, as chart_get_visible_range reports it, so a range read there ' +
+    'can be set again; a time before the first loaded bar, or past that space, is clamped, with a ' +
+    'warning, because TradingView loads older history only on demand. A preset is clicked in the ' +
+    'date range bar of the active chart, ' +
     'and TradingView then also picks a timeframe that suits the range: the result reports it ' +
     '(resolution) and warns when it changed. Returns the visible range afterwards: from and to in ' +
     'Unix seconds and as ISO strings (fromIso, toIso, UTC), plus preset and resolution for a ' +

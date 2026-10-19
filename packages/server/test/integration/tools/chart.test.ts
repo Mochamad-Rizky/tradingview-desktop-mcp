@@ -1421,6 +1421,30 @@ describe('chart_set_visible_range', () => {
     expect(warningsOf(result)).toEqual([]);
   });
 
+  test('chart_set_visible_range sets again a range that reaches past the last bar', async () => {
+    const win = createFakeTvWindow(fixture, { futurePoints: 40 });
+    // The view of a chart with empty space after its last bar, as TradingView shows one.
+    chartOf(win).chart._chartWidget.model().model().timeScale().zoomToBarsRange(200, 319);
+    const { client } = await startHarness({ win });
+    const read = dataOf(await callTool(client, 'chart_get_visible_range')) as {
+      from: number;
+      to: number;
+    };
+
+    const result = await callTool(client, 'chart_set_visible_range', {
+      from: read.from,
+      to: read.to,
+    });
+
+    expect(read.to).toBe(barTime(319));
+    expect(inspectFakeWindow(win).callsTo('timeScale.zoomToBarsRange')).toEqual([
+      [200, 319],
+      [200, 319],
+    ]);
+    expect(dataOf(result)).toEqual(read);
+    expect(warningsOf(result)).toEqual([]);
+  });
+
   test('chart_set_visible_range takes Unix seconds and milliseconds as well', async () => {
     const win = createFakeTvWindow(fixture);
     const { client } = await startHarness({ win });

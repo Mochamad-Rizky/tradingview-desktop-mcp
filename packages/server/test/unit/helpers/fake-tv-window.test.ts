@@ -366,23 +366,31 @@ describe('createFakeTvWindow', () => {
       return time;
     };
 
-    test('maps a time to the index of the nearest bar', () => {
+    // As on the app: the first time point at or after the time, not the nearest one.
+    test('maps a time to the first time point at or after it', () => {
       const scale = timeScaleOf(createFakeTvWindow(fixture));
 
       expect(scale.timePointToIndex(timeAt(10))).toBe(10);
-      expect(scale.timePointToIndex(timeAt(10) + 100)).toBe(10);
-      expect(scale.timePointToIndex(timeAt(10) + 50_000)).toBe(11);
-      expect(scale.timePointToIndex(timeAt(10) - 50_000)).toBe(9);
-      expect(scale.timePointToIndex(timeAt(10) + DAY / 2)).toBe(10);
+      expect(scale.timePointToIndex(timeAt(10) + 100)).toBe(11);
+      expect(scale.timePointToIndex(timeAt(10) - 50_000)).toBe(10);
       expect(scale.timePointToIndex(timeAt(0) - 5 * DAY)).toBe(0);
       expect(scale.timePointToIndex(timeAt(299) + 5 * DAY)).toBe(299);
+      expect(scale.timePointToIndex(Number.POSITIVE_INFINITY)).toBe(299);
     });
 
-    test('has no index for a time that is not a number', () => {
-      const scale = timeScaleOf(createFakeTvWindow(fixture));
+    test('maps a time after the last bar to the time points after it, when there are some', () => {
+      const scale = timeScaleOf(createFakeTvWindow(fixture, { futurePoints: 30 }));
 
-      expect(scale.timePointToIndex(Number.NaN)).toBeNull();
-      expect(scale.timePointToIndex(Number.POSITIVE_INFINITY)).toBeNull();
+      expect(scale.timePointToIndex(timeAt(299) + 5 * DAY)).toBe(304);
+      expect(scale.timePointToIndex(timeAt(299) + 90 * DAY)).toBe(329);
+    });
+
+    test('has no index for a time that is not a number, or without bars', async () => {
+      const win = createFakeTvWindow(fixture);
+
+      expect(timeScaleOf(win).timePointToIndex(Number.NaN)).toBeNull();
+      await chartOf(win).setSymbol('NOSUCH:SYMBOL');
+      expect(timeScaleOf(win).timePointToIndex(timeAt(10))).toBeNull();
     });
 
     test('starts from the visible range of the fixture', () => {
@@ -447,6 +455,45 @@ describe('createFakeTvWindow', () => {
         to: timeAt(280) - offset,
       });
       expect(endsOf(timeScaleOf(win).logicalRange())).toEqual([250, 280]);
+    });
+
+    test('keeps time points after the last bar, when asked to', () => {
+      const win = createFakeTvWindow(fixture, { futurePoints: 30 });
+      const scale = timeScaleOf(win);
+
+      expect(scale.points().range().value()).toEqual({ firstIndex: 0, lastIndex: 329 });
+      expect(chartOf(win)._convertIndexToPublicTime(310)).toBe(timeAt(299) + 11 * DAY);
+      expect(seriesOf(win).bars().valueAt(310)).toBeNull();
+
+      scale.zoomToBarsRange(250, 320);
+
+      expect(chartOf(win).getVisibleRange()).toEqual({
+        from: timeAt(250),
+        to: timeAt(299) + 21 * DAY,
+      });
+      expect(endsOf(scale.logicalRange())).toEqual([250, 320]);
+
+      scale.zoomToBarsRange(250, 400);
+
+      expect(chartOf(win).getVisibleRange().to).toBe(timeAt(299) + 30 * DAY);
+    });
+
+    test('has time points up to the last bar by default, and none without bars', async () => {
+      const win = createFakeTvWindow(fixture);
+
+      expect(timeScaleOf(win).points().range().value()).toEqual({ firstIndex: 0, lastIndex: 299 });
+      await chartOf(win).setSymbol('NOSUCH:SYMBOL');
+      expect(timeScaleOf(win).points().range().value()).toBeNull();
+      expect(chartOf(win)._convertIndexToPublicTime(10)).toBeNull();
+    });
+
+    test('zoomToBarsRange leaves the view alone when its ends are the wrong way round', () => {
+      const win = createFakeTvWindow(fixture);
+
+      timeScaleOf(win).zoomToBarsRange(280, 250);
+
+      expect(chartOf(win).getVisibleRange()).toEqual(fixture.visibleRange);
+      expect(inspectFakeWindow(win).callsTo('timeScale.zoomToBarsRange')).toEqual([[280, 250]]);
     });
 
     test('converts no index that has no bar', () => {
