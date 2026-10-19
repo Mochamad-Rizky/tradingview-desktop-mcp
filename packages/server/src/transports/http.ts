@@ -40,6 +40,10 @@ export interface HttpTransportOptions {
   sessionIdleTimeoutMs?: number;
 }
 
+// Shorter tokens draw a warning at startup: the endpoint may be tunnelled to the internet, where a
+// short secret can be guessed. openssl rand -hex 32, which the hints suggest, gives 64 characters.
+const MIN_TOKEN_LENGTH = 32;
+
 // A client that goes away without deleting its session would keep its server forever otherwise.
 // Half an hour is longer than a user takes to answer a model, so a live session is never cut off.
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -168,6 +172,15 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     throw new TvMcpError('INVALID_INPUT', 'TV_MCP_AUTH_TOKEN is required for the HTTP transport', {
       hint: 'Set TV_MCP_AUTH_TOKEN to a random secret, or use the stdio transport.',
     });
+  }
+  if (token.length < MIN_TOKEN_LENGTH) {
+    // Neither the token nor its length: both would help someone who guesses it.
+    logger.warn(
+      { minimumLength: MIN_TOKEN_LENGTH },
+      `TV_MCP_AUTH_TOKEN is shorter than ${String(MIN_TOKEN_LENGTH)} characters. Whoever holds ` +
+        'it can control TradingView, and a tunnel can expose this endpoint: use a long random ' +
+        'secret, such as the output of "openssl rand -hex 32"',
+    );
   }
   const idleTimeoutMs = options.sessionIdleTimeoutMs ?? SESSION_IDLE_TIMEOUT_MS;
   // Sessions by id, from the moment the SDK starts them.

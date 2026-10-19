@@ -642,3 +642,22 @@ test('refuses to start without a token', async () => {
   expect(error.code).toBe('INVALID_INPUT');
   expect(error.message).toContain('TV_MCP_AUTH_TOKEN');
 });
+
+// The endpoint may be tunnelled to the internet, where a short token can be guessed.
+test('warns at startup when the token is shorter than 32 characters, without naming it', async () => {
+  const { lines } = await start({ authToken: 'short-but-real' });
+
+  expect(lines).toContainEqual(
+    expect.objectContaining({
+      level: 40,
+      msg: expect.stringMatching(/TV_MCP_AUTH_TOKEN is shorter than 32 characters/) as string,
+    }),
+  );
+  expect(JSON.stringify(lines)).not.toContain('short-but-real');
+});
+
+test('does not warn about a token of 32 characters', async () => {
+  const { lines } = await start({ authToken: 'k'.repeat(32) });
+
+  expect(lines.filter((line) => line.level === 40)).toEqual([]);
+});

@@ -45,8 +45,9 @@ a password.
 The default transport is stdio, which opens nothing on the network. The HTTP transport
 (`--transport http`) listens on `127.0.0.1:8787` by default and needs `TV_MCP_AUTH_TOKEN`.
 
-- Use a strong random token, for example the output of `openssl rand -hex 32`. Whoever holds it can
-  control your TradingView through the server, so it is as sensitive as the debug port.
+- Use a strong random token of at least 32 characters, for example the output of
+  `openssl rand -hex 32`; the server warns on stderr when it starts with a shorter one. Whoever holds
+  it can control your TradingView through the server, so it is as sensitive as the debug port.
 - The token comes from the environment only. There is no flag for it, because command lines show in
   process lists.
 - Send the token as `Authorization: Bearer <token>`. The `/mcp/<token>` form exists for connector
