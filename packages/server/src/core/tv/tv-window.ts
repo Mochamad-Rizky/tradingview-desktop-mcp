@@ -124,9 +124,10 @@ export interface SeriesLike {
   // The live quote: last_price, bid, ask, bid_size, ask_size, change, change_percent, low_price,
   // lp_time, currency_code and fundamentals.
   quotes(): Record<string, unknown>;
-  // Whether the last symbol change failed to resolve, in which case dataReady does not run. The
-  // notes do not record this member: it models how the app treats an unknown symbol, and is still
-  // to be confirmed on the real app.
+  // Whether the symbol the series was given could not be resolved, in which case dataReady does not
+  // run: the series status is InvalidSymbol (seen on the app). It turns true about 150 ms after
+  // setSymbol is given an unknown symbol, while symbol() keeps the text as set and symbolInfo()
+  // stays null.
   isSymbolInvalid(): boolean;
 }
 

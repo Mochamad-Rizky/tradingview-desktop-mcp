@@ -273,8 +273,9 @@ Seen on the app (probe script, chart-change experiments with an exact restore, a
 
 - `symbol()` is the `full_name` of the series' symbol info, which names the exchange of the **data feed**: on an
   account whose US stock data comes from Cboe, `setSymbol("NASDAQ:AAPL")` ends on `BATS:AAPL` while `pro_name` stays
-  `NASDAQ:AAPL` (delayed feeds look like `BATS_DLY:AAPL`). Right after `setSymbol`, `symbol()` returns the text as it
-  was set, and changes to the feed's name once the symbol is resolved.
+  `NASDAQ:AAPL`. Right after `setSymbol`, `symbol()` returns the text as it was set, and changes to the feed's name
+  once the symbol is resolved. (For illustration only: a delayed feed adds `_DLY` to the exchange, as in
+  `BATS_DLY:AAPL`, which the symbol info of AAPL lists among its `alternatives`; AAPL itself was seen as `BATS:AAPL`.)
 - `setSymbol(symbol, {dataReady})` returns a promise. When `symbol` equals `symbol()` or the series "resolved" it
   already (`symbolSameAsResolved`, which matched both `NASDAQ:AAPL` and `BATS:AAPL` while `BATS:AAPL` was shown), it
   calls `dataReady` at once and loads nothing. Otherwise it activates the chart unless `doNotActivateChart` is given,
@@ -289,9 +290,10 @@ Seen on the app (probe script, chart-change experiments with an exact restore, a
   symbol) it answers `{from: 0, to: 0}`.
 - `_convertIndexToPublicTime(index)` (internal) is the conversion `getVisibleRange` uses. It answers for the time
   points after the last bar too, and `null` while the series has no symbol info.
-- `setResolution` changes `resolution()` at once and calls `dataReady` after the data (200 to 550 ms), or at once when
-  the resolution is unchanged. `setChartType` changes `chartType()` at once and returns a promise that settles once
-  the style is drawn (4 ms for line, about 400 ms for Heikin Ashi).
+- `setResolution` activates the chart unless `doNotActivateChart` is given, changes `resolution()` at once and calls
+  `dataReady` after the data (200 to 550 ms), or at once, changing nothing, when the resolution is unchanged or cannot
+  be normalized. `setChartType` changes `chartType()` at once and returns a promise that settles once the style is
+  drawn (4 ms for line, about 400 ms for Heikin Ashi).
 - `getAllShapes()` answers `{id, name}` with the tool type as `name` (`rectangle`, `horizontal_line`, `text`), and
   `getAllStudies()` answers `{id, name}` with the study title as `name` and six-character ids. Neither carries the
   text of a drawing.
@@ -704,8 +706,10 @@ These are resolved during implementation of the corresponding domain, each with 
     of the current interval was seen, without `data-value`.
 13. Whether the fullscreen button shows its state, and whether `startFullscreen()` uses the browser's Fullscreen API.
 14. Whether order tickets and context menus open inside `#overlap-manager-root` (none was open).
-15. `setSymbol` on `chart(i)` activates that chart unless `doNotActivateChart` is passed (seen in its body), and
-    `setResolution` may do the same. Not exercised: the analysis plan allows one chart per layout.
+15. `setSymbol` and `setResolution` on `chart(i)` activate that chart unless `doNotActivateChart` is passed (seen in
+    their bodies), so the server passes it when a call names a chart. How the app behaves with several charts was not
+    exercised: the analysis plan allows one chart per layout. `setResolution` also calls `dataReady` at once, changing
+    nothing, for a resolution it cannot normalize.
 16. Whether the public `chartWidget()` and `chartModel()` lead to the same objects as `_chartWidget`.
 
 Answered while the foundation was built, with the probe script and the end-to-end suites: how an unknown symbol shows,
