@@ -6,6 +6,9 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**'],
+      // The bin entry only hands the process to runCli, which the tests run in process. The tests
+      // that start the built CLI do so in child processes, which coverage does not see.
+      exclude: ['src/cli.ts'],
       thresholds: {
         lines: 80,
         branches: 80,

@@ -1,6 +1,8 @@
+import type { Readable, Writable } from 'node:stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 // An SDK client connected to `server` through a linked pair of in-memory transports. Requests go
@@ -11,6 +13,19 @@ export async function connectInMemoryClient(server: McpServer): Promise<Client> 
   await server.connect(serverTransport);
   const client = new Client({ name: 'tradingview-mcp-tests', version: '0.0.0' });
   await client.connect(clientTransport);
+  return client;
+}
+
+// An SDK client on the other end of the streams a stdio server was given: it reads what the server
+// writes to its stdout and writes to the server's stdin. The SDK's stdio transport is only
+// newline-delimited JSON over two streams, so it serves the client side as well. Closing the client
+// leaves the server's stdin open; end it to make the server see its client go away.
+export async function connectStdioClient(
+  serverStdout: Readable,
+  serverStdin: Writable,
+): Promise<Client> {
+  const client = new Client({ name: 'tradingview-mcp-tests', version: '0.0.0' });
+  await client.connect(new StdioServerTransport(serverStdout, serverStdin));
   return client;
 }
 

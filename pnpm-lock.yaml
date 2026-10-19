@@ -230,6 +230,9 @@ importers:
       devtools-protocol:
         specifier: ^0.0.1721318
         version: 0.0.1721318
+      picocolors:
+        specifier: ^1.1.1
+        version: 1.1.1
       pino:
         specifier: ^10.4.0
         version: 10.4.0
