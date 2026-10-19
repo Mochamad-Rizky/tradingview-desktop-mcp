@@ -46,6 +46,10 @@ export function readAppInfo(win: TvWindow): {
 // Where readUiState looks, as the notes record it (sections 5.1 to 5.4). The page function cannot
 // import the selectors, so they are handed in with every call.
 //
+// - widgetPages, minPanelWidth: the pages of the right panel, and how wide they are at least once
+//   the panel is open. The widget bar holds the toolbar on the right edge too and stays shown while
+//   the panel is collapsed, its pages then being a border of 1 px (seen on the app), so the pages
+//   tell whether the panel is open; any panel is far wider than the 50 px asked for.
 // - widgets: the widgets that can show in the right panel, by the type the page gives them, in the
 //   order they are tried. The details of a symbol come last because they show next to the
 //   watchlist, which is the one to report when both are there.
@@ -53,6 +57,8 @@ export function readAppInfo(win: TvWindow): {
 //   is never read: it can hold the name of a layout or of a script.
 export const UI_STATE_SELECTORS = {
   widgetBar: SELECTORS.widgets.widgetBar,
+  widgetPages: SELECTORS.widgets.widgetBarTabs,
+  minPanelWidth: 50,
   widgets: {
     watchlist: SELECTORS.widgets.watchlist,
     alerts: SELECTORS.widgets.alerts,
@@ -72,8 +78,9 @@ export const UI_STATE_SELECTORS = {
 // a best-effort reading of a page whose markup is not published, so what it cannot see counts as
 // closed:
 // - A panel or widget is open when its element has a box and is neither display: none nor
-//   visibility: hidden. A page without getComputedStyle is judged by the box alone. Only the
-//   widget bar tells whether the right panel is open, and a widget is reported only while it is.
+//   visibility: hidden. A page without getComputedStyle is judged by the box alone. The right panel
+//   is open when the widget bar is and its pages are at least minPanelWidth wide (a page without
+//   such pages is judged by the bar alone), and a widget is reported only while it is open.
 // - Fullscreen is on when the browser's own fullscreen mode is, or when the fullscreen button is
 //   pressed. The replay toolbar and the Pine Editor are on when their buttons are pressed. A
 //   button is pressed when it says so through aria-pressed or aria-selected, whether or not the
@@ -88,6 +95,8 @@ export function readUiState(
   win: TvWindow,
   selectors: {
     widgetBar: string;
+    widgetPages: string;
+    minPanelWidth: number;
     widgets: Record<string, string>;
     bottomArea: string;
     overlapRoot: string;
@@ -153,7 +162,11 @@ export function readUiState(
     return null;
   };
 
-  const rightPanelOpen = isOpen(selectors.widgetBar);
+  const panelPages = find(selectors.widgetPages);
+  const rightPanelOpen =
+    isOpen(selectors.widgetBar) &&
+    (panelPages === null ||
+      (isShown(panelPages) && panelPages.getBoundingClientRect().width >= selectors.minPanelWidth));
   let activeWidget: string | null = null;
   if (rightPanelOpen) {
     for (const [name, selector] of Object.entries(selectors.widgets)) {

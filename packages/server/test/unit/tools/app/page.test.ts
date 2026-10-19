@@ -503,6 +503,42 @@ describe('readUiState', () => {
     expect(state.rightPanel).toEqual({ open: false, activeWidget: null });
   });
 
+  // The widget bar holds the toolbar on the right edge too, and stays shown while the panel is
+  // collapsed: the toolbar is 45 px wide and the pages of the panel are a border of 1 px (seen on
+  // the app).
+  const pages = (width: number, children: FakeElement[] = []) =>
+    fakeElement({
+      matches: [SELECTORS.widgets.widgetBarTabs],
+      rect: box(1467, 42, width, 810),
+      children,
+    });
+  const rightEdge = (panelPages: FakeElement) =>
+    widgetBar({
+      rect: box(1467, 42, 45, 810),
+      children: [
+        fakeElement({ matches: [SELECTORS.widgets.rightToolbar], rect: box(1467, 42, 45, 810) }),
+        panelPages,
+      ],
+    });
+
+  test('readUiState reports the right panel as closed while only its toolbar shows', async () => {
+    const state = await stateOfPage([
+      rightEdge(pages(1, [widget(SELECTORS.widgets.watchlist, { rect: NO_BOX })])),
+    ]);
+
+    expect(state.rightPanel).toEqual({ open: false, activeWidget: null });
+  });
+
+  test('readUiState reports the right panel as open once its pages are wider than a border', async () => {
+    const state = await stateOfPage([
+      rightEdge(
+        pages(320, [widget(SELECTORS.widgets.watchlist, { rect: box(1180, 42, 320, 810) })]),
+      ),
+    ]);
+
+    expect(state.rightPanel).toEqual({ open: true, activeWidget: 'watchlist' });
+  });
+
   test('readUiState reports the right panel as closed when the page has no widget bar', async () => {
     const state = await stateOfPage([widget(SELECTORS.widgets.watchlist)]);
 
@@ -612,6 +648,8 @@ describe('UI_STATE_SELECTORS', () => {
     // in the constant does not also sit in the assertion.
     expect(UI_STATE_SELECTORS).toEqual({
       widgetBar: '[data-name="widgetbar-wrap"]',
+      widgetPages: '[data-name="widgetbar-pages-with-tabs"]',
+      minPanelWidth: 50,
       widgets: {
         watchlist: '[data-test-id-widget-type="watchlist"]',
         alerts: '[data-test-id-widget-type="alerts"]',
