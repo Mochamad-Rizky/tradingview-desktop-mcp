@@ -3,7 +3,12 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SELECTORS } from '../../../src/core/tv/selectors.js';
 import { createMcpServer } from '../../../src/server.js';
 import { chartTools } from '../../../src/tools/chart/index.js';
-import { startFakeCdpServer, type FakeCdpServer } from '../../helpers/fake-cdp/server.js';
+import { CDP_ERROR } from '../../helpers/fake-cdp/protocol.js';
+import {
+  FakeCdpError,
+  startFakeCdpServer,
+  type FakeCdpServer,
+} from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
 import {
   createFakeDomWindow,
@@ -457,6 +462,9 @@ interface ChartUiOptions {
   searchButtonIs?: 'covered' | 'in-trading-control' | 'off-screen';
   // A page that cannot say what lies at a point.
   withoutHitTest?: boolean;
+  // An input event the page does not know, as a CDP method it answers with "not found": the text,
+  // or the press of the mouse button halfway through a click.
+  failsOn?: 'insertText' | 'mousePressed';
   // The chart API of the page: complete, without the members named, or none at all.
   api?: 'complete' | 'none' | { without: string[]; chartsCount?: number };
   // A text field outside any dialog that has the focus at the start.
@@ -588,6 +596,9 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
   const handlers: Handlers = {
     'Input.dispatchMouseEvent': (params) => {
       const { type, x, y } = params as { type: string; x: number; y: number };
+      if (type === 'mousePressed' && options.failsOn === 'mousePressed') {
+        throw new FakeCdpError(CDP_ERROR.methodNotFound, "'Input.dispatchMouseEvent' wasn't found");
+      }
       if (type !== 'mouseReleased') {
         return {};
       }
@@ -614,6 +625,9 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
       return {};
     },
     'Input.insertText': (params) => {
+      if (options.failsOn === 'insertText') {
+        throw new FakeCdpError(CDP_ERROR.methodNotFound, "'Input.insertText' wasn't found");
+      }
       if (page.document.activeElement === field) {
         typed += (params as { text: string }).text;
       }
@@ -890,6 +904,46 @@ describe('chart_set_symbol through the interface', () => {
     expect(inputOf(app)).toEqual([]);
   });
 
+  // Once a strategy has sent input, a CDP method that turns out to be missing must end the operation:
+  // the next strategy would carry it out a second time.
+  test('chart_set_symbol stops, and tries no other way, when the page refuses the text after the click', async () => {
+    const ui = chartUi({
+      searchButton: true,
+      failsOn: 'insertText',
+      api: { without: ['setSymbol'] },
+    });
+    const { client, app } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PAGE_EVALUATION_FAILED',
+      details: { strategy: 'symbol search', stage: 'type' },
+      hint: expect.stringMatching(/chart_get_state/) as string,
+    });
+    expect(methodsOf(app)).toEqual([
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      'Input.insertText',
+    ]);
+    // Typing on the chart, the next way, never ran.
+    expect(keysOf(app)).toEqual([]);
+  });
+
+  test('chart_set_symbol stops when the page refuses the text after the first key typed on the chart', async () => {
+    const ui = chartUi({ failsOn: 'insertText', api: { without: ['setSymbol'] } });
+    const { client, app } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PAGE_EVALUATION_FAILED',
+      details: { strategy: 'typing on the chart', stage: 'type' },
+    });
+    expect(keysOf(app)).toEqual(['N']);
+  });
+
   test('chart_set_symbol is unavailable on a page that has neither the setter nor a DOM', async () => {
     const win = createFakeTvWindow(fixture);
     Reflect.deleteProperty(chartOf(win).chart, 'setSymbol');
@@ -1001,6 +1055,25 @@ describe('chart_set_timeframe', () => {
     expect(dataOf(result)).toStrictEqual({ resolution: '240', previous: '1D', changed: true });
     expect(keysOf(app)).toEqual(['2', 'Enter']);
     expect(textsOf(app)).toEqual(['40']);
+  });
+
+  test('chart_set_timeframe stops, and does not type on the chart, when a click fails halfway', async () => {
+    const ui = chartUi({
+      intervalButtons: ['60'],
+      failsOn: 'mousePressed',
+      api: { without: ['setResolution'] },
+    });
+    const { client, app } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_timeframe', { timeframe: '1h' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PAGE_EVALUATION_FAILED',
+      details: { strategy: 'interval button', stage: 'click' },
+    });
+    // The pointer had moved onto the button when the press failed; nothing was typed afterwards.
+    expect(methodsOf(app)).toEqual(['Input.dispatchMouseEvent', 'Input.dispatchMouseEvent']);
+    expect(keysOf(app)).toEqual([]);
   });
 
   test('chart_set_timeframe leaves the chart alone through the interface when it shows the timeframe already', async () => {
@@ -1248,6 +1321,18 @@ describe('chart_set_visible_range', () => {
       details: { attempts: ['date range preset'] },
     });
     expect(inputOf(app)).toEqual([]);
+  });
+
+  test('chart_set_visible_range stops with a terminal error when the click on a preset fails halfway', async () => {
+    const ui = chartUi({ presets: ['3M'], failsOn: 'mousePressed' });
+    const { client } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_visible_range', { preset: '3M' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PAGE_EVALUATION_FAILED',
+      details: { strategy: 'date range preset', stage: 'click' },
+    });
   });
 
   test('chart_set_visible_range warns when a preset leaves the range as it was', async () => {

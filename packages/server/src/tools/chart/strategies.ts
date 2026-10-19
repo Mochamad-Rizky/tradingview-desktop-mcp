@@ -262,6 +262,37 @@ async function requireNoTextField(page: PageHandle): Promise<void> {
   }
 }
 
+// The steps of an interface strategy from its first input event on. Once that event is sent, the
+// operation has begun, so a capability that turns out to be missing (a CDP method the page does not
+// know, say) ends it as PAGE_EVALUATION_FAILED instead of handing it to the next strategy, which
+// would act a second time. The step that sends the first event is inside, because whether the event
+// got out before the failure cannot be told. `stage` names the step that is running, for the error.
+async function begun<T>(
+  strategy: string,
+  steps: (stage: (name: string) => void) => Promise<T>,
+): Promise<T> {
+  let current = 'start';
+  try {
+    return await steps((name) => {
+      current = name;
+    });
+  } catch (error) {
+    if (isTvMcpError(error) && error.code === 'CAPABILITY_UNAVAILABLE') {
+      throw new TvMcpError(
+        'PAGE_EVALUATION_FAILED',
+        `The change through the ${strategy} stopped after it had begun (${current}): ${error.message}`,
+        {
+          hint:
+            'Part of the change may have happened. Call chart_get_state to see what the chart ' +
+            'shows, and close any dialog that is still open.',
+          details: { strategy, stage: current },
+        },
+      );
+    }
+    throw error;
+  }
+}
+
 // After the click or the key that opens a dialog: its text field takes the focus. As no text field
 // had it before, the first one that does is the dialog's.
 async function waitForTextField(page: PageHandle, waitMs: number, failure: string): Promise<void> {
@@ -378,15 +409,22 @@ export function symbolStrategies(
         }
         await requireClickable(page, SELECTORS.header.symbolSearch, 'The symbol search button');
         await requireNoTextField(page);
-        await clickElement(page, SELECTORS.header.symbolSearch);
-        await waitForTextField(
-          page,
-          waitMs,
-          'The symbol search dialog did not open: no text field took the focus after the click',
-        );
-        await typeText(page, symbol);
-        await pressKey(page, 'Enter');
-        return confirmSymbol(page, target, symbol, before, waitMs);
+        return begun('symbol search', async (stage) => {
+          stage('click');
+          await clickElement(page, SELECTORS.header.symbolSearch);
+          stage('dialog');
+          await waitForTextField(
+            page,
+            waitMs,
+            'The symbol search dialog did not open: no text field took the focus after the click',
+          );
+          stage('type');
+          await typeText(page, symbol);
+          stage('enter');
+          await pressKey(page, 'Enter');
+          stage('confirm');
+          return confirmSymbol(page, target, symbol, before, waitMs);
+        });
       },
     },
     {
@@ -407,15 +445,22 @@ export function symbolStrategies(
           return { symbol: before.symbol, previous: before.symbol, changed: false };
         }
         await requireNoTextField(page);
-        await pressKey(page, first);
-        await waitForTextField(
-          page,
-          waitMs,
-          'Typing on the chart did not open the symbol search: no text field took the focus',
-        );
-        await typeText(page, symbol.slice(1));
-        await pressKey(page, 'Enter');
-        return confirmSymbol(page, target, symbol, before, waitMs);
+        return begun('typing on the chart', async (stage) => {
+          stage('key');
+          await pressKey(page, first);
+          stage('dialog');
+          await waitForTextField(
+            page,
+            waitMs,
+            'Typing on the chart did not open the symbol search: no text field took the focus',
+          );
+          stage('type');
+          await typeText(page, symbol.slice(1));
+          stage('enter');
+          await pressKey(page, 'Enter');
+          stage('confirm');
+          return confirmSymbol(page, target, symbol, before, waitMs);
+        });
       },
     },
   ];
@@ -460,8 +505,12 @@ export function timeframeStrategies(
         }
         const selector = intervalButton(resolution);
         await requireClickable(page, selector, 'The button of this interval');
-        await clickElement(page, selector);
-        return confirmTimeframe(page, target, resolution, before, waitMs);
+        return begun('interval button', async (stage) => {
+          stage('click');
+          await clickElement(page, selector);
+          stage('confirm');
+          return confirmTimeframe(page, target, resolution, before, waitMs);
+        });
       },
     },
     {
@@ -482,15 +531,22 @@ export function timeframeStrategies(
           return same;
         }
         await requireNoTextField(page);
-        await pressKey(page, first);
-        await waitForTextField(
-          page,
-          waitMs,
-          'Typing on the chart did not open the interval dialog: no text field took the focus',
-        );
-        await typeText(page, resolution.slice(1));
-        await pressKey(page, 'Enter');
-        return confirmTimeframe(page, target, resolution, before, waitMs);
+        return begun('typing on the chart', async (stage) => {
+          stage('key');
+          await pressKey(page, first);
+          stage('dialog');
+          await waitForTextField(
+            page,
+            waitMs,
+            'Typing on the chart did not open the interval dialog: no text field took the focus',
+          );
+          stage('type');
+          await typeText(page, resolution.slice(1));
+          stage('enter');
+          await pressKey(page, 'Enter');
+          stage('confirm');
+          return confirmTimeframe(page, target, resolution, before, waitMs);
+        });
       },
     },
   ];
@@ -557,22 +613,32 @@ export function presetStrategies(
         const selector = SELECTORS.buttons.dateRange[preset];
         await requireClickable(page, selector, 'The button of this preset');
         const before = await snapshotOf(page, target);
-        await clickElement(page, selector);
-        if (before === null) {
-          return { from: null, to: null, resolution: null, previousResolution: null, moved: null };
-        }
-        const { satisfied, last } = await pollUntil(
-          () => snapshotOf(page, target),
-          (now) => now?.from !== before.from || now.to !== before.to,
-          { intervalMs: POLL_INTERVAL_MS, timeoutMs: Math.min(waitMs, PRESET_WAIT_MS) },
-        );
-        return {
-          from: last?.from ?? null,
-          to: last?.to ?? null,
-          resolution: last?.resolution ?? null,
-          previousResolution: before.resolution,
-          moved: last === null ? null : satisfied,
-        };
+        return begun('date range preset', async (stage): Promise<PresetMove> => {
+          stage('click');
+          await clickElement(page, selector);
+          if (before === null) {
+            return {
+              from: null,
+              to: null,
+              resolution: null,
+              previousResolution: null,
+              moved: null,
+            };
+          }
+          stage('confirm');
+          const { satisfied, last } = await pollUntil(
+            () => snapshotOf(page, target),
+            (now) => now?.from !== before.from || now.to !== before.to,
+            { intervalMs: POLL_INTERVAL_MS, timeoutMs: Math.min(waitMs, PRESET_WAIT_MS) },
+          );
+          return {
+            from: last?.from ?? null,
+            to: last?.to ?? null,
+            resolution: last?.resolution ?? null,
+            previousResolution: before.resolution,
+            moved: last === null ? null : satisfied,
+          };
+        });
       },
     },
   ];
