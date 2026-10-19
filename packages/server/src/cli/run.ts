@@ -238,9 +238,16 @@ export async function runCli(
 
   const shared = createServerDeps(config, deps);
   const fatal = deferred<number>();
+  let ended = false;
   const unlisten = FATAL_EVENTS.map((event) =>
     listen(io.process, event, (error) => {
       shared.logger.fatal({ err: error }, 'An unexpected error ended the CLI');
+      // The log may be silenced, and it is not where a person looks when a process ends. Only the
+      // error that ended the CLI is printed; any after it are in the log.
+      if (!ended) {
+        ended = true;
+        io.stderr.write(renderError(error, { color }));
+      }
       fatal.resolve(1);
     }),
   );

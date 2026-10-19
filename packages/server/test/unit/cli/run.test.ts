@@ -279,6 +279,31 @@ test('a CDP connection that fails to close is logged with its error, not as a sl
   expect(slowCloseLines(lines)).toEqual([]);
 });
 
+// The log can be silenced, and it is not where a person looks first when the process ends.
+test('an error nothing caught is printed on stderr even when logging is silent', async () => {
+  const signals = new EventEmitter();
+  const stdin = new PassThrough();
+  const stderr = new CaptureStream();
+  // offlineDeps logs nothing: its logger is silent.
+  const running = runCli(
+    [],
+    ENV,
+    { stdin, stdout: new PassThrough(), stderr, process: signals },
+    offlineDeps(),
+  );
+  await expect.poll(() => stderr.text).toMatch(/transport +stdio/);
+
+  signals.emit('uncaughtException', new Error('thrown from a socket handler'));
+  signals.emit('unhandledRejection', new Error('rejected after it'));
+
+  expect(await running).toBe(1);
+  expect(stderr.text).toContain('✖ INTERNAL: thrown from a socket handler');
+  // Only the error that ended the CLI is printed.
+  expect(stderr.text).not.toContain('rejected after it');
+  // The server that was left running stops once its input ends.
+  stdin.end();
+});
+
 test('once it shuts down it stops listening for signals, so a second one ends the process', async () => {
   vi.useFakeTimers();
   const signals = new EventEmitter();
