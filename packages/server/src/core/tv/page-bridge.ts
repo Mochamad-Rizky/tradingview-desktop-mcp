@@ -153,6 +153,24 @@ function resultValue(result: Protocol.Runtime.RemoteObject): unknown {
   return value;
 }
 
+// The expression evaluate sends: the source text of a page function, called with the window and
+// the arguments. The window is passed in rather than read as a global, so page functions take it
+// as a parameter and can run against a fake window in tests. The arguments are written as JSON,
+// which is also a valid JavaScript literal. The one difference: a "__proto__" key sets the
+// prototype of the object literal instead of adding a member. Exported so that the
+// serializability test checks page functions in the very call the bridge makes.
+export function pageCallExpression(source: string, args: readonly JsonValue[]): string {
+  return `(${source})(window, ...${JSON.stringify(args)})`;
+}
+
+// The expression evaluateWithLib sends: the same, with the page library between the window and the
+// arguments, built from its source text inside the expression, so that it exists only for this call
+// and nothing of it stays on the page.
+export function pageLibCallExpression(source: string, args: readonly JsonValue[]): string {
+  const lib = `(${createPageLib.toString()})(window)`;
+  return `(${source})(window, ${lib}, ...${JSON.stringify(args)})`;
+}
+
 export function createPageBridge(session: CdpSession, defaults: { timeoutMs: number }): PageBridge {
   // Evaluates the expression that calls a page function and maps what comes back, the same way for
   // both methods.
@@ -178,13 +196,8 @@ export function createPageBridge(session: CdpSession, defaults: { timeoutMs: num
       args: A,
       options?: { timeoutMs?: number },
     ): Promise<R> {
-      // The window is passed in rather than read as a global, so page functions take it as a
-      // parameter and can run against a fake window in tests. The arguments are written as JSON,
-      // which is also a valid JavaScript literal. The one difference: a "__proto__" key sets the
-      // prototype of the object literal instead of adding a member.
-      const expression = `(${fn.toString()})(window, ...${JSON.stringify(args)})`;
       // The page function's own type promises R; what came back is JSON either way.
-      return (await run(expression, options)) as R;
+      return (await run(pageCallExpression(fn.toString(), args), options)) as R;
     },
 
     async evaluateWithLib<A extends JsonValue[], R extends JsonValue | null>(
@@ -192,11 +205,7 @@ export function createPageBridge(session: CdpSession, defaults: { timeoutMs: num
       args: A,
       options?: { timeoutMs?: number },
     ): Promise<R> {
-      // As in evaluate, with the library built from its source text inside the expression, so that
-      // it exists only for this call and nothing of it stays on the page.
-      const lib = `(${createPageLib.toString()})(window)`;
-      const expression = `(${fn.toString()})(window, ${lib}, ...${JSON.stringify(args)})`;
-      return (await run(expression, options)) as R;
+      return (await run(pageLibCallExpression(fn.toString(), args), options)) as R;
     },
   };
 }

@@ -1,15 +1,22 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import vm from 'node:vm';
-import { pageFunctions } from '../../../../src/core/tv/page-functions.js';
+import { pageCallExpression, pageLibCallExpression } from '../../../../src/core/tv/page-bridge.js';
+import { pageFunctions, pageLibFunctions } from '../../../../src/core/tv/page-functions.js';
+import type { PageLib } from '../../../../src/core/tv/page-lib.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import { CDP_ERROR } from '../../../helpers/fake-cdp/protocol.js';
 import { createPageContext } from '../../../helpers/fake-cdp/runtime.js';
 import { loadTvFixture } from '../../../helpers/fake-tv/fixture.js';
-import { createFakeTvWindow, inspectFakeWindow } from '../../../helpers/fake-tv/window.js';
+import {
+  createFakeTvWindow,
+  inspectFakeWindow,
+  type FakeTvOverrides,
+} from '../../../helpers/fake-tv/window.js';
 
 // The page bridge sends a page function as its source text, so a page function must not depend on
 // anything of its module. These checks look at every registered page function the way the bridge
-// sees it: its Function.prototype.toString text, run in a page that is a fake window.
+// sees it: its Function.prototype.toString text, run in a page that is a fake window, in the call
+// the bridge makes for the registry the function is in.
 
 // What a bundler or a module system leaves in a function that is not self-contained.
 const BUNDLER_ARTIFACTS = /\b(require|import)\s*\(|__name|__async|__publicField|__spreadValues/;
@@ -27,10 +34,15 @@ const SETTLE_MS = 500;
 type Outcome =
   { kind: 'value'; value: unknown } | { kind: 'thrown'; error: unknown } | { kind: 'pending' };
 
-// What the bridge sends for a call without arguments. The guard knows no argument values, so a
-// page function runs with only its window, as far as that takes it.
-function pageCall(source: string): string {
-  return `(${source})(window, ...[])`;
+// What the bridge sends for a call without arguments, built the way the bridge builds it: the window
+// for a page function, and the window and the page library for a lib function. The guard knows no
+// argument values, so a page function runs with only these, as far as that takes it.
+function plainCall(source: string): string {
+  return pageCallExpression(source, []);
+}
+
+function libCall(source: string): string {
+  return pageLibCallExpression(source, []);
 }
 
 // The first bundler helper or import found in a source, for each kind there is.
@@ -49,20 +61,20 @@ function nodeGlobalsIn(source: string): string[] {
   return source.match(NODE_GLOBALS) ?? [];
 }
 
-// Why the expression the bridge sends for a source does not compile, if it does not.
-function compileError(source: string): string | undefined {
+// Why an expression the bridge sends does not compile, if it does not.
+function compileError(expression: string): string | undefined {
   try {
-    new vm.Script(pageCall(source));
+    new vm.Script(expression);
     return undefined;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
 }
 
-async function runInFakePage(source: string, win: object): Promise<Outcome> {
+async function runInFakePage(expression: string, win: object): Promise<Outcome> {
   const page = createPageContext(win);
   try {
-    const value = page.run(pageCall(source));
+    const value = page.run(expression);
     // Not ref'd, so a deadline that lost the race does not hold the test process.
     const pending = delay(SETTLE_MS, undefined, { ref: false }).then((): Outcome => ({
       kind: 'pending',
@@ -97,17 +109,20 @@ function referenceError(outcome: Outcome): string | undefined {
   return undefined;
 }
 
-function fakeWindows(): object[] {
+function fakeWindows(overrides: FakeTvOverrides = {}): object[] {
   const fixture = loadTvFixture();
   // A booted chart, and a tab whose app has not booted, so both kinds of paths get to run.
-  return [createFakeTvWindow(fixture), createFakeTvWindow(fixture, { withoutApi: true })];
+  return [
+    createFakeTvWindow(fixture, overrides),
+    createFakeTvWindow(fixture, { ...overrides, withoutApi: true }),
+  ];
 }
 
-// The ReferenceErrors a source runs into in the fake pages.
-async function referenceErrorsIn(source: string): Promise<string[]> {
+// The ReferenceErrors an expression runs into in the fake pages.
+async function referenceErrorsIn(expression: string, windows = fakeWindows()): Promise<string[]> {
   const messages: string[] = [];
-  for (const win of fakeWindows()) {
-    const message = referenceError(await runInFakePage(source, win));
+  for (const win of windows) {
+    const message = referenceError(await runInFakePage(expression, win));
     if (message !== undefined) {
       messages.push(message);
     }
@@ -115,7 +130,11 @@ async function referenceErrorsIn(source: string): Promise<string[]> {
   return messages;
 }
 
-const registered = Object.entries(pageFunctions);
+// Every registered page function, with the call the bridge makes for its registry.
+const registered = [
+  ...Object.entries(pageFunctions).map(([name, fn]) => ({ name, fn, call: plainCall })),
+  ...Object.entries(pageLibFunctions).map(([name, fn]) => ({ name, fn, call: libCall })),
+];
 
 test('registers the page functions, so the checks below are not vacuous', () => {
   expect(registered.length).toBeGreaterThan(0);
@@ -141,32 +160,36 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   ]) {
     expect(Object.keys(pageFunctions)).toContain(name);
   }
-  for (const [name, fn] of registered) {
+  for (const { name, fn } of registered) {
     expect(typeof fn, name).toBe('function');
   }
+  // A function is called one way, so it is in one registry.
+  expect(
+    Object.keys(pageLibFunctions).filter((name) => Object.hasOwn(pageFunctions, name)),
+  ).toEqual([]);
 });
 
 test('every page function serializes without bundler helpers or imports', () => {
-  for (const [name, fn] of registered) {
+  for (const { name, fn } of registered) {
     expect(importsIn(fn.toString()), name).toEqual([]);
   }
 });
 
 test('every page function stays clear of Node globals', () => {
-  for (const [name, fn] of registered) {
+  for (const { name, fn } of registered) {
     expect(nodeGlobalsIn(fn.toString()), name).toEqual([]);
   }
 });
 
 test('every page function compiles as the expression the page bridge sends', () => {
-  for (const [name, fn] of registered) {
-    expect(compileError(fn.toString()), name).toBeUndefined();
+  for (const { name, fn, call } of registered) {
+    expect(compileError(call(fn.toString())), name).toBeUndefined();
   }
 });
 
 test('every page function runs in an isolated vm context', async () => {
-  for (const [name, fn] of registered) {
-    expect(await referenceErrorsIn(fn.toString()), name).toEqual([]);
+  for (const { name, fn, call } of registered) {
+    expect(await referenceErrorsIn(call(fn.toString())), name).toEqual([]);
   }
 });
 
@@ -185,6 +208,14 @@ describe('the checks catch what they are meant to', () => {
     return symbol === undefined ? null : formatSymbol(symbol);
   }
 
+  // A lib function in the shape the tools write: it looks a service of the app up, then hands what
+  // the service answers to a helper of its module.
+  function callsModuleHelperAfterLookup(win: TvWindow, lib: PageLib): string | null {
+    const service = lib.findExport('symbolService') as { current?: () => string } | null;
+    const symbol = service?.current?.();
+    return symbol === undefined ? null : formatSymbol(symbol);
+  }
+
   const withMethod = {
     readHref(win: TvWindow): string {
       return win.location.href;
@@ -195,7 +226,7 @@ describe('the checks catch what they are meant to', () => {
     const source = readsImportedConstant.toString();
 
     expect(importsIn(source)).toEqual(['__vite_ssr_']);
-    const errors = await referenceErrorsIn(source);
+    const errors = await referenceErrorsIn(plainCall(source));
     expect(errors).toHaveLength(2);
     expect(
       errors.every((message) => /^__vite_ssr_import_\d+__ is not defined$/.test(message)),
@@ -207,11 +238,32 @@ describe('the checks catch what they are meant to', () => {
 
     expect(importsIn(source)).toEqual([]);
     // Only the booted chart reaches the call.
-    expect(await referenceErrorsIn(source)).toEqual(['formatSymbol is not defined']);
+    expect(await referenceErrorsIn(plainCall(source))).toEqual(['formatSymbol is not defined']);
+  });
+
+  test('a call of a helper of the module after a lookup, which only a run with the library can see', async () => {
+    const source = callsModuleHelperAfterLookup.toString();
+    // Pages whose webpack registry has the service, so that the lookup succeeds and the run goes on.
+    const withService = (): object[] =>
+      fakeWindows({ webpackModules: { 1: { symbolService: { current: () => 'nasdaq:aapl' } } } });
+
+    expect(importsIn(source)).toEqual([]);
+    expect(nodeGlobalsIn(source)).toEqual([]);
+    expect(compileError(libCall(source))).toBeUndefined();
+    // Both pages reach the call, the one whose app has not booted too: the lookup needs no chart.
+    expect(await referenceErrorsIn(libCall(source), withService())).toEqual([
+      'formatSymbol is not defined',
+      'formatSymbol is not defined',
+    ]);
+    // Called the plain way, the function gets no library and fails with a TypeError at the lookup.
+    // With the library but without the service, the lookup answers null and the run ends early.
+    // Neither run reaches the call.
+    expect(await referenceErrorsIn(plainCall(source), withService())).toEqual([]);
+    expect(await referenceErrorsIn(libCall(source))).toEqual([]);
   });
 
   test('method shorthand, whose source is not an expression', () => {
-    expect(compileError(withMethod.readHref.toString())).toMatch(/^Unexpected token/);
+    expect(compileError(plainCall(withMethod.readHref.toString()))).toMatch(/^Unexpected token/);
   });
 
   test('bundler helpers, imports and Node globals in a source text', () => {
@@ -233,7 +285,7 @@ describe('the checks catch what they are meant to', () => {
         win.TVD?.reloadTab();
       });
 
-    const outcome = await runInFakePage(neverSettles.toString(), fakeWindows()[0] ?? {});
+    const outcome = await runInFakePage(plainCall(neverSettles.toString()), fakeWindows()[0] ?? {});
 
     expect(outcome).toEqual({ kind: 'pending' });
   });
@@ -247,7 +299,7 @@ describe('the checks catch what they are meant to', () => {
       return null;
     };
 
-    await runInFakePage(keepsReloading.toString(), win);
+    await runInFakePage(plainCall(keepsReloading.toString()), win);
     await delay(40);
 
     expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([]);
