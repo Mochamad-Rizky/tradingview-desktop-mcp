@@ -7,10 +7,11 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch or pull request makes the run in progress pointless.
+# A newer push to the same branch or pull request makes the run in progress pointless. On main every
+# commit is checked to the end, so that a failure there names the commit that brought it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # The prepare script installs the Git hooks, which a CI checkout has no use for.
@@ -72,19 +73,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # Feeds the badge and never fails the run: the gate above decides. The token is optional
-      # for pull requests from forks, which cannot read secrets.
-      - name: Upload coverage to Codecov
-        if: ${{ !cancelled() && hashFiles('packages/server/coverage/lcov.info') != '' }}
-        continue-on-error: true
-        uses: codecov/codecov-action@v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: packages/server/coverage/lcov.info
-          disable_search: true
-          fail_ci_if_error: false
-
-      # What the next job runs, so that it tests the bundle that passed here.
+      # What the next job runs, so that it tests the bundle that passed here. It comes before the
+      # Codecov upload, so that a slow or stuck upload cannot hold it back.
       - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
@@ -92,6 +82,20 @@ jobs:
           path: packages/server/dist
           if-no-files-found: error
           retention-days: 7
+
+      # Feeds the badge and never fails the run: the gate above decides, and a stuck upload is cut
+      # off after five minutes. The token is optional for pull requests from forks, which cannot
+      # read secrets.
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('packages/server/coverage/lcov.info') != '' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/server/coverage/lcov.info
+          disable_search: true
+          fail_ci_if_error: false
 
   runtime-node20:
     name: Runtime (Node 20)
