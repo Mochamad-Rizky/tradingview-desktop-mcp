@@ -4,7 +4,8 @@ import { TvMcpError } from '../../../../src/core/errors.js';
 
 // The library is replaced here, to reach the failures the real one only produces by timing luck
 // and to look at what the adapter hands to it. The integration test runs the real library against
-// the fake CDP server.
+// the fake CDP server. Port 9 (discard) stands in for the debug port, so that a mock that failed to
+// apply would not reach a TradingView that runs with the default port open.
 const library = vi.hoisted(() => ({
   connect: vi.fn<(options: unknown) => Promise<unknown>>(),
   // Stands in for the class the library rejects a command with when the target answers with an
@@ -38,9 +39,7 @@ function fakeClient() {
 
 async function connectOver(client: ReturnType<typeof fakeClient>, target = TARGET) {
   library.connect.mockResolvedValue(client);
-  return createCriConnector({ host: '127.0.0.1', port: 9222, defaultTimeoutMs: 1000 }).connect(
-    target,
-  );
+  return createCriConnector({ host: '127.0.0.1', port: 9, defaultTimeoutMs: 1000 }).connect(target);
 }
 
 // Resolves with the error of a call that must fail with one of ours.
@@ -61,7 +60,7 @@ beforeEach(() => {
 });
 
 test('connects through the listed debugger URL with the protocol descriptor of the library', async () => {
-  const url = 'ws://127.0.0.1:9222/devtools/page/TARGET';
+  const url = 'ws://127.0.0.1:9/devtools/page/TARGET';
 
   await connectOver(fakeClient(), { ...TARGET, webSocketDebuggerUrl: url });
 
@@ -75,11 +74,11 @@ test('hands the library the URL the way the URL parser reads it', async () => {
   // not the original text, leaves nothing for the two readings to disagree about.
   await connectOver(fakeClient(), {
     ...TARGET,
-    webSocketDebuggerUrl: 'ws://LOCALHOST:9222/devtools/page/TA\tRGET',
+    webSocketDebuggerUrl: 'ws://LOCALHOST:9/devtools/page/TA\tRGET',
   });
 
   expect(library.connect).toHaveBeenCalledExactlyOnceWith({
-    target: 'ws://localhost:9222/devtools/page/TARGET',
+    target: 'ws://localhost:9/devtools/page/TARGET',
     local: true,
   });
 });
@@ -104,12 +103,12 @@ test.each([
   ['an error whose code is not an errno name', Object.assign(new Error('odd'), { code: 7 })],
 ])('leaves the errno out of the details for %s', async (_label, failure) => {
   library.connect.mockRejectedValue(failure);
-  const connector = createCriConnector({ host: '127.0.0.1', port: 9222, defaultTimeoutMs: 1000 });
+  const connector = createCriConnector({ host: '127.0.0.1', port: 9, defaultTimeoutMs: 1000 });
 
   const error = await failureOf(connector.connect(TARGET));
 
   expect(error.code).toBe('CDP_UNREACHABLE');
-  expect(error.details).toEqual({ targetId: 'TARGET', endpoint: 'ws://127.0.0.1:9222' });
+  expect(error.details).toEqual({ targetId: 'TARGET', endpoint: 'ws://127.0.0.1:9' });
   expect(error.cause).toBe(failure);
 });
 
