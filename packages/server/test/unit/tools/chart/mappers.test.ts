@@ -223,6 +223,9 @@ describe('toTimeRange', () => {
     ['an infinity', 1721433600, Number.POSITIVE_INFINITY],
     ['text', '1721433600', 1729987200],
     ['a time no date can hold', 1721433600, 1e13],
+    // What getVisibleRange answers while the chart has no range: while a symbol loads, and for a
+    // symbol TradingView could not find.
+    ['the empty range of a chart without data', 0, 0],
   ])('toTimeRange gives null for %s', (_case, from, to) => {
     expect(toTimeRange(from, to)).toBeNull();
   });

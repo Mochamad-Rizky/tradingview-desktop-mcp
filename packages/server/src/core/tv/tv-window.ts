@@ -113,8 +113,9 @@ export interface SeriesLike {
   // 51 fields were seen, among them name, full_name, pro_name, exchange, listed_exchange,
   // description, type, typespecs, currency_code, pricescale, minmov, pointvalue, session,
   // subsessions, timezone, has_intraday, has_extended_hours, is_replayable, variable_tick_size
-  // and isin. Only their names were recorded.
-  symbolInfo(): Record<string, unknown>;
+  // and isin. Null from the moment a symbol is set until it is resolved, and for good when it
+  // cannot be (seen on the app).
+  symbolInfo(): Record<string, unknown> | null;
   // The live quote: last_price, bid, ask, bid_size, ask_size, change, change_percent, low_price,
   // lp_time, currency_code and fundamentals.
   quotes(): Record<string, unknown>;

@@ -221,6 +221,17 @@ describe('chart_get_state', () => {
     ]);
   });
 
+  test('chart_get_state reports no visible range while the chart has no data to show', async () => {
+    const win = createFakeTvWindow(fixture);
+    inspectFakeWindow(win).state.symbolInvalid = true;
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'chart_get_state');
+
+    expect(dataOf(result)).toMatchObject({ visibleRange: null });
+    expect(warningsOf(result)).toEqual([expect.stringMatching(/visible range/)]);
+  });
+
   test('chart_get_state warns when the chart does not report its drawings', async () => {
     const win = createFakeTvWindow(fixture);
     Object.assign(chartOf(win).chart, { getAllShapes: () => undefined });
@@ -1342,6 +1353,17 @@ describe('chart_get_visible_range', () => {
       },
       meta: { via: 'api', durationMs: expect.any(Number) as number, warnings: [] },
     });
+  });
+
+  test('chart_get_visible_range answers NOT_AVAILABLE while the chart shows a symbol TradingView could not find', async () => {
+    const win = createFakeTvWindow(fixture);
+    inspectFakeWindow(win).state.symbolInvalid = true;
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'chart_get_visible_range');
+
+    // The chart answers zeros then, which are not a range of 1970.
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
   });
 
   test('chart_get_visible_range answers NOT_AVAILABLE when the chart reports no usable range', async () => {

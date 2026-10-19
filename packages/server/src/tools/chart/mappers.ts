@@ -132,12 +132,14 @@ export function isReportableTime(value: unknown): value is number {
 }
 
 // A range of times as the tools report one: Unix seconds and ISO 8601 (design spec 5.1). Null when
-// either end is not a time, which a page can answer while the chart has no data yet.
+// either end is not a time, and for the zeros getVisibleRange answers instead of a range while the
+// chart has none (while a symbol loads, and for a symbol TradingView could not find; seen on the
+// app), which are no range of 1970.
 export function toTimeRange(
   from: unknown,
   to: unknown,
 ): { from: number; to: number; fromIso: string; toIso: string } | null {
-  if (!isReportableTime(from) || !isReportableTime(to)) {
+  if (!isReportableTime(from) || !isReportableTime(to) || (from === 0 && to === 0)) {
     return null;
   }
   return { from, to, fromIso: toIso(from), toIso: toIso(to) };

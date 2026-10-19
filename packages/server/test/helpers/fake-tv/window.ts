@@ -6,7 +6,8 @@ import { syntheticBars, type SyntheticBar } from './synthetic-bars.js';
 // only the members of TradingViewApi, the chart widget API and the chart model that the server
 // uses (reverse-engineering notes, sections 4.2 to 4.4), with the quirks of the real build:
 // setVisibleRange throws, chart(i) only knows index 0, and an unknown symbol is accepted but
-// flags the series as invalid and never reports data ready.
+// flags the series as invalid and never reports data ready. While the series is flagged it has no
+// bars and no symbol info, and getVisibleRange answers zeros, as the real app does.
 //
 // Data is static per fixture. Bars are the same series whatever the symbol or resolution, and
 // symbolInfo() and quotes() always describe the fixture symbol. The fake does not model
@@ -45,7 +46,7 @@ export interface FakeTimeScale {
 
 export interface FakeMainSeries {
   bars(): FakeBars;
-  symbolInfo(): Record<string, JsonValue>;
+  symbolInfo(): Record<string, JsonValue> | null;
   quotes(): Record<string, JsonValue>;
   isSymbolInvalid(): boolean;
 }
@@ -223,6 +224,9 @@ export function createFakeTvWindow(
     return low;
   };
 
+  // The bars a page sees: none while the series is flagged for an unknown symbol.
+  const loaded = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : bars);
+
   // A zoom past the loaded history stays on the loaded bars. The real time scale can reach
   // beyond them, but there is no data to report a time for.
   const timeAtClamped = (index: number): number => {
@@ -234,11 +238,11 @@ export function createFakeTvWindow(
   };
 
   const barContainer: FakeBars = {
-    size: () => bars.length,
-    firstIndex: () => (bars.length === 0 ? null : 0),
-    lastIndex: () => (bars.length === 0 ? null : bars.length - 1),
+    size: () => loaded().length,
+    firstIndex: () => (loaded().length === 0 ? null : 0),
+    lastIndex: () => (loaded().length === 0 ? null : loaded().length - 1),
     valueAt(index) {
-      const bar = Number.isInteger(index) ? bars[index] : undefined;
+      const bar = Number.isInteger(index) ? loaded()[index] : undefined;
       return bar ? copyBar(bar) : null;
     },
   };
@@ -246,7 +250,7 @@ export function createFakeTvWindow(
   const timeScale: FakeTimeScale = {
     zoomToBarsRange(fromIndex, toIndex) {
       record('timeScale.zoomToBarsRange', [fromIndex, toIndex]);
-      if (times.length > 0) {
+      if (loaded().length > 0) {
         state.visibleRange = { from: timeAtClamped(fromIndex), to: timeAtClamped(toIndex) };
       }
     },
@@ -263,7 +267,7 @@ export function createFakeTvWindow(
 
   const mainSeries: FakeMainSeries = {
     bars: () => barContainer,
-    symbolInfo: () => structuredClone(fixture.symbolInfo),
+    symbolInfo: () => (state.symbolInvalid ? null : structuredClone(fixture.symbolInfo)),
     quotes: () => structuredClone(fixture.quote),
     isSymbolInvalid: () => state.symbolInvalid,
   };
@@ -276,7 +280,7 @@ export function createFakeTvWindow(
     symbol: () => state.symbol,
     resolution: () => state.resolution,
     chartType: () => state.chartType,
-    getVisibleRange: () => ({ ...state.visibleRange }),
+    getVisibleRange: () => (state.symbolInvalid ? { from: 0, to: 0 } : { ...state.visibleRange }),
     getAllStudies: () => fixture.studies.map(({ id, name }) => ({ id, name })),
     getAllShapes: () => fixture.shapes.map(({ id, name }) => ({ id, name })),
     setSymbol(symbol, options) {

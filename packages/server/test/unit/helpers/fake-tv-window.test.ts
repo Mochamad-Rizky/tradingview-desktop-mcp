@@ -253,6 +253,9 @@ describe('createFakeTvWindow', () => {
     apiOf(win).getIntervals().length = 0;
     chart.getVisibleRange().from = 0;
     const info = seriesOf(win).symbolInfo();
+    if (info === null) {
+      throw new Error('A booted fake series has symbol info');
+    }
     info.name = 'changed';
     seriesOf(win).quotes().last_price = 0;
 
@@ -464,6 +467,26 @@ describe('createFakeTvWindow', () => {
       expect(chartOf(win).symbol()).toBe('NASDAQ:AAPL');
       expect(seriesOf(win).isSymbolInvalid()).toBe(false);
       expect(known).toHaveBeenCalledOnce();
+    });
+
+    test('an unknown symbol leaves the series without bars, symbol info or visible range', async () => {
+      const win = createFakeTvWindow(fixture);
+
+      await chartOf(win).setSymbol('NOSUCH:SYMBOL');
+
+      // As on the real app: the bars are gone, the symbol info is null, and getVisibleRange
+      // answers zeros instead of a range.
+      expect(seriesOf(win).bars().size()).toBe(0);
+      expect(seriesOf(win).bars().firstIndex()).toBeNull();
+      expect(seriesOf(win).bars().valueAt(0)).toBeNull();
+      expect(seriesOf(win).symbolInfo()).toBeNull();
+      expect(chartOf(win).getVisibleRange()).toEqual({ from: 0, to: 0 });
+
+      await chartOf(win).setSymbol('NASDAQ:AAPL');
+
+      expect(seriesOf(win).bars().size()).toBe(fixture.bars.count);
+      expect(seriesOf(win).symbolInfo()).toEqual(fixture.symbolInfo);
+      expect(chartOf(win).getVisibleRange()).toEqual(fixture.visibleRange);
     });
 
     test('setSymbol works without options', async () => {
