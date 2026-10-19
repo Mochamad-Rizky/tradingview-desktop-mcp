@@ -97,12 +97,17 @@ function describeIssues(error: z.ZodError): string {
     .join('; ');
 }
 
+// The base URL of the HTTP half of the debug port, which is also how reports and errors name it.
+export function debugPortEndpoint(host: string, port: number): string {
+  // An IPv6 literal must be bracketed in a URL, or its colons read as the start of the port.
+  return `http://${isIPv6(host) ? `[${host}]` : host}:${String(port)}`;
+}
+
 // The HTTP half of the debug port: /json/version says whether the app is there, and /json/list
 // says which targets it has. Commands go over a WebSocket per target, which is not handled here.
 export function createHttpDiscovery(options: HttpDiscoveryOptions): CdpDiscovery {
   const { host, port, timeoutMs } = options;
-  // An IPv6 literal must be bracketed in a URL, or its colons read as the start of the port.
-  const endpoint = `http://${isIPv6(host) ? `[${host}]` : host}:${String(port)}`;
+  const endpoint = debugPortEndpoint(host, port);
 
   async function getJson(path: string): Promise<unknown> {
     // The signal aborts the request itself, not only the wait for it: an app that stalls must not
