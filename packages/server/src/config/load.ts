@@ -19,6 +19,9 @@ const OPTIONS = {
   'allow-eval': { type: 'boolean' },
   dashboard: { type: 'boolean' },
   'no-dashboard': { type: 'boolean' },
+  // The CLI answers these itself before it loads a configuration, so they change nothing here.
+  help: { type: 'boolean', short: 'h' },
+  version: { type: 'boolean', short: 'v' },
 } as const;
 
 type StringOption = {

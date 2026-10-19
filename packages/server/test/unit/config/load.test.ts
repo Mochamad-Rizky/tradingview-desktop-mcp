@@ -451,6 +451,11 @@ test('lists the valid options when a flag is unknown', () => {
   expect(hint).toContain('TV_MCP_AUTH_TOKEN');
 });
 
+// The CLI answers these before it loads anything, but a caller may hand loadConfig the whole argv.
+test.each(['--help', '-h', '--version', '-v'])('accepts %s and loads the defaults', (flag) => {
+  expect(load([flag])).toEqual(load());
+});
+
 const BOOLEAN_VARIABLES = ['TV_MCP_ALLOW_EVAL', 'TV_MCP_DASHBOARD'];
 
 test.each(['true', 'TRUE', 'True', '1'])('TV_MCP_ALLOW_EVAL=%s enables eval', (text) => {
