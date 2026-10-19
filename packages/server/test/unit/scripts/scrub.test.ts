@@ -7,6 +7,7 @@ import {
   findLeaks,
   scrubFixture,
   scrubTargets,
+  toStateFixture,
 } from '../../../scripts/re/scrub.js';
 import type { JsonObject, JsonValue } from '../../../src/utils/json.js';
 import { syntheticBars } from '../../helpers/fake-tv/synthetic-bars.js';
@@ -234,6 +235,33 @@ describe('scrubFixture', () => {
     expect(scrubbed.bars).toEqual([]);
     expect(scrubbed.visibleRange).toEqual({ from: 0, to: 0 });
     expect(asArray(scrubbed.studies)).toHaveLength(2);
+  });
+});
+
+describe('toStateFixture', () => {
+  it('turns a scrubbed recording into a fixture the fake window loads, with bars as a spec', () => {
+    const fixture = toStateFixture(scrubFixture(recording()));
+
+    expect(fixture.bars).toEqual({
+      count: 3,
+      startTime: START,
+      stepSeconds: DAY,
+      seed: FIXTURE_SEED,
+    });
+    expect(fixture.layout).toEqual({
+      type: 's',
+      chartsCount: 1,
+      name: FIXTURE_LAYOUT_NAME,
+      id: FIXTURE_LAYOUT_ID,
+    });
+    expect(fixture.symbol).toBe(FIXTURE_SYMBOL);
+    expect(fixture.knownSymbols).toContain(FIXTURE_SYMBOL);
+  });
+
+  it('refuses bars that are not the synthetic ones, so a recording cannot skip the scrubber', () => {
+    expect(() => toStateFixture({ ...scrubFixture(recording()), bars: REAL_BARS })).toThrow(
+      /not the synthetic bars/,
+    );
   });
 });
 

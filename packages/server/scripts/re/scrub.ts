@@ -1,4 +1,6 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { JsonObject, JsonValue } from '../../src/utils/json.js';
+import { parseTvStateFixture, type TvStateFixture } from '../../test/helpers/fake-tv/fixture.js';
 import { syntheticBars, type SyntheticBar } from '../../test/helpers/fake-tv/synthetic-bars.js';
 
 // Turns a recording of the user's chart into a fixture that may be committed (design spec 10): no
@@ -322,6 +324,45 @@ export function scrubFixture(raw: JsonObject): JsonObject {
     bars,
   };
   return Object.fromEntries(FIXTURE_FIELDS.map((field) => [field, fields[field]]));
+}
+
+// The symbols the fake window accepts besides the fixture's own, as in the committed fixture. A
+// recording cannot say which symbols exist, so a fixture made from one gets these.
+const KNOWN_SYMBOLS = [
+  'NASDAQ:AAPL',
+  'NASDAQ:MSFT',
+  'NASDAQ:NVDA',
+  'NYSE:IBM',
+  'BINANCE:BTCUSDT',
+  'FX:EURUSD',
+];
+
+// A scrubbed recording in the form of the fixtures under test/fixtures/tv/, which hold the bars as
+// the spec syntheticBars expands, so that no price is committed. The bars must be the synthetic
+// ones scrubFixture made, which the spec reproduces exactly: anything else is refused, so a
+// recording cannot reach a fixture without being scrubbed. The result is checked against the
+// fixture schema, which rejects any field the fake does not know.
+export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
+  const rows = list(scrubbed.bars);
+  const timeOf = (index: number): number | undefined => {
+    const row = rows[index];
+    return Array.isArray(row) ? finite(row[0]) : undefined;
+  };
+  const startTime = timeOf(0) ?? 0;
+  const second = timeOf(1);
+  const spec = {
+    count: rows.length,
+    startTime,
+    stepSeconds: second === undefined ? 86_400 : second - startTime,
+    seed: FIXTURE_SEED,
+  };
+  if (!isDeepStrictEqual(syntheticBars(spec), rows)) {
+    throw new Error(
+      'The bars are not the synthetic bars of the fixture seed. Pass the recording through ' +
+        'scrubFixture first.',
+    );
+  }
+  return parseTvStateFixture({ ...scrubbed, knownSymbols: KNOWN_SYMBOLS, bars: spec });
 }
 
 // The random part of the instance id the window chrome carries in its address and title, such as

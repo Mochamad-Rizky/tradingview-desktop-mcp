@@ -23,7 +23,9 @@
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:e2e": "vitest run --project e2e",
-    "test:coverage": "vitest run --project unit --project integration --coverage"
+    "test:coverage": "vitest run --project unit --project integration --coverage",
+    "re:probe": "tsx scripts/re/probe.ts",
+    "re:record": "tsx scripts/re/record-fixtures.ts"
   },
   "devDependencies": {
     "@types/chrome-remote-interface": "^0.34.0",
@@ -31,6 +33,7 @@
     "@types/ws": "^8.18.2",
     "@vitest/coverage-v8": "^5.0.5",
     "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.3",
     "vite": "^8.3.4",
     "vitest": "^5.0.5",
