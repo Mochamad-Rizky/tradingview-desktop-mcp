@@ -211,6 +211,50 @@ describe('data_get_ohlcv', () => {
     expect(warningsOf(result)).toEqual([expect.stringMatching(/still loading older history/)]);
   });
 
+  test('data_get_ohlcv returns at once when TradingView takes no more requests without an end flag', async () => {
+    const callTimeoutMs = 5000;
+    const win = windowWith(fixture, { historyEndUnflagged: true });
+    const { client } = await startHarness({ win, callTimeoutMs });
+
+    for (const call of ['first', 'second']) {
+      const started = performance.now();
+      const result = await callTool(client, 'data_get_ohlcv', { count: 400 });
+
+      expect(performance.now() - started, call).toBeLessThan(1000);
+      expect(dataOf(result).bars, call).toHaveLength(300);
+      expect(dataOf(result).complete, call).toBe(false);
+      expect(warningsOf(result), call).toEqual([
+        expect.stringMatching(/sends no more older history for now.*HISTORICAL_BARS/),
+      ]);
+      expect(warningsOf(result)[0], call).not.toMatch(/call again|still loading/i);
+    }
+    // The second call saw that the chart takes no request, and sent none.
+    expect(inspectFakeWindow(win).callsTo('series.requestMoreData')).toEqual([[100]]);
+  });
+
+  test('data_get_ohlcv is not complete when bars without prices were left out', async () => {
+    const win = createFakeTvWindow(fixture);
+    const container = seriesOf(win).bars();
+    const valueAt = container.valueAt.bind(container);
+    container.valueAt = (index) => {
+      const row = valueAt(index);
+      return row !== null && index === 295
+        ? [row[0], row[1], row[2], row[3], Number.NaN, row[5]]
+        : row;
+    };
+    const { client } = await startHarness({ win });
+
+    const last = await callTool(client, 'data_get_ohlcv', { count: 10 });
+    const range = await callTool(client, 'data_get_ohlcv', { from: barTime(290), count: 50 });
+
+    expect(dataOf(last).bars).toHaveLength(9);
+    expect(dataOf(last).complete).toBe(false);
+    expect(warningsOf(last)).toEqual([expect.stringMatching(/^1 bar of the chart .* left out/)]);
+    expect(dataOf(range).bars).toHaveLength(9);
+    expect(dataOf(range).complete).toBe(false);
+    expect(warningsOf(range)).toEqual([expect.stringMatching(/left out/)]);
+  });
+
   test('data_get_ohlcv says when TradingView did not load more history when asked', async () => {
     const win = windowWith(withHistory(450));
     // A request the app does not send, as for a chart that has not laid out its bars.

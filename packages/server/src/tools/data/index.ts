@@ -83,17 +83,18 @@ function isChartSymbol(wanted: string, names: readonly (string | null)[]): boole
 type HistoryState = Exclude<ReturnType<typeof readHistory>, PageErrorSentinel>;
 
 // Why loading older bars ended: the bars asked for were there (done), the series reported the end
-// of its data (end), a request brought no bar without that (stalled), the wait ran out (timeout),
-// or the series cannot load older bars (unsupported).
-type HistoryStop = 'done' | 'end' | 'stalled' | 'timeout' | 'unsupported';
+// of its data (end), the series takes no more requests without reporting an end (stalled: after a
+// request that brought no bar, the app keeps it that way), the series ignored a request it should
+// have taken (ignored, as on a chart that is hidden or not laid out), a load was still running when
+// the wait ran out (timeout), or the series cannot load older bars (unsupported).
+type HistoryStop = 'done' | 'end' | 'stalled' | 'ignored' | 'timeout' | 'unsupported';
 
 // Loads older bars until `count` bars lie between `from` and `to`, or the first bar of the series
 // is at or before `from`, one request per round, since the series takes another request only after
-// the bars of the last one arrived (read from the web build). Each round asks for the bars
-// still missing and waits until the series has settled: not loading, and either ready for another
-// request or at the end of its data. It ends when a round brings no bar, at the end of the data, or
-// when `waitMs` is up, and never waits past it. A series without bars gets no request: the app
-// ignores one.
+// the bars of the last one arrived (read from the web build). Before a request it waits only while
+// a load runs; after one, until the load has ended. It ends when a round brings no bar, when the
+// series reports the end of its data or takes no more requests, or when `waitMs` is up, and never
+// waits past it. A series without bars gets no request: the app ignores one.
 async function loadHistory(
   page: PageHandle,
   chartIndex: number | null,
@@ -104,14 +105,12 @@ async function loadHistory(
 ): Promise<{ state: HistoryState; stop: HistoryStop }> {
   const deadline = performance.now() + waitMs;
   const read = () => page.bridge.evaluate(readHistory, [chartIndex, from, to]);
-  const settled = (state: HistoryState): boolean =>
-    !state.loading && (state.available || state.endOfData);
   const covered = (state: HistoryState): boolean =>
     state.inRange >= count ||
     (from !== null && state.firstTime !== null && state.firstTime <= from);
-  // Asks the series until it has settled, the first time at once.
-  const untilSettled = () =>
-    pollUntil(read, settled, {
+  // Asks the series until no load runs, the first time at once.
+  const untilIdle = () =>
+    pollUntil(read, (state) => !state.loading, {
       intervalMs: HISTORY_POLL_MS,
       timeoutMs: deadline - performance.now(),
     });
@@ -124,20 +123,23 @@ async function loadHistory(
     if (!state.canLoad) {
       return { state, stop: 'unsupported' };
     }
-    if (state.endOfData) {
-      return { state, stop: 'end' };
-    }
     if (state.size === 0) {
-      return { state, stop: 'stalled' };
+      return { state, stop: 'ignored' };
     }
-    if (!settled(state)) {
+    if (state.loading) {
       // A load the app started itself, such as after a scroll, ends before another request.
-      const ready = await untilSettled();
-      state = ready.last;
-      if (!ready.satisfied) {
+      const idle = await untilIdle();
+      state = idle.last;
+      if (!idle.satisfied) {
         return { state, stop: 'timeout' };
       }
       continue;
+    }
+    if (state.endOfData) {
+      return { state, stop: 'end' };
+    }
+    if (!state.available) {
+      return { state, stop: 'stalled' };
     }
     if (deadline - performance.now() <= 0) {
       return { state, stop: 'timeout' };
@@ -148,9 +150,9 @@ async function loadHistory(
       count - state.inRange,
     ]);
     if (!sent) {
-      return { state: await read(), stop: 'stalled' };
+      return { state: await read(), stop: 'ignored' };
     }
-    const loaded = await untilSettled();
+    const loaded = await untilIdle();
     state = loaded.last;
     if (!loaded.satisfied) {
       return { state, stop: 'timeout' };
@@ -161,7 +163,8 @@ async function loadHistory(
   }
 }
 
-// What a call of data_get_ohlcv says when it returns fewer bars than were asked for.
+// What a call of data_get_ohlcv says when it returns fewer bars than were asked for, by why loading
+// older bars ended.
 function shortfallWarning(
   returned: number,
   count: number,
@@ -178,6 +181,12 @@ function shortfallWarning(
             'before the first bar of the symbol, most likely at the history limit of the plan ' +
             '(HISTORICAL_BARS, which app_get_plan_limits reports).';
     case 'stalled':
+      return (
+        `${only}: TradingView sends no more older history for now: the chart takes no further ` +
+        'request and has not reported the end of its data. This can be the history limit of the ' +
+        'plan (HISTORICAL_BARS, which app_get_plan_limits reports).'
+      );
+    case 'ignored':
       return (
         `${only}: TradingView did not load more history when asked. The chart may be hidden or ` +
         'not laid out yet; show the chart and try again.'
@@ -217,18 +226,24 @@ export async function readOhlcvData(
   }
   const read = await page.bridge.evaluate(readBarRows, [target.index, from, to, count]);
   const bars = toBarRows(read.rows, input.from, input.to, count);
-  // A range whose start is loaded is complete with fewer bars than count.
-  const warnings =
-    bars.length === count || stop === 'done'
-      ? []
-      : [shortfallWarning(bars.length, count, stop, state, waitMs)];
+  // Rows the chart holds without a price for each of open, high, low and close are left out.
+  const dropped = read.rows.length - bars.length;
+  // Complete when every bar asked for is returned: count of them, or every bar of a range whose
+  // start is loaded.
+  const startLoaded = from !== null && state.firstTime !== null && state.firstTime <= from;
+  const complete = bars.length === count || (startLoaded && dropped === 0);
+  const warnings: string[] = [];
+  if (!complete && stop !== 'done') {
+    warnings.push(shortfallWarning(bars.length, count, stop, state, waitMs));
+  }
+  if (dropped > 0) {
+    warnings.push(
+      `${String(dropped)} bar${dropped === 1 ? '' : 's'} of the chart had no open, high, low or ` +
+        'close price and were left out.',
+    );
+  }
   return {
-    data: {
-      symbol: read.symbol,
-      resolution: read.resolution,
-      bars,
-      complete: warnings.length === 0,
-    },
+    data: { symbol: read.symbol, resolution: read.resolution, bars, complete },
     warnings,
   };
 }

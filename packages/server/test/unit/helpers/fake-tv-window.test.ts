@@ -1064,3 +1064,13 @@ test('a request brings at most historyBatchBars bars', async () => {
   expect(series.bars().size()).toBe(350);
   expect(series.requestMoreDataAvailable()).toBe(true);
 });
+
+test('with historyEndUnflagged, a request that brings no bar leaves no end flag', async () => {
+  const series = seriesOf(createFakeTvWindow(loadTvFixture(), { historyEndUnflagged: true }));
+
+  series.requestMoreData(100);
+  await delay(30);
+
+  expect([series.isLoading(), series.requestMoreDataAvailable()]).toEqual([false, false]);
+  expect([series.endOfData(), series.endOfDataType()]).toEqual([false, null]);
+});

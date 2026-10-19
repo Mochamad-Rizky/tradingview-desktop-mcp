@@ -30,6 +30,9 @@ export interface FakeHistoryOptions {
   loadMs: number;
   // The most bars one request brings, as a data server that answers in batches.
   batchBars: number;
+  // A request that brings no bar sets no end flag: the series then takes no more requests and
+  // reports no end, which the app may do at the history limit of the plan (not observed).
+  endUnflagged: boolean;
   // Whether a request can be sent now; false makes requestMoreData a silent no-op, as on the app
   // while the series has no bars or the chart has not laid them out.
   canRequest: () => boolean;
@@ -77,7 +80,7 @@ export function createFakeHistory(
         loaded = [...older.slice(olderCount - loadedOlder), ...initial];
         loading = false;
         available = added > 0;
-        ended = loadedOlder === olderCount;
+        ended = loadedOlder === olderCount && !(added === 0 && options.endUnflagged);
       }, options.loadMs).unref();
     },
     requestMoreDataAvailable: () => available,

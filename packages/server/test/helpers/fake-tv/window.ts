@@ -71,6 +71,8 @@ export interface FakeTvOverrides {
   historyLoadMs?: number;
   // The most bars one requestMoreData call brings. Default: as many as were asked for.
   historyBatchBars?: number;
+  // A requestMoreData call that brings no bar sets no end flag (history.ts). Default false.
+  historyEndUnflagged?: boolean;
 }
 
 export interface FakeBars {
@@ -257,6 +259,7 @@ export function createFakeTvWindow(
   const history = createFakeHistory(fixture, {
     loadMs: overrides.historyLoadMs ?? 10,
     batchBars: overrides.historyBatchBars ?? Infinity,
+    endUnflagged: overrides.historyEndUnflagged ?? false,
     canRequest: () => !state.symbolInvalid,
     record,
   });
