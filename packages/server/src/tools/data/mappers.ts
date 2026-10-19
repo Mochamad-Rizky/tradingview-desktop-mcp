@@ -111,10 +111,13 @@ export interface SearchItem {
 // ticker of a futures root is the symbol of its first contract.
 export function mapSearchResult(item: SearchItem) {
   const ticker = stripTags(item.contract ?? item.symbol);
-  const listing = item.prefix ?? item.exchange;
+  // An empty prefix counts as none, as `prefix || exchange` has it in the app.
+  const named = (text: string | null): string | null =>
+    text === null || stripTags(text) === '' ? null : stripTags(text);
+  const listing = named(item.prefix) ?? named(item.exchange);
   const exchange = item.exchange === null ? null : stripTags(item.exchange);
   return {
-    symbol: listing === null ? ticker : `${stripTags(listing)}:${ticker}`,
+    symbol: listing === null ? ticker : `${listing}:${ticker}`,
     ticker,
     description: stripTags(item.description),
     exchange,

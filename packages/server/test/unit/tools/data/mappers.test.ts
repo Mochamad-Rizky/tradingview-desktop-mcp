@@ -221,6 +221,11 @@ describe('stripTags and mapSearchResult', () => {
     );
   });
 
+  test('mapSearchResult takes an empty prefix as none, and an empty exchange as well', () => {
+    expect(mapSearchResult(item({ prefix: '' })).symbol).toBe('NASDAQ:AAPL');
+    expect(mapSearchResult(item({ prefix: '', exchange: '' })).symbol).toBe('AAPL');
+  });
+
   test('mapSearchResult names the first contract of a futures root, which a click would show', () => {
     const result = mapSearchResult(
       item({ symbol: 'ES', exchange: 'CME_MINI', type: 'futures', contract: 'ES1!' }),
