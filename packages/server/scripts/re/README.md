@@ -45,8 +45,7 @@ the repository, pass `--out` with a directory elsewhere.
 
 What the scrubber does (`scrub.ts`, tested in `test/unit/scripts/scrub.test.ts`):
 
-- The layout becomes `Fixture Layout` with the id `FIXTURE1`, in the fixture and in every target
-  address and title.
+- The layout becomes `Fixture Layout` with the id `FIXTURE1`.
 - A drawing keeps its type only; its text, points and properties are dropped.
 - Studies keep a built-in name; any other name (a Pine script's title) becomes `Study N`.
 - Every field outside the fixture format is dropped, which removes the user object, the login state
@@ -55,9 +54,19 @@ What the scrubber does (`scrub.ts`, tested in `test/unit/scripts/scrub.test.ts`)
   symbol are kept, unknown fields are dropped.
 - The bars become `syntheticBars` with the fixture seed (42), as many as were recorded, and the
   quote is made from them. Fixtures never hold recorded prices.
+- The target list keeps only the id, the type and the parent id of each target. Each title is
+  replaced by a fixed one for its kind (the chart tab's generic title, the window chrome's file and
+  fixture data, `index.html` for a helper page, empty for the rest). Each address is rebuilt: the
+  chart tab gets `https://www.tradingview.com/chart/FIXTURE1/`; the window chrome its file with the
+  fixture data `{"remoteServiceInstanceId":"fixture-tvd:tabbed-window"}`; another file its path
+  inside the app bundle, under the default install folder; a web address keeps its scheme and host,
+  plus its path only for a frame of another site (ad and anti-abuse frames), so any other page, a
+  TradingView profile among them, keeps `/`; an address of another scheme keeps only the scheme.
+  Queries and fragments are always dropped, and so are the debugger addresses.
 
-Before writing, the recorder searches both files for the recorded layout name, layout id and symbol
-names, and refuses to write if any of them survived.
+Before writing, the recorder searches both files for the recorded layout name, layout ids and symbol
+names, plainly, percent-decoded and with HTML entities undone, a text shorter than three characters
+(a ticker such as `GE`) as a whole word, and refuses to write if any of them survived.
 
 ## Why the scripts wrap page functions
 

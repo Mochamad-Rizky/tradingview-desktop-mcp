@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { classifyTarget, type TargetKind } from '../../src/core/cdp/targets.js';
 import type { JsonObject, JsonValue } from '../../src/utils/json.js';
 import { parseTvStateFixture, type TvStateFixture } from '../../test/helpers/fake-tv/fixture.js';
 import { syntheticBars, type SyntheticBar } from '../../test/helpers/fake-tv/synthetic-bars.js';
@@ -6,7 +7,16 @@ import { syntheticBars, type SyntheticBar } from '../../test/helpers/fake-tv/syn
 // Turns a recording of the user's chart into a fixture that may be committed (design spec 10): no
 // personal data, the identity of NASDAQ:AAPL instead of the recorded symbol, and synthetic prices
 // instead of recorded ones, which are licensed market data. Everything is rebuilt from an
-// allowlist, so a field the recording gains in a later build is left out rather than copied.
+// allowlist, so a field the recording gains in a later build is left out rather than copied:
+// - scrubFixture keeps the build time, the timeframe, the chart type, the type of each drawing, the
+//   name of each built-in study with its plot ids, the layout type and chart count, the interval
+//   list and the symbol info fields that say nothing about which symbol it is. It writes the
+//   fixture's own layout name and id, symbol, symbol identity, ids, bars and quote.
+// - scrubTargets keeps the id, the type and the parent id of each target; it writes a fixed title
+//   per kind of target, and an address of which only the scheme, the host and, for some targets,
+//   the path survive (see scrubAddress).
+// - findLeaks is the last check of the recorder: no recorded identifying text may survive, whether
+//   written plainly, percent-encoded or HTML-escaped.
 
 export const FIXTURE_LAYOUT_NAME = 'Fixture Layout';
 export const FIXTURE_LAYOUT_ID = 'FIXTURE1';
@@ -365,42 +375,82 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
   return parseTvStateFixture({ ...scrubbed, knownSymbols: KNOWN_SYMBOLS, bars: spec });
 }
 
-// The random part of the instance id the window chrome carries in its address and title, such as
-// c0ffee12 in c0ffee12-tvd:tabbed-window.
-const INSTANCE_ID = /[0-9a-f]{6,}-tvd/g;
-const CHART_URL = /^https:\/\/([a-z0-9-]+\.)?tradingview\.com\/chart\//;
-// The layout id in the address of a chart tab, such as Qw3rTy12 in .../chart/Qw3rTy12/.
-const LAYOUT_IN_URL = /^https:\/\/(?:[a-z0-9-]+\.)?tradingview\.com\/chart\/([^/?#]+)/;
+// The install folder of the default macOS install, inside its app bundle. A recorded file address
+// can lie under another folder (a home folder names its user), so only the part inside the bundle
+// is kept and put under this one.
+const APP_ROOT = 'file:///Applications/TradingView.app/Contents/Resources/app.asar/';
+// The address of the window chrome holds data for its renderer; a fixture keeps only an instance id
+// of its own.
+const WINDOW_DATA = '{"remoteServiceInstanceId":"fixture-tvd:tabbed-window"}';
+const WINDOW_QUERY = `?rendererInitialData=${encodeURIComponent(WINDOW_DATA)}`;
+// What the window chrome shows as its title: the file and its data, with the quotes escaped.
+export const FIXTURE_WINDOW_TITLE = `index.html${WINDOW_QUERY.replaceAll('%22', '&quot;')}`;
+const FIXTURE_CHART_URL = `https://www.tradingview.com/chart/${FIXTURE_LAYOUT_ID}/`;
+const TRADINGVIEW_HOST = /(^|\.)tradingview\.com$/;
 
-// A target list of /json/list made safe to commit: the layout id replaced by FIXTURE1 wherever it
-// appears (it is made of letters and digits, so encoding leaves it as it is), the title of a chart
-// tab replaced by the one the app shows, the instance id of the window chrome replaced by
-// "fixture", and the debugger addresses dropped, since a fake server fills them in itself. The
-// layout ids are the one given and any the addresses of chart tabs hold, so an app that did not
-// report its layout id leaks it no more than one that did.
-export function scrubTargets(targets: readonly JsonValue[], layoutId: string): JsonValue[] {
-  const layoutIds = new Set(layoutId === '' ? [] : [layoutId]);
-  for (const target of targets.filter(isObject)) {
-    const found = typeof target.url === 'string' ? LAYOUT_IN_URL.exec(target.url)?.[1] : undefined;
-    if (found !== undefined && found !== FIXTURE_LAYOUT_ID) {
-      layoutIds.add(found);
-    }
+// The title a target of each kind gets. A recorded title can show what the page shows, such as a
+// symbol, a price or the name of a layout or of a person, so none is kept.
+const TITLES: Readonly<Record<TargetKind, string>> = {
+  chart: FIXTURE_CHART_TITLE,
+  'window-chrome': FIXTURE_WINDOW_TITLE,
+  helper: 'index.html',
+  blank: '',
+  other: '',
+};
+
+// The address of a target, rebuilt from what a fixture may hold:
+// - the chart tab: the fixture chart address, with the layout id FIXTURE1;
+// - the window chrome: its file in the default install folder, with the fixture data;
+// - another file: the same file in the default install folder, without query or fragment, or the
+//   bare scheme when it lies outside an app bundle;
+// - a web address: the scheme and the host, and the path only for a frame inside the chart page (ad
+//   and anti-abuse frames, whose paths are generic) and not on a TradingView host; any other page,
+//   a TradingView page such as a profile among them, keeps the root path. Query and fragment, which
+//   carry the data of a page, are always dropped;
+// - an empty address stays empty, about:blank stays as it is, and any other scheme keeps only its
+//   name, since what follows it can be the content itself.
+function scrubAddress(url: string, kind: TargetKind, type: string): string {
+  if (url === '' || url === 'about:blank') {
+    return url;
   }
-  const clean = (text: string): string => {
-    let scrubbed = text;
-    for (const id of layoutIds) {
-      scrubbed = scrubbed.split(id).join(FIXTURE_LAYOUT_ID);
+  if (kind === 'chart') {
+    return FIXTURE_CHART_URL;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return '';
+  }
+  if (parsed.protocol === 'file:') {
+    const inBundle = /\/app\.asar\/(.*)$/.exec(parsed.pathname)?.[1];
+    if (inBundle === undefined) {
+      return 'file:///';
     }
-    return scrubbed.replace(INSTANCE_ID, 'fixture-tvd');
-  };
+    return `${APP_ROOT}${inBundle}${kind === 'window-chrome' ? WINDOW_QUERY : ''}`;
+  }
+  if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+    const keepsPath = type === 'iframe' && !TRADINGVIEW_HOST.test(parsed.hostname);
+    return `${parsed.protocol}//${parsed.host}${keepsPath ? parsed.pathname : '/'}`;
+  }
+  return parsed.protocol;
+}
+
+// A target list of /json/list made safe to commit, rebuilt from an allowlist: of each target its
+// id, type and parent id are kept (random ids the app gives), its address is rebuilt by
+// scrubAddress, and its title is the fixed one of its kind. Everything else, the debugger addresses
+// among it, is dropped, and no recorded layout id can survive in the rebuilt addresses.
+export function scrubTargets(targets: readonly JsonValue[]): JsonValue[] {
   return targets.filter(isObject).map((target): JsonObject => {
+    const id = typeof target.id === 'string' ? target.id : '';
+    const type = typeof target.type === 'string' ? target.type : '';
     const url = typeof target.url === 'string' ? target.url : '';
-    const title = typeof target.title === 'string' ? target.title : '';
+    const kind = classifyTarget({ id, type, title: '', url });
     const scrubbed: JsonObject = {
-      id: typeof target.id === 'string' ? target.id : '',
-      type: typeof target.type === 'string' ? target.type : '',
-      title: target.type === 'page' && CHART_URL.test(url) ? FIXTURE_CHART_TITLE : clean(title),
-      url: clean(url),
+      id,
+      type,
+      title: TITLES[kind],
+      url: scrubAddress(url, kind, type),
     };
     if (typeof target.parentId === 'string') {
       scrubbed.parentId = target.parentId;
@@ -409,15 +459,44 @@ export function scrubTargets(targets: readonly JsonValue[], layoutId: string): J
   });
 }
 
-// The texts among `needles` that still occur in `value`, ignoring case: a last check before a
-// fixture is written. Texts of fewer than three characters are skipped, because they occur in
-// ordinary words.
+// `text` with percent-encoding undone (twice, for an address inside an address) and the HTML
+// entities a title can carry replaced, so that a recorded text is found however it was written.
+function decoded(text: string): string {
+  let plain = text;
+  for (let round = 0; round < 2; round += 1) {
+    plain = plain.replace(/%([0-9A-Fa-f]{2})/g, (_match, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+  }
+  return plain
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&apos;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+// The texts among `needles` that still occur in `value`: a last check before a fixture is written.
+// The value is searched as it is and with its encodings undone. A text of three characters or more
+// counts wherever it occurs, ignoring case; a shorter one, such as the ticker GE, only as a whole
+// word of letters and digits written the same way, so that it is not found inside other words.
 export function findLeaks(value: JsonValue, needles: readonly string[]): string[] {
-  const text = JSON.stringify(value).toLowerCase();
+  const raw = JSON.stringify(value);
+  const plain = decoded(raw);
+  const haystacks = [raw.toLowerCase(), plain.toLowerCase()];
+  const words = new Set(plain.split(/[^A-Za-z0-9]+/));
   const found = new Set<string>();
   for (const needle of needles) {
     const trimmed = needle.trim();
-    if (trimmed.length >= 3 && text.includes(trimmed.toLowerCase())) {
+    if (trimmed === '') {
+      continue;
+    }
+    const leaked =
+      trimmed.length >= 3
+        ? haystacks.some((haystack) => haystack.includes(trimmed.toLowerCase()))
+        : words.has(trimmed);
+    if (leaked) {
       found.add(trimmed);
     }
   }

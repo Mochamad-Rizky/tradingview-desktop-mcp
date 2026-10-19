@@ -228,10 +228,7 @@ async function main(): Promise<void> {
       bars: extra.bars,
     };
     const fixture = toStateFixture(scrubFixture(raw));
-    const scrubbedTargets = scrubTargets(
-      targets.map((target) => ({ ...target })),
-      chart.layout.id ?? '',
-    );
+    const scrubbedTargets = scrubTargets(targets.map((target) => ({ ...target })));
 
     const needles = identifyingTexts(
       raw,

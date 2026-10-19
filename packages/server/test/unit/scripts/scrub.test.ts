@@ -4,6 +4,7 @@ import {
   FIXTURE_LAYOUT_NAME,
   FIXTURE_SEED,
   FIXTURE_SYMBOL,
+  FIXTURE_WINDOW_TITLE,
   findLeaks,
   scrubFixture,
   scrubTargets,
@@ -266,13 +267,18 @@ describe('toStateFixture', () => {
 });
 
 describe('scrubTargets', () => {
+  const APP = 'file:///Applications/TradingView.app/Contents/Resources/app.asar/app';
+  // What the window chrome carries in a committed fixture: the fixture's instance id and nothing else.
+  const WINDOW_QUERY =
+    '?rendererInitialData=%7B%22remoteServiceInstanceId%22%3A%22fixture-tvd%3Atabbed-window%22%7D';
   const targets: JsonValue[] = [
     {
       id: 'EE67363DAA56C9940A709061CFAA2FFF',
       type: 'page',
       title:
         'index.html?rendererInitialData=%7B&quot;remoteServiceInstanceId&quot;%3A&quot;c0ffee12-tvd%3Atabbed-window&quot;%7D',
-      url: 'file:///Applications/TradingView.app/Contents/Resources/app.asar/app/window/index.html?rendererInitialData=%7B%22remoteServiceInstanceId%22%3A%22c0ffee12-tvd%3Atabbed-window%22%7D',
+      // The data the window chrome gets can hold more than the instance id.
+      url: `${APP}/window/index.html?rendererInitialData=%7B%22remoteServiceInstanceId%22%3A%22c0ffee12-tvd%3Atabbed-window%22%2C%22account%22%3A%22someone%22%7D`,
       webSocketDebuggerUrl: 'ws://127.0.0.1:9222/devtools/page/EE67363DAA56C9940A709061CFAA2FFF',
       devtoolsFrontendUrl: '/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/EE67',
     },
@@ -280,52 +286,128 @@ describe('scrubTargets', () => {
       id: 'BBB144A7827AE55CBA0E74986FC9574C',
       type: 'page',
       title: 'ZZTEST 713.25 ▲ +0.25% My Layout',
-      url: 'https://www.tradingview.com/chart/Qw3rTy12/',
+      url: 'https://www.tradingview.com/chart/Qw3rTy12/?symbol=XAMS%3AZZTEST',
     },
     {
       id: '45FA12C67FCC102BC635696179137865',
       type: 'iframe',
       title:
         'https://cm.g.doubleclick.net/partnerpixels?url=https%3A%2F%2Fwww.tradingview.com%2Fchart%2FQw3rTy12%2F',
-      url: 'https://cm.g.doubleclick.net/partnerpixels?url=https%3A%2F%2Fwww.tradingview.com%2Fchart%2FQw3rTy12%2F',
+      url: 'https://cm.g.doubleclick.net/partnerpixels?url=https%3A%2F%2Fwww.tradingview.com%2Fchart%2FQw3rTy12%2F&uid=4242#frame',
       parentId: 'BBB144A7827AE55CBA0E74986FC9574C',
     },
+    {
+      id: '0621E0BEA8DA2CEEE3C6E3AFFD3C3229',
+      type: 'page',
+      title: 'My private notes',
+      url: 'file:///Users/someone/Applications/TradingView.app/Contents/Resources/app.asar/app/tooltip/index.html?rendererInitialData=%7B%7D',
+    },
+    {
+      id: '9A1E5B7C3D2F4E6A8B0C1D2E3F4A5B6C',
+      type: 'page',
+      title: 'someone — profile',
+      url: 'https://www.tradingview.com/u/someone/?tab=ideas#latest',
+    },
+    { id: 'D4FA899CB58B76FCEDDAC2E1E63735B2', type: 'page', title: '', url: '' },
+    {
+      id: '1B2C3D4E5F60718293A4B5C6D7E8F901',
+      type: 'page',
+      title: 'x',
+      url: 'data:text/html,secret',
+    },
+    { id: '2B2C3D4E5F60718293A4B5C6D7E8F902', type: 'page', title: 'y', url: 'about:blank' },
   ];
+  const byId = (scrubbed: JsonValue[], id: string): JsonObject => {
+    const found = scrubbed.find((target) => asObject(target).id === id);
+    return asObject(found);
+  };
 
-  it('replaces the layout id, the title of the chart tab and the instance id of the window', () => {
-    const scrubbed = scrubTargets(targets, 'Qw3rTy12');
-    const text = JSON.stringify(scrubbed);
+  it('keeps of every target its id, type and parent, and nothing it does not know', () => {
+    const scrubbed = scrubTargets(targets);
 
-    expect(text).not.toContain('Qw3rTy12');
-    expect(text).not.toContain('c0ffee12');
-    expect(text).not.toContain('ZZTEST');
-    expect(text).not.toContain('My Layout');
-    expect(scrubbed[1]).toEqual({
+    expect(Object.keys(byId(scrubbed, 'EE67363DAA56C9940A709061CFAA2FFF')).sort()).toEqual([
+      'id',
+      'title',
+      'type',
+      'url',
+    ]);
+    expect(byId(scrubbed, '45FA12C67FCC102BC635696179137865').parentId).toBe(
+      'BBB144A7827AE55CBA0E74986FC9574C',
+    );
+    expect(scrubbed.map((target) => asObject(target).type)).toEqual(
+      targets.map((target) => asObject(target).type),
+    );
+  });
+
+  it('gives the chart tab the fixture address and title', () => {
+    expect(byId(scrubTargets(targets), 'BBB144A7827AE55CBA0E74986FC9574C')).toEqual({
       id: 'BBB144A7827AE55CBA0E74986FC9574C',
       type: 'page',
       title: FIXTURE_CHART_TITLE,
       url: `https://www.tradingview.com/chart/${FIXTURE_LAYOUT_ID}/`,
     });
-    expect(asObject(scrubbed[0]).url).toContain('fixture-tvd%3Atabbed-window');
-    expect(asObject(scrubbed[0]).title).toContain('fixture-tvd%3Atabbed-window');
-    expect(asObject(scrubbed[2]).url).toContain(`%2Fchart%2F${FIXTURE_LAYOUT_ID}%2F`);
-    expect(asObject(scrubbed[2]).parentId).toBe('BBB144A7827AE55CBA0E74986FC9574C');
   });
 
-  it('finds the layout id in the address of a chart tab when none is given', () => {
-    const scrubbed = scrubTargets(targets, '');
+  it('rebuilds the window chrome with the data of the fixture alone', () => {
+    const chrome = byId(scrubTargets(targets), 'EE67363DAA56C9940A709061CFAA2FFF');
 
-    expect(JSON.stringify(scrubbed)).not.toContain('Qw3rTy12');
-    expect(asObject(scrubbed[1]).url).toBe(
-      `https://www.tradingview.com/chart/${FIXTURE_LAYOUT_ID}/`,
+    expect(chrome.url).toBe(`${APP}/window/index.html${WINDOW_QUERY}`);
+    expect(chrome.title).toBe(FIXTURE_WINDOW_TITLE);
+    expect(FIXTURE_WINDOW_TITLE).toBe(
+      'index.html?rendererInitialData=%7B&quot;remoteServiceInstanceId&quot;%3A&quot;fixture-tvd%3Atabbed-window&quot;%7D',
     );
-    expect(asObject(scrubbed[2]).url).toContain(`%2Fchart%2F${FIXTURE_LAYOUT_ID}%2F`);
   });
 
-  it('drops the debugger addresses, which a fake server fills in itself', () => {
-    const scrubbed = scrubTargets(targets, 'Qw3rTy12');
+  it('drops the query and the fragment of every other address, an unknown parameter with them', () => {
+    const frame = byId(scrubTargets(targets), '45FA12C67FCC102BC635696179137865');
 
-    expect(Object.keys(asObject(scrubbed[0])).sort()).toEqual(['id', 'title', 'type', 'url']);
+    expect(frame.url).toBe('https://cm.g.doubleclick.net/partnerpixels');
+  });
+
+  it('replaces the title of every target by a fixed one of its kind', () => {
+    const scrubbed = scrubTargets(targets);
+
+    // A helper page, a frame, a page of another site and a blank page.
+    expect(byId(scrubbed, '0621E0BEA8DA2CEEE3C6E3AFFD3C3229').title).toBe('index.html');
+    expect(byId(scrubbed, '45FA12C67FCC102BC635696179137865').title).toBe('');
+    expect(byId(scrubbed, '9A1E5B7C3D2F4E6A8B0C1D2E3F4A5B6C').title).toBe('');
+    expect(byId(scrubbed, 'D4FA899CB58B76FCEDDAC2E1E63735B2').title).toBe('');
+  });
+
+  it('keeps no path of a TradingView page other than the chart, such as a profile', () => {
+    const profile = byId(scrubTargets(targets), '9A1E5B7C3D2F4E6A8B0C1D2E3F4A5B6C');
+
+    expect(profile.url).toBe('https://www.tradingview.com/');
+  });
+
+  it('moves a file address onto the default install folder, whatever folder it was under', () => {
+    const helper = byId(scrubTargets(targets), '0621E0BEA8DA2CEEE3C6E3AFFD3C3229');
+
+    expect(helper.url).toBe(`${APP}/tooltip/index.html`);
+  });
+
+  it('keeps nothing of an address of another kind but its scheme, apart from about:blank', () => {
+    const scrubbed = scrubTargets(targets);
+
+    expect(byId(scrubbed, '1B2C3D4E5F60718293A4B5C6D7E8F901').url).toBe('data:');
+    expect(byId(scrubbed, '2B2C3D4E5F60718293A4B5C6D7E8F902').url).toBe('about:blank');
+    expect(byId(scrubbed, 'D4FA899CB58B76FCEDDAC2E1E63735B2').url).toBe('');
+  });
+
+  it('leaves no recorded text in the list', () => {
+    const text = JSON.stringify(scrubTargets(targets));
+
+    for (const recorded of [
+      'Qw3rTy12',
+      'c0ffee12',
+      'ZZTEST',
+      'My Layout',
+      'someone',
+      '4242',
+      'secret',
+    ]) {
+      expect(text).not.toContain(recorded);
+    }
   });
 });
 
@@ -336,7 +418,21 @@ describe('findLeaks', () => {
     expect(findLeaks(value, ['ZZTEST', 'abc123', 'ZZTEST'])).toEqual(['ZZTEST']);
   });
 
-  it('ignores texts too short to tell apart from ordinary words', () => {
-    expect(findLeaks({ a: 'generic' }, ['GE', ' '])).toEqual([]);
+  it('finds a text that an address holds percent-encoded or HTML-escaped', () => {
+    expect(findLeaks({ url: 'https://x.example/?s=XAMS%3AZZTEST' }, ['XAMS:ZZTEST'])).toEqual([
+      'XAMS:ZZTEST',
+    ]);
+    expect(findLeaks({ title: 'a &quot;Zz &amp; Co&quot; title' }, ['Zz & Co'])).toEqual([
+      'Zz & Co',
+    ]);
+  });
+
+  it('finds a short ticker as a whole word, encoded or not', () => {
+    expect(findLeaks({ url: 'https://x.example/?s=NYSE%3AGE' }, ['GE'])).toEqual(['GE']);
+    expect(findLeaks({ a: 'ticker F' }, ['F'])).toEqual(['F']);
+  });
+
+  it('does not take a short ticker inside a longer word for a leak', () => {
+    expect(findLeaks({ a: 'generic GEO 1F' }, ['GE', 'F', ' '])).toEqual([]);
   });
 });
