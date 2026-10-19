@@ -102,6 +102,15 @@ test('app_health tells what to do when TradingView is down', () => {
   expect(toolNamed('app_health').description).toMatch(/app_launch/);
 });
 
+// The tab of the app can show the home page of TradingView instead of a chart, and that is the
+// case app_discover is for.
+test('app_discover counts a page that is not a chart, such as the home page, as other', () => {
+  const { description } = toolNamed('app_discover');
+
+  expect(description).toMatch(/other \([^)]*frame[^)]*worker[^)]*\)/);
+  expect(description).toMatch(/other \([^)]*not a chart[^)]*home page[^)]*\)/);
+});
+
 test('the tools that take nothing have an empty input', () => {
   for (const name of ['app_health', 'app_discover', 'app_get_ui_state']) {
     expect(Object.keys(toolNamed(name).inputSchema), name).toEqual([]);

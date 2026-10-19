@@ -213,9 +213,10 @@ export const appDiscover = defineTool({
     'answers) and targets: every page the debug port lists, each with id, kind, title and url. ' +
     'kind is chart (a tab that shows a chart, the kind the other tools drive), window-chrome ' +
     '(the window with the tab strip), helper (a page the app keeps for itself), blank (a page ' +
-    'without content) or other (a frame or a worker). Use it to find out why no chart tab is ' +
-    'found, for example when the only tab is not on a chart. targets is empty, with a warning ' +
-    'that says what to do, when the debug port does not answer.',
+    'without content) or other (a frame, a worker, or a page that is not a chart, such as the ' +
+    'TradingView home page). Use it to find out why no chart tab is found, for example when the ' +
+    'only tab is not on a chart. targets is empty, with a warning that says what to do, when the ' +
+    'debug port does not answer.',
   inputSchema: {},
   annotations: {
     readOnlyHint: true,
