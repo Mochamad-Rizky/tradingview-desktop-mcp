@@ -37,6 +37,10 @@ export type KeyModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
 // the button. So the calls of one page queue. A call holds its turn from its first lookup to the
 // answer to its last event, and gives it up when it ends, however it ends. The queue belongs to
 // the session, so it goes away with the page.
+//
+// A turn is not re-entrant: an action that called clickElement, pressKey or typeText of the same
+// page would queue behind itself and never end. So no helper calls another one while it holds a
+// turn, and a caller that needs several runs them one after the other.
 const queues = new WeakMap<CdpSession, Promise<void>>();
 
 function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
