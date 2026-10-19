@@ -177,7 +177,7 @@
   - `indicator_set_inputs accepts input ids or names and returns previous values`; `indicator_set_inputs rejects unknown inputs and wrong types with INVALID_INPUT` (nothing set).
   - `indicator_set_visibility hides and shows a study`.
 - [ ] **Step 2: Run the tests to verify they fail.** Expected: FAIL.
-- [ ] **Step 3: Implement.** Before `createStudy`, use the model's `canCreateStudy` when it exists (read-only), else compare `getAllStudies().length` with `INDICATORS_ON_CHART`. Validate inputs against the study's `getInputsInfo()` (design spec §7) before calling `setInputValues`. Annotations: `indicator_add` not destructive; `indicator_remove` `destructiveHint: true`; setters `idempotentHint: true`.
+- [ ] **Step 3: Implement.** Before `createStudy`, use the model's `canCreateStudy` when it exists (read-only), else compare `getAllStudies().length` with `INDICATORS_ON_CHART`. Always call `createStudy` with `checkLimit: true`, so TradingView still enforces its own limit; never pass `false`. Validate inputs against the study's `getInputsInfo()` (design spec §7) before calling `setInputValues`. Annotations: `indicator_add` not destructive; `indicator_remove` `destructiveHint: true`; setters `idempotentHint: true`.
 - [ ] **Step 4: Run the tests to verify they pass.** Expected: PASS.
 - [ ] **Step 5: Commit.** `git commit -m "feat(indicator): add, remove and edit indicators within plan limits"`
 
