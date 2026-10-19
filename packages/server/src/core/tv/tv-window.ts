@@ -81,6 +81,11 @@ export interface ChartWidgetApiLike {
   setVisibleRange(range: { from: number; to: number }): unknown;
   // The widget behind the API. It is internal, so a build may not have it.
   readonly _chartWidget?: ChartWidgetLike;
+  // The time the chart reports for the bar at an index, the one getVisibleRange speaks in: for
+  // daily and longer bars the day at 00:00 UTC, while bars().valueAt() holds the start of the
+  // session (13:30 UTC for a US stock). It answers for the time points after the last bar too, and
+  // null while the series has no symbol info (seen on the app). Internal as well.
+  _convertIndexToPublicTime?(index: number): number | null;
 }
 
 // The options of setSymbol and setResolution.

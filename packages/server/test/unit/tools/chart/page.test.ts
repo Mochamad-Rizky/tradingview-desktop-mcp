@@ -26,6 +26,7 @@ import { loadTvFixture, type TvStateFixture } from '../../../helpers/fake-tv/fix
 import {
   createFakeTvWindow,
   inspectFakeWindow,
+  type FakeTvOverrides,
   type FakeTvWindow,
 } from '../../../helpers/fake-tv/window.js';
 
@@ -42,6 +43,11 @@ const HOUR = 3_600;
 // The fixture has one bar a day, every day, from 2024-01-02 on.
 const barTime = (index: number): number => fixture.bars.startTime + index * DAY;
 const LAST = fixture.bars.count - 1;
+// The chart reports a daily bar as its day at 00:00 UTC, while the row of the bar holds the start of
+// its session: 13:30 UTC for a US stock, 13.5 hours later (seen on the app).
+const SESSION = 13.5 * HOUR;
+const US_DAILY: FakeTvOverrides = { sessionOffsetSeconds: SESSION };
+const dayOf = (index: number): number => barTime(index) - SESSION;
 
 const disposers: (() => void)[] = [];
 
@@ -86,9 +92,13 @@ type Parts = ReturnType<typeof partsOf>;
 type Make = () => object;
 
 // A booted chart, reshaped by `patch`, made anew for every run.
-function chart(patch?: (parts: Parts, win: FakeTvWindow) => void, from = fixture): Make {
+function chart(
+  patch?: (parts: Parts, win: FakeTvWindow) => void,
+  from = fixture,
+  overrides: FakeTvOverrides = {},
+): Make {
   return () => {
-    const win = createFakeTvWindow(from);
+    const win = createFakeTvWindow(from, overrides);
     patch?.(partsOf(win), win);
     return win;
   };
@@ -845,6 +855,29 @@ describe('zoomToTimeRange', () => {
     expect(callsTo(win, 'chart.setVisibleRange')).toEqual([]);
   });
 
+  test('zoomToTimeRange reads times as the chart reports them, hours before the rows of the bars', async () => {
+    // The days of bars 250 and 280 at 00:00 UTC: 10.5 hours after the row of the bar before, and
+    // 13.5 hours before the row of the bar itself.
+    const { result, win } = await resultOf(
+      zoomToTimeRange,
+      [dayOf(250), dayOf(280), null],
+      chart(undefined, fixture, US_DAILY),
+    );
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[250, 280]]);
+    expect(result).toStrictEqual({ from: dayOf(250), to: dayOf(280), warnings: [] });
+  });
+
+  test('zoomToTimeRange reads the rows of the bars on a build that cannot convert an index', async () => {
+    const make = chart(({ chart: target }) => {
+      Reflect.deleteProperty(target, '_convertIndexToPublicTime');
+    });
+
+    const { win } = await resultOf(zoomToTimeRange, [barTime(250), barTime(280), null], make);
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[250, 280]]);
+  });
+
   test('zoomToTimeRange moves the chart at chartIndex', async () => {
     const { win } = await resultOf(zoomToTimeRange, [barTime(10), barTime(20), 0], chart());
 
@@ -989,9 +1022,10 @@ describe('zoomToTimeRange', () => {
     ],
     [
       'bars without readable times',
-      chart(({ series }) => {
+      chart(({ chart: target, series }) => {
         const original = series.bars();
         Object.assign(series, { bars: () => ({ ...original, valueAt: () => null }) });
+        Reflect.deleteProperty(target, '_convertIndexToPublicTime');
       }),
     ],
   ])('zoomToTimeRange is unavailable, before it acts, on %s', async (_case, make) => {
@@ -1020,6 +1054,23 @@ describe('scrollToTime', () => {
     });
     // The width of the view is kept: only where it starts moves.
     expect(barTime(149) - barTime(50)).toBe(fixture.visibleRange.to - fixture.visibleRange.from);
+  });
+
+  test('scrollToTime finds the bar of a day as the chart reports the day', async () => {
+    const { result, win } = await resultOf(
+      scrollToTime,
+      [dayOf(99), 'center', null],
+      chart(undefined, fixture, US_DAILY),
+    );
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[50, 149]]);
+    // The bar is reported in the time the chart reports for it, like the visible range.
+    expect(result).toStrictEqual({
+      time: dayOf(99),
+      from: dayOf(50),
+      to: dayOf(149),
+      warnings: [],
+    });
   });
 
   test.each([
@@ -1149,9 +1200,10 @@ describe('scrollToTime', () => {
   });
 
   test('scrollToTime is unavailable, before it acts, when the bars have no readable times', async () => {
-    const make = chart(({ series }) => {
+    const make = chart(({ chart: target, series }) => {
       const original = series.bars();
       Object.assign(series, { bars: () => ({ ...original, valueAt: () => [null] }) });
+      Reflect.deleteProperty(target, '_convertIndexToPublicTime');
     });
 
     const { error, win } = await failureOfBoth(scrollToTime, [barTime(40), 'center', null], make);

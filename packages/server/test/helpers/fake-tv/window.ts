@@ -28,6 +28,12 @@ export interface FakeTvOverrides {
   visibilityState?: VisibilityState;
   // Leaves TradingViewApi out, like the page before the app has booted.
   withoutApi?: boolean;
+  // How many seconds the time the chart reports for a bar (getVisibleRange,
+  // _convertIndexToPublicTime) lies before the time in its row (bars().valueAt). The app reports a
+  // daily bar as its day at 00:00 UTC while the row holds the start of its session, 13:30 UTC for
+  // a US stock (seen on the app), which 48_600 models. Default 0, where both are the same, as for
+  // intraday bars. The visible range of the fixture is given in the times of the rows.
+  sessionOffsetSeconds?: number;
 }
 
 export interface FakeBars {
@@ -67,6 +73,8 @@ export interface FakeChartWidgetApi {
   setResolution(resolution: string, options?: FakeSetOptions): Promise<true>;
   setChartType(chartType: number): Promise<void>;
   setVisibleRange(range: { from: number; to: number }): never;
+  // The time the chart reports for the bar at an index, or null for an index without a bar.
+  _convertIndexToPublicTime(index: number): number | null;
   readonly _chartWidget: {
     model(): { mainSeries(): FakeMainSeries; model(): { timeScale(): FakeTimeScale } };
   };
@@ -120,6 +128,7 @@ export interface FakeTvState {
   symbol: string;
   resolution: string;
   chartType: number;
+  // In the times the chart reports (see sessionOffsetSeconds).
   visibleRange: { from: number; to: number };
   activeChartIndex: number;
   symbolInvalid: boolean;
@@ -168,13 +177,19 @@ export function createFakeTvWindow(
 ): FakeTvWindow {
   const bars = syntheticBars(fixture.bars);
   const times = bars.map((bar) => bar[0]);
+  const offset = overrides.sessionOffsetSeconds ?? 0;
+  // The times the chart reports for the bars: getVisibleRange speaks in these.
+  const publicTimes = times.map((time) => time - offset);
   const knownSymbols = new Set(fixture.knownSymbols);
   const calls: FakeCall[] = [];
   const state: FakeTvState = {
     symbol: fixture.symbol,
     resolution: fixture.resolution,
     chartType: fixture.chartType,
-    visibleRange: { ...fixture.visibleRange },
+    visibleRange: {
+      from: fixture.visibleRange.from - offset,
+      to: fixture.visibleRange.to - offset,
+    },
     activeChartIndex: 0,
     symbolInvalid: false,
     connected: true,
@@ -201,40 +216,42 @@ export function createFakeTvWindow(
     });
   };
 
-  // Index of the bar whose time is closest to `time`; the earlier bar wins a tie.
-  const nearestIndex = (time: number): number | null => {
-    if (times.length === 0 || !Number.isFinite(time)) {
+  // Index of the time in `list` that is closest to `time`; the earlier one wins a tie.
+  const nearestIn = (list: readonly number[], time: number): number | null => {
+    if (list.length === 0 || !Number.isFinite(time)) {
       return null;
     }
     let low = 0;
-    let high = times.length - 1;
+    let high = list.length - 1;
     while (low < high) {
       const middle = Math.floor((low + high) / 2);
-      if ((times[middle] ?? Infinity) < time) {
+      if ((list[middle] ?? Infinity) < time) {
         low = middle + 1;
       } else {
         high = middle;
       }
     }
-    const before = times[low - 1];
-    const at = times[low];
+    const before = list[low - 1];
+    const at = list[low];
     if (before !== undefined && at !== undefined && time - before <= at - time) {
       return low - 1;
     }
     return low;
   };
+  const nearestIndex = (time: number): number | null => nearestIn(times, time);
 
   // The bars a page sees: none while the series is flagged for an unknown symbol.
   const loaded = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : bars);
 
-  // A zoom past the loaded history stays on the loaded bars. The real time scale can reach
-  // beyond them, but there is no data to report a time for.
+  // The time the chart reports for the bar nearest to an index. A zoom past the loaded history
+  // stays on the loaded bars. The real time scale can reach beyond them, but there is no data to
+  // report a time for.
   const timeAtClamped = (index: number): number => {
     if (Number.isNaN(index)) {
       throw new RangeError('Bar index must be a number');
     }
     const clamped = Math.min(Math.max(Math.round(index), 0), times.length - 1);
-    return times[clamped] ?? Number.NaN;
+    return publicTimes[clamped] ?? Number.NaN;
   };
 
   const barContainer: FakeBars = {
@@ -263,8 +280,8 @@ export function createFakeTvWindow(
       if (loaded().length === 0) {
         return null;
       }
-      const from = nearestIndex(state.visibleRange.from);
-      const to = nearestIndex(state.visibleRange.to);
+      const from = nearestIn(publicTimes, state.visibleRange.from);
+      const to = nearestIn(publicTimes, state.visibleRange.to);
       return from === null || to === null ? null : { left: () => from, right: () => to };
     },
   };
@@ -313,6 +330,8 @@ export function createFakeTvWindow(
       record('chart.setVisibleRange', [range]);
       throw new Error('Not implemented');
     },
+    _convertIndexToPublicTime: (index) =>
+      Number.isInteger(index) && loaded().length > 0 ? (publicTimes[index] ?? null) : null,
     _chartWidget: { model: () => chartModel },
   };
 

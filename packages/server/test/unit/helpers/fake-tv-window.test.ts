@@ -428,6 +428,36 @@ describe('createFakeTvWindow', () => {
       expect(chartOf(win).getVisibleRange()).toEqual(fixture.visibleRange);
     });
 
+    test('reports times a session offset before the rows of the bars, when asked to', () => {
+      const offset = 48_600;
+      const win = createFakeTvWindow(fixture, { sessionOffsetSeconds: offset });
+
+      expect(seriesOf(win).bars().valueAt(10)?.[0]).toBe(timeAt(10));
+      expect(chartOf(win)._convertIndexToPublicTime(10)).toBe(timeAt(10) - offset);
+      expect(chartOf(win).getVisibleRange()).toEqual({
+        from: timeAt(200) - offset,
+        to: timeAt(299) - offset,
+      });
+      expect(endsOf(timeScaleOf(win).logicalRange())).toEqual([200, 299]);
+
+      timeScaleOf(win).zoomToBarsRange(250, 280);
+
+      expect(chartOf(win).getVisibleRange()).toEqual({
+        from: timeAt(250) - offset,
+        to: timeAt(280) - offset,
+      });
+      expect(endsOf(timeScaleOf(win).logicalRange())).toEqual([250, 280]);
+    });
+
+    test('converts no index that has no bar', () => {
+      const win = createFakeTvWindow(fixture);
+
+      expect(chartOf(win)._convertIndexToPublicTime(10)).toBe(timeAt(10));
+      expect(chartOf(win)._convertIndexToPublicTime(10.5)).toBeNull();
+      expect(chartOf(win)._convertIndexToPublicTime(-1)).toBeNull();
+      expect(chartOf(win)._convertIndexToPublicTime(300)).toBeNull();
+    });
+
     test('scrollToBar records the call and leaves the range alone', () => {
       const win = createFakeTvWindow(fixture);
 

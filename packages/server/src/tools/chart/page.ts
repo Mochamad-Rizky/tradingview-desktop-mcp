@@ -470,10 +470,13 @@ export function readVisibleRange(
 
 // Shows the bars from `from` to `to` (Unix seconds). The public setVisibleRange throws on the
 // observed build, so the core time scale is used: each time is mapped to the index of the nearest
-// loaded bar (the earlier one on a tie) by a binary search over the bar times, and the time scale is
-// zoomed to that range of indices. A time before the first loaded bar or after the last one is
-// clamped to it, with a warning. Answers the visible range afterwards, and NOT_AVAILABLE while no bar
-// is loaded.
+// loaded bar (the earlier one on a tie) by a binary search over the times of the bars, and the time
+// scale is zoomed to that range of indices. The times are the ones the chart reports for its bars,
+// in which getVisibleRange speaks too: the chart reports a daily bar as its day at 00:00 UTC, while
+// the row of the bar holds the start of its session, 13:30 UTC for a US stock (seen on the app), so
+// a search over the rows would land a day early. A build that cannot convert an index is searched
+// by its rows. A time before the first loaded bar or after the last one is clamped to it, with a
+// warning. Answers the visible range afterwards, and NOT_AVAILABLE while no bar is loaded.
 export function zoomToTimeRange(
   win: TvWindow,
   from: number,
@@ -525,7 +528,14 @@ export function zoomToTimeRange(
       },
     };
   }
+  // The time the chart reports for the bar at `index`, or else the time in its row.
+  const convert = chart?._convertIndexToPublicTime;
   const timeAt = (index: number): number => {
+    const reported =
+      typeof convert === 'function' ? attempt(() => convert.call(chart, index)) : undefined;
+    if (typeof reported === 'number' && Number.isFinite(reported)) {
+      return reported;
+    }
     const time: unknown = loaded.valueAt(index)?.[0];
     return typeof time === 'number' ? time : Number.NaN;
   };
@@ -591,7 +601,8 @@ export function zoomToTimeRange(
 // Moves the chart so that the bar nearest to `time` (Unix seconds) is at the left edge, the center
 // or the right edge of the view, and keeps the zoom: the view keeps its width in bars, read from the
 // logical range of the time scale, which counts the empty space after the last bar too, or else
-// from the visible range mapped to bars. It zooms the core time scale to the new range of indices,
+// from the visible range mapped to bars. Times are the ones the chart reports for its bars, as in
+// zoomToTimeRange. It zooms the core time scale to the new range of indices,
 // as zoomToTimeRange does, because where scrollToBar puts a bar is not recorded. The new range stays
 // within the loaded bars: near either end the view is moved, and a view wider than the loaded bars
 // is narrowed to them, each with a warning. A time outside the loaded bars goes to the first or the
@@ -648,7 +659,14 @@ export function scrollToTime(
       },
     };
   }
+  // The time the chart reports for the bar at `index`, or else the time in its row.
+  const convert = chart?._convertIndexToPublicTime;
   const timeAt = (index: number): number => {
+    const reported =
+      typeof convert === 'function' ? attempt(() => convert.call(chart, index)) : undefined;
+    if (typeof reported === 'number' && Number.isFinite(reported)) {
+      return reported;
+    }
     const barTime: unknown = loaded.valueAt(index)?.[0];
     return typeof barTime === 'number' ? barTime : Number.NaN;
   };

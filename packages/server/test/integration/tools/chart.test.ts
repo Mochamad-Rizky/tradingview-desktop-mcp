@@ -1402,6 +1402,25 @@ describe('chart_set_visible_range', () => {
     expect(inspector.callsTo('chart.setVisibleRange')).toEqual([]);
   });
 
+  // The chart reports a daily bar as its day at 00:00 UTC; a US stock's row holds 13:30 UTC.
+  test('chart_set_visible_range sets again a range read from a daily chart of a US stock', async () => {
+    const win = createFakeTvWindow(fixture, { sessionOffsetSeconds: 48_600 });
+    const { client } = await startHarness({ win });
+    const read = dataOf(await callTool(client, 'chart_get_visible_range')) as {
+      from: number;
+      to: number;
+    };
+
+    const result = await callTool(client, 'chart_set_visible_range', {
+      from: read.from,
+      to: read.to,
+    });
+
+    expect(inspectFakeWindow(win).callsTo('timeScale.zoomToBarsRange')).toEqual([[200, 299]]);
+    expect(dataOf(result)).toEqual(read);
+    expect(warningsOf(result)).toEqual([]);
+  });
+
   test('chart_set_visible_range takes Unix seconds and milliseconds as well', async () => {
     const win = createFakeTvWindow(fixture);
     const { client } = await startHarness({ win });
@@ -1631,6 +1650,11 @@ describe('chart_scroll_to_date', () => {
         ...bars,
         valueAt: (index: number) => (index === 99 ? null : bars.valueAt(index)),
       }),
+    });
+    // Neither the row of bar 99 nor the chart can say when it was.
+    const convert = chart._convertIndexToPublicTime.bind(chart);
+    Object.assign(chart, {
+      _convertIndexToPublicTime: (index: number) => (index === 99 ? null : convert(index)),
     });
     const { client } = await startHarness({ win });
 
