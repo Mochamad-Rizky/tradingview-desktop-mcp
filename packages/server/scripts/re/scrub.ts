@@ -170,17 +170,27 @@ function counter(index: number): string {
   return String(index + 1).padStart(2, '0');
 }
 
-// The times of the recorded bars, oldest first. Only the time of a row is read; its prices are
-// never copied anywhere.
-function recordedTimes(bars: JsonValue | undefined): number[] {
-  const times: number[] = [];
-  for (const row of list(bars)) {
+// The recorded bars, oldest first: the time in each row, and the time the chart reports for the bar
+// when the recording has it (publicTimes, in the order of the rows). Only times are read; the prices
+// of a row are never copied anywhere.
+interface RecordedBar {
+  time: number;
+  reported: number | undefined;
+}
+
+function recordedBars(
+  bars: JsonValue | undefined,
+  publicTimes: JsonValue | undefined,
+): RecordedBar[] {
+  const reported = list(publicTimes);
+  const recorded: RecordedBar[] = [];
+  list(bars).forEach((row, index) => {
     const time = Array.isArray(row) ? finite(row[0]) : undefined;
     if (time !== undefined) {
-      times.push(time);
+      recorded.push({ time, reported: finite(reported[index]) });
     }
-  }
-  return times.sort((a, b) => a - b);
+  });
+  return recorded.sort((a, b) => a.time - b.time);
 }
 
 // A series of synthetic bars as long as the recording, starting at its first time and as far apart
@@ -206,19 +216,33 @@ function syntheticSeries(times: readonly number[]): SyntheticBar[] {
   });
 }
 
-// The index of the first recorded bar at or after `time`, kept within the bars. The chart reports
-// a range in its own time base (the day of a daily bar at 00:00 UTC), which can be hours before
-// the time of the bar, so the bar at or after the time is the bar the range starts or ends on.
-function barAtOrAfter(times: readonly number[], time: number): number {
-  const index = times.findIndex((barTime) => barTime >= time);
-  return index === -1 ? times.length - 1 : index;
+// The index of the recorded bar a time of the chart's visible range falls on, kept within the bars.
+// The chart reports a range in its own time base: a daily bar is its day at 00:00 UTC, which can lie
+// hours after the start of the session in the row (a session that starts the day before in UTC) or
+// hours before it (13:30 UTC for a US stock), so only the times the chart reports for the bars
+// tell for sure. With them, the bar whose reported time is nearest is taken, the earlier on a tie.
+// A recording without them is searched by its rows for the first bar at or after the time, which
+// is right for every session that starts on the bar's own day in UTC.
+function barOfRangeTime(bars: readonly RecordedBar[], time: number): number {
+  const reported = bars.map((bar) => bar.reported);
+  if (reported.every((value): value is number => value !== undefined)) {
+    let nearest = 0;
+    reported.forEach((value, index) => {
+      if (Math.abs(value - time) < Math.abs((reported[nearest] ?? value) - time)) {
+        nearest = index;
+      }
+    });
+    return nearest;
+  }
+  const index = bars.findIndex((bar) => bar.time >= time);
+  return index === -1 ? bars.length - 1 : index;
 }
 
 // The recorded visible range, moved onto the synthetic bars at the same places. A range that
 // reaches past the last bar ends on it, since a fixture has nothing after its last bar.
 function scrubVisibleRange(
   range: JsonValue | undefined,
-  times: readonly number[],
+  recorded: readonly RecordedBar[],
   bars: readonly SyntheticBar[],
 ): JsonObject {
   const from = isObject(range) ? finite(range.from) : undefined;
@@ -227,8 +251,8 @@ function scrubVisibleRange(
   if (bars.length === 0 || from === undefined || to === undefined) {
     return { from: 0, to: 0 };
   }
-  const start = barAtOrAfter(times, from);
-  const end = Math.max(barAtOrAfter(times, to), start);
+  const start = barOfRangeTime(recorded, from);
+  const end = Math.max(barOfRangeTime(recorded, to), start);
   return { from: timeAt(start), to: timeAt(end) };
 }
 
@@ -312,19 +336,20 @@ function scrubLayout(layout: JsonValue | undefined): JsonObject {
 }
 
 // A recording made safe to commit. `raw` is what the recorder read from the chart tab: the chart
-// state, the symbol info, the quote and the bars as rows. The result has the same fields with the
-// layout named Fixture Layout (FIXTURE1), drawings reduced to their types, studies by built-in name
-// only, the identity of NASDAQ:AAPL, the bars replaced by syntheticBars with the fixture seed and as
-// many bars as were recorded, a quote made from those bars, and no other field.
+// state, the symbol info, the quote, the bars as rows and, in publicTimes, the time the chart
+// reports for each of them (used only to place the visible range). The result has the same fields
+// with the layout named Fixture Layout (FIXTURE1), drawings reduced to their types, studies by
+// built-in name only, the identity of NASDAQ:AAPL, the bars replaced by syntheticBars with the
+// fixture seed and as many bars as were recorded, a quote made from those bars, and no other field.
 export function scrubFixture(raw: JsonObject): JsonObject {
-  const times = recordedTimes(raw.bars);
-  const bars = syntheticSeries(times);
+  const recorded = recordedBars(raw.bars, raw.publicTimes);
+  const bars = syntheticSeries(recorded.map((bar) => bar.time));
   const fields: Record<(typeof FIXTURE_FIELDS)[number], JsonValue> = {
     buildTime: typeof raw.buildTime === 'string' ? raw.buildTime : '',
     symbol: FIXTURE_SYMBOL,
     resolution: typeof raw.resolution === 'string' ? raw.resolution : '1D',
     chartType: finite(raw.chartType) ?? 1,
-    visibleRange: scrubVisibleRange(raw.visibleRange, times, bars),
+    visibleRange: scrubVisibleRange(raw.visibleRange, recorded, bars),
     studies: scrubStudies(raw.studies),
     shapes: scrubShapes(raw.shapes),
     layout: scrubLayout(raw.layout),

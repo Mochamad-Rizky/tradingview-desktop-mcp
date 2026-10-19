@@ -222,6 +222,37 @@ describe('scrubFixture', () => {
     expect(scrubbed.visibleRange).toEqual({ from: bars[1]?.[0], to: bars[2]?.[0] });
   });
 
+  // A market whose session starts the day before in UTC, such as one opening at 21:00 UTC: the row
+  // of a daily bar holds 21:00 of the previous day, while the chart reports the bar as its own day
+  // at 00:00 UTC, which is the time a recorded range speaks in.
+  it('moves the range of a session that starts the day before by the times the chart reports', () => {
+    const day = (index: number): number => START - (START % DAY) + index * DAY;
+    const rows: JsonValue[] = [0, 1, 2, 3].map((index) => [
+      day(index) - 3 * 3600,
+      10,
+      11,
+      9,
+      10.5,
+      1000,
+    ]);
+    const scrubbed = scrubFixture(
+      recording({
+        bars: rows,
+        publicTimes: [0, 1, 2, 3].map(day),
+        visibleRange: { from: day(1), to: day(2) },
+      }),
+    );
+    const synthetic = syntheticBars({
+      count: 4,
+      startTime: day(0) - 3 * 3600,
+      stepSeconds: DAY,
+      seed: FIXTURE_SEED,
+    });
+
+    expect(scrubbed.visibleRange).toEqual({ from: synthetic[1]?.[0], to: synthetic[2]?.[0] });
+    expect(scrubbed).not.toHaveProperty('publicTimes');
+  });
+
   it('is deterministic and leaves its input alone', () => {
     const input = recording();
     const copy = structuredClone(input);

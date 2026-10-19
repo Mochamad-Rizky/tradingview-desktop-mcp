@@ -28,14 +28,16 @@ const USAGE = `Usage: pnpm re:record [--out DIR] [--name NAME] [--force] [--host
 
 const DEFAULT_OUT = fileURLToPath(new URL('../../test/fixtures/', import.meta.url));
 
-// What the chart tab holds beyond the chart state: every loaded bar as a row, the symbol info, the
-// interval list, the build, and each study with the ids of its plots and each drawing with its type.
-// Of a drawing only the id and the type are read, never its text or points.
+// What the chart tab holds beyond the chart state: every loaded bar as a row with the time the chart
+// reports for it (_convertIndexToPublicTime, the time base of the visible range, or null), the
+// symbol info, the interval list, the build, and each study with the ids of its plots and each
+// drawing with its type. Of a drawing only the id and the type are read, never its text or points.
 export function readRecording(win: TvWindow): {
   buildTime: string | null;
   intervals: JsonValue;
   symbolInfo: JsonValue;
   bars: number[][];
+  publicTimes: (number | null)[];
   studies: { id: string; name: string; plots: string[] }[];
   shapes: { id: string; name: string }[];
 } {
@@ -79,6 +81,7 @@ export function readRecording(win: TvWindow): {
   const first = call(loaded, 'firstIndex');
   const last = call(loaded, 'lastIndex');
   const bars: number[][] = [];
+  const publicTimes: (number | null)[] = [];
   if (typeof first === 'number' && typeof last === 'number') {
     for (let index = first; index <= last; index += 1) {
       const row = call(loaded, 'valueAt', index);
@@ -86,6 +89,10 @@ export function readRecording(win: TvWindow): {
         const cells = row.filter((cell): cell is number => typeof cell === 'number');
         if (cells.length === row.length) {
           bars.push(cells.slice(0, 6));
+          const reported = call(chart, '_convertIndexToPublicTime', index);
+          publicTimes.push(
+            typeof reported === 'number' && Number.isFinite(reported) ? reported : null,
+          );
         }
       }
     }
@@ -98,6 +105,7 @@ export function readRecording(win: TvWindow): {
     intervals: json(call(api, 'getIntervals')),
     symbolInfo: json(call(series, 'symbolInfo')),
     bars,
+    publicTimes,
     studies: Array.isArray(studies)
       ? studies.map((study: unknown) => {
           const id = String(member(study, 'id'));
@@ -226,6 +234,7 @@ async function main(): Promise<void> {
       intervals: extra.intervals,
       symbolInfo: extra.symbolInfo,
       bars: extra.bars,
+      publicTimes: extra.publicTimes,
     };
     const fixture = toStateFixture(scrubFixture(raw));
     const scrubbedTargets = scrubTargets(targets.map((target) => ({ ...target })));
