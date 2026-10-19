@@ -1,3 +1,4 @@
+import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement } from './input.js';
 import { readAppState, readVisibilityState } from './probes.js';
 
@@ -7,6 +8,7 @@ import { readAppState, readVisibilityState } from './probes.js';
 export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   describeElement,
   describeFocusedElement,
+  probeCapabilities,
   readAppState,
   readVisibilityState,
 };
