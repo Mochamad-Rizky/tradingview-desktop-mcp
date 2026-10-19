@@ -346,7 +346,7 @@ describe('createDetachedSpawn', () => {
     return { impl, calls };
   }
 
-  test('starts the command with its arguments, detached, without input or output, and hidden on Windows', () => {
+  test('starts the command with its arguments, detached, without input or output', () => {
     const child = new FakeChild(4242);
     const { impl, calls } = recorder(child);
 
@@ -357,13 +357,19 @@ describe('createDetachedSpawn', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.command).toBe('/path/to/TradingView');
     expect(calls[0]?.args).toEqual(['--remote-debugging-port=9222']);
-    expect(calls[0]?.options).toMatchObject({
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
+    expect(calls[0]?.options).toMatchObject({ detached: true, stdio: 'ignore' });
     // No shell, so that the path and the arguments are never read as shell syntax.
     expect(calls[0]?.options).not.toHaveProperty('shell');
+  });
+
+  // windowsHide suits the console of a command line tool, but on Windows it can start a program
+  // with its window hidden, and TradingView is a window.
+  test('does not ask Windows to hide the app it starts', () => {
+    const { impl, calls } = recorder(new FakeChild(4242));
+
+    createDetachedSpawn({ spawn: impl, env: {} })('C:\\TradingView\\TradingView.exe', []);
+
+    expect(calls[0]?.options).not.toHaveProperty('windowsHide');
   });
 
   test('lets the app outlive this process', () => {

@@ -169,11 +169,12 @@ export async function quitTradingView(
 export type SpawnFn = (command: string, args: string[]) => { pid?: number };
 
 // The options a detached start uses, and the part of a child process that the adapter touches.
-// Naming them lets a test hand in a stand-in for node's spawn without a cast.
+// Naming them lets a test hand in a stand-in for node's spawn without a cast. There is no
+// windowsHide, unlike for the commands that look up the process: on Windows it can start a program
+// with its window hidden, and the app is a window.
 export interface DetachedSpawnOptions {
   detached: true;
   stdio: 'ignore';
-  windowsHide: true;
   env: NodeJS.ProcessEnv;
 }
 
@@ -209,12 +210,7 @@ export function createDetachedSpawn(
       Object.entries(inherited).filter(([name]) => !name.toUpperCase().startsWith('TV_MCP_')),
     );
 
-    const child = start(command, args, {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      env,
-    });
+    const child = start(command, args, { detached: true, stdio: 'ignore', env });
     // A start that fails (the file is gone, or not allowed to run) is reported as an event on the
     // next tick, and an event of that kind that nobody listens for would crash the server.
     child.on('error', () => undefined);
