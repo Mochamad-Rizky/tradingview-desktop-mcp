@@ -126,11 +126,17 @@ function text(value: JsonValue | undefined): string {
   return typeof value === 'string' ? value : '';
 }
 
-// The texts of a recording that identify the user or the recorded symbol. None of them may be in
-// a file that is written.
-function identifyingTexts(chart: JsonObject, info: JsonValue): string[] {
+// The texts of a recording that identify the user or the recorded symbol, the layout ids in the
+// addresses of chart tabs among them. None of them may be in a file that is written.
+function identifyingTexts(chart: JsonObject, info: JsonValue, urls: readonly string[]): string[] {
   const layout = chart.layout;
   const needles = [text(chart.symbol)];
+  for (const url of urls) {
+    const id = /tradingview\.com\/chart\/([^/?#]+)/.exec(url)?.[1];
+    if (id !== undefined) {
+      needles.push(id);
+    }
+  }
   if (typeof layout === 'object' && layout !== null && !Array.isArray(layout)) {
     needles.push(text(layout.name), text(layout.id));
   }
@@ -227,7 +233,11 @@ async function main(): Promise<void> {
       chart.layout.id ?? '',
     );
 
-    const needles = identifyingTexts(raw, extra.symbolInfo);
+    const needles = identifyingTexts(
+      raw,
+      extra.symbolInfo,
+      targets.map((target) => target.url),
+    );
     const leaks = [
       ...findLeaks(fixture as unknown as JsonValue, needles),
       ...findLeaks(scrubbedTargets, needles),

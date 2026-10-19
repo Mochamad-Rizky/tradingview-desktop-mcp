@@ -369,15 +369,29 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
 // c0ffee12 in c0ffee12-tvd:tabbed-window.
 const INSTANCE_ID = /[0-9a-f]{6,}-tvd/g;
 const CHART_URL = /^https:\/\/([a-z0-9-]+\.)?tradingview\.com\/chart\//;
+// The layout id in the address of a chart tab, such as Qw3rTy12 in .../chart/Qw3rTy12/.
+const LAYOUT_IN_URL = /^https:\/\/(?:[a-z0-9-]+\.)?tradingview\.com\/chart\/([^/?#]+)/;
 
 // A target list of /json/list made safe to commit: the layout id replaced by FIXTURE1 wherever it
 // appears (it is made of letters and digits, so encoding leaves it as it is), the title of a chart
 // tab replaced by the one the app shows, the instance id of the window chrome replaced by
-// "fixture", and the debugger addresses dropped, since a fake server fills them in itself.
+// "fixture", and the debugger addresses dropped, since a fake server fills them in itself. The
+// layout ids are the one given and any the addresses of chart tabs hold, so an app that did not
+// report its layout id leaks it no more than one that did.
 export function scrubTargets(targets: readonly JsonValue[], layoutId: string): JsonValue[] {
+  const layoutIds = new Set(layoutId === '' ? [] : [layoutId]);
+  for (const target of targets.filter(isObject)) {
+    const found = typeof target.url === 'string' ? LAYOUT_IN_URL.exec(target.url)?.[1] : undefined;
+    if (found !== undefined && found !== FIXTURE_LAYOUT_ID) {
+      layoutIds.add(found);
+    }
+  }
   const clean = (text: string): string => {
-    const withoutLayout = layoutId === '' ? text : text.split(layoutId).join(FIXTURE_LAYOUT_ID);
-    return withoutLayout.replace(INSTANCE_ID, 'fixture-tvd');
+    let scrubbed = text;
+    for (const id of layoutIds) {
+      scrubbed = scrubbed.split(id).join(FIXTURE_LAYOUT_ID);
+    }
+    return scrubbed.replace(INSTANCE_ID, 'fixture-tvd');
   };
   return targets.filter(isObject).map((target): JsonObject => {
     const url = typeof target.url === 'string' ? target.url : '';

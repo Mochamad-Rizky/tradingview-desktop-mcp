@@ -312,6 +312,16 @@ describe('scrubTargets', () => {
     expect(asObject(scrubbed[2]).parentId).toBe('BBB144A7827AE55CBA0E74986FC9574C');
   });
 
+  it('finds the layout id in the address of a chart tab when none is given', () => {
+    const scrubbed = scrubTargets(targets, '');
+
+    expect(JSON.stringify(scrubbed)).not.toContain('Qw3rTy12');
+    expect(asObject(scrubbed[1]).url).toBe(
+      `https://www.tradingview.com/chart/${FIXTURE_LAYOUT_ID}/`,
+    );
+    expect(asObject(scrubbed[2]).url).toContain(`%2Fchart%2F${FIXTURE_LAYOUT_ID}%2F`);
+  });
+
   it('drops the debugger addresses, which a fake server fills in itself', () => {
     const scrubbed = scrubTargets(targets, 'Qw3rTy12');
 
