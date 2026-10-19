@@ -111,6 +111,14 @@ test('app_discover counts a page that is not a chart, such as the home page, as 
   expect(description).toMatch(/other \([^)]*not a chart[^)]*home page[^)]*\)/);
 });
 
+// The fullscreen button of the app does not say whether it is pressed (seen on the app).
+test("app_get_ui_state warns that fullscreen can miss TradingView's own fullscreen mode", () => {
+  const { description } = toolNamed('app_get_ui_state');
+
+  expect(description).toMatch(/TradingView's own fullscreen mode/);
+  expect(description).toMatch(/fullscreen (then )?reads false/);
+});
+
 test('the tools that take nothing have an empty input', () => {
   for (const name of ['app_health', 'app_discover', 'app_get_ui_state']) {
     expect(Object.keys(toolNamed(name).inputSchema), name).toEqual([]);

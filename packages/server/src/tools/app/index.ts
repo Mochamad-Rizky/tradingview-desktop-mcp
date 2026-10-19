@@ -262,8 +262,10 @@ export const appGetUiState = defineTool({
     'are open, each by its data-name, aria-label or role and never by its text, or unnamed when ' +
     'it has none), fullscreen, replayToolbarVisible and pineEditorOpen. Use it before clicking in ' +
     'the interface, to see whether a dialog covers the chart. It reads the page, so a part is ' +
-    'reported as closed when the page does not show it. Fails with NOT_AVAILABLE on a page ' +
-    'without a DOM.',
+    'reported as closed when the page does not show it. fullscreen is true while an element of ' +
+    'the page is in full screen (the Fullscreen API) or the fullscreen button is marked as ' +
+    "pressed; TradingView does not mark that button, so TradingView's own fullscreen mode can go " +
+    'unseen, and fullscreen then reads false. Fails with NOT_AVAILABLE on a page without a DOM.',
   inputSchema: {},
   annotations: {
     readOnlyHint: true,

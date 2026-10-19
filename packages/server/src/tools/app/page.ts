@@ -85,6 +85,9 @@ export const UI_STATE_SELECTORS = {
 //   pressed. The replay toolbar and the Pine Editor are on when their buttons are pressed. A
 //   button is pressed when it says so through aria-pressed or aria-selected, whether or not the
 //   page shows it, since fullscreen mode hides the toolbars and their buttons still tell what is on.
+//   The fullscreen button of the app says neither (seen on the app), and whether the app's own
+//   fullscreen mode goes through the browser's was not seen, so that mode can go unseen, and
+//   fullscreen is false then.
 // - Each layer that #overlap-manager-root holds is a dialog, a menu or a popup, and is listed
 //   while it is shown, by the first of data-name, aria-label and role that it or the first named
 //   element inside it has, cut to one short line. A layer with nothing to name it by is listed as
