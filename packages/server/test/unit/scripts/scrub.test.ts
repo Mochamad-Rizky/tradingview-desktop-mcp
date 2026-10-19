@@ -389,10 +389,11 @@ describe('scrubTargets', () => {
     );
   });
 
-  it('drops the query and the fragment of every other address, an unknown parameter with them', () => {
+  // A path can say what a page shows as much as a query can, so a frame of another site keeps none.
+  it('keeps of every other web address its scheme and host, a frame of another site among them', () => {
     const frame = byId(scrubTargets(targets), '45FA12C67FCC102BC635696179137865');
 
-    expect(frame.url).toBe('https://cm.g.doubleclick.net/partnerpixels');
+    expect(frame.url).toBe('https://cm.g.doubleclick.net/');
   });
 
   it('replaces the title of every target by a fixed one of its kind', () => {

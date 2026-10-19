@@ -411,7 +411,6 @@ const WINDOW_QUERY = `?rendererInitialData=${encodeURIComponent(WINDOW_DATA)}`;
 // What the window chrome shows as its title: the file and its data, with the quotes escaped.
 export const FIXTURE_WINDOW_TITLE = `index.html${WINDOW_QUERY.replaceAll('%22', '&quot;')}`;
 const FIXTURE_CHART_URL = `https://www.tradingview.com/chart/${FIXTURE_LAYOUT_ID}/`;
-const TRADINGVIEW_HOST = /(^|\.)tradingview\.com$/;
 
 // The title a target of each kind gets. A recorded title can show what the page shows, such as a
 // symbol, a price or the name of a layout or of a person, so none is kept.
@@ -428,13 +427,12 @@ const TITLES: Readonly<Record<TargetKind, string>> = {
 // - the window chrome: its file in the default install folder, with the fixture data;
 // - another file: the same file in the default install folder, without query or fragment, or the
 //   bare scheme when it lies outside an app bundle;
-// - a web address: the scheme and the host, and the path only for a frame inside the chart page (ad
-//   and anti-abuse frames, whose paths are generic) and not on a TradingView host; any other page,
-//   a TradingView page such as a profile among them, keeps the root path. Query and fragment, which
-//   carry the data of a page, are always dropped;
+// - a web address: the scheme and the host, with the root path. A path, a query and a fragment can
+//   all carry what a page shows, so a frame of another site keeps none of them either, and neither
+//   does a TradingView page such as a profile;
 // - an empty address stays empty, about:blank stays as it is, and any other scheme keeps only its
 //   name, since what follows it can be the content itself.
-function scrubAddress(url: string, kind: TargetKind, type: string): string {
+function scrubAddress(url: string, kind: TargetKind): string {
   if (url === '' || url === 'about:blank') {
     return url;
   }
@@ -455,8 +453,7 @@ function scrubAddress(url: string, kind: TargetKind, type: string): string {
     return `${APP_ROOT}${inBundle}${kind === 'window-chrome' ? WINDOW_QUERY : ''}`;
   }
   if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-    const keepsPath = type === 'iframe' && !TRADINGVIEW_HOST.test(parsed.hostname);
-    return `${parsed.protocol}//${parsed.host}${keepsPath ? parsed.pathname : '/'}`;
+    return `${parsed.protocol}//${parsed.host}/`;
   }
   return parsed.protocol;
 }
@@ -475,7 +472,7 @@ export function scrubTargets(targets: readonly JsonValue[]): JsonValue[] {
       id,
       type,
       title: TITLES[kind],
-      url: scrubAddress(url, kind, type),
+      url: scrubAddress(url, kind),
     };
     if (typeof target.parentId === 'string') {
       scrubbed.parentId = target.parentId;

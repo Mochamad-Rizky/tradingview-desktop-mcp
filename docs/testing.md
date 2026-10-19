@@ -161,10 +161,10 @@ commit:
   fixture data, `index.html` for a helper page, empty for the rest). Each address is rebuilt: the
   chart tab gets `https://www.tradingview.com/chart/FIXTURE1/`; the window chrome its file with the
   fixture data `{"remoteServiceInstanceId":"fixture-tvd:tabbed-window"}`; another file its path
-  inside the app bundle, under the default install folder; a web address keeps its scheme and host,
-  plus its path only for a frame of another site (ad and anti-abuse frames), so any other page, a
-  TradingView profile among them, keeps `/`; an address of another scheme keeps only the scheme.
-  Queries and fragments are always dropped, and so are the debugger addresses.
+  inside the app bundle, under the default install folder; a web address keeps only its scheme and
+  host, with the path `/`, a frame of another site (ad and anti-abuse frames) and a TradingView
+  profile among them; an address of another scheme keeps only the scheme. Paths, queries and
+  fragments of web addresses are always dropped, and so are the debugger addresses.
 
 Before it writes, the recorder searches both files for the recorded layout name, layout ids and
 symbol names, plainly, percent-decoded and with HTML entities undone, a text shorter than three
