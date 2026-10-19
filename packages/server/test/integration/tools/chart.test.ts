@@ -452,6 +452,11 @@ interface ChartUiOptions {
   buttonsApply?: boolean;
   // Whether the page loses its chart API once an input has taken effect, as a page that reloads.
   dropsApi?: boolean;
+  // How the symbol search button can be out of reach: under a dialog, inside a trading control
+  // (the buy and sell buttons), or off the visible part of the page.
+  searchButtonIs?: 'covered' | 'in-trading-control' | 'off-screen';
+  // A page that cannot say what lies at a point.
+  withoutHitTest?: boolean;
   // The chart API of the page: complete, without the members named, or none at all.
   api?: 'complete' | 'none' | { without: string[]; chartsCount?: number };
   // A text field outside any dialog that has the focus at the start.
@@ -484,12 +489,19 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
     }),
   ];
   if (options.searchButton === true) {
+    const button = fakeElement({
+      tag: 'button',
+      matches: [SELECTORS.header.symbolSearch],
+      rect: options.searchButtonIs === 'off-screen' ? box(10, -100, 80, 30) : box(10, 10, 80, 30),
+    });
     elements.push(
-      fakeElement({
-        tag: 'button',
-        matches: [SELECTORS.header.symbolSearch],
-        rect: box(10, 10, 80, 30),
-      }),
+      options.searchButtonIs === 'in-trading-control'
+        ? fakeElement({
+            matches: ['[data-name="buy-sell-buttons"]'],
+            rect: box(0, 0, 400, 60),
+            children: [button],
+          })
+        : button,
     );
   }
   for (const [position, resolution] of (options.intervalButtons ?? []).entries()) {
@@ -523,18 +535,21 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
   if (options.focusedField === true) {
     elements.push(outsideField);
   }
+  // A dialog of the portal, open over the header toolbar.
+  const cover = fakeElement({ attributes: { role: 'dialog' }, rect: box(0, 0, 200, 60) });
   elements.push(
     fakeElement({
       matches: [SELECTORS.regions.overlapManagerRoot],
       rect: box(0, 0, 0, 0),
-      children: [field],
+      children: options.searchButtonIs === 'covered' ? [field, cover] : [field],
     }),
   );
 
-  const page = createFakeDomWindow(
-    elements,
-    options.focusedField === true ? { focus: outsideField } : {},
-  ) as unknown as FakeDomWindow;
+  const page = createFakeDomWindow(elements, {
+    ...(options.focusedField === true ? { focus: outsideField } : {}),
+    ...(options.withoutHitTest === true ? { without: ['elementFromPoint'] as const } : {}),
+    ...(options.searchButtonIs === 'off-screen' ? { viewport: { width: 1200, height: 800 } } : {}),
+  }) as unknown as FakeDomWindow;
   const resting = page.document.activeElement ?? null;
   let dialog: 'symbol' | 'interval' | null = null;
   let typed = '';
@@ -838,6 +853,40 @@ describe('chart_set_symbol through the interface', () => {
       previous: 'NASDAQ:AAPL',
       changed: false,
     });
+    expect(inputOf(app)).toEqual([]);
+  });
+
+  test.each([
+    ['is covered by a dialog', { searchButtonIs: 'covered' as const }],
+    ['is off the visible part of the page', { searchButtonIs: 'off-screen' as const }],
+    ['is on a page that cannot say what lies over it', { withoutHitTest: true }],
+  ])(
+    'chart_set_symbol types on the chart when the symbol search button %s',
+    async (_case, options) => {
+      const ui = chartUi({ searchButton: true, api: { without: ['setSymbol'] }, ...options });
+      const { client, app } = await startUi(ui);
+
+      const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+      // Nothing was clicked: the button was found out of reach before anything was sent.
+      expect(viaOf(result)).toBe('keyboard');
+      expect(dataOf(result)).toMatchObject({ symbol: 'NASDAQ:MSFT', changed: true });
+      expect(methodsOf(app)).not.toContain('Input.dispatchMouseEvent');
+      expect(keysOf(app)).toEqual(['N', 'Enter']);
+    },
+  );
+
+  test('chart_set_symbol stops, without trying another way, when the symbol search button sits in a trading control', async () => {
+    const ui = chartUi({
+      searchButton: true,
+      searchButtonIs: 'in-trading-control',
+      api: { without: ['setSymbol'] },
+    });
+    const { client, app } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+    expect(errorOf(result)).toMatchObject({ code: 'UNSAFE_ACTION_BLOCKED' });
     expect(inputOf(app)).toEqual([]);
   });
 

@@ -202,21 +202,33 @@ function requireActiveChart(target: ChartTarget, way: string): void {
   }
 }
 
-// Before a click: the element is on the page and shown. A page without a DOM has no interface to
-// use either. Whether the click may go there is up to clickElement, which refuses a trading control
-// and an element under a dialog.
-async function requireShown(page: PageHandle, selector: string, missing: string): Promise<void> {
+// Before a click: the element is on the page and shown, and the click would reach it. Each of these
+// is checked before anything is sent, so a failure leaves the next strategy to try: no element, an
+// element that is hidden, covered by a dialog or a frame, off the visible part of the page, or on a
+// page that cannot say what lies over it (and a page without a DOM, which has no interface at all).
+// A verdict that the element is, holds or sits under a trading control is left to clickElement,
+// whose refusal ends the operation instead of handing it on.
+async function requireClickable(page: PageHandle, selector: string, what: string): Promise<void> {
   let element: Awaited<ReturnType<typeof lookUp>>;
   try {
     element = await lookUp(page, selector);
   } catch (error) {
     if (isTvMcpError(error) && error.code === 'NOT_AVAILABLE') {
-      throw unavailable(missing);
+      throw unavailable(`${what} cannot be looked up: the page has no DOM`);
     }
     throw error;
   }
   if (!element.found || !element.visible) {
-    throw unavailable(missing);
+    throw unavailable(`${what} is not shown`);
+  }
+  if (element.unsafe) {
+    return;
+  }
+  if (element.coverage === 'obscured') {
+    throw unavailable(`${what} is covered by ${element.obscuredBy}`);
+  }
+  if (element.coverage !== 'clear') {
+    throw unavailable(`${what} cannot be clicked (${element.coverage})`);
   }
 }
 
@@ -364,11 +376,7 @@ export function symbolStrategies(
         if (showsSymbol(before, symbol)) {
           return { symbol: before.symbol, previous: before.symbol, changed: false };
         }
-        await requireShown(
-          page,
-          SELECTORS.header.symbolSearch,
-          'The header toolbar has no symbol search button',
-        );
+        await requireClickable(page, SELECTORS.header.symbolSearch, 'The symbol search button');
         await requireNoTextField(page);
         await clickElement(page, SELECTORS.header.symbolSearch);
         await waitForTextField(
@@ -451,7 +459,7 @@ export function timeframeStrategies(
           return same;
         }
         const selector = intervalButton(resolution);
-        await requireShown(page, selector, 'The header toolbar shows no button for this interval');
+        await requireClickable(page, selector, 'The button of this interval');
         await clickElement(page, selector);
         return confirmTimeframe(page, target, resolution, before, waitMs);
       },
@@ -547,7 +555,7 @@ export function presetStrategies(
       async run() {
         requireActiveChart(target, 'The date range bar');
         const selector = SELECTORS.buttons.dateRange[preset];
-        await requireShown(page, selector, 'The date range bar shows no button for this preset');
+        await requireClickable(page, selector, 'The button of this preset');
         const before = await snapshotOf(page, target);
         await clickElement(page, selector);
         if (before === null) {
