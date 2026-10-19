@@ -1,5 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -106,13 +107,35 @@ describe('startStdioTransport', () => {
   });
 });
 
+// When a file, or anything in a directory, last changed.
+function lastChangeMs(path: string): number {
+  const stats = statSync(path);
+  if (!stats.isDirectory()) {
+    return stats.mtimeMs;
+  }
+  return Math.max(0, ...readdirSync(path).map((name) => lastChangeMs(join(path, name))));
+}
+
 describe('the built CLI over stdio', () => {
   const cli = fileURLToPath(new URL('../../dist/cli.js', import.meta.url));
+  // What the bundle is built from: the sources, the version it inlines, and the build settings.
+  const inputs = ['src', 'package.json', 'tsup.config.ts'].map((path) =>
+    fileURLToPath(new URL(`../../${path}`, import.meta.url)),
+  );
 
+  // These tests run the bundle that ships, as a client would start it, so it must be built from
+  // the sources as they are now. They compare times instead of building, which would add a build
+  // to every run: the gate builds first, and a forgotten build fails here, never silently.
   beforeAll(() => {
-    // These tests run the bundle that ships, as a client would start it.
     if (!existsSync(cli)) {
       throw new Error(`${cli} is missing: run pnpm build before the integration tests`);
+    }
+    const builtMs = statSync(cli).mtimeMs;
+    const changed = inputs.filter((input) => lastChangeMs(input) > builtMs);
+    if (changed.length > 0) {
+      throw new Error(
+        `${cli} is older than ${changed.join(', ')}: run pnpm build before the integration tests`,
+      );
     }
   });
 
