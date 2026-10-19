@@ -56,6 +56,7 @@ tradingview.com bundle, which was rebuilt two days before this analysis.
 | Viewport capture                       | REA `capture_web_screenshot`                                        | That `Page.captureScreenshot` works on a tab's BrowserView                                                                  |
 | Read-only runtime introspection        | CDP `Runtime.evaluate` probes                                       | Global objects, method names and arity, method bodies via `Function.prototype.toString`, values of side-effect-free getters |
 | Bundle source search                   | CDP `Debugger.getScriptSource` (already-loaded scripts, no refetch) | Internal services, signatures, and data shapes                                                                              |
+| Probe script and end-to-end suites     | `pnpm re:probe`, `TV_E2E=1 pnpm test:e2e`                           | Return shapes, timings and DOM facts the server relies on (sections marked "seen on the app")                               |
 
 REA runtime tools are deliberately passive and never evaluate page JavaScript, so deeper introspection used small
 read-only probes (see [§14](#14-reproducing-the-analysis)). The probes never invoked mutating methods. The only
@@ -182,6 +183,12 @@ intentionally unused: it would grant more privilege than needed.
 | doubleclick, reCAPTCHA, googlesyndication                                                   | `iframe` | Ads and anti-abuse frames inside the chart page; ignore                                 |
 | Service worker                                                                              | `worker` | Ignore                                                                                  |
 
+A later run listed the same kinds: one chart tab, the window chrome, three helpers, two blank pages, the ad and
+anti-abuse iframes, and one or two workers. Every `webSocketDebuggerUrl` was `ws://127.0.0.1:9222/devtools/page/<id>`.
+The window chrome's `rendererInitialData` holds a random `remoteServiceInstanceId` (`<hex>-tvd:tabbed-window`) and
+title bar flags, nothing about the user; the chart tab's title is the generic "Live stock, index, futures, Forex and
+Bitcoin charts on TradingView".
+
 **Target selection rule:** `type === "page"` and the URL matches `^https://([a-z0-9-]+\.)?tradingview\.com/chart/`.
 When several tabs exist, prefer the one whose `document.visibilityState === "visible"` (the only tab observed reported
 `visible`; behavior with several tabs is still to be verified, see [§12](#12-open-questions)). **Every CDP call needs a
@@ -237,6 +244,10 @@ Signatures below come from method bodies; parameters marked `?` are optional.
 | Connection    | `isConnected()`, `connect()`, `disconnect()`, `onConnectionStatusChanged(cb)`                                                                                                                                                                                                                                                                       |
 | Events        | `subscribe(event, cb)`, `unsubscribe(event, cb)`                                                                                                                                                                                                                                                                                                    |
 
+`getIntervals()` merges the default resolutions of the data connection with the user's custom ones. The
+analysis account got 30: ticks (`1T`, `10T`, `100T`, `1000T`), seconds (`1S` to `45S`), minutes (`1` to `240`), `1D`,
+`1W`, months (`1M` to `12M`) and ranges (`1R` to `1000R`). Whether the plan offers each one is a separate question.
+
 **Disabled or stubbed in this build** (observed from method bodies):
 
 | Member                                                               | Behavior                                                          | Replacement                                                           |
@@ -257,6 +268,33 @@ Signatures below come from method bodies; parameters marked `?` are optional.
 | Drawings      | `getAllShapes() → [{id, name}]`, `getShapeById(id) → ILineDataSourceApi`, `createShape(point, options)`, `createMultipointShape(points, options)`, `createAnchoredShape(position, options)`, `removeAllShapes()`, `getLineToolsState()`                                                                          |
 | Structure     | `getPanes() → IPaneApi[]`, `getSeries()`, `getTimeScale()`, `chartModel()`, `chartWidget()`                                                                                                                                                                                                                      |
 | Subscriptions | `onDataLoaded()`, `onSymbolChanged()`, `onIntervalChanged()`, `onVisibleRangeChanged()`, `onChartTypeChanged()`, `crossHairMoved()`, `dataReady(cb)`, `whenChartReady(cb)`                                                                                                                                       |
+
+Seen on the app (probe script, chart-change experiments with an exact restore, and the end-to-end suites):
+
+- `symbol()` is the `full_name` of the series' symbol info, which names the exchange of the **data feed**: on an
+  account whose US stock data comes from Cboe, `setSymbol("NASDAQ:AAPL")` ends on `BATS:AAPL` while `pro_name` stays
+  `NASDAQ:AAPL` (delayed feeds look like `BATS_DLY:AAPL`). Right after `setSymbol`, `symbol()` returns the text as it
+  was set, and changes to the feed's name once the symbol is resolved.
+- `setSymbol(symbol, {dataReady})` returns a promise. When `symbol` equals `symbol()` or the series "resolved" it
+  already (`symbolSameAsResolved`, which matched both `NASDAQ:AAPL` and `BATS:AAPL` while `BATS:AAPL` was shown), it
+  calls `dataReady` at once and loads nothing. Otherwise it activates the chart unless `doNotActivateChart` is given,
+  and calls `dataReady` once the series has loaded (about 350 ms for a new symbol). A bare ticker of the symbol shown
+  (`AAPL`) is loaded again and also ends in `dataReady`. For a symbol that does not exist, `dataReady` never comes; the
+  series flags it about 150 ms after the call, and the promise then resolves with `true` all the same.
+- `getVisibleRange()` answers `{from, to}` in the chart's **public time**: for daily and longer bars the bar's day at
+  00:00 UTC, while `bars().valueAt()` holds the start of the session (13:30 UTC for a US stock); intraday bars have
+  the same time in both. `from` is the first visible bar, kept at or after the first time point. `to` is the last
+  visible index, which lies in the future while the view keeps empty space after the last bar (the default view of
+  the analyzed chart reached dozens of bars past it). While the chart has no range (a symbol loading, an unknown
+  symbol) it answers `{from: 0, to: 0}`.
+- `_convertIndexToPublicTime(index)` (internal) is the conversion `getVisibleRange` uses. It answers for the time
+  points after the last bar too, and `null` while the series has no symbol info.
+- `setResolution` changes `resolution()` at once and calls `dataReady` after the data (200 to 550 ms), or at once when
+  the resolution is unchanged. `setChartType` changes `chartType()` at once and returns a promise that settles once
+  the style is drawn (4 ms for line, about 400 ms for Heikin Ashi).
+- `getAllShapes()` answers `{id, name}` with the tool type as `name` (`rectangle`, `horizontal_line`, `text`), and
+  `getAllStudies()` answers `{id, name}` with the study title as `name` and six-character ids. Neither carries the
+  text of a drawing.
 
 `createStudy` resolves `name` case-insensitively against study descriptions from the study metadata repository and
 accepts `options.checkLimit`, which applies the plan's per-chart indicator limit. **`tradingview-mcp` always passes
@@ -286,6 +324,31 @@ more stable than their underscore prefix suggests.
 | `….model().model().timeScale()`      | Core time scale: `zoomToBarsRange(from, to)`, `scrollToBar(index)`, `scrollToRealtime()`, `scrollToFirstBar()`, `setBarSpacing()`, `setRightOffset()`, `timePointToIndex(time)`, `indexToTimePoint(i)`, `logicalRange()`, `requestMoreHistoryPoints()`                                             |
 
 Observed: 300 bars were loaded for a daily chart. Older history loads on demand (`requestMoreData`, or scrolling).
+
+Seen on the app (probe script and chart-change experiments with an exact restore):
+
+- `bars()`: indices run from `firstIndex()` 0 to `lastIndex()` `size() - 1`; `valueAt(i)` answers six numbers, and
+  `null` outside that range or for a fractional index. The time in a row is the start of the bar's session, not the
+  public time `getVisibleRange` reports ([§4.3](#43-chart-widget-api-activechart)).
+- `symbolInfo()` is `null` from the moment a symbol is set until it is resolved, and stays `null` for a symbol that
+  does not exist; it has 51 keys otherwise (`corrections` is present but undefined).
+- `isSymbolInvalid()` exists on the main series: `this._status.value().seriesStatus === Status.InvalidSymbol`, a
+  boolean. `status()` read 2 while loading, 3 once a new symbol had loaded, 4 for an invalid symbol, and 9 on a chart
+  loaded at startup. While the flag is up the series has no bars.
+- The time scale keeps time points after the last bar for the empty space a chart shows there:
+  `points().range().value()` answered `{firstIndex: 0, lastIndex}` with dozens of points past the last bar.
+  `indexToTimePoint(i)` answers for them too.
+- `logicalRange()` answers an object with `left()` and `right()` (own fields `_left`, `_right`), the first and the
+  last bar index of the view, fractional; `right()` passes the last bar while the view keeps empty space. It has no
+  `from` or `to`.
+- `timePointToIndex(time, mode?)`, in the time base of the bar rows: the default mode answers the index of the first
+  time point at or after `time` (a time between two bars gives the later one), the first index for an earlier time,
+  and the last time point for a later one; a number, `null` only without points.
+- `zoomToBarsRange(i, j)` ignores `j < i`. Otherwise it sets the right offset to `j - baseIndex()` and the bar spacing
+  to fit bars `i` to `j`, so the logical range becomes exactly `[i, j]` and `getVisibleRange()` the public times of
+  bars `i` and `j`, a future `j` included. `zoomToBarsRange(i, i)` shows bars `i - 1` and `i`.
+- `barSpacing()`, `rightOffset()`, `setBarSpacing()` and `setRightOffset()` together restore a view exactly.
+  `preserveBarSpacing` was off, so `setBarSpacing` saved no default.
 
 ### 4.5 Replay API (`await TradingViewApi.replayApi()`)
 
@@ -393,11 +456,24 @@ example `iconButton-3Lt7-uhL`) change on every build and are never used.
 `#header-toolbar-save-load`, `#header-toolbar-quick-search`, `#header-toolbar-properties`,
 `#header-toolbar-fullscreen`, `#header-toolbar-screenshot`.
 
+Seen on the app: every id exists. `#header-toolbar-symbol-search` is a `button` with no `data-name` or `aria-label`.
+`#header-toolbar-intervals` held a single button for the current interval (`aria-label` and `data-tooltip` such as
+"1 day", `aria-haspopup`, no `data-value`) on a layout without favorite intervals, so a selector by `data-value`
+finds nothing there. `#header-toolbar-layouts` carries `data-qa-id="layouts-menu-button"`, and the quick search,
+properties and fullscreen buttons carry their id as `data-name` too.
+
 ### 5.2 Page regions
 
 `#drawing-toolbar`, `#bottom-area`, `#footer-chart-panel`, `#overlap-manager-root` (portal for dialogs and menus),
 `#tooltip-root-element`, `#snackbar-container`, `[data-qa-id="chart-container"]`, `[data-qa-id="pane"]`,
 `canvas[data-name="pane-canvas"]`.
+
+Seen on the app: `#bottom-area` is `display: none` while the bottom panel is closed, so it is not always shown.
+`#overlap-manager-root` holds one empty layer of no size when nothing is open. `[data-name="widgetbar-wrap"]` holds the
+45 px wide right toolbar (`[data-name="right-toolbar"]`) and the pages of the right panel
+(`[data-name="widgetbar-pages-with-tabs"]`), which are a border of 1 px while the panel is collapsed: the wrapper is
+shown either way, and only the pages tell whether the panel is open. The widgets inside have no size while it is
+closed.
 
 ### 5.3 Buttons (`data-name`)
 
@@ -412,11 +488,18 @@ example `iconButton-3Lt7-uhL`) change on every build and are never used.
 | Right toolbar and widget bar | `[data-name="right-toolbar"]`, `[data-name="widgetbar-wrap"]`, `[data-name="widgetbar-pages-with-tabs"]`                                                                                                                                                                                                     |
 | Panels                       | `[data-name="toggle-maximize-button"]`, `[data-name="toggle-visibility-button"]`                                                                                                                                                                                                                             |
 
+Seen on the app: the replay button (`#header-toolbar-replay`), the Pine Editor button and the alerts and object tree
+buttons of the right toolbar carry `aria-pressed`; the fullscreen button carries neither `aria-pressed` nor
+`aria-selected`. The right toolbar also holds `base`, `copilot-dialog-button`, `screener-dialog-button`,
+`calendar-dialog-button`, `community-hub-button`, `notifications-button`, `chats-button` and `help-button`.
+`startFullscreen()` calls `requestFullscreen()` of the chart's resizer bridge; whether that is the browser's
+Fullscreen API was not seen (`document.fullscreenElement` was `null`, and fullscreen was not turned on).
+
 ### 5.4 Legend, panes, and control bar (`data-qa-id`)
 
 - Legend: `legend`, `legend-series-item`, `legend-source-item` (carries `data-entity-id` = study ID),
   `legend-source-title`, `legend-show-hide-action`, `legend-delete-action`, `legend-settings-action`,
-  `legend-more-action`.
+  `legend-more-action`. A later run found every one of them except `legend-source-title`.
 - Values: `[data-test-id-value-title]` (`O`, `H`, `L`, `C`, `Vol`, and plot titles).
 - Panes: `pane-button-close`, `pane-button-collapse`, `pane-button-up`, `pane-button-down`,
   `pane-button-maximize`, `pane-button-restore`.
@@ -428,6 +511,7 @@ example `iconButton-3Lt7-uhL`) change on every build and are never used.
 
 `[data-name="buy-order-button"]`, `[data-name="sell-order-button"]`, `[data-name="buy-sell-buttons"]`,
 `[data-qa-id="trade-button"]`, `#header-toolbar-trade-desktop`, and anything inside a broker order ticket.
+All five matched elements of the analyzed chart, the trade button four times.
 The low-level UI tools refuse a click on a target that matches one of these selectors, contains one, sits inside one,
 or has one over the point where the click would land. They also refuse a click when a dialog, a menu or a popup of the
 overlap root, or a frame, lies over that point, because the click would go to it and what it is cannot be told, and
@@ -473,12 +557,12 @@ Tiers: **T1** public JS API · **T2** internal model or webpack service · **T3*
 | ----------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------- |
 | Connection        | launch                                                               | Spawn binary with `--remote-debugging-port`, honoring the single-instance lock          | —                                                                  | ✅ flag works · ❓ launcher             |
 |                   | health / discover                                                    | `/json/version`, `/json/list`, `TradingViewApi.isConnected()`                           | —                                                                  | ✅                                      |
-|                   | UI state                                                             | Widget bar, bottom area, open dialogs in `#overlap-manager-root`                        | T3                                                                 | 🔎                                      |
+|                   | UI state                                                             | Widget bar, bottom area, open dialogs in `#overlap-manager-root`                        | T3                                                                 | ✅ read (probe)                         |
 |                   | reconnect                                                            | Re-resolve target, reattach; `TradingViewApi.connect()`                                 | `TVD.reloadTab()`                                                  | 🔎                                      |
 | Chart             | get state                                                            | `symbol()`, `resolution()`, `chartType()`, `getVisibleRange()`, studies, shapes, layout | —                                                                  | ✅                                      |
-|                   | set symbol / timeframe / type                                        | `setSymbol`, `setResolution`, `setChartType` (T1)                                       | Header toolbar (T3), typing a symbol or interval on the chart (T4) | 🔎                                      |
-|                   | set visible range                                                    | Core time scale `zoomToBarsRange` after mapping times to bar indices (T2)               | Date range presets (T3)                                            | ✅ T1 disabled · ❓ T2                  |
-|                   | scroll to date                                                       | `timeScale().scrollToBar(index)` (T2)                                                   | Go-to-date dialog (T3)                                             | ❓                                      |
+|                   | set symbol / timeframe / type                                        | `setSymbol`, `setResolution`, `setChartType` (T1)                                       | Header toolbar (T3), typing a symbol or interval on the chart (T4) | ✅ T1 · ❓ T3/T4 on the app             |
+|                   | set visible range                                                    | Core time scale `zoomToBarsRange` after mapping times to bar indices (T2)               | Date range presets (T3)                                            | ✅ T1 disabled · ✅ T2                  |
+|                   | scroll to date                                                       | Core time scale `zoomToBarsRange` around the bar, keeping the width (T2)                | Go-to-date dialog (T3)                                             | 🔎 (`zoomToBarsRange` ✅)               |
 | Market data       | OHLCV                                                                | `mainSeries().bars().valueAt(i)` (T2)                                                   | —                                                                  | ✅ (`exportData` disabled)              |
 |                   | quote                                                                | `mainSeries().quotes()` (T2)                                                            | Quote session cache                                                | ✅                                      |
 |                   | symbol info                                                          | `mainSeries().symbolInfo()`, `symbolExt()`                                              | —                                                                  | ✅                                      |
@@ -612,6 +696,24 @@ These are resolved during implementation of the corresponding domain, each with 
 7. Whether `takeClientScreenshot()` resolves to a canvas.
 8. Market depth availability per symbol and plan.
 9. Windows and Linux launch behavior.
+10. Which element has the focus after a click on the chart pane, and whether the symbol search input opens empty in
+    the main document. Not observed: both need input to the user's chart.
+11. Whether `Input.dispatchMouseEvent` coordinates match `getBoundingClientRect()` at a page zoom other than 100%. The
+    analysis ran at 100% (`devicePixelRatio` 2 on a Retina screen, the page as wide as the screen).
+12. Which attribute names the interval of a favorite interval button in `#header-toolbar-intervals`: only the button
+    of the current interval was seen, without `data-value`.
+13. Whether the fullscreen button shows its state, and whether `startFullscreen()` uses the browser's Fullscreen API.
+14. Whether order tickets and context menus open inside `#overlap-manager-root` (none was open).
+15. `setSymbol` on `chart(i)` activates that chart unless `doNotActivateChart` is passed (seen in its body), and
+    `setResolution` may do the same. Not exercised: the analysis plan allows one chart per layout.
+16. Whether the public `chartWidget()` and `chartModel()` lead to the same objects as `_chartWidget`.
+
+Answered while the foundation was built, with the probe script and the end-to-end suites: how an unknown symbol shows,
+when `dataReady` comes, how the chart names a symbol through its data feed, the time base of `getVisibleRange` and the
+empty space after the last bar ([§4.3](#43-chart-widget-api-activechart)); the shapes of `logicalRange()` and
+`timePointToIndex()`, the bar container, what `zoomToBarsRange` shows, and the time points after the last bar
+([§4.4](#44-chart-model-internals)); the interval list ([§4.2](#42-tradingviewapi)); the capability flags, all true on
+a booted chart tab; and the header toolbar, panels and trading controls ([§5](#5-dom-selectors)).
 
 ---
 
@@ -633,9 +735,13 @@ which could not be observed on the analysis host. No code was copied.
 3. REA, runtime: `list_browser_targets` and `list_electron_targets` on `http://127.0.0.1:9222`, then
    `inspect_electron_page` on the window-chrome target and `capture_web_screenshot` on the chart target.
 4. Read-only probes: evaluate introspection snippets in the chart target (enumerate `Object.keys(window)`, walk
-   prototypes for method names and arity, read method bodies with `Function.prototype.toString`). The repository's
-   `scripts/re/` folder will hold these probes so they can be re-run after TradingView updates.
+   prototypes for method names and arity, read method bodies with `Function.prototype.toString`). The scripts in
+   `packages/server/scripts/re/` do this: `pnpm re:probe` prints a summary of what the app offers and whether every
+   member the server relies on is still there (`--json` prints everything, `--bodies` the sources of those members),
+   and `pnpm re:record` records scrubbed fixtures for the fake app ([testing.md](testing.md)).
 5. Bundle search: collect sources of already-loaded scripts with `Debugger.getScriptSource`, then search them as inert
    text.
+6. End-to-end suites: `TV_E2E=1 pnpm test:e2e` runs the tools against the app. They change only the symbol, the
+   timeframe, the chart type and the visible range of the active chart, and restore them.
 
-Re-run steps 3 to 5 after a TradingView update, and compare results with this document.
+Re-run steps 3 to 6 after a TradingView update, and compare results with this document.
