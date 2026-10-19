@@ -6,6 +6,7 @@ import {
   chartTypeName,
   normalizeTimeframe,
   sameResolution,
+  sameSymbol,
   toTimeRange,
 } from '../../../../src/tools/chart/mappers.js';
 import { toIso } from '../../../../src/utils/time.js';
@@ -134,6 +135,28 @@ describe('sameResolution', () => {
     ['1D', 'odd'],
   ])('sameResolution tells %s from %s', (a, b) => {
     expect(sameResolution(a, b)).toBe(false);
+  });
+});
+
+describe('sameSymbol', () => {
+  test.each([
+    ['the same symbol', 'NASDAQ:AAPL', 'NASDAQ:AAPL'],
+    ['another case', 'nasdaq:aapl', 'NASDAQ:AAPL'],
+    ['a bare ticker and the same ticker after an exchange', 'AAPL', 'NASDAQ:AAPL'],
+    ['the same, the other way round', 'NASDAQ:AAPL', 'aapl'],
+    ['surrounding whitespace', ' AAPL ', 'NASDAQ:AAPL'],
+    ['a ticker with a suffix', 'BTCUSDT.P', 'BINANCE:BTCUSDT.P'],
+  ])('sameSymbol takes %s for one instrument', (_case, a, b) => {
+    expect(sameSymbol(a, b)).toBe(true);
+  });
+
+  test.each([
+    ['other tickers', 'NASDAQ:MSFT', 'NASDAQ:AAPL'],
+    ['one ticker on two exchanges', 'BMV:AAPL', 'NASDAQ:AAPL'],
+    ['a bare ticker and another qualified one', 'MSFT', 'NASDAQ:AAPL'],
+    ['a bare ticker that is only part of the other', 'AAP', 'NASDAQ:AAPL'],
+  ])('sameSymbol tells apart %s', (_case, a, b) => {
+    expect(sameSymbol(a, b)).toBe(false);
   });
 });
 

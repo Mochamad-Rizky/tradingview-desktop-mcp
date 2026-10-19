@@ -72,6 +72,20 @@ export function sameResolution(a: string, b: string): boolean {
   return (parseTimeframe(a) ?? a) === (parseTimeframe(b) ?? b);
 }
 
+// Whether two symbols name one instrument as TradingView writes them: case does not count, and a
+// bare ticker matches the same ticker after an exchange (AAPL and NASDAQ:AAPL). Two symbols that
+// both name an exchange must name the same one.
+export function sameSymbol(a: string, b: string): boolean {
+  const left = a.trim().toUpperCase();
+  const right = b.trim().toUpperCase();
+  const ticker = (symbol: string): string => symbol.slice(symbol.lastIndexOf(':') + 1);
+  return (
+    left === right ||
+    (!left.includes(':') && left === ticker(right)) ||
+    (!right.includes(':') && right === ticker(left))
+  );
+}
+
 // The chart style ids of TradingView by name. Id 11 is left out: it is not recorded what it is.
 export const CHART_TYPES = {
   bars: 0,

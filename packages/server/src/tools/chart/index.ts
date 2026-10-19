@@ -12,6 +12,7 @@ import {
   isReportableTime,
   normalizeTimeframe,
   sameResolution,
+  sameSymbol,
   toTimeRange,
 } from './mappers.js';
 import { readChartState, readVisibleRange } from './page.js';
@@ -192,10 +193,21 @@ export const chartSetSymbol = defineTool({
       throw await revertUnknownSymbol(page, target, symbol, previous, waitMs);
     }
     const { value, via } = outcome;
+    const warnings: string[] = [];
+    if (value.symbol === null) {
+      warnings.push(UNCHECKED);
+    } else if (!sameSymbol(symbol, value.symbol)) {
+      // Enter in the symbol search applies the highlighted result, which need not be the one asked
+      // for, and the chart API resolves a symbol its own way too.
+      warnings.push(
+        `The chart shows ${value.symbol} instead of ${symbol}; TradingView may have chosen another ` +
+          'match. Give the symbol in the EXCHANGE:SYMBOL form to pick one.',
+      );
+    }
     return {
       data: { symbol: value.symbol, previous: value.previous, changed: value.changed },
       via,
-      warnings: value.symbol === null ? [UNCHECKED] : [],
+      warnings,
     };
   },
 });

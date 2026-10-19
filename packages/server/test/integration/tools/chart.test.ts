@@ -371,6 +371,25 @@ describe('chart_set_symbol through the chart API', () => {
     expect(error?.hint).toMatch(/chart_set_symbol with NASDAQ:AAPL/);
   });
 
+  test('chart_set_symbol warns when the chart API settles on another symbol than the one asked for', async () => {
+    const win = createFakeTvWindow(fixture);
+    const { chart } = chartOf(win);
+    const original = chart.setSymbol.bind(chart);
+    Object.assign(chart, {
+      setSymbol: (_symbol: string, options?: { dataReady?: () => void }) =>
+        original('NYSE:IBM', options),
+    });
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+    expect(viaOf(result)).toBe('api');
+    expect(dataOf(result)).toMatchObject({ symbol: 'NYSE:IBM', changed: true });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/shows NYSE:IBM instead of NASDAQ:MSFT/),
+    ]);
+  });
+
   test('chart_set_symbol leaves the chart alone when it shows the symbol already', async () => {
     const win = createFakeTvWindow(fixture);
     const { client } = await startHarness({ win });
@@ -465,6 +484,9 @@ interface ChartUiOptions {
   // An input event the page does not know, as a CDP method it answers with "not found": the text,
   // or the press of the mouse button halfway through a click.
   failsOn?: 'insertText' | 'mousePressed';
+  // What Enter in the symbol search applies for a typed text, when it is not the text itself: the
+  // highlighted result of the search.
+  enterApplies?: Record<string, string>;
   // The chart API of the page: complete, without the members named, or none at all.
   api?: 'complete' | 'none' | { without: string[]; chartsCount?: number };
   // A text field outside any dialog that has the focus at the start.
@@ -651,8 +673,9 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
         if (enter === 'flags-unknown') {
           state.symbolInvalid = true;
         } else if (dialog === 'symbol') {
-          state.symbol = typed;
-          state.symbolInvalid = !fixture.knownSymbols.includes(typed);
+          const applied = options.enterApplies?.[typed] ?? typed;
+          state.symbol = applied;
+          state.symbolInvalid = !fixture.knownSymbols.includes(applied);
         } else if (dialog === 'interval') {
           state.resolution = typed;
         }
@@ -942,6 +965,41 @@ describe('chart_set_symbol through the interface', () => {
       details: { strategy: 'typing on the chart', stage: 'type' },
     });
     expect(keysOf(app)).toEqual(['N']);
+  });
+
+  test('chart_set_symbol warns when Enter applies another search result than the symbol typed', async () => {
+    const ui = chartUi({
+      searchButton: true,
+      enterApplies: { 'NASDAQ:MSFT': 'NYSE:IBM' },
+      api: { without: ['setSymbol'] },
+    });
+    const { client } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+    expect(viaOf(result)).toBe('dom');
+    expect(dataOf(result)).toStrictEqual({
+      symbol: 'NYSE:IBM',
+      previous: 'NASDAQ:AAPL',
+      changed: true,
+    });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/shows NYSE:IBM instead of NASDAQ:MSFT/),
+    ]);
+  });
+
+  test('chart_set_symbol takes a bare ticker that TradingView qualifies with its exchange as asked for', async () => {
+    const ui = chartUi({
+      searchButton: true,
+      enterApplies: { MSFT: 'NASDAQ:MSFT' },
+      api: { without: ['setSymbol'] },
+    });
+    const { client } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'MSFT' });
+
+    expect(dataOf(result)).toMatchObject({ symbol: 'NASDAQ:MSFT', changed: true });
+    expect(warningsOf(result)).toEqual([]);
   });
 
   test('chart_set_symbol is unavailable on a page that has neither the setter nor a DOM', async () => {
