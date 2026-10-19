@@ -1035,7 +1035,7 @@ describe('the app tools as a client sees them', () => {
 
     const { tools } = await client.listTools();
 
-    expect(tools.map(({ name }) => name)).toEqual([
+    expect(tools.map(({ name }) => name).filter((name) => name.startsWith('app_'))).toEqual([
       'app_health',
       'app_discover',
       'app_get_ui_state',

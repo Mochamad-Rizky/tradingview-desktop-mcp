@@ -9,6 +9,7 @@ import { registerResources } from '../../src/resources/index.js';
 import { createMcpServer, createServerDeps, type ServerDeps } from '../../src/server.js';
 import { appTools } from '../../src/tools/app/index.js';
 import { batchTools } from '../../src/tools/batch/index.js';
+import { chartTools } from '../../src/tools/chart/index.js';
 import { createToolRegistry, registerToolsWithServer } from '../../src/tools/registry.js';
 import { defineTool, type ToolRegistry } from '../../src/tools/types.js';
 import { startFakeCdpServer } from '../helpers/fake-cdp/server.js';
@@ -27,8 +28,10 @@ import {
 } from '../helpers/tool-context.js';
 
 const HEALTH_URI = 'tradingview://app/health';
-// What a server offers when nothing narrows its tools: the tools of the app, then the batch.
+// What a server offers when nothing narrows its tools: the tools of the app and of the chart, then
+// the batch.
 const APP_TOOL_NAMES = appTools.map(({ name }) => name);
+const CHART_TOOL_NAMES = chartTools.map(({ name }) => name);
 
 // Everything a test starts is closed here, newest first, so a client goes before its server and a
 // connection manager before the fake app it talks to.
@@ -118,7 +121,11 @@ test('lists registered tools with descriptions and input schemas', async () => {
 
   const { tools } = await client.listTools();
 
-  expect(tools.map(({ name }) => name)).toEqual([...APP_TOOL_NAMES, 'batch_run']);
+  expect(tools.map(({ name }) => name)).toEqual([
+    ...APP_TOOL_NAMES,
+    ...CHART_TOOL_NAMES,
+    'batch_run',
+  ]);
   expect(tools.find(({ name }) => name === 'batch_run')).toMatchObject({
     name: 'batch_run',
     title: expect.any(String) as string,
@@ -553,7 +560,11 @@ test('createMcpServer creates the dependencies it is not given', () => {
     discover: expect.any(Function) as unknown,
   });
   expect(ctx.session).toEqual({ createdDrawingIds: new Set(), createdAlertIds: new Set() });
-  expect(registry.list().map(({ name }) => name)).toEqual([...APP_TOOL_NAMES, 'batch_run']);
+  expect(registry.list().map(({ name }) => name)).toEqual([
+    ...APP_TOOL_NAMES,
+    ...CHART_TOOL_NAMES,
+    'batch_run',
+  ]);
 });
 
 test('createMcpServer registers the tools of the profile and the tool filter only', () => {
@@ -564,7 +575,11 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
       .registry.list()
       .map(({ name }) => name);
 
-  expect(toolsOf({ profile: 'core' })).toEqual([...APP_TOOL_NAMES, 'batch_run']);
+  expect(toolsOf({ profile: 'core' })).toEqual([
+    ...APP_TOOL_NAMES,
+    ...CHART_TOOL_NAMES,
+    'batch_run',
+  ]);
   expect(toolsOf({ profile: 'full', toolPatterns: ['batch_*'] })).toEqual(['batch_run']);
   expect(toolsOf({ profile: 'full', toolPatterns: ['app_*'] })).toEqual(APP_TOOL_NAMES);
   expect(toolsOf({ profile: 'core', toolPatterns: ['app_h*', 'batch_*'] })).toEqual([
@@ -576,6 +591,8 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     'app_health',
     'app_discover',
     'app_get_ui_state',
+    'chart_get_state',
+    'chart_get_visible_range',
   ]);
   expect(lines).toEqual([]);
 

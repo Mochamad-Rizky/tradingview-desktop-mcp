@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ErrorCode, McpError, type ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
 import { isTvMcpError, toErrorPayload } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
+import { readChartStateData } from '../tools/chart/index.js';
 import type { ToolContext } from '../tools/types.js';
 
 const JSON_MIME_TYPE = 'application/json';
@@ -58,5 +59,15 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
       'Whether the TradingView debug port answers, how many chart tabs are open, and whether the ' +
       'app is connected and ready. Reading it changes nothing.',
     read: () => ctx.connection.health(),
+  });
+  registerJsonResource(server, ctx.logger, {
+    name: 'chart_state',
+    uri: 'tradingview://chart/state',
+    title: 'TradingView chart state',
+    description:
+      'What chart_get_state reports for the active chart: the symbol, the timeframe, the chart ' +
+      'type, the visible range, the studies, the number of drawings and the layout. Reading it ' +
+      'changes nothing.',
+    read: async () => (await readChartStateData(ctx)).data,
   });
 }

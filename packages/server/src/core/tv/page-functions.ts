@@ -1,4 +1,15 @@
 import { readAppInfo, readUiState, reloadTab } from '../../tools/app/page.js';
+import {
+  readChartLayout,
+  readChartSnapshot,
+  readChartState,
+  readVisibleRange,
+  scrollToTime,
+  setChartTypeViaApi,
+  setResolutionViaApi,
+  setSymbolViaApi,
+  zoomToTimeRange,
+} from '../../tools/chart/page.js';
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement } from './input.js';
 import { readAppState, readVisibilityState } from './probes.js';
@@ -12,7 +23,16 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   probeCapabilities,
   readAppInfo,
   readAppState,
+  readChartLayout,
+  readChartSnapshot,
+  readChartState,
   readUiState,
   readVisibilityState,
+  readVisibleRange,
   reloadTab,
+  scrollToTime,
+  setChartTypeViaApi,
+  setResolutionViaApi,
+  setSymbolViaApi,
+  zoomToTimeRange,
 };

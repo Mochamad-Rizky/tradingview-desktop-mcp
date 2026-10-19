@@ -15,6 +15,7 @@ import pkg from '../../package.json' with { type: 'json' };
 import { ToolEventBus } from '../../src/core/events.js';
 import { createMcpServer } from '../../src/server.js';
 import { appTools } from '../../src/tools/app/index.js';
+import { chartTools } from '../../src/tools/chart/index.js';
 import { startStdioTransport } from '../../src/transports/stdio.js';
 import { startFakeCdpServer, type FakeCdpServer } from '../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
@@ -69,6 +70,7 @@ describe('startStdioTransport', () => {
     const { tools } = await client.listTools();
     expect(tools.map(({ name }) => name)).toEqual([
       ...appTools.map(({ name }) => name),
+      ...chartTools.map(({ name }) => name),
       'batch_run',
     ]);
   });
@@ -216,7 +218,7 @@ describe('the built CLI over stdio', () => {
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  test('stdio client lists tools, calls the app tools and reads the app health resource', async () => {
+  test('stdio client lists tools, calls the app and chart tools and reads the app health resource', async () => {
     const app = await startApp();
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -235,6 +237,13 @@ describe('the built CLI over stdio', () => {
     // what has to hold them in a form the page can run.
     const health = await callTool(client, 'app_health');
     const uiState = await callTool(client, 'app_get_ui_state');
+    // The chart tools, among them one whose page function waits in the page with timers.
+    const state = await callTool(client, 'chart_get_state');
+    const symbol = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+    const range = await callTool(client, 'chart_set_visible_range', {
+      from: '2024-03-01',
+      to: '2024-04-01',
+    });
 
     expect(tools.map(({ name }) => name)).toContain('batch_run');
     expect(health.structuredContent).toMatchObject({
@@ -250,6 +259,20 @@ describe('the built CLI over stdio', () => {
     expect(uiState.structuredContent).toMatchObject({
       ok: false,
       error: { code: 'NOT_AVAILABLE' },
+    });
+    expect(state.structuredContent).toMatchObject({
+      ok: true,
+      data: { symbol: 'NASDAQ:AAPL', chartTypeName: 'candles' },
+    });
+    expect(symbol.structuredContent).toMatchObject({
+      ok: true,
+      data: { symbol: 'NASDAQ:MSFT', previous: 'NASDAQ:AAPL', changed: true },
+      meta: { via: 'api' },
+    });
+    expect(range.structuredContent).toMatchObject({
+      ok: true,
+      data: { fromIso: '2024-03-01T00:00:00Z', toIso: '2024-04-01T00:00:00Z' },
+      meta: { via: 'internal' },
     });
     const [content] = read.contents;
     const text = content !== undefined && 'text' in content ? content.text : '';
