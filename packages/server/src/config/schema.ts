@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import type { LogLevel } from '../core/logger.js';
 
-// The logger owns this type (ruling R2). It is re-exported so code that reads the configuration
-// imports every config type from one module.
+// The logger owns this type. It is re-exported so code that reads the configuration imports every
+// config type from one module.
 export type { LogLevel } from '../core/logger.js';
 
 export const CLI_COMMANDS = ['serve', 'launch', 'doctor', 'config'] as const;
@@ -42,7 +42,7 @@ export interface Config {
   // A bearer secret: never log this object as it is.
   authToken?: string;
   profile: Profile;
-  // Globs with `*`. Empty means every tool the profile allows.
+  // Globs with `*`. Empty means every tool the profile allows; a lone `all` is read as empty.
   toolPatterns: string[];
   allowEval: boolean;
   dashboard: boolean;
@@ -87,6 +87,13 @@ function oneOf(values: readonly string[]): string {
   return `must be one of ${values.join(', ')}`;
 }
 
+const list = z.string().transform((text) =>
+  text
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item !== ''),
+);
+
 export const settingSchemas = {
   // Matching ignores case and the value is kept in lower case, so later comparisons are exact.
   loopbackHost: z
@@ -113,10 +120,9 @@ export const settingSchemas = {
     .pipe(z.enum(['true', '1', 'false', '0'], 'must be true, false, 1 or 0'))
     .transform((text) => text === 'true' || text === '1'),
   text: z.string(),
-  list: z.string().transform((text) =>
-    text
-      .split(',')
-      .map((item) => item.trim())
-      .filter((item) => item !== ''),
+  // Design spec 9 documents `all` as the default filter, so on its own it must mean "no filter"
+  // rather than a glob that matches no tool. Next to other globs it is an ordinary pattern.
+  toolPatterns: list.transform((patterns) =>
+    patterns.length === 1 && patterns[0]?.toLowerCase() === 'all' ? [] : patterns,
   ),
 };

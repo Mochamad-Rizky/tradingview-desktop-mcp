@@ -327,6 +327,24 @@ test('drops empty tool patterns', () => {
   expect(load(['--tools', ',chart_* ,, ']).config.toolPatterns).toEqual(['chart_*']);
 });
 
+// Design spec 9 documents "all" as the default of the tool filter, so it has to select every tool
+// like an empty filter does, not a tool named "all" (there is none, so nothing would be served).
+test.each(['all', 'ALL', ' All ', 'all,'])(
+  'a lone %j in TV_MCP_TOOLS selects every tool',
+  (text) => {
+    expect(load([], { TV_MCP_TOOLS: text }).config.toolPatterns).toEqual([]);
+  },
+);
+
+test('--tools all selects every tool and beats TV_MCP_TOOLS', () => {
+  expect(load(['--tools', 'all']).config.toolPatterns).toEqual([]);
+  expect(load(['--tools', 'All'], { TV_MCP_TOOLS: 'chart_*' }).config.toolPatterns).toEqual([]);
+});
+
+test('reads all as an ordinary pattern when other patterns come with it', () => {
+  expect(load(['--tools', 'all,chart_*']).config.toolPatterns).toEqual(['all', 'chart_*']);
+});
+
 test('parses subcommands', () => {
   expect(load(['launch']).command).toBe('launch');
 

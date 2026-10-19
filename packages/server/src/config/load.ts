@@ -203,7 +203,7 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
   // Environment only: a flag would show the secret in the process list.
   const authToken = read(settingSchemas.text, 'TV_MCP_AUTH_TOKEN');
   const profile = read(settingSchemas.profile, 'TV_MCP_PROFILE', 'profile') ?? DEFAULTS.profile;
-  const toolPatterns = read(settingSchemas.list, 'TV_MCP_TOOLS', 'tools') ?? [];
+  const toolPatterns = read(settingSchemas.toolPatterns, 'TV_MCP_TOOLS', 'tools') ?? [];
   const allowEval =
     flags['allow-eval'] ?? read(settingSchemas.boolean, 'TV_MCP_ALLOW_EVAL') ?? DEFAULTS.allowEval;
   // Without a flag or a variable the dashboard follows the transport: on for http, off for stdio.
