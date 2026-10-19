@@ -322,6 +322,9 @@ export function setSymbolViaApi(
     let result: unknown;
     try {
       result = chart.setSymbol(symbol, {
+        // setSymbol makes its chart the active one unless told not to (seen on the app), which a
+        // change of another chart than the active one must not do.
+        ...(chartIndex === null ? {} : { doNotActivateChart: true }),
         dataReady: () => {
           if (!failIfUnknown()) {
             const shown = chart.symbol();
@@ -416,6 +419,8 @@ export function setResolutionViaApi(
     let result: unknown;
     try {
       result = chart.setResolution(resolution, {
+        // As setSymbol, setResolution activates its chart unless told not to.
+        ...(chartIndex === null ? {} : { doNotActivateChart: true }),
         dataReady: () => {
           finish({ resolution: chart.resolution(), previous, changed: true });
         },

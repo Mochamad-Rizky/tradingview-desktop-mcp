@@ -232,6 +232,14 @@ export function createFakeTvWindow(
     calls.push({ name, args });
   };
 
+  // setSymbol and setResolution make their chart the active one unless told not to, as the app
+  // does. The fake has one chart, at index 0.
+  const activate = (options: FakeSetOptions | undefined): void => {
+    if (options?.doNotActivateChart !== true) {
+      state.activeChartIndex = 0;
+    }
+  };
+
   // The app reports readiness later than the call that asked for it, and a callback of the
   // page that throws is the page's own problem, not the caller's.
   const notifyDataReady = (options: FakeSetOptions | undefined): void => {
@@ -368,6 +376,7 @@ export function createFakeTvWindow(
     getAllShapes: () => fixture.shapes.map(({ id, name }) => ({ id, name })),
     setSymbol(symbol, options) {
       record('chart.setSymbol', options === undefined ? [symbol] : [symbol, options]);
+      activate(options);
       // The requested symbol sticks even when it is unknown; only the series flag and the
       // missing dataReady tell the page it did not resolve.
       state.symbol = symbol;
@@ -388,6 +397,7 @@ export function createFakeTvWindow(
     },
     setResolution(resolution, options) {
       record('chart.setResolution', options === undefined ? [resolution] : [resolution, options]);
+      activate(options);
       state.resolution = resolution;
       notifyDataReady(options);
       return Promise.resolve(true);

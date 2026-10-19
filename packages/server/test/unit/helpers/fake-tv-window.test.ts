@@ -612,6 +612,23 @@ describe('createFakeTvWindow', () => {
       expect(chartOf(win).getVisibleRange()).toEqual(fixture.visibleRange);
     });
 
+    // As on the app, where both call _activateChart unless doNotActivateChart is given.
+    test('setSymbol and setResolution make their chart the active one unless told not to', async () => {
+      const win = createFakeTvWindow(fixture);
+      const state = inspectFakeWindow(win).state;
+
+      state.activeChartIndex = 1;
+      await chartOf(win).setSymbol('NASDAQ:MSFT', { doNotActivateChart: true });
+      await chartOf(win).setResolution('60', { doNotActivateChart: true });
+      expect(state.activeChartIndex).toBe(1);
+
+      await chartOf(win).setSymbol('NASDAQ:NVDA');
+      expect(state.activeChartIndex).toBe(0);
+      state.activeChartIndex = 1;
+      await chartOf(win).setResolution('240');
+      expect(state.activeChartIndex).toBe(0);
+    });
+
     test('setSymbol works without options', async () => {
       const win = createFakeTvWindow(fixture);
 

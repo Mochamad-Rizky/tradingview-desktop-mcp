@@ -677,6 +677,24 @@ describe('setSymbolViaApi', () => {
     );
   });
 
+  // setSymbol makes its chart the active one unless told not to (seen in its body on the app).
+  test('setSymbolViaApi leaves the active chart alone when it changes another chart', async () => {
+    const make = chart((_parts, win) => {
+      inspectFakeWindow(win).state.activeChartIndex = 1;
+    });
+
+    const { win } = await resultOf(setSymbolViaApi, ['NASDAQ:MSFT', 0, 5000], make);
+
+    expect(inspectFakeWindow(win).state.activeChartIndex).toBe(1);
+    expect(callsTo(win, 'chart.setSymbol')[0]?.[1]).toMatchObject({ doNotActivateChart: true });
+  });
+
+  test('setSymbolViaApi lets the app activate the chart it changes when that is the active one', async () => {
+    const { win } = await resultOf(setSymbolViaApi, ['NASDAQ:MSFT', null, 5000], chart());
+
+    expect(callsTo(win, 'chart.setSymbol')[0]?.[1]).not.toHaveProperty('doNotActivateChart');
+  });
+
   test('setSymbolViaApi changes the chart at chartIndex', async () => {
     const make = chart(({ api, chart: first }, win) => {
       let shown = 'NYSE:IBM';
@@ -714,6 +732,26 @@ describe('setSymbolViaApi', () => {
 
     expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
     expect(recordedCalls(win)).toEqual([]);
+  });
+});
+
+describe('setResolutionViaApi and the active chart', () => {
+  // setResolution makes its chart the active one unless told not to (seen in its body on the app).
+  test('setResolutionViaApi leaves the active chart alone when it changes another chart', async () => {
+    const make = chart((_parts, win) => {
+      inspectFakeWindow(win).state.activeChartIndex = 1;
+    });
+
+    const { win } = await resultOf(setResolutionViaApi, ['60', 0, 5000], make);
+
+    expect(inspectFakeWindow(win).state.activeChartIndex).toBe(1);
+    expect(callsTo(win, 'chart.setResolution')[0]?.[1]).toMatchObject({ doNotActivateChart: true });
+  });
+
+  test('setResolutionViaApi lets the app activate the active chart', async () => {
+    const { win } = await resultOf(setResolutionViaApi, ['60', null, 5000], chart());
+
+    expect(callsTo(win, 'chart.setResolution')[0]?.[1]).not.toHaveProperty('doNotActivateChart');
   });
 });
 
