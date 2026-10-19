@@ -1,20 +1,22 @@
 # Testing
 
 The server is tested at three levels: unit, integration, and end-to-end against the real TradingView
-Desktop. Fixtures for the fake app are recorded from the real one by a script that scrubs them first.
-The dashboard tests (component tests and Playwright) arrive with the dashboard.
+Desktop. A smoke test of the built CLI on the oldest supported Node.js runs next to them in CI.
+Fixtures for the fake app are recorded from the real one by a script that scrubs them first. The
+dashboard tests (component tests and Playwright) arrive with the dashboard.
 
-| Level       | Command                               | Runs against                                        | In CI      |
-| ----------- | ------------------------------------- | --------------------------------------------------- | ---------- |
-| Unit        | `pnpm test:unit`                      | Fakes: no network, no app                           | yes        |
-| Integration | `pnpm build && pnpm test:integration` | A fake CDP server with a fake TradingView window    | yes        |
-| End-to-end  | `TV_E2E=1 pnpm test:e2e`              | The TradingView Desktop running on this machine     | local only |
-| Coverage    | `pnpm test:coverage`                  | Unit and integration together, ≥80% on every metric | yes        |
+| Level       | Command                                       | Runs against                                        | In CI      |
+| ----------- | --------------------------------------------- | --------------------------------------------------- | ---------- |
+| Unit        | `pnpm test:unit`                              | Fakes: no network, no app                           | yes        |
+| Integration | `pnpm build && pnpm test:integration`         | A fake CDP server with a fake TradingView window    | yes        |
+| End-to-end  | `TV_E2E=1 pnpm test:e2e`                      | The TradingView Desktop running on this machine     | local only |
+| Coverage    | `pnpm test:coverage`                          | Unit and integration together, ≥80% on every metric | yes        |
+| Smoke       | `pnpm build && node scripts/smoke-node20.mjs` | The built CLI over stdio, with no app               | yes        |
 
 Before a commit, run the whole local gate:
 
 ```sh
-pnpm lint && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:integration
+pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm test:coverage
 ```
 
 ## Unit tests
@@ -46,6 +48,19 @@ The fake window models what the real app was seen to do, among others:
 
 No unit or integration test can reach a real app: the test configuration points the debug port at
 port 9, and the suites that could start a program mock `node:child_process`.
+
+## Smoke test
+
+`scripts/smoke-node20.mjs` starts the built CLI (`packages/server/dist/cli.js --transport stdio`) the
+way a client does and talks to it over stdio. The debug port points at port 9, where nothing
+listens, so no app is needed. The script checks that the handshake works, that `app_health` and
+`batch_run` are listed, that every line on stdout is a JSON-RPC 2.0 message, and that the server
+exits with code 0 once its input closes. It prints `smoke ok`, or the reason it failed and the start
+of the server's stderr, and it gives up after 20 s.
+
+CI runs it in the `runtime-node20` job on Node.js 20.19, the oldest runtime the package declares,
+after installing only the production dependencies of the package. The test suites cannot show that
+the bundle runs there, because Vitest needs Node.js 22 or newer.
 
 ## End-to-end tests
 
