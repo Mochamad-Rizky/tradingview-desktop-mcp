@@ -731,7 +731,9 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
         if (enter === 'flags-unknown') {
           state.symbolInvalid = true;
         } else if (dialog === 'symbol') {
-          const applied = options.enterApplies?.[typed] ?? typed;
+          // The symbol search ignores case, and applies its result in capitals.
+          const query = typed.toUpperCase();
+          const applied = options.enterApplies?.[query] ?? query;
           state.symbol = applied;
           const feed = options.feedOf?.[applied];
           if (feed !== undefined && fixture.knownSymbols.includes(applied)) {
@@ -882,10 +884,11 @@ describe('chart_set_symbol through the interface', () => {
       previous: 'NASDAQ:AAPL',
       changed: true,
     });
-    // The first letter opens the dialog, the rest is typed into it, and Enter applies it.
-    expect(keysOf(app)).toEqual(['N', 'Enter']);
+    // The first letter, pressed in lower case as a person types it, opens the dialog, the rest is
+    // typed into it as written, and Enter applies it: the symbol search ignores case.
+    expect(keysOf(app)).toEqual(['n', 'Enter']);
     expect(textsOf(app)).toEqual(['ASDAQ:MSFT']);
-    expect(ui.typed()).toBe('NASDAQ:MSFT');
+    expect(ui.typed()).toBe('nASDAQ:MSFT');
   });
 
   test('chart_set_symbol does not type a symbol that starts with a digit, which would open the intervals', async () => {
@@ -1103,7 +1106,7 @@ describe('chart_set_symbol through the interface', () => {
       expect(viaOf(result)).toBe('keyboard');
       expect(dataOf(result)).toMatchObject({ symbol: 'NASDAQ:MSFT', changed: true });
       expect(methodsOf(app)).not.toContain('Input.dispatchMouseEvent');
-      expect(keysOf(app)).toEqual(['N', 'Enter']);
+      expect(keysOf(app)).toEqual(['n', 'Enter']);
     },
   );
 
@@ -1158,7 +1161,7 @@ describe('chart_set_symbol through the interface', () => {
       code: 'PAGE_EVALUATION_FAILED',
       details: { strategy: 'typing on the chart', stage: 'type' },
     });
-    expect(keysOf(app)).toEqual(['N']);
+    expect(keysOf(app)).toEqual(['n']);
   });
 
   test('chart_set_symbol warns when Enter applies another search result than the symbol typed', async () => {

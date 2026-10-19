@@ -514,10 +514,13 @@ export function symbolStrategies(
       name: 'typing on the chart',
       async run() {
         requireActiveChart(target, 'Typing on the chart');
-        const first = symbol.charAt(0);
+        // In lower case, as a person types it: a capital would go out as a key that types a
+        // capital without Shift, which no keyboard sends and a shortcut of the page could read as
+        // another key. The symbol search ignores case, so the rest is typed as written.
+        const first = symbol.charAt(0).toLowerCase();
         // A digit typed on the chart opens the interval dialog instead, and the rest of the
         // symbol would become an interval.
-        if (!/^[A-Za-z]$/.test(first)) {
+        if (!/^[a-z]$/.test(first)) {
           throw unavailable(
             'Typing on the chart opens the symbol search only for a symbol that starts with a letter',
           );
