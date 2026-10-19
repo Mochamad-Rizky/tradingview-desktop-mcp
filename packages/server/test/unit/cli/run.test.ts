@@ -49,6 +49,17 @@ class StuckConnection extends ReportingConnection {
   }
 }
 
+// One whose close fails.
+class FailingConnection extends ReportingConnection {
+  override close(): Promise<void> {
+    return Promise.reject(new Error('socket hang up'));
+  }
+}
+
+function slowCloseLines(lines: Record<string, unknown>[]): Record<string, unknown>[] {
+  return lines.filter((line) => typeof line.msg === 'string' && line.msg.includes('in time'));
+}
+
 function offlineDeps(overrides: CliDeps = {}): CliDeps {
   return {
     connection: unreachableConnection(),
@@ -247,9 +258,25 @@ test('the CDP connection gets at most 3 s to close before the CLI moves on', asy
   await running;
 
   expect(code).toBe(0);
+  expect(slowCloseLines(lines)).toEqual([expect.objectContaining({ level: 40, timeoutMs: 3000 })]);
+});
+
+test('a CDP connection that fails to close is logged with its error, not as a slow one', async () => {
+  const { logger, lines } = capturingLogger();
+  const deps = offlineDeps({ connection: new FailingConnection(READY), logger });
+
+  const { code } = await run(['doctor'], { deps });
+
+  expect(code).toBe(0);
   expect(lines).toContainEqual(
-    expect.objectContaining({ level: 40, msg: expect.stringContaining('close') as string }),
+    expect.objectContaining({
+      level: 40,
+      err: expect.objectContaining({
+        stack: expect.stringContaining('socket hang up') as string,
+      }) as unknown,
+    }),
   );
+  expect(slowCloseLines(lines)).toEqual([]);
 });
 
 test('once it shuts down it stops listening for signals, so a second one ends the process', async () => {

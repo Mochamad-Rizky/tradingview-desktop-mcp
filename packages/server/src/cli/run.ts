@@ -95,17 +95,22 @@ function metaFlag(argv: readonly string[]): 'help' | 'version' | undefined {
 }
 
 async function closeConnection({ connection, logger }: ServerDeps): Promise<void> {
+  // A failure is caught apart from the deadline, so that the log can tell the two apart.
+  let failure: { error: unknown } | undefined;
+  const closing = connection.close().catch((error: unknown) => {
+    failure = { error };
+  });
   try {
-    await withTimeout(
-      connection.close(),
-      CONNECTION_CLOSE_TIMEOUT_MS,
-      'Closing the CDP connection',
-    );
+    await withTimeout(closing, CONNECTION_CLOSE_TIMEOUT_MS, 'Closing the CDP connection');
   } catch {
     logger.warn(
       { timeoutMs: CONNECTION_CLOSE_TIMEOUT_MS },
       'The CDP connection did not close in time, so the CLI goes on without waiting for it',
     );
+    return;
+  }
+  if (failure !== undefined) {
+    logger.warn({ err: failure.error }, 'The CDP connection failed to close');
   }
 }
 
