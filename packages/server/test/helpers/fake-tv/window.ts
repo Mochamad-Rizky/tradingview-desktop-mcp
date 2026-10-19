@@ -1,6 +1,7 @@
 import type { JsonValue } from '../../../src/utils/json.js';
 import type { TvStateFixture } from './fixture.js';
 import { syntheticBars, type SyntheticBar } from './synthetic-bars.js';
+import { createPlanLimitModules } from './plan-limits.js';
 import { createFakeWebpack } from './webpack.js';
 
 // A stand-in for the window of a TradingView chart tab, built from a TvStateFixture. It models
@@ -16,8 +17,10 @@ import { createFakeWebpack } from './webpack.js';
 // per-symbol data, and bars() deliberately lacks search(), range() and each(), because their
 // behavior is unverified on the real app and the server must not depend on them.
 //
-// The webpack chunk list is a plain empty list, as before the webpack runtime has loaded, unless
-// the webpackModules option asks for the fake runtime of webpack.ts.
+// The webpack chunk list is the one of the fake runtime of webpack.ts. Its cache holds the two
+// modules of the plan features, driven by the planLimits of the fixture (plan-limits.ts), unless
+// the webpackModules option puts other modules there. A plain empty list, as before the webpack
+// runtime has loaded, is what withoutWebpackRuntime asks for.
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -50,10 +53,13 @@ export interface FakeTvOverrides {
   // symbol, and a feed name is a known symbol too. Default: every symbol shows as it was set.
   feeds?: Readonly<Record<string, string>>;
   // The modules in the cache of the webpack registry, by module ID, each given as its exports
-  // object. With it the chunk list is the one of a fake webpack runtime (createFakeWebpack), which
-  // hands the page library a require whose cache holds these modules. Default: a plain empty list,
-  // where a push hands nothing back.
+  // object. They replace the default ones, the plan feature modules of the fixture; {} gives a
+  // runtime whose cache is empty. The chunk list is the one of a fake webpack runtime
+  // (createFakeWebpack), which hands the page library a require whose cache holds these modules.
   webpackModules?: Record<string, Record<string, unknown>>;
+  // A plain empty chunk list, where a push hands nothing back, as before the webpack runtime has
+  // loaded. Wins over webpackModules.
+  withoutWebpackRuntime?: boolean;
 }
 
 export interface FakeBars {
@@ -459,7 +465,9 @@ export function createFakeTvWindow(
     },
     BUILD_TIME: fixture.buildTime,
     webpackChunktradingview:
-      overrides.webpackModules === undefined ? [] : createFakeWebpack(overrides.webpackModules),
+      overrides.withoutWebpackRuntime === true
+        ? []
+        : createFakeWebpack(overrides.webpackModules ?? createPlanLimitModules(fixture.planLimits)),
     document: {
       get visibilityState() {
         return state.visibilityState;

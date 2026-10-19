@@ -218,7 +218,11 @@ test('each push registers one inert chunk ID, unique within a millisecond', () =
 });
 
 test('createPageLib returns a library whose lookups return null without a chunk array', () => {
-  for (const win of [pageWith(undefined), pageWith(null), createFakeTvWindow(fixture)]) {
+  for (const win of [
+    pageWith(undefined),
+    pageWith(null),
+    createFakeTvWindow(fixture, { withoutWebpackRuntime: true }),
+  ]) {
     const lib = createPageLib(win);
 
     expect(lib.findExport('getConfig')).toBeNull();

@@ -46,7 +46,7 @@ describe('the TvWindow contract', () => {
     const logical = timeScale?.logicalRange();
     expect([logical?.left(), logical?.right()]).toEqual([200, 299]);
     expect(win.BUILD_TIME).toBe(fixture.buildTime);
-    expect(win.webpackChunktradingview).toEqual([]);
+    expect(Array.isArray(win.webpackChunktradingview)).toBe(true);
     expect(typeof win.TVD?.reloadTab).toBe('function');
     expect(win.document.visibilityState).toBe('visible');
     expect(win.location.href).toBe('https://www.tradingview.com/chart/FIXTURE1/');

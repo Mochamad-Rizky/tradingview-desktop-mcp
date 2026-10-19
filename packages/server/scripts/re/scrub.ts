@@ -397,7 +397,12 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
         'scrubFixture first.',
     );
   }
-  return parseTvStateFixture({ ...scrubbed, knownSymbols: KNOWN_SYMBOLS, bars: spec });
+  return parseTvStateFixture({
+    ...scrubbed,
+    knownSymbols: KNOWN_SYMBOLS,
+    planLimits: {},
+    bars: spec,
+  });
 }
 
 // The install folder of the default macOS install, inside its app bundle. A recorded file address

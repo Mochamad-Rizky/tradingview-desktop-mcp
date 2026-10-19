@@ -98,5 +98,6 @@
     "lp_time": 1729987200,
     "currency_code": "USD"
   },
+  "planLimits": { "INDICATORS_ON_CHART": 2, "SAVED_PINE_SCRIPTS": 1, "WATCHLIST_SYMBOLS": 30 },
   "bars": { "count": 300, "startTime": 1704153600, "stepSeconds": 86400, "seed": 42 }
 }

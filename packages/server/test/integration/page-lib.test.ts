@@ -148,7 +148,7 @@ test('pushes one chunk per call, however many lookups, and leaves no global behi
 
 test('relays the sentinel of a page function that finds no export as a typed error', async () => {
   // A plain chunk list, as before the webpack runtime has loaded: the push hands nothing back.
-  const { win, bridge } = await openPage();
+  const { win, bridge } = await openPage({ withoutWebpackRuntime: true });
 
   const error = await failureOf(bridge.evaluateWithLib(listStudyNames, ['Moving']));
   const limit = await bridge.evaluateWithLib(readFeatureLimit, ['INDICATORS_ON_CHART']);

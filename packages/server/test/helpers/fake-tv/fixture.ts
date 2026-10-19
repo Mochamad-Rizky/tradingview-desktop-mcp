@@ -19,6 +19,10 @@ export interface TvStateFixture {
   knownSymbols: string[];
   symbolInfo: Record<string, JsonValue>;
   quote: Record<string, JsonValue>;
+  // The limits of the plan of the fake account, by plan feature name. The fake window serves them
+  // through the two webpack modules that hold the plan features (plan-limits.ts). A feature not
+  // listed has no limit entry: getConfig throws for it, as for an unknown value.
+  planLimits: Record<string, number>;
   // Not stored as bars: syntheticBars() expands this spec, so fixtures hold no price data.
   bars: { count: number; startTime: number; stepSeconds: number; seed: number };
 }
@@ -45,6 +49,7 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
   knownSymbols: z.array(z.string()),
   symbolInfo: z.record(z.string(), z.json()),
   quote: z.record(z.string(), z.json()),
+  planLimits: z.record(z.string(), z.number()),
   bars: z.strictObject({
     count: z.number(),
     startTime: z.number(),

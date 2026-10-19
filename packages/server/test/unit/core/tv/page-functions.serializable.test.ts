@@ -109,6 +109,27 @@ function referenceError(outcome: Outcome): string | undefined {
   return undefined;
 }
 
+// The message of the TypeError a function ends in when it reads the page library it was not given:
+// a lib function called the plain way gets no second argument, so its first look at the library
+// reads a member of undefined. Errors of the page realm fail `instanceof`, so the name tells.
+function libMisuse(outcome: Outcome): string | undefined {
+  if (outcome.kind !== 'thrown') {
+    return undefined;
+  }
+  const { error } = outcome;
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    error.name === 'TypeError' &&
+    'message' in error &&
+    /\b(findExport|findModuleWith)\b/.test(String(error.message))
+  ) {
+    return String(error.message);
+  }
+  return undefined;
+}
+
 function fakeWindows(overrides: FakeTvOverrides = {}): object[] {
   const fixture = loadTvFixture();
   // A booted chart, and a tab whose app has not booted, so both kinds of paths get to run.
@@ -123,6 +144,18 @@ async function referenceErrorsIn(expression: string, windows = fakeWindows()): P
   const messages: string[] = [];
   for (const win of windows) {
     const message = referenceError(await runInFakePage(expression, win));
+    if (message !== undefined) {
+      messages.push(message);
+    }
+  }
+  return messages;
+}
+
+// The TypeErrors of a missing page library an expression runs into in the fake pages.
+async function libMisusesIn(expression: string, windows = fakeWindows()): Promise<string[]> {
+  const messages: string[] = [];
+  for (const win of windows) {
+    const message = libMisuse(await runInFakePage(expression, win));
     if (message !== undefined) {
       messages.push(message);
     }
@@ -193,6 +226,12 @@ test('every page function runs in an isolated vm context', async () => {
   }
 });
 
+test('no function of the plain registry reads the page library it is not given', async () => {
+  for (const [name, fn] of Object.entries(pageFunctions)) {
+    expect(await libMisusesIn(plainCall(fn.toString())), name).toEqual([]);
+  }
+});
+
 // Page functions that break the rules on purpose, to show that each check can fail.
 describe('the checks catch what they are meant to', () => {
   function readsImportedConstant(win: TvWindow): number {
@@ -260,6 +299,36 @@ describe('the checks catch what they are meant to', () => {
     // Neither run reaches the call.
     expect(await referenceErrorsIn(plainCall(source), withService())).toEqual([]);
     expect(await referenceErrorsIn(libCall(source))).toEqual([]);
+  });
+
+  test('a lib function registered in the plain registry, which fails at its first lookup', async () => {
+    const source = callsModuleHelperAfterLookup.toString();
+
+    // Called the plain way, as the plain registry would have it, it reads a member of undefined.
+    const misuses = await libMisusesIn(plainCall(source));
+    expect(misuses).toHaveLength(2);
+    expect(misuses.every((message) => message.includes('findExport'))).toBe(true);
+    // Called with the library, it does not.
+    expect(await libMisusesIn(libCall(source))).toEqual([]);
+  });
+
+  test('the default fake windows carry the plan feature modules, so a lib function runs past its lookups', async () => {
+    // Looks the two plan modules up the way the tools do, then calls a helper of its module.
+    function callsModuleHelperAfterPlanLookup(win: TvWindow, lib: PageLib): string | null {
+      const features = lib.findExport('ProductFeatures');
+      const config = lib.findModuleWith(['getConfig', 'getProductFeaturesConfig']);
+      return features === null || config === null ? null : formatSymbol('x');
+    }
+    const source = callsModuleHelperAfterPlanLookup.toString();
+
+    expect(await referenceErrorsIn(libCall(source))).toEqual([
+      'formatSymbol is not defined',
+      'formatSymbol is not defined',
+    ]);
+    // A window built without the modules stops at the lookup.
+    expect(await referenceErrorsIn(libCall(source), fakeWindows({ webpackModules: {} }))).toEqual(
+      [],
+    );
   });
 
   test('method shorthand, whose source is not an expression', () => {

@@ -699,13 +699,32 @@ describe('createFakeTvWindow', () => {
     });
 
     test('exposes an empty webpack chunk list and a TVD bridge that records reloadTab', () => {
-      const win = createFakeTvWindow(fixture);
+      const win = createFakeTvWindow(fixture, { withoutWebpackRuntime: true });
 
       win.TVD.reloadTab();
 
       expect(win.webpackChunktradingview).toEqual([]);
       expect(Array.isArray(win.webpackChunktradingview)).toBe(true);
       expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
+    });
+
+    test('puts the plan feature modules of the fixture in the webpack cache by default', () => {
+      const win = createFakeTvWindow(fixture);
+      let handed: FakeWebpackRequire | undefined;
+
+      win.webpackChunktradingview.push([
+        ['probe'],
+        {},
+        (given: FakeWebpackRequire) => (handed = given),
+      ]);
+
+      const exports = Object.values(handed?.c ?? {}).map((record) =>
+        Object.keys(record.exports as object).sort(),
+      );
+      expect(exports).toEqual([
+        ['ProductFeatures', 'ProductFeaturesEnum', 'UNLIMITED_FEATURE_LIMIT'],
+        ['canUpgradePlan', 'enabled', 'getConfig', 'getProductFeaturesConfig'],
+      ]);
     });
 
     test('puts a fake webpack runtime holding webpackModules behind the chunk list', () => {
@@ -730,7 +749,7 @@ describe('createFakeTvWindow', () => {
       expect(win.TradingViewApi).toBeUndefined();
       expect(win.BUILD_TIME).toBe('2026-10-16T17:55:37');
       expect(typeof win.TVD.reloadTab).toBe('function');
-      expect(win.webpackChunktradingview).toEqual([]);
+      expect(Array.isArray(win.webpackChunktradingview)).toBe(true);
     });
   });
 
