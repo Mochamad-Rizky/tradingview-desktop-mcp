@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request makes the run in progress pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The prepare script installs the Git hooks, which a CI checkout has no use for.
+  HUSKY: '0'
+
+jobs:
+  verify:
+    name: Verify (Node 24)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Reads the version from the packageManager field of package.json. It comes before
+      # setup-node, whose pnpm cache asks pnpm where its store is.
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type-check
+        run: pnpm typecheck
+
+      # The stdio tests start packages/server/dist/cli.js and refuse a bundle that is older than the
+      # sources, so the build comes before the tests, and dist is never restored from a cache.
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      # Runs both levels again, now measured, and fails when any metric is under 80%.
+      - name: Coverage gate
+        run: pnpm test:coverage
+
+      # Also after a failed gate, because the report shows what is not covered.
+      - name: Upload the coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: packages/server/coverage
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Feeds the badge and never fails the run: the gate above decides. The token is optional
+      # for pull requests from forks, which cannot read secrets.
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && hashFiles('packages/server/coverage/lcov.info') != '' }}
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: packages/server/coverage/lcov.info
+          disable_search: true
+          fail_ci_if_error: false
+
+      # What the next job runs, so that it tests the bundle that passed here.
+      - name: Upload the build
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: packages/server/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  runtime-node20:
+    name: Runtime (Node 20)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # For the smoke script and the manifest of the package.
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download the build
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: packages/server/dist
+
+      # 20.19.0 is the oldest Node that engines.node of the package accepts.
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20.19.0
+          package-manager-cache: false
+
+      # Installs what a user of the package gets: its runtime dependencies, resolved from their
+      # version ranges (the lockfile belongs to pnpm), and none of the development tools.
+      # - npm 10, which comes with Node 20, resolves devDependencies even with --omit=dev and
+      #   crashes on Vite 8, so this throwaway checkout drops them from the manifest first.
+      # - --no-package-lock leaves no package-lock.json next to the pnpm lockfile.
+      # - --ignore-scripts keeps install scripts of dependencies from running; none is needed.
+      - name: Install the production dependencies
+        working-directory: packages/server
+        run: |
+          npm pkg delete devDependencies
+          npm install --omit=dev --no-package-lock --ignore-scripts --no-audit --no-fund
+
+      - name: Smoke test the built CLI
+        run: |
+          node --version
+          node scripts/smoke-node20.mjs
