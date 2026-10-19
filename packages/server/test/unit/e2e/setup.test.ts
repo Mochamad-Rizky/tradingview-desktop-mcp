@@ -1,5 +1,10 @@
 import type { TvWindow } from '../../../src/core/tv/tv-window.js';
-import { missingChartMembers, restorabilityProblems } from '../../e2e/setup.js';
+import {
+  applyView,
+  missingChartMembers,
+  readView,
+  restorabilityProblems,
+} from '../../e2e/setup.js';
 import { loadTvFixture } from '../../helpers/fake-tv/fixture.js';
 import { createFakeTvWindow } from '../../helpers/fake-tv/window.js';
 
@@ -109,5 +114,79 @@ describe('missingChartMembers', () => {
 
     expect(missingChartMembers(booting)).toEqual(everything);
     expect(missingChartMembers(throwing)).toEqual(everything);
+  });
+});
+
+describe('the exact view restore', () => {
+  // A time scale that keeps the relation seen on the app: the view spans width / barSpacing - 1
+  // bars, and ends rightOffset bars after the bar at baseIndex.
+  function timeScale(width: number, barSpacing: number, rightOffset: number, baseIndex = 299) {
+    const scale = {
+      width: () => width,
+      barSpacing: () => barSpacing,
+      rightOffset: () => rightOffset,
+      logicalRange: () => ({
+        left: () => baseIndex + rightOffset - (width / barSpacing - 1),
+        right: () => baseIndex + rightOffset,
+      }),
+      setBarSpacing: (value: number) => {
+        barSpacing = value;
+      },
+      setRightOffset: (value: number) => {
+        rightOffset = value;
+      },
+      resize: (value: number) => {
+        width = value;
+      },
+    };
+    const win = {
+      TradingViewApi: {
+        activeChart: () => ({
+          _chartWidget: { model: () => ({ model: () => ({ timeScale: () => scale }) }) },
+        }),
+      },
+    } as unknown as TvWindow;
+    return { scale, win };
+  }
+
+  test('reads the bars the view spans and how far it reaches past the last bar', () => {
+    const { win } = timeScale(1250, 4.87, 37.25);
+
+    const view = readView(win);
+
+    expect(view?.rightOffset).toBe(37.25);
+    expect(view?.left).toBeCloseTo(80.576489, 5);
+    expect(view?.right).toBeCloseTo(336.25, 5);
+  });
+
+  test('puts the same bars back from edge to edge, also on a pane that has grown meanwhile', () => {
+    const { scale, win } = timeScale(1250, 4.87, 37.25);
+    const view = readView(win);
+    if (view === null) {
+      throw new Error('The view could not be read');
+    }
+
+    // TradingView narrows the price axis by 20 px, and the test moves the view.
+    scale.resize(1270);
+    scale.setBarSpacing(9);
+    scale.setRightOffset(-10);
+    expect(applyView(win, view)).toBe(true);
+
+    const range = scale.logicalRange();
+    expect(range.left()).toBeCloseTo(view.left, 6);
+    expect(range.right()).toBeCloseTo(view.right, 6);
+  });
+
+  test('gives back the very zoom it read when the pane kept its width', () => {
+    const { scale, win } = timeScale(1250, 4.87, 37.25);
+    const view = readView(win);
+    if (view === null) {
+      throw new Error('The view could not be read');
+    }
+
+    scale.setBarSpacing(9);
+    applyView(win, view);
+
+    expect(scale.barSpacing()).toBeCloseTo(4.87, 9);
   });
 });

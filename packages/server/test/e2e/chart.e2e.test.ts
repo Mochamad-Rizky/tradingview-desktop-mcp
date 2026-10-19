@@ -84,7 +84,7 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
     }
   });
 
-  // The chart through the tools, then the exact zoom, each tried whatever the other did; the
+  // The chart through the tools, then the exact view, each tried whatever the other did; the
   // failures are thrown together once the server is closed.
   afterAll(async () => {
     if (e2e === undefined) {

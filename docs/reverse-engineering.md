@@ -349,8 +349,12 @@ Seen on the app (probe script and chart-change experiments with an exact restore
 - `zoomToBarsRange(i, j)` ignores `j < i`. Otherwise it sets the right offset to `j - baseIndex()` and the bar spacing
   to fit bars `i` to `j`, so the logical range becomes exactly `[i, j]` and `getVisibleRange()` the public times of
   bars `i` and `j`, a future `j` included. `zoomToBarsRange(i, i)` shows bars `i - 1` and `i`.
-- `barSpacing()`, `rightOffset()`, `setBarSpacing()` and `setRightOffset()` together restore a view exactly.
-  `preserveBarSpacing` was off, so `setBarSpacing` saved no default.
+- `barSpacing()`, `rightOffset()`, `setBarSpacing()` and `setRightOffset()` set a view exactly: the logical range
+  spans `width() / barSpacing() - 1` bars and ends `rightOffset()` bars past the bar at `baseIndex()`.
+  `preserveBarSpacing` was off, so `setBarSpacing` saved no default. The width of the time scale follows the price
+  axis, which TradingView resized by itself after a change of symbol (20 px narrower in one run, likely a label of
+  the axis that went away), so the same bar spacing can show other bars later; the same bars need
+  `width() / (right - left + 1)`.
 
 ### 4.5 Replay API (`await TradingViewApi.replayApi()`)
 

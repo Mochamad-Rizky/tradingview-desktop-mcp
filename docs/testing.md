@@ -81,13 +81,14 @@ The end-to-end suites work on the user's own, logged-in app, so they follow thes
   two times `chart_set_visible_range` takes, the earlier first. If either check fails, every test is
   skipped with the reason and nothing is changed.
 - **How they restore it:** a suite takes a snapshot of those four (through `chart_get_state`) and of
-  the zoom of the time scale before its first test. Every test that changes the chart restores it
-  first thing after it ends, and asserts that the symbol, timeframe and chart type are back and that
-  the visible range is within one bar of where it was; a restore that fails after a failed test is
-  logged next to the test's own failure, which stays the one reported. After the last test the
-  suite restores again through the tools, then puts the zoom back exactly (bar spacing and right
-  offset, which the tools can only set to the nearest bar), each step tried whatever the other did.
-  Restoring runs whether the tests passed or failed.
+  the view of the time scale (the bars it spans from edge to edge) before its first test. Every test
+  that changes the chart restores it first thing after it ends, and asserts that the symbol,
+  timeframe and chart type are back and that the visible range is within one bar of where it was; a
+  restore that fails after a failed test is logged next to the test's own failure, which stays the
+  one reported. After the last test the suite restores again through the tools, then puts the view
+  back exactly: the same bars from edge to edge, with the bar spacing worked out for the width the
+  pane has then, because TradingView can resize the price axis while a suite runs. Each of the two
+  steps is tried whatever the other did. Restoring runs whether the tests passed or failed.
 - **What they never touch:** drawings (no `drawing_clear_all`), indicators, alerts, layouts and
   layout switching, the Pine Editor, replay, watchlists, and anything that trades. They never click
   or press keys: the check above makes the chart tools take the chart API, so none of them falls

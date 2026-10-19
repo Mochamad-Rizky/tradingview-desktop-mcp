@@ -33,9 +33,9 @@ import { quietLogger } from '../helpers/tool-context.js';
 // the tools use (so that no tool falls back to clicks or typing) and that the chart can be put back
 // as it is (restorabilityProblems), and it skips its tests when either fails. It snapshots the four
 // before its first test and restores them after every test and after its last one, whether the
-// tests passed or not. Restoring goes through the tools, so it is tested too; afterwards the zoom
-// of the view is put back exactly through the time scale, because the tools set a range in whole
-// bars. Nothing else of the app is touched: no drawing, indicator, alert, layout, Pine script,
+// tests passed or not. Restoring goes through the tools, so it is tested too; afterwards the view
+// is put back exactly through the time scale (the same bars from edge to edge), because the tools
+// set a range in whole bars. Nothing else of the app is touched: no drawing, indicator, alert, layout, Pine script,
 // replay, watchlist or trading control, and the app is never reloaded, quit or started.
 
 export function e2eEnabled(): boolean {
@@ -358,35 +358,48 @@ export async function barDistance(
 }
 
 interface ExactTimeScale {
-  barSpacing(): number;
+  width(): number;
   rightOffset(): number;
+  logicalRange(): { left(): number; right(): number } | null;
   setBarSpacing(spacing: number): void;
   setRightOffset(offset: number): void;
 }
 
-// The zoom of the view in the time scale's own terms: the width of a bar in pixels and how many
-// bars the last bar stands left of the right edge. Together they fix the view exactly, where a
-// range in bars only fixes it to the nearest bar. It only reads.
-export function readView(win: TvWindow): { barSpacing: number; rightOffset: number } | null {
+// The view in the time scale's own terms: the bars it spans from edge to edge (the logical range,
+// fractional) and how many bars it reaches past the last one (the right offset). Unlike a range of
+// whole bars, these fix the view exactly. It only reads.
+export function readView(
+  win: TvWindow,
+): { left: number; right: number; rightOffset: number } | null {
   const scale = win.TradingViewApi?.activeChart()._chartWidget?.model().model().timeScale() as
     Partial<ExactTimeScale> | undefined;
-  if (typeof scale?.barSpacing !== 'function' || typeof scale.rightOffset !== 'function') {
+  const range = typeof scale?.logicalRange === 'function' ? scale.logicalRange() : null;
+  if (range === null || typeof scale?.rightOffset !== 'function') {
     return null;
   }
-  return { barSpacing: scale.barSpacing(), rightOffset: scale.rightOffset() };
+  return { left: range.left(), right: range.right(), rightOffset: scale.rightOffset() };
 }
 
 // Derived from the page function, because a page function may only return a JSON type, which an
 // interface is not.
 export type ViewSnapshot = NonNullable<ReturnType<typeof readView>>;
 
+// Puts the same bars back from edge to edge. The time scale spans width / barSpacing - 1 bars (seen
+// on the app), so the bar spacing is worked out from the width the pane has now: TradingView can
+// resize the price axis while a suite runs (after a change of symbol), and the bar spacing read
+// before would then show other bars on a pane of another width. On a pane that kept its width this
+// is the bar spacing it had.
 export function applyView(win: TvWindow, view: ViewSnapshot): boolean {
   const scale = win.TradingViewApi?.activeChart()._chartWidget?.model().model().timeScale() as
     Partial<ExactTimeScale> | undefined;
-  if (typeof scale?.setBarSpacing !== 'function' || typeof scale.setRightOffset !== 'function') {
+  if (
+    typeof scale?.width !== 'function' ||
+    typeof scale.setBarSpacing !== 'function' ||
+    typeof scale.setRightOffset !== 'function'
+  ) {
     return false;
   }
-  scale.setBarSpacing(view.barSpacing);
+  scale.setBarSpacing(scale.width() / (view.right - view.left + 1));
   scale.setRightOffset(view.rightOffset);
   return true;
 }
@@ -396,10 +409,10 @@ export async function snapshotView(ctx: ToolContext): Promise<ViewSnapshot | nul
   return page.bridge.evaluate(readView, []);
 }
 
-// Puts the zoom back exactly, once the tools have restored the symbol, the timeframe and the range.
+// Puts the view back exactly, once the tools have restored the symbol, the timeframe and the range.
 export async function restoreView(ctx: ToolContext, view: ViewSnapshot): Promise<void> {
   const page = await ctx.connection.chartPage();
   if (!(await page.bridge.evaluate(applyView, [view]))) {
-    throw new Error('The time scale of the chart cannot set its zoom on this build');
+    throw new Error('The time scale of the chart cannot set its view on this build');
   }
 }
