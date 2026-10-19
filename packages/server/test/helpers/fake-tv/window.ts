@@ -41,7 +41,7 @@ export interface FakeTimeScale {
   zoomToBarsRange(fromIndex: number, toIndex: number): void;
   scrollToBar(index: number): void;
   timePointToIndex(time: number): number | null;
-  logicalRange(): { from: number; to: number } | null;
+  logicalRange(): { left(): number; right(): number } | null;
 }
 
 export interface FakeMainSeries {
@@ -258,10 +258,14 @@ export function createFakeTvWindow(
       record('timeScale.scrollToBar', [index]);
     },
     timePointToIndex: nearestIndex,
+    // An object with left() and right(), the shape of the app's logical range.
     logicalRange() {
+      if (loaded().length === 0) {
+        return null;
+      }
       const from = nearestIndex(state.visibleRange.from);
       const to = nearestIndex(state.visibleRange.to);
-      return from === null || to === null ? null : { from, to };
+      return from === null || to === null ? null : { left: () => from, right: () => to };
     },
   };
 

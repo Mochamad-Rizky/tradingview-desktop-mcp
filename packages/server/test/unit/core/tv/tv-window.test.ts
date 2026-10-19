@@ -43,7 +43,8 @@ describe('the TvWindow contract', () => {
     expect(series?.quotes()).toEqual(fixture.quote);
     expect(series?.isSymbolInvalid()).toBe(false);
     expect(timeScale?.timePointToIndex(fixture.visibleRange.to)).toBe(bars.length - 1);
-    expect(timeScale?.logicalRange()).toEqual({ from: 200, to: 299 });
+    const logical = timeScale?.logicalRange();
+    expect([logical?.left(), logical?.right()]).toEqual([200, 299]);
     expect(win.BUILD_TIME).toBe(fixture.buildTime);
     expect(win.webpackChunktradingview).toEqual([]);
     expect(typeof win.TVD?.reloadTab).toBe('function');

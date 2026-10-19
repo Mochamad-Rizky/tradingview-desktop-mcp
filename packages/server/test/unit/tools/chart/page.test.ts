@@ -128,6 +128,12 @@ async function failureOfBoth<A extends JsonValue[], R extends JsonValue | null>(
 const callsOf = (win: object) => inspectFakeWindow(win).calls;
 const callsTo = (win: object, name: string) => inspectFakeWindow(win).callsTo(name);
 
+// What logicalRange() of the time scale answers on the app: an object whose left() and right()
+// give the first and the last bar index of the view, fractional, and that has no from or to.
+function logical(left: unknown, right: unknown): object {
+  return { left: () => left, right: () => right };
+}
+
 // What a page recorded: a fake chart window records every call that changes it, and a plain
 // object that stands in for a page has nothing to record.
 function recordedCalls(win: object): readonly unknown[] {
@@ -1061,7 +1067,7 @@ describe('scrollToTime', () => {
 
   test('scrollToTime narrows a view that is wider than the loaded bars', async () => {
     const make = chart(({ timeScale }) => {
-      Object.assign(timeScale, { logicalRange: () => ({ from: -100, to: 400 }) });
+      Object.assign(timeScale, { logicalRange: () => logical(-100, 400) });
     });
 
     const { result, win } = await resultOf(scrollToTime, [barTime(150), 'center', null], make);
@@ -1092,7 +1098,7 @@ describe('scrollToTime', () => {
   // loaded bars does not.
   test('scrollToTime takes the width of the view from the logical range of the time scale', async () => {
     const make = chart(({ timeScale }) => {
-      Object.assign(timeScale, { logicalRange: () => ({ from: 100.4, to: 140.6 }) });
+      Object.assign(timeScale, { logicalRange: () => logical(100.4, 140.6) });
     });
 
     const { win } = await resultOf(scrollToTime, [barTime(99), 'center', null], make);
@@ -1102,8 +1108,10 @@ describe('scrollToTime', () => {
 
   test.each([
     ['answers nothing', () => null],
-    ['answers ends that are not numbers', () => ({ from: '1', to: '2' })],
-    ['has its ends the wrong way round', () => ({ from: 10, to: 5 })],
+    ['answers ends that are not numbers', () => logical('1', '2')],
+    ['has its ends the wrong way round', () => logical(10, 5)],
+    // The shape the server once guessed: the app's range has no such members.
+    ['has from and to instead of left() and right()', () => ({ from: 100.4, to: 140.6 })],
     [
       'throws',
       () => {
@@ -1154,7 +1162,7 @@ describe('scrollToTime', () => {
 
   test('scrollToTime keeps a width of at least one bar', async () => {
     const make = chart(({ timeScale }) => {
-      Object.assign(timeScale, { logicalRange: () => ({ from: 5, to: 5 }) });
+      Object.assign(timeScale, { logicalRange: () => logical(5, 5) });
     });
 
     const { win } = await resultOf(scrollToTime, [barTime(40), 'left', null], make);

@@ -3,6 +3,7 @@ import type {
   BarsLike,
   ChartModelLike,
   ChartWidgetApiLike,
+  LogicalRangeLike,
   SeriesLike,
   TimeScaleLike,
   TradingViewApiLike,
@@ -695,12 +696,13 @@ export function scrollToTime(
       `The chart has no bars after ${iso(lastTime)}; the chart was scrolled to the last bar`,
     );
   }
-  // The logical range is the view in bar units; its shape is not recorded, so it is used only when
-  // it has the two ends as numbers.
+  // The logical range is the view in bar units: an object whose left() and right() give the first
+  // and the last bar index of the view, fractional (seen on the app). It is used only when both
+  // ends are numbers.
   const logical = attempt(() => scale.logicalRange()) as
-    { from?: unknown; to?: unknown } | null | undefined;
-  const logicalFrom = number(logical?.from);
-  const logicalTo = number(logical?.to);
+    Partial<LogicalRangeLike> | null | undefined;
+  const logicalFrom = number(attempt(() => logical?.left?.()));
+  const logicalTo = number(attempt(() => logical?.right?.()));
   let width: number;
   if (logicalFrom !== null && logicalTo !== null && logicalTo >= logicalFrom) {
     width = Math.round(logicalTo - logicalFrom);

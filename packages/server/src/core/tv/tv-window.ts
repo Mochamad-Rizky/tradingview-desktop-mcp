@@ -152,8 +152,16 @@ export interface TimeScaleLike {
   scrollToBar(index: number): void;
   // The index of the bar at a time in Unix seconds.
   timePointToIndex(time: number): number | null;
-  // Only the name of this member was recorded.
-  logicalRange(): unknown;
+  // The view in bar units, or null before the chart has laid out its bars.
+  logicalRange(): LogicalRangeLike | null;
+}
+
+// What logicalRange() answers on the app: left() and right() are the first and the last bar index
+// of the view, fractional, and right() reaches past the last bar while the chart keeps empty space
+// after it. The object has no from or to.
+export interface LogicalRangeLike {
+  left(): number;
+  right(): number;
 }
 
 // window.TVD. Only reloadTab, a last-resort recovery step, is described. The object also carries

@@ -38,6 +38,12 @@ function timeScaleOf(win: FakeTvWindow): FakeTimeScale {
   return chartOf(win)._chartWidget.model().model().timeScale();
 }
 
+// The first and the last bar index of a logical range, which the app answers as an object with
+// left() and right().
+function endsOf(range: { left(): number; right(): number } | null): [number, number] | null {
+  return range === null ? null : [range.left(), range.right()];
+}
+
 describe('syntheticBars', () => {
   const spec = { count: 300, startTime: 1_704_153_600, stepSeconds: DAY, seed: 42 };
 
@@ -383,7 +389,7 @@ describe('createFakeTvWindow', () => {
       const win = createFakeTvWindow(fixture);
 
       expect(chartOf(win).getVisibleRange()).toEqual({ from: timeAt(200), to: timeAt(299) });
-      expect(timeScaleOf(win).logicalRange()).toEqual({ from: 200, to: 299 });
+      expect(endsOf(timeScaleOf(win).logicalRange())).toEqual([200, 299]);
     });
 
     test('zoomToBarsRange moves the visible range to the bar times and records the call', () => {
@@ -392,7 +398,7 @@ describe('createFakeTvWindow', () => {
       timeScaleOf(win).zoomToBarsRange(250, 280);
 
       expect(chartOf(win).getVisibleRange()).toEqual({ from: timeAt(250), to: timeAt(280) });
-      expect(timeScaleOf(win).logicalRange()).toEqual({ from: 250, to: 280 });
+      expect(endsOf(timeScaleOf(win).logicalRange())).toEqual([250, 280]);
       expect(inspectFakeWindow(win).callsTo('timeScale.zoomToBarsRange')).toEqual([[250, 280]]);
     });
 
@@ -410,7 +416,7 @@ describe('createFakeTvWindow', () => {
 
       timeScaleOf(win).zoomToBarsRange(10.4, 20.6);
 
-      expect(timeScaleOf(win).logicalRange()).toEqual({ from: 10, to: 21 });
+      expect(endsOf(timeScaleOf(win).logicalRange())).toEqual([10, 21]);
     });
 
     test('zoomToBarsRange refuses an index that is not a number', () => {
