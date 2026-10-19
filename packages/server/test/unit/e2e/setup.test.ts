@@ -1,8 +1,10 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { createMcpServer } from '../../../src/server.js';
 import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 import {
   applyView,
   missingChartMembers,
+  planLimitSkipReason,
   readSymbolListing,
   readView,
   restorabilityProblems,
@@ -10,8 +12,12 @@ import {
   type ChartSnapshot,
   type ChartState,
 } from '../../e2e/setup.js';
+import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
+import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
 import { loadTvFixture } from '../../helpers/fake-tv/fixture.js';
 import { createFakeTvWindow, inspectFakeWindow } from '../../helpers/fake-tv/window.js';
+import { connectInMemoryClient } from '../../helpers/mcp-client.js';
+import { quietLogger, refusingLauncher, testConfig } from '../../helpers/tool-context.js';
 
 // The checks the end-to-end chart suite makes, by reading only, before it changes the user's chart:
 // that the tools can put the chart back as it is, and that the chart API has what the tools use, so
@@ -272,5 +278,72 @@ describe('restoreChart', () => {
     await restoreChart(client, SNAPSHOT);
 
     expect(calls.map(([name]) => name)).toEqual(['chart_get_state', 'chart_set_visible_range']);
+  });
+});
+
+describe('planLimitSkipReason', () => {
+  const cleanups: (() => Promise<void>)[] = [];
+
+  afterEach(async () => {
+    for (const cleanup of cleanups.splice(0).reverse()) {
+      await cleanup();
+    }
+  });
+
+  // A client of the real server over a fake app whose plan allows 2 indicators on a chart.
+  async function clientOf(overrides: Parameters<typeof createFakeTvWindow>[1] = {}) {
+    const win = createFakeTvWindow(fixture, overrides);
+    const app = await startFakeCdpServer({
+      targets: loadTargetsFixture({ chartWindow: () => win }),
+    });
+    cleanups.push(() => app.close());
+    const { server, ctx } = createMcpServer(
+      testConfig({ cdpPort: app.port, callTimeoutMs: 5000 }),
+      {
+        launcher: refusingLauncher(),
+        logger: quietLogger,
+      },
+    );
+    cleanups.push(() => ctx.connection.close());
+    const client = await connectInMemoryClient(server);
+    cleanups.push(async () => {
+      await client.close();
+      await server.close();
+    });
+    return client;
+  }
+
+  test('names the feature and limit when the chart is full', async () => {
+    const client = await clientOf();
+
+    const reason = await planLimitSkipReason(client, 'INDICATORS_ON_CHART', 2, 1);
+
+    expect(reason).toMatch(/INDICATORS_ON_CHART/);
+    expect(reason).toMatch(/limit of 2/);
+    expect(reason).toMatch(/2 in use/);
+  });
+
+  test('names the feature and limit when the test would need more than there is room for', async () => {
+    const client = await clientOf();
+
+    expect(await planLimitSkipReason(client, 'INDICATORS_ON_CHART', 1, 2)).toMatch(
+      /INDICATORS_ON_CHART/,
+    );
+  });
+
+  test('returns null when there is room', async () => {
+    const client = await clientOf();
+
+    expect(await planLimitSkipReason(client, 'INDICATORS_ON_CHART', 1, 1)).toBeNull();
+    expect(await planLimitSkipReason(client, 'INDICATORS_ON_CHART', 0, 2)).toBeNull();
+  });
+
+  test('returns null when the limit is unknown', async () => {
+    const client = await clientOf();
+    // The fixture plan sets no limit for HISTORICAL_BARS.
+    expect(await planLimitSkipReason(client, 'HISTORICAL_BARS', 1000, 1)).toBeNull();
+
+    const bare = await clientOf({ webpackModules: {} });
+    expect(await planLimitSkipReason(bare, 'INDICATORS_ON_CHART', 100, 1)).toBeNull();
   });
 });

@@ -13,6 +13,7 @@ import {
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
+import { readPlanLimits } from './plan-limits.js';
 import { readAppState, readVisibilityState } from './probes.js';
 import type { TvWindow } from './tv-window.js';
 
@@ -49,4 +50,6 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
 export const pageLibFunctions: Record<
   string,
   (win: TvWindow, lib: PageLib, ...args: never[]) => unknown
-> = {};
+> = {
+  readPlanLimits,
+};

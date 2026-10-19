@@ -591,6 +591,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     'app_health',
     'app_discover',
     'app_get_ui_state',
+    'app_get_plan_limits',
     'chart_get_state',
     'chart_get_visible_range',
   ]);

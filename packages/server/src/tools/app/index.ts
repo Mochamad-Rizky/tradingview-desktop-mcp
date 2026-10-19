@@ -4,6 +4,7 @@ import type { CdpTargetInfo } from '../../core/cdp/types.js';
 import { isOtherBrowserError } from '../../core/connection.js';
 import { isTvMcpError, TvMcpError } from '../../core/errors.js';
 import { readCapabilities, type Capabilities } from '../../core/tv/capabilities.js';
+import { getPlanLimits, PLAN_FEATURES, type PlanFeature } from '../../core/tv/plan-limits.js';
 import { defineTool, type AnyToolDefinition } from '../types.js';
 import { readUiState, reloadTab, UI_STATE_SELECTORS } from './page.js';
 
@@ -302,6 +303,39 @@ export const appGetUiState = defineTool({
   },
 });
 
+export const appGetPlanLimits = defineTool({
+  name: 'app_get_plan_limits',
+  domain: 'app',
+  title: 'Read the plan limits',
+  description:
+    'Reads what the TradingView plan of the signed-in account allows, and changes nothing. ' +
+    'Returns limits: for each of INDICATORS_ON_CHART (indicators on one chart), ' +
+    'SAVED_PINE_SCRIPTS, CHART_STORAGE, MULTIPLE_CHARTS (charts in one layout), ' +
+    'SERVER_SIDE_ALERTS, WATCHLIST_SYMBOLS, STUDY_TEMPLATES and HISTORICAL_BARS, the number ' +
+    'the app reports, or null when the app does not report one. The limits are those of the ' +
+    "user's own plan, as the app reports them; 99999 means unlimited. Use it before adding " +
+    'indicators or saving scripts, to see how much room is left: the tools that act check the ' +
+    'same limits and fail with PLAN_LIMIT instead of opening an upgrade dialog. It reads the ' +
+    'modules the app has loaded, so every limit is null on a page whose app has not started.',
+  inputSchema: {},
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  core: true,
+  async handler(_input, ctx) {
+    const page = await ctx.connection.chartPage();
+    const read = await getPlanLimits(page, PLAN_FEATURES);
+    // Every feature is listed, in a fixed order, null where the app said nothing.
+    const limits = Object.fromEntries(
+      PLAN_FEATURES.map((feature: PlanFeature) => [feature, read[feature] ?? null]),
+    );
+    return { data: { limits }, via: 'internal' };
+  },
+});
+
 export const appReconnect = defineTool({
   name: 'app_reconnect',
   domain: 'app',
@@ -381,5 +415,6 @@ export const appTools: AnyToolDefinition[] = [
   appHealth,
   appDiscover,
   appGetUiState,
+  appGetPlanLimits,
   appReconnect,
 ];

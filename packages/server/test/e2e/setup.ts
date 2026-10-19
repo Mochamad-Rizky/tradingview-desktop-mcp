@@ -7,6 +7,7 @@ import type {
   TimeScaleLike,
   TvWindow,
 } from '../../src/core/tv/tv-window.js';
+import type { PlanFeature } from '../../src/core/tv/plan-limits.js';
 import { createMcpServer } from '../../src/server.js';
 import {
   chartSetSymbol,
@@ -114,6 +115,31 @@ export async function callOk<T>(
     via: envelope.meta.via,
     warnings: envelope.meta.warnings ?? [],
   };
+}
+
+// Why a test that needs room under a plan limit cannot run, or null when it can. `used` is how much
+// of the feature the account already uses and `needed` how much the test adds, so a suite that adds
+// two indicators to a chart that has two on a plan of three is skipped, instead of running into the
+// paywall of the app. A limit the app does not report counts as room: the tool under test then
+// meets the check of the app itself.
+export async function planLimitSkipReason(
+  client: Client,
+  feature: PlanFeature,
+  used: number,
+  needed: number,
+): Promise<string | null> {
+  const { data } = await callOk<{ limits: Record<PlanFeature, number | null> }>(
+    client,
+    'app_get_plan_limits',
+  );
+  const limit = data.limits[feature];
+  if (typeof limit !== 'number' || used + needed <= limit) {
+    return null;
+  }
+  return (
+    `The plan allows ${String(limit)} of ${feature} (limit of ${String(limit)}), ${String(used)} ` +
+    `in use and the test needs ${String(needed)} more`
+  );
 }
 
 export interface ChartState {

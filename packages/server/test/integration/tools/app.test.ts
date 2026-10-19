@@ -1035,6 +1035,65 @@ describe('app_reconnect', () => {
   });
 });
 
+describe('app_get_plan_limits', () => {
+  const EVERY_FEATURE = [
+    'INDICATORS_ON_CHART',
+    'SAVED_PINE_SCRIPTS',
+    'CHART_STORAGE',
+    'MULTIPLE_CHARTS',
+    'SERVER_SIDE_ALERTS',
+    'WATCHLIST_SYMBOLS',
+    'STUDY_TEMPLATES',
+    'HISTORICAL_BARS',
+  ];
+
+  test('app_get_plan_limits returns every plan feature', async () => {
+    const { client } = await startHarness();
+
+    const result = await callTool(client, 'app_get_plan_limits');
+
+    // The features the fixture plan sets no limit for, or the app does not report, are null.
+    expect(result.structuredContent).toStrictEqual({
+      ok: true,
+      data: {
+        limits: {
+          INDICATORS_ON_CHART: 2,
+          SAVED_PINE_SCRIPTS: 1,
+          CHART_STORAGE: null,
+          MULTIPLE_CHARTS: null,
+          SERVER_SIDE_ALERTS: null,
+          WATCHLIST_SYMBOLS: 30,
+          STUDY_TEMPLATES: null,
+          HISTORICAL_BARS: null,
+        },
+      },
+      meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
+    });
+  });
+
+  test('app_get_plan_limits reports null for every feature when the app modules are not loaded', async () => {
+    const win = createFakeTvWindow(fixture, { webpackModules: {} });
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'app_get_plan_limits');
+
+    const { limits } = dataOf(result) as { limits: Record<string, number | null> };
+    expect(Object.keys(limits)).toEqual(EVERY_FEATURE);
+    expect(Object.values(limits).every((limit) => limit === null)).toBe(true);
+  });
+
+  test('app_get_plan_limits fails with CDP_UNREACHABLE when TradingView is down', async () => {
+    const client = await startOffline();
+
+    const result = await callTool(client, 'app_get_plan_limits');
+
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: 'CDP_UNREACHABLE' },
+    });
+  });
+});
+
 describe('the app tools as a client sees them', () => {
   test('are listed with their annotations, descriptions and described inputs', async () => {
     const { client } = await startHarness();
@@ -1047,6 +1106,7 @@ describe('the app tools as a client sees them', () => {
       'app_health',
       'app_discover',
       'app_get_ui_state',
+      'app_get_plan_limits',
       'app_reconnect',
     ]);
     for (const tool of app) {
@@ -1095,6 +1155,7 @@ describe('the app tools as a client sees them', () => {
       'app_health',
       'app_discover',
       'app_get_ui_state',
+      'app_get_plan_limits',
     ]);
   });
 });

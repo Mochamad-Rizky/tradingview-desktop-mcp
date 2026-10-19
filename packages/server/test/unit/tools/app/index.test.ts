@@ -23,13 +23,14 @@ test('appTools lists the app tools of the catalog, in its order', () => {
     'app_health',
     'app_discover',
     'app_get_ui_state',
+    'app_get_plan_limits',
     'app_reconnect',
   ]);
   expect(new Set(appTools.map(({ domain }) => domain))).toEqual(new Set(['app']));
 });
 
 test('every app tool is part of the core profile', () => {
-  expect(appTools.map(({ core }) => core)).toEqual([true, true, true, true, true]);
+  expect(appTools.map(({ core }) => core)).toEqual([true, true, true, true, true, true]);
 });
 
 // A client asks the user before a call by these hints, while confirm is filled in by the model, so
@@ -40,6 +41,7 @@ test.each([
   ['app_health', { readOnlyHint: true, destructiveHint: false, idempotentHint: true }],
   ['app_discover', { readOnlyHint: true, destructiveHint: false, idempotentHint: true }],
   ['app_get_ui_state', { readOnlyHint: true, destructiveHint: false, idempotentHint: true }],
+  ['app_get_plan_limits', { readOnlyHint: true, destructiveHint: false, idempotentHint: true }],
   ['app_reconnect', { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
 ])('%s says how it acts', (name, hints) => {
   expect(toolNamed(name).annotations).toEqual({ ...hints, openWorldHint: false });
@@ -48,7 +50,7 @@ test.each([
 test('only the tools that read are read-only, so that the readonly profile keeps just them', () => {
   expect(
     appTools.filter(({ annotations }) => annotations.readOnlyHint === true).map(({ name }) => name),
-  ).toEqual(['app_health', 'app_discover', 'app_get_ui_state']);
+  ).toEqual(['app_health', 'app_discover', 'app_get_ui_state', 'app_get_plan_limits']);
 });
 
 test('app_launch tells that a restart closes TradingView and can take more than a minute', () => {
@@ -126,7 +128,7 @@ test("app_get_ui_state warns that fullscreen can miss TradingView's own fullscre
 });
 
 test('the tools that take nothing have an empty input', () => {
-  for (const name of ['app_health', 'app_discover', 'app_get_ui_state']) {
+  for (const name of ['app_health', 'app_discover', 'app_get_ui_state', 'app_get_plan_limits']) {
     expect(Object.keys(toolNamed(name).inputSchema), name).toEqual([]);
   }
 });
@@ -188,4 +190,11 @@ test('app_reconnect fills in reloadTab: false and leaves confirm out when it is 
     reloadTab: true,
     confirm: true,
   });
+});
+
+test('app_get_plan_limits says that 99999 means unlimited and whose plan the limits are', () => {
+  const { description } = toolNamed('app_get_plan_limits');
+
+  expect(description).toMatch(/99999 means unlimited/);
+  expect(description).toMatch(/user's own plan, as the app reports them/);
 });
