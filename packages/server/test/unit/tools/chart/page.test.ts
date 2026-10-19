@@ -756,6 +756,26 @@ describe('setResolutionViaApi and the active chart', () => {
 });
 
 describe('setResolutionViaApi', () => {
+  // setResolution calls dataReady at once and changes nothing for a resolution the app cannot
+  // normalize (seen in its body on the app).
+  test('setResolutionViaApi reports no change when the app keeps the timeframe it showed', async () => {
+    const make = chart(({ chart: target }) => {
+      Object.assign(target, {
+        setResolution: (
+          _resolution: string,
+          options?: { dataReady?: () => void },
+        ): Promise<true> => {
+          options?.dataReady?.();
+          return Promise.resolve(true);
+        },
+      });
+    });
+
+    const { result } = await resultOf(setResolutionViaApi, ['7S', null, 5000], make);
+
+    expect(result).toStrictEqual({ resolution: '1D', previous: '1D', changed: false });
+  });
+
   test('setResolutionViaApi switches the timeframe and resolves once the data is ready', async () => {
     const { result, win } = await resultOf(setResolutionViaApi, ['60', null, 5000], chart());
 

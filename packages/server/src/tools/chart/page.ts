@@ -421,8 +421,15 @@ export function setResolutionViaApi(
       result = chart.setResolution(resolution, {
         // As setSymbol, setResolution activates its chart unless told not to.
         ...(chartIndex === null ? {} : { doNotActivateChart: true }),
+        // A resolution the app cannot normalize gets dataReady at once and changes nothing (seen
+        // on the app), so the change counts as one only when the chart shows another timeframe.
         dataReady: () => {
-          finish({ resolution: chart.resolution(), previous, changed: true });
+          const shown = chart.resolution();
+          finish({
+            resolution: shown,
+            previous,
+            changed: withCount(shown) !== withCount(previous),
+          });
         },
       });
     } catch (error) {
