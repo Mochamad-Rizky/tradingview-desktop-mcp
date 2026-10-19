@@ -200,8 +200,14 @@ export function createDetachedSpawn(
     // and TradingView would inherit it. The app has that mode enabled (see the security notes in
     // docs/reverse-engineering.md), so it would start as a plain Node.js runtime and never open
     // its windows or the debug port.
-    const env = { ...(system.env ?? process.env) };
-    delete env.ELECTRON_RUN_AS_NODE;
+    const inherited = { ...(system.env ?? process.env) };
+    delete inherited.ELECTRON_RUN_AS_NODE;
+    // The settings of this server mean nothing to the app, and TV_MCP_AUTH_TOKEN is a secret that
+    // anything the app starts, or any page it loads, could otherwise read from its environment.
+    // Compared in upper case because Windows does not tell tv_mcp_x from TV_MCP_X.
+    const env = Object.fromEntries(
+      Object.entries(inherited).filter(([name]) => !name.toUpperCase().startsWith('TV_MCP_')),
+    );
 
     const child = start(command, args, {
       detached: true,

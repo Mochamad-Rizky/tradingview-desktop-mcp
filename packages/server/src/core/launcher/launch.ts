@@ -123,9 +123,8 @@ function notReady(last: HealthReport, port: number, limitMs: number, waitedMs: n
     `TradingView did not become ready within ${String(Math.round(limitMs / 1000))} s: ${progressOf(last)}`,
     {
       hint:
-        `Start TradingView yourself with --remote-debugging-port=${String(port)} (see the notes ` +
-        'on launching with the debug port in docs/reverse-engineering.md), then try again. If ' +
-        'the app is only slow to start, raise TV_LAUNCH_TIMEOUT_MS.',
+        `Start TradingView yourself with --remote-debugging-port=${String(port)}, then try ` +
+        'again. If the app is only slow to start, raise TV_LAUNCH_TIMEOUT_MS.',
       details: {
         endpoint: last.cdp.endpoint,
         waitedMs,

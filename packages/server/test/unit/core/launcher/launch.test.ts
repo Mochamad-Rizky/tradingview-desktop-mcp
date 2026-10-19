@@ -372,6 +372,18 @@ describe('launch readiness', () => {
     expect(totalSleep(machine)).toBe(configWith().launchTimeoutMs);
   });
 
+  test('keeps the notes out of the failure hint, because the notes are not shipped', async () => {
+    const machine = createMachine({ reports: [downReport()] });
+
+    const error = await failureOf(launcherFor(machine).launch({ restart: false }));
+
+    // The package holds only its build, so a path into the repository would lead nowhere.
+    expect(error.hint).not.toMatch(/docs\/|reverse-engineering|\.md/);
+    // What the reader needs is still there: the flag to start the app with, and the timeout.
+    expect(error.hint).toContain(`Start TradingView yourself with ${DEBUG_FLAG}, then try again.`);
+    expect(error.hint).toContain('raise TV_LAUNCH_TIMEOUT_MS');
+  });
+
   test.each([
     [
       'the debug port answers but the app has no chart tab',

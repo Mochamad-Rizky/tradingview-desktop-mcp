@@ -391,6 +391,43 @@ describe('createDetachedSpawn', () => {
     expect(env).toHaveProperty('ELECTRON_RUN_AS_NODE', '1');
   });
 
+  test('keeps the settings and secrets of this server away from the app', () => {
+    const env = {
+      PATH: '/usr/bin',
+      HOME: '/Users/trader',
+      TV_CDP_PORT: '9222',
+      TV_MCP_AUTH_TOKEN: 'a-secret-token',
+      TV_MCP_PROFILE: 'readonly',
+      TV_MCP_HTTP_PORT: '8787',
+      // Windows treats the names of variables as case-insensitive, and a spread of its environment
+      // keeps them as they were written.
+      tv_mcp_log_level: 'debug',
+    };
+    const before = { ...env };
+    const { impl, calls } = recorder(new FakeChild(4242));
+
+    createDetachedSpawn({ spawn: impl, env })('/path/to/TradingView', []);
+
+    // The app and everything it starts could read what it inherits. The settings that are not ours
+    // are not touched.
+    expect(calls[0]?.options.env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/Users/trader',
+      TV_CDP_PORT: '9222',
+    });
+    // The environment of this process is only read.
+    expect(env).toEqual(before);
+  });
+
+  test('keeps a variable that only looks like one of ours', () => {
+    const env = { TV_MCP: '1', TV_MCPX: '2', MY_TV_MCP_X: '3', TV_APP_PATH: '/path' };
+    const { impl, calls } = recorder(new FakeChild(4242));
+
+    createDetachedSpawn({ spawn: impl, env })('/path/to/TradingView', []);
+
+    expect(calls[0]?.options.env).toEqual(env);
+  });
+
   test('listens for the error event of the child, so that a failed start cannot crash the server', () => {
     const child = new FakeChild(4242);
 
