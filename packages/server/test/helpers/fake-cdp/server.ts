@@ -62,7 +62,14 @@ export interface FakeCdpServer {
 
 export interface FakeCdpServerOptions {
   targets: FakeTarget[];
+  // The user agent /json/version names. By default the one of TradingView Desktop 3.4.1; another
+  // browser that holds the port, such as CHROME_USER_AGENT, names no TradingView in it.
+  userAgent?: string;
 }
+
+// What Chrome names as its user agent, for a test of another browser on the debug port.
+export const CHROME_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.216 Safari/537.36';
 
 const BROWSER_VERSION = {
   Browser: 'Chrome/146.0.7680.216',
@@ -229,6 +236,7 @@ export async function startFakeCdpServer(options: FakeCdpServerOptions): Promise
     } else if (pathname === '/json/version') {
       sendJson(response, {
         ...BROWSER_VERSION,
+        ...(options.userAgent === undefined ? {} : { 'User-Agent': options.userAgent }),
         webSocketDebuggerUrl: `ws://${HOST}:${String(port)}/devtools/browser/${browserId}`,
       });
     } else if (pathname === '/json/list' || pathname === '/json') {

@@ -12,6 +12,15 @@ const CHART_URL = /^https:\/\/([a-z0-9-]+\.)?tradingview\.com\/chart\//;
 
 const WINDOW_CHROME_PATH = '/app/window/index.html';
 
+// TradingView Desktop names itself in the user agent of its debug port, twice (TradingView/3.4.1 …
+// TVDesktop/3.4.1). Another browser that holds the port, such as a Chrome started with a debug port
+// of its own, names neither, even when a tab of it shows a chart of tradingview.com.
+const TRADINGVIEW_USER_AGENT = /(?:^|[\s(;])(?:TradingView|TVDesktop)\/\S/;
+
+export function isTradingViewUserAgent(userAgent: string): boolean {
+  return TRADINGVIEW_USER_AGENT.test(userAgent);
+}
+
 // Only the path counts. The query after it is data handed to the renderer, and it must not decide
 // what kind of page this is.
 function isWindowChrome(url: string): boolean {

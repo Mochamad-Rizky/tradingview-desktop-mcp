@@ -1,6 +1,6 @@
 import type { Config } from '../../config/schema.js';
 import { pollUntil } from '../../utils/poll.js';
-import type { HealthReport } from '../connection.js';
+import { otherBrowserOnPort, type HealthReport } from '../connection.js';
 import { isTvMcpError, TvMcpError } from '../errors.js';
 import { findInstall, searchedLocations, type InstallDeps } from './install.js';
 import { isTradingViewRunning, quitTradingView, type SpawnFn } from './process.js';
@@ -162,8 +162,14 @@ export function createLauncher(deps: LauncherDeps): Launcher {
 
   async function run(restart: boolean, port: number, args: string[]): Promise<LaunchResult> {
     const first = await health();
+    // Another browser holds the port, so TradingView could not open it: a start would leave the app
+    // running without the port, and a restart would close it for nothing.
+    if (first.cdp.otherBrowser === true) {
+      throw otherBrowserOnPort(first.cdp.endpoint, first.cdp.browser);
+    }
     if (first.cdp.reachable) {
-      // Whatever answers on the port is taken for the app, and a restart has nothing to fix.
+      // The app answers on the port (the health check tells it from another browser), so there is
+      // nothing to start, and a restart has nothing to fix.
       return {
         status: 'already-running',
         executable: null,

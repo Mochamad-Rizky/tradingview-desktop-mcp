@@ -11,6 +11,7 @@ import { createLauncher, type Launcher } from '../../../src/core/launcher/launch
 import { SELECTORS } from '../../../src/core/tv/selectors.js';
 import { createMcpServer } from '../../../src/server.js';
 import {
+  CHROME_USER_AGENT,
   startFakeCdpServer,
   type FakeCdpServer,
   type FakeTarget,
@@ -84,6 +85,8 @@ interface HarnessOptions {
   // What the debug port lists. By default the target list of the app, with `win` on its chart tab.
   targets?: FakeTarget[];
   launcher?: Launcher;
+  // The user agent of the debug port. By default the one of TradingView Desktop.
+  userAgent?: string;
 }
 
 // The real server over the real adapters, against a fake debug port.
@@ -91,6 +94,7 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   const win = options.win ?? createFakeTvWindow(fixture);
   const app = await startFakeCdpServer({
     targets: options.targets ?? loadTargetsFixture({ chartWindow: () => win }),
+    ...(options.userAgent === undefined ? {} : { userAgent: options.userAgent }),
   });
   cleanups.push(() => app.close());
   const { server, ctx } = createMcpServer(testConfig({ cdpPort: app.port, callTimeoutMs: 5000 }), {
@@ -195,6 +199,38 @@ describe('app_health', () => {
       },
       meta: { via: 'cdp', durationMs: expect.any(Number) as number, warnings: [] },
     });
+  });
+
+  // A Chrome with a debug port of its own and a chart of tradingview.com in a tab lists targets like
+  // the app's, but it is not the app, and none of its pages is read.
+  test('app_health reports another browser on the debug port as not TradingView', async () => {
+    const win = createFakeTvWindow(fixture);
+    const { client, app } = await startHarness({ win, userAgent: CHROME_USER_AGENT });
+
+    const result = await callTool(client, 'app_health');
+
+    expect(result.structuredContent).toStrictEqual({
+      ok: true,
+      data: {
+        cdp: {
+          reachable: false,
+          endpoint: `http://127.0.0.1:${String(app.port)}`,
+          browser: 'Chrome/146.0.7680.216',
+          userAgent: CHROME_USER_AGENT,
+          otherBrowser: true,
+        },
+        chart: { found: false, tabs: 0 },
+        app: { ready: false },
+        capabilities: null,
+      },
+      meta: {
+        via: 'cdp',
+        durationMs: expect.any(Number) as number,
+        warnings: [expect.stringMatching(/another browser holds the debug port.*TV_CDP_PORT/is)],
+      },
+    });
+    expect(app.connectionCount()).toBe(0);
+    expect(inspectFakeWindow(win).calls).toEqual([]);
   });
 
   test('app_health reports a page whose app has not booted', async () => {
@@ -645,6 +681,26 @@ describe('app_discover', () => {
     });
     // TradingView runs, so a plain launch would be refused: the way out is a confirmed restart.
     expect(warningsOf(result)).toEqual([expect.stringMatching(/restart: true.*confirm: true/s)]);
+  });
+
+  test('app_discover lists nothing of another browser that holds the debug port, and says so', async () => {
+    const launcher = discovering({ executable: MAC_BINARY, running: false, cdpReachable: false });
+    const { client, app } = await startHarness({ launcher, userAgent: CHROME_USER_AGENT });
+
+    const result = await callTool(client, 'app_discover');
+
+    expect(dataOf(result)).toEqual({
+      executable: MAC_BINARY,
+      running: false,
+      cdpReachable: false,
+      targets: [],
+    });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(
+        /another browser holds the debug port.*targets is empty.*TV_CDP_PORT/is,
+      ),
+    ]);
+    expect(app.connectionCount()).toBe(0);
   });
 
   test('app_discover tells to start TradingView when it is installed and not running', async () => {

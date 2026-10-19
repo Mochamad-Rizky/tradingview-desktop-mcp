@@ -111,6 +111,16 @@ function tradingViewVersion(userAgent: string | undefined): string | undefined {
 }
 
 function cdpCheck({ cdp }: HealthReport): Check {
+  if (cdp.otherBrowser === true) {
+    const browser = present(cdp.browser) ? ` (${cdp.browser})` : '';
+    return {
+      state: 'fail',
+      text: `Another browser answers on the debug port at ${cdp.endpoint}${browser}, not TradingView`,
+      hint:
+        'Another browser holds the debug port: quit it, or set TV_CDP_PORT (--cdp-port) to a ' +
+        'free port for TradingView.',
+    };
+  }
   if (!cdp.reachable) {
     return {
       state: 'fail',

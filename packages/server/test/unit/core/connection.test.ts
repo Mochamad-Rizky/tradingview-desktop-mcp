@@ -20,6 +20,7 @@ import {
   HELPER,
   IFRAME,
   openSessions,
+  OTHER_BROWSER,
   OTHER_SITE,
   PROBE_TIMEOUT_MS,
   quiet,
@@ -605,6 +606,65 @@ describe('retrying', () => {
     expect(performance.now() - startedAt).toBeLessThan(500);
     expect(page.target.id).toBe('A');
     expect(app.listCalls).toBe(2);
+  });
+});
+
+// Another browser can hold the debug port: a Chrome started with a debug port of its own, say. It
+// may even show a TradingView chart in a tab, but it is not the app, and its pages are not ours.
+describe('another browser on the debug port', () => {
+  test('refuses the chart tab of another browser before it lists or opens anything', async () => {
+    const app = createApp([chart('A')]);
+    app.onVersion = () => Promise.resolve(OTHER_BROWSER);
+    const { manager, delays } = createManager(app);
+
+    const error = await failureOf(manager.chartPage());
+
+    expect(error.toPayload()).toStrictEqual({
+      code: 'CDP_UNREACHABLE',
+      message: `Another browser answers on the debug port at ${ENDPOINT}, not TradingView Desktop`,
+      hint: expect.stringMatching(
+        /another browser holds the debug port.*quit it.*TV_CDP_PORT/is,
+      ) as string,
+      details: { endpoint: ENDPOINT, browser: 'Chrome/146.0.7680.216', otherBrowser: true },
+    });
+    expect(app.listCalls).toBe(0);
+    expect(app.connects).toEqual([]);
+    // Waiting does not make the other browser go away.
+    expect(delays).toEqual([]);
+  });
+
+  test('lists no target of another browser, nor its window', async () => {
+    const app = createApp([CHROME, chart('A')]);
+    app.onVersion = () => Promise.resolve(OTHER_BROWSER);
+    const { manager } = createManager(app);
+
+    await expect(manager.targets()).rejects.toMatchObject({
+      code: 'CDP_UNREACHABLE',
+      details: { otherBrowser: true },
+    });
+    await expect(manager.windowChromePage()).rejects.toMatchObject({
+      code: 'CDP_UNREACHABLE',
+      details: { otherBrowser: true },
+    });
+    expect(app.listCalls).toBe(0);
+    expect(app.connects).toEqual([]);
+  });
+
+  test('asks the debug port which program it is on every call, since the program can change', async () => {
+    const app = createApp([chart('A')]);
+    app.onVersion = () => Promise.resolve(OTHER_BROWSER);
+    const { manager } = createManager(app);
+    await expect(manager.chartPage()).rejects.toMatchObject({ code: 'CDP_UNREACHABLE' });
+
+    app.onVersion = () =>
+      Promise.resolve({
+        browser: 'Chrome/146.0.7680.216',
+        protocolVersion: '1.3',
+        userAgent: 'TradingView/3.4.1',
+      });
+    const page = await manager.chartPage();
+
+    expect(page.target.id).toBe('A');
   });
 });
 

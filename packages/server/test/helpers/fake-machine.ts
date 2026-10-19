@@ -148,6 +148,23 @@ export function downReport(): HealthReport {
   };
 }
 
+// Another browser answers on the debug port, such as a Chrome started with a debug port of its own:
+// the health check does not take it for TradingView.
+export function otherBrowserReport(): HealthReport {
+  return {
+    cdp: {
+      reachable: false,
+      endpoint: ENDPOINT,
+      browser: 'Chrome/134.0.0.0',
+      userAgent:
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/134.0.0.0 Safari/537.36',
+      otherBrowser: true,
+    },
+    chart: { found: false, tabs: 0 },
+    app: { ready: false },
+  };
+}
+
 // The debug port answers, and the app has no chart tab (yet).
 export function noChartReport(): HealthReport {
   return {

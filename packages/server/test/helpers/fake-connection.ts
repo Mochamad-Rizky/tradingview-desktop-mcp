@@ -10,6 +10,7 @@ import { ConnectionManager, type ConnectionManagerDeps } from '../../src/core/co
 import { TvMcpError } from '../../src/core/errors.js';
 import { createLogger } from '../../src/core/logger.js';
 import { createPageRuntime, type PageRuntime } from './fake-cdp/runtime.js';
+import { CHROME_USER_AGENT } from './fake-cdp/server.js';
 import { loadTvFixture } from './fake-tv/fixture.js';
 import { createFakeTvWindow, inspectFakeWindow } from './fake-tv/window.js';
 
@@ -24,6 +25,13 @@ export const CALL_TIMEOUT_MS = 1000;
 export const PROBE_TIMEOUT_MS = 1500;
 // Something a page says about itself, which must never end up in a log.
 export const PRIVATE_TITLE = 'Private layout title';
+// What /json/version answers when another browser holds the debug port: a Chrome that was started
+// with a debug port of its own. Its user agent names no TradingView.
+export const OTHER_BROWSER: CdpVersionInfo = {
+  browser: 'Chrome/146.0.7680.216',
+  protocolVersion: '1.3',
+  userAgent: CHROME_USER_AGENT,
+};
 
 export function chart(id: string): CdpTargetInfo {
   return {

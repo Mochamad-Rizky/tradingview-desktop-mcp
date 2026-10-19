@@ -34,6 +34,20 @@ const UNREACHABLE: HealthReport = {
 
 const REACHABLE = { reachable: true, endpoint: ENDPOINT, browser: 'Chrome/146.0.7680.216' };
 
+// Chrome started with a debug port of its own holds the port TradingView should have.
+const OTHER_BROWSER: HealthReport = {
+  cdp: {
+    reachable: false,
+    endpoint: ENDPOINT,
+    browser: 'Chrome/146.0.7680.216',
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.216 Safari/537.36',
+    otherBrowser: true,
+  },
+  chart: { found: false, tabs: 0 },
+  app: { ready: false },
+};
+
 test('renderHealth checks off every step of a ready app', () => {
   const text = renderHealth(READY, { color: false });
 
@@ -54,6 +68,30 @@ test('renderHealth says how to start TradingView when the debug port does not an
   expect(text).toContain('- Chart tab: not checked');
   expect(text).toContain('- App: not checked');
   expect(text).toContain('TradingView is not ready.');
+});
+
+test('renderHealth says that another browser holds the debug port, and how to free it', () => {
+  const text = renderHealth(OTHER_BROWSER, { color: false });
+
+  expect(text).toContain(
+    `✖ Another browser answers on the debug port at ${ENDPOINT} (Chrome/146.0.7680.216), not TradingView`,
+  );
+  expect(text).toMatch(/quit it.*TV_CDP_PORT/is);
+  expect(text).not.toContain('does not answer');
+  expect(text).toContain('- Chart tab: not checked');
+  expect(text).toContain('TradingView is not ready.');
+  expect(isHealthy(OTHER_BROWSER)).toBe(false);
+});
+
+test('renderHealth names no browser when the debug port did not say which it is', () => {
+  const text = renderHealth(
+    { ...OTHER_BROWSER, cdp: { reachable: false, endpoint: ENDPOINT, otherBrowser: true } },
+    { color: false },
+  );
+
+  expect(text).toContain(
+    `✖ Another browser answers on the debug port at ${ENDPOINT}, not TradingView`,
+  );
 });
 
 test.each<[string, HealthReport, string[]]>([

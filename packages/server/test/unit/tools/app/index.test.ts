@@ -62,6 +62,12 @@ test('app_launch tells that a restart closes TradingView and can take more than 
   expect(description).toMatch(/time ?out/i);
 });
 
+test('app_launch says that it fails while another browser holds the debug port', () => {
+  expect(toolNamed('app_launch').description).toMatch(
+    /CDP_UNREACHABLE while another browser holds the port/,
+  );
+});
+
 test('app_launch takes a port only to say it must be the configured one', () => {
   const port = descriptionOf(toolNamed('app_launch'), 'port');
 

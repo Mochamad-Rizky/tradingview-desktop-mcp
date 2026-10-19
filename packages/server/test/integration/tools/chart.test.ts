@@ -5,6 +5,7 @@ import { createMcpServer } from '../../../src/server.js';
 import { chartTools } from '../../../src/tools/chart/index.js';
 import { CDP_ERROR } from '../../helpers/fake-cdp/protocol.js';
 import {
+  CHROME_USER_AGENT,
   FakeCdpError,
   startFakeCdpServer,
   type FakeCdpServer,
@@ -84,6 +85,8 @@ interface HarnessOptions {
   // Answers of the chart tab for single CDP commands: the page reacting to input.
   handlers?: Handlers;
   callTimeoutMs?: number;
+  // The user agent of the debug port. By default the one of TradingView Desktop.
+  userAgent?: string;
 }
 
 // The real server over the real adapters, against a fake debug port.
@@ -94,7 +97,10 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   if (chartTarget !== undefined && options.handlers !== undefined) {
     chartTarget.handlers = options.handlers;
   }
-  const app = await startFakeCdpServer({ targets });
+  const app = await startFakeCdpServer({
+    targets,
+    ...(options.userAgent === undefined ? {} : { userAgent: options.userAgent }),
+  });
   cleanups.push(() => app.close());
   const config = testConfig({ cdpPort: app.port, callTimeoutMs: options.callTimeoutMs ?? 5000 });
   const { server, ctx } = createMcpServer(config, {
@@ -303,6 +309,23 @@ describe('chart_get_state', () => {
     const result = await callTool(client, 'chart_get_state');
 
     expect(errorOf(result)).toMatchObject({ code: 'CDP_UNREACHABLE' });
+  });
+
+  // A Chrome with a debug port of its own and a chart of tradingview.com in a tab lists targets
+  // like the app's, but it is not the app.
+  test('chart_get_state fails with CDP_UNREACHABLE, and reads nothing, when another browser holds the debug port', async () => {
+    const win = createFakeTvWindow(fixture);
+    const { client, app } = await startHarness({ win, userAgent: CHROME_USER_AGENT });
+
+    const result = await callTool(client, 'chart_get_state');
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'CDP_UNREACHABLE',
+      hint: expect.stringMatching(/another browser holds the debug port.*TV_CDP_PORT/is) as string,
+      details: { otherBrowser: true },
+    });
+    expect(app.connectionCount()).toBe(0);
+    expect(inspectFakeWindow(win).calls).toEqual([]);
   });
 });
 

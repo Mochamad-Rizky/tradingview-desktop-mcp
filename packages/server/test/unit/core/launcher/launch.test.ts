@@ -11,6 +11,7 @@ import {
   downReport,
   exitCode,
   noChartReport,
+  otherBrowserReport,
   readyReport,
   unfocusedReport,
   type FakeMachine,
@@ -130,6 +131,41 @@ describe('launch when the debug port already answers', () => {
 
     expect(result.status).toBe('already-running');
     expect(machine.spawned).toEqual([]);
+  });
+});
+
+// TradingView could not open its debug port while another browser holds it, so starting it would
+// only leave it running without the port, and a restart would close it for nothing.
+describe('launch when another browser holds the debug port', () => {
+  test.each([false, true])(
+    'refuses with CDP_UNREACHABLE and looks no further (restart %s)',
+    async (restart) => {
+      const machine = createMachine({ running: true, reports: [otherBrowserReport()] });
+
+      const error = await failureOf(launcherFor(machine).launch({ restart }));
+
+      expect(error.toPayload()).toStrictEqual({
+        code: 'CDP_UNREACHABLE',
+        message: `Another browser answers on the debug port at ${ENDPOINT}, not TradingView Desktop`,
+        hint: expect.stringMatching(
+          /another browser holds the debug port.*quit it.*TV_CDP_PORT/is,
+        ) as string,
+        details: { endpoint: ENDPOINT, browser: 'Chrome/134.0.0.0', otherBrowser: true },
+      });
+      // One look at the debug port: no process lookup, no quit, no start.
+      expect(machine.log).toEqual(['health']);
+    },
+  );
+
+  test('leaves the browser out of the details when the report does not name it', async () => {
+    const report = otherBrowserReport();
+    const machine = createMachine({
+      reports: [{ ...report, cdp: { reachable: false, endpoint: ENDPOINT, otherBrowser: true } }],
+    });
+
+    const error = await failureOf(launcherFor(machine).launch({ restart: false }));
+
+    expect(error.details).toStrictEqual({ endpoint: ENDPOINT, otherBrowser: true });
   });
 });
 
@@ -655,6 +691,22 @@ describe('discover', () => {
       cdpReachable: false,
     });
   });
+
+  // The debug port answers, but not for TradingView, so whether the app runs is read from the
+  // process table.
+  test.each([true, false])(
+    'reports a debug port that another browser holds as not reachable (app running %s)',
+    async (running) => {
+      const machine = createMachine({ running, reports: [otherBrowserReport()] });
+
+      await expect(launcherFor(machine).discover()).resolves.toEqual({
+        executable: MAC_BINARY,
+        running,
+        cdpReachable: false,
+      });
+      expect(machine.log).toContain('lookup');
+    },
+  );
 
   test('reports an app that is not running', async () => {
     const machine = createMachine({ running: false, reports: [downReport()] });

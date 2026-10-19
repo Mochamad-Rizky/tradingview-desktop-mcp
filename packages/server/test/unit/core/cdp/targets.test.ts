@@ -3,6 +3,7 @@ import {
   classifyTarget,
   findChartTargets,
   findWindowChromeTarget,
+  isTradingViewUserAgent,
   pickChartTarget,
   type TargetKind,
   type Visibility,
@@ -269,4 +270,34 @@ test('pickChartTarget lists every tab when three are open and two are visible', 
     code: 'TARGET_NOT_FOUND',
     details: { tabs: tabs.map(({ id, url }) => ({ id, url })) },
   });
+});
+
+// The user agent /json/version reports. TradingView Desktop names itself in it twice; a browser that
+// holds the debug port instead, Chrome or another one built on Chromium, names neither.
+test.each([
+  [
+    'TradingView Desktop 3.4.1 on macOS',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) TradingView/3.4.1 Chrome/146.0.7680.216 Electron/41.7.1 Safari/537.36 TVDesktop/3.4.1',
+  ],
+  ['a build that keeps only the app name', 'Mozilla/5.0 TradingView/4.0.0 Chrome/150.0.0.0'],
+  ['a build that keeps only the desktop name', 'Mozilla/5.0 Chrome/150.0.0.0 TVDesktop/4.0.0'],
+])('isTradingViewUserAgent recognizes %s', (_case, userAgent) => {
+  expect(isTradingViewUserAgent(userAgent)).toBe(true);
+});
+
+test.each([
+  [
+    'Chrome',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.7680.216 Safari/537.36',
+  ],
+  [
+    'Edge',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0',
+  ],
+  ['another Electron app', 'Mozilla/5.0 Chrome/146.0.0.0 Electron/41.7.1 Safari/537.36 Slack/4.0'],
+  ['an empty user agent', ''],
+  ['the name without a version', 'Mozilla/5.0 TradingView Chrome/146.0.0.0'],
+  ['the name inside another word', 'Mozilla/5.0 NotTradingView/1.0 MyTVDesktop/1.0'],
+])('isTradingViewUserAgent does not take %s for TradingView', (_case, userAgent) => {
+  expect(isTradingViewUserAgent(userAgent)).toBe(false);
 });

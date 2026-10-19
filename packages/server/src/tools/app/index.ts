@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { classifyTarget } from '../../core/cdp/targets.js';
 import type { CdpTargetInfo } from '../../core/cdp/types.js';
+import { isOtherBrowserError } from '../../core/connection.js';
 import { isTvMcpError, TvMcpError } from '../../core/errors.js';
 import { readCapabilities, type Capabilities } from '../../core/tv/capabilities.js';
 import { defineTool, type AnyToolDefinition } from '../types.js';
@@ -16,6 +17,12 @@ const MAX_PORT = 65535;
 const UNFOCUSED_TABS =
   'Several TradingView chart tabs are open and none of them is in front, so the app cannot tell ' +
   'which one to use. Focus one TradingView tab (click it), then call app_health again.';
+
+// What frees the debug port when another browser holds it, such as a Chrome started with a debug
+// port of its own.
+const FREE_THE_PORT =
+  'quit that browser, or set TV_CDP_PORT (--cdp-port) to a free port and start this server ' +
+  'again, then call app_launch.';
 
 // What a failure of the debug port means to a tool that only reports. The two codes say that the
 // port cannot be used right now; any other failure is not an answer about the port.
@@ -39,6 +46,12 @@ function whyNoTargets(
   found: { executable: string | null; running: boolean },
   failure: TvMcpError,
 ): string {
+  if (isOtherBrowserError(failure)) {
+    return (
+      'Another browser holds the debug port, not TradingView, so targets is empty and none of ' +
+      `its pages is listed: ${FREE_THE_PORT}`
+    );
+  }
   if (failure.code === 'TIMEOUT') {
     return (
       'The debug port did not list its targets in time, so targets is empty. Try again, and ' +
@@ -71,7 +84,8 @@ export const appLaunch = defineTool({
   description:
     'Starts TradingView Desktop with its debug port open, which is how every other tool reaches ' +
     'it, and waits until a chart tab is up. Use it when app_health shows that the debug port does ' +
-    'not answer. It does nothing when the port already answers (status already-running). ' +
+    'not answer. It does nothing when TradingView already answers on the port (status ' +
+    'already-running), and fails with CDP_UNREACHABLE while another browser holds the port. ' +
     'TradingView allows only one instance, so when it runs without the debug port the call fails ' +
     'with RESTART_REQUIRED; to quit and reopen it, call again with restart: true and confirm: ' +
     'true. A restart closes TradingView, so unsaved edits, such as Pine Editor text, can be ' +
@@ -162,7 +176,8 @@ export const appHealth = defineTool({
     'registry, the desktop bridge); every flag is false on a page whose app has not started, and ' +
     'capabilities is null when no chart tab could be read. It is a report, so it succeeds when ' +
     'TradingView is down. With several chart tabs open and none in front, chart.tabs is above 1 ' +
-    'and a warning asks you to focus one TradingView tab.',
+    'and a warning asks you to focus one TradingView tab. When another browser holds the debug ' +
+    'port, cdp.reachable is false, cdp.otherBrowser is true and a warning says how to free it.',
   inputSchema: {},
   annotations: {
     readOnlyHint: true,
@@ -174,6 +189,12 @@ export const appHealth = defineTool({
   async handler(_input, ctx) {
     const report = await ctx.connection.health();
     const warnings: string[] = [];
+    if (report.cdp.otherBrowser === true) {
+      warnings.push(
+        'Another browser holds the debug port, not TradingView, so none of its pages is read: ' +
+          FREE_THE_PORT,
+      );
+    }
     // Not a sign that the app is starting, so it is told apart from a tab that is not ready.
     const unfocused = report.chart.tabs > 1 && report.chart.url === undefined;
     if (unfocused) {

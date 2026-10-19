@@ -12,6 +12,7 @@ import { createLogger, type Logger } from '../../src/core/logger.js';
 import { readVisibilityState } from '../../src/core/tv/probes.js';
 import { failureOf } from '../helpers/failure-of.js';
 import {
+  CHROME_USER_AGENT,
   startFakeCdpServer,
   type FakeCdpServer,
   type FakeTarget,
@@ -830,4 +831,36 @@ test('logs its decisions at debug level and no page data', async () => {
   expect(content).not.toContain('tradingview.com');
   expect(content).not.toContain('FIXTURE1');
   expect(content).not.toContain('Live stock');
+});
+
+// Chrome started with a debug port of its own, with a chart of tradingview.com in one of its tabs:
+// the targets look like the app's, and only the user agent tells them apart.
+test('refuses another browser on the debug port, even with a TradingView chart open in it', async () => {
+  const win = createFakeTvWindow(fixture);
+  const server = await startFakeCdpServer({
+    targets: loadTargetsFixture({ chartWindow: () => win }),
+    userAgent: CHROME_USER_AGENT,
+  });
+  cleanups.push(() => server.close());
+  const manager = managerOn(server);
+
+  const error = await failureOf(manager.chartPage());
+  const report = await manager.health();
+
+  expect(error).toMatchObject({ code: 'CDP_UNREACHABLE', details: { otherBrowser: true } });
+  expect(error.hint).toMatch(/TV_CDP_PORT/);
+  expect(report).toEqual({
+    cdp: {
+      reachable: false,
+      endpoint: endpointOf(server.port),
+      browser: 'Chrome/146.0.7680.216',
+      userAgent: CHROME_USER_AGENT,
+      otherBrowser: true,
+    },
+    chart: { found: false, tabs: 0 },
+    app: { ready: false },
+  });
+  // Nothing of the browser was opened or read.
+  expect(server.connectionCount()).toBe(0);
+  expect(inspectFakeWindow(win).calls).toEqual([]);
 });

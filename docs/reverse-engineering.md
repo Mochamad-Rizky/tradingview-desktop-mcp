@@ -203,6 +203,9 @@ timeout**, because unresponsive targets otherwise hang the client.
   consent (`restart: true`), using a graceful quit first.
 - Readiness is a two-step check: `GET /json/version` answers, then a chart target exists where
   `window.TradingViewApi` is defined and `TradingViewApi.isConnected()` returns `true`.
+- The `User-Agent` of `/json/version` names the app (`TradingView/` and `TVDesktop/`). Another browser that holds the
+  port, such as a Chrome started with a debug port of its own, names neither, even with a chart of tradingview.com in
+  one of its tabs, so the server takes the port for the app only when one of them is there.
 - The debug port binds to loopback by default (observed: `127.0.0.1:9222` only, via `lsof`). The launcher must never
   pass `--remote-debugging-address`.
 

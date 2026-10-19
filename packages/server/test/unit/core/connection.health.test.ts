@@ -20,6 +20,7 @@ import {
   HELPER,
   never,
   openSessions,
+  OTHER_BROWSER,
   PRIVATE_TITLE,
   PROBE_TIMEOUT_MS,
   settle,
@@ -53,7 +54,7 @@ describe('health', () => {
       Promise.resolve({
         browser: 'Chrome/147.0.1',
         protocolVersion: '1.3',
-        userAgent: 'Other/1.0',
+        userAgent: 'Mozilla/5.0 TradingView/3.5.0 Chrome/147.0.1 TVDesktop/3.5.0',
         v8Version: '15.0',
       });
     const { manager } = createManager(app);
@@ -64,8 +65,33 @@ describe('health', () => {
       reachable: true,
       endpoint: ENDPOINT,
       browser: 'Chrome/147.0.1',
-      userAgent: 'Other/1.0',
+      userAgent: 'Mozilla/5.0 TradingView/3.5.0 Chrome/147.0.1 TVDesktop/3.5.0',
     });
+  });
+
+  // Chrome started with a debug port of its own answers there too, and may even show a chart of
+  // tradingview.com, but it is not the app.
+  test('reports another browser on the debug port as not TradingView, and reads none of its pages', async () => {
+    const app = createApp([chart('A')]);
+    app.onVersion = () => Promise.resolve(OTHER_BROWSER);
+    const { manager } = createManager(app);
+
+    const report = await manager.health();
+
+    expect(report).toEqual({
+      cdp: {
+        reachable: false,
+        endpoint: ENDPOINT,
+        browser: OTHER_BROWSER.browser,
+        userAgent: OTHER_BROWSER.userAgent,
+        otherBrowser: true,
+      },
+      chart: { found: false, tabs: 0 },
+      app: { ready: false },
+    });
+    expect(app.versionCalls).toBe(1);
+    expect(app.listCalls).toBe(0);
+    expect(app.connects).toEqual([]);
   });
 
   test.each<[string, unknown]>([

@@ -3,6 +3,7 @@ import { withTimeout } from '../utils/timeout.js';
 import {
   findChartTargets,
   findWindowChromeTarget,
+  isTradingViewUserAgent,
   pickChartTarget,
   type Visibility,
 } from './cdp/targets.js';
@@ -30,13 +31,22 @@ export interface PageHandle {
 // part at the defaults (not reachable, no chart tab, not ready), and the optional members are
 // absent when they are not known:
 // - cdp.browser and cdp.userAgent: as the debug port names them, once it answered.
+// - cdp.otherBrowser: true when another browser answers on the debug port, such as a Chrome started
+//   with a debug port of its own: its user agent names no TradingView. cdp.reachable is false then,
+//   since TradingView cannot be reached there, and nothing of that browser is listed or read.
 // - chart.tabs: the chart tabs open, whichever of them is in use. chart.url is the url of the tab
 //   that was read, or of the only tab; it is absent when several are open and none was chosen.
 // - app.ready: the tab has the app's API and the API says it is connected. app.connected is what
 //   the API said, and is absent when there is no API or it could not say. app.buildTime is null
 //   when the page does not state its build.
 export interface HealthReport {
-  cdp: { reachable: boolean; endpoint: string; browser?: string; userAgent?: string };
+  cdp: {
+    reachable: boolean;
+    endpoint: string;
+    browser?: string;
+    userAgent?: string;
+    otherBrowser?: boolean;
+  };
   chart: { found: boolean; tabs: number; url?: string };
   app: { ready: boolean; connected?: boolean; buildTime?: string | null };
 }
@@ -66,10 +76,33 @@ const CONNECT_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 100;
 const RETRY_MAX_DELAY_MS = 400;
 
+// What a call gets when another browser answers on the debug port. Its pages are not the app's, not
+// even one that shows a chart of tradingview.com, so none of them is listed or opened. The launcher
+// refuses with it too: TradingView could not open its debug port on a port that is taken.
+export function otherBrowserOnPort(endpoint: string, browser: string | undefined): TvMcpError {
+  return new TvMcpError(
+    'CDP_UNREACHABLE',
+    `Another browser answers on the debug port at ${endpoint}, not TradingView Desktop`,
+    {
+      hint:
+        'Another browser holds the debug port: quit it, or set TV_CDP_PORT (--cdp-port) to a ' +
+        'free port and start this server again, so that TradingView can open its debug port there.',
+      details: { endpoint, ...(browser === undefined ? {} : { browser }), otherBrowser: true },
+    },
+  );
+}
+
+export function isOtherBrowserError(error: unknown): boolean {
+  return (
+    isTvMcpError(error) && error.code === 'CDP_UNREACHABLE' && error.details?.otherBrowser === true
+  );
+}
+
 // Only a debug port that does not answer is retried. A timeout means the app is stuck, and trying
-// again would only wait as long again; every other failure is not one that waiting cures.
+// again would only wait as long again; another browser on the port does not go away by waiting
+// either; every other failure is not one that waiting cures.
 function isUnreachable(error: unknown): error is TvMcpError {
-  return isTvMcpError(error) && error.code === 'CDP_UNREACHABLE';
+  return isTvMcpError(error) && error.code === 'CDP_UNREACHABLE' && !isOtherBrowserError(error);
 }
 
 // Logs carry codes and ids only. The message of a failure that came from a page can carry what the
@@ -145,8 +178,18 @@ export class ConnectionManager {
   }
 
   // The targets the app lists right now, with the errors of CdpDiscovery. A session whose target is
-  // not among them any more is closed and forgotten, since the tab it belonged to is gone.
+  // not among them any more is closed and forgotten, since the tab it belonged to is gone. Another
+  // browser on the debug port is refused before anything of it is listed (otherBrowserOnPort), and
+  // the port is asked which program it is every time, since that can change between two calls.
   async targets(): Promise<CdpTargetInfo[]> {
+    const version = await this.discovery.version();
+    if (!isTradingViewUserAgent(version.userAgent)) {
+      throw otherBrowserOnPort(this.endpoint, version.browser);
+    }
+    return this.listTargets();
+  }
+
+  private async listTargets(): Promise<CdpTargetInfo[]> {
     this.listingsAsked += 1;
     const asked = this.listingsAsked;
     const listed = await this.discovery.targets();
@@ -380,14 +423,18 @@ export class ConnectionManager {
   // Fills `report` step by step, so that when the deadline stops it, what was learned is kept.
   private async inspect(report: HealthReport): Promise<void> {
     const version = await this.discovery.version();
-    report.cdp = {
-      reachable: true,
+    const answered = {
       endpoint: this.endpoint,
       browser: version.browser,
       userAgent: version.userAgent,
     };
+    if (!isTradingViewUserAgent(version.userAgent)) {
+      report.cdp = { reachable: false, ...answered, otherBrowser: true };
+      return;
+    }
+    report.cdp = { reachable: true, ...answered };
 
-    const tabs = findChartTargets(await this.targets());
+    const tabs = findChartTargets(await this.listTargets());
     const lone = tabs.length === 1 ? tabs[0] : undefined;
     report.chart = {
       found: tabs.length > 0,
