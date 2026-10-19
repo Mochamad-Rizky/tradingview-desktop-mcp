@@ -1039,6 +1039,21 @@ describe('zoomToTimeRange', () => {
     });
   });
 
+  test('zoomToTimeRange says so when a range starts after the last bar', async () => {
+    const { result, win } = await resultOf(
+      zoomToTimeRange,
+      [afterLast(LAST + 5), afterLast(LAST + 20), null],
+      chart(undefined, fixture, WITH_SPACE),
+    );
+
+    expect(callsTo(win, 'timeScale.zoomToBarsRange')).toEqual([[LAST, LAST + 20]]);
+    expect(result).toMatchObject({
+      warnings: [
+        `The chart has no bars after ${toIso(barTime(LAST))}; the range starts at the last bar`,
+      ],
+    });
+  });
+
   test('zoomToTimeRange moves the chart at chartIndex', async () => {
     const { win } = await resultOf(zoomToTimeRange, [barTime(10), barTime(20), 0], chart());
 

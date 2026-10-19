@@ -631,6 +631,11 @@ export function zoomToTimeRange(
   if (from < firstTime) {
     warnings.push(`History before ${iso(firstTime)} is not loaded; the range was clamped`);
   }
+  // A range that starts after the last bar starts on it instead. When its end lies past the last
+  // bar on a chart without time points after it, the warning about the end says so already.
+  if (from > lastTime && !(to > reachTime && reach === last)) {
+    warnings.push(`The chart has no bars after ${iso(lastTime)}; the range starts at the last bar`);
+  }
   if (to > reachTime) {
     warnings.push(
       reach === last
@@ -657,14 +662,14 @@ export function zoomToTimeRange(
 }
 
 // Moves the chart so that the bar nearest to `time` (Unix seconds) is at the left edge, the center
-// or the right edge of the view, and keeps the zoom: the view keeps its width in bars, read from the
-// logical range of the time scale, which counts the empty space after the last bar too, or else
+// or the right edge of the view, and keeps the zoom: the view keeps its width in bars, read from
+// the logical range of the time scale, which counts the empty space after the last bar too, or else
 // from the visible range mapped to bars. Times are the ones the chart reports for its bars, as in
-// zoomToTimeRange. It zooms the core time scale to the new range of indices,
-// as zoomToTimeRange does, because where scrollToBar puts a bar is not recorded. The new range stays
-// within the loaded bars: near either end the view is moved, and a view wider than the loaded bars
-// is narrowed to them, each with a warning. A time outside the loaded bars goes to the first or the
-// last of them, with a warning too. Answers the time of the bar and the visible range afterwards.
+// zoomToTimeRange. It zooms the core time scale to the new range of indices, as zoomToTimeRange
+// does, because where scrollToBar puts a bar is not recorded. The new range stays within the loaded
+// bars: near either end the view is moved, and a view wider than the loaded bars is narrowed to
+// them, each with a warning. A time outside the loaded bars goes to the first or the last of them,
+// with a warning too. Answers the time of the bar and the visible range afterwards.
 export function scrollToTime(
   win: TvWindow,
   time: number,
