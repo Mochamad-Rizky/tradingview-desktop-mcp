@@ -106,9 +106,11 @@ export const appLaunch = defineTool({
           'reopened, which loses unsaved edits such as Pine Editor text. Ignored without restart.',
       ),
   },
+  // A restart can lose unsaved work. A client decides from the hints whether to ask the user
+  // first, while confirm is filled in by the model, so the hints describe the worst mode.
   annotations: {
     readOnlyHint: false,
-    destructiveHint: false,
+    destructiveHint: true,
     idempotentHint: false,
     openWorldHint: false,
   },
@@ -306,10 +308,12 @@ export const appReconnect = defineTool({
           'reloaded, which loses unsaved edits such as Pine Editor text. Ignored without reloadTab.',
       ),
   },
+  // As for app_launch, the hints describe the worst mode: a reload can lose unsaved work, and
+  // every call with reloadTab reloads the tab again.
   annotations: {
     readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
     openWorldHint: false,
   },
   core: true,

@@ -32,12 +32,15 @@ test('every app tool is part of the core profile', () => {
   expect(appTools.map(({ core }) => core)).toEqual([true, true, true, true, true]);
 });
 
+// A client asks the user before a call by these hints, while confirm is filled in by the model, so
+// a tool with a mode that can lose unsaved work says it is destructive: app_launch with restart,
+// app_reconnect with reloadTab, which reloads the page again on every call.
 test.each([
-  ['app_launch', { readOnlyHint: false, destructiveHint: false, idempotentHint: false }],
+  ['app_launch', { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
   ['app_health', { readOnlyHint: true, destructiveHint: false, idempotentHint: true }],
   ['app_discover', { readOnlyHint: true, destructiveHint: false, idempotentHint: true }],
   ['app_get_ui_state', { readOnlyHint: true, destructiveHint: false, idempotentHint: true }],
-  ['app_reconnect', { readOnlyHint: false, destructiveHint: false, idempotentHint: true }],
+  ['app_reconnect', { readOnlyHint: false, destructiveHint: true, idempotentHint: false }],
 ])('%s says how it acts', (name, hints) => {
   expect(toolNamed(name).annotations).toEqual({ ...hints, openWorldHint: false });
 });
