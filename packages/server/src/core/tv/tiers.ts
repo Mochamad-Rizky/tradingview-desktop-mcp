@@ -11,7 +11,8 @@ import type { Tier } from '../result.js';
 // other one may have come after the operation started.
 export interface Strategy<T> {
   tier: Tier;
-  // How the strategy is called in the log and in the error of an operation that none could do.
+  // How the strategy is called in the log and in the error of an operation that none could do: a
+  // short fixed label, never anything the page said.
   name: string;
   run(): Promise<T>;
 }
@@ -36,10 +37,9 @@ export async function runWithFallback<T>(
         throw error;
       }
       attempts.push(strategy.name);
-      logger.debug(
-        { strategy: strategy.name, tier: strategy.tier, message: error.message },
-        'A strategy is unavailable',
-      );
+      // The name and the code only: the message can carry what the page said, such as how it
+      // describes an element.
+      logger.debug({ strategy: strategy.name, code: error.code }, 'A strategy is unavailable');
       continue;
     }
     return { value, via: strategy.tier };

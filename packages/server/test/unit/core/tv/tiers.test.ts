@@ -293,7 +293,9 @@ describe('runWithFallback', () => {
     expect(events).toEqual(['api started', 'api ended', 'internal started', 'internal ended']);
   });
 
-  test('logs each strategy it skips at debug level, with its name, tier and message', async () => {
+  // The message of a failure can carry what the page said, such as how it describes an element,
+  // so only the name of the strategy, a fixed label, and the code go to the log.
+  test('logs each strategy it skips at debug level, with its name and the code, never the message', async () => {
     const { logger, records } = recordingLogger();
     const { make } = strategies();
 
@@ -303,7 +305,7 @@ describe('runWithFallback', () => {
         make(
           'internal',
           'internal',
-          raise(new TvMcpError('CAPABILITY_UNAVAILABLE', 'The chart model is missing')),
+          raise(new TvMcpError('CAPABILITY_UNAVAILABLE', 'div#private-layout-name is missing')),
         ),
         make('dom', 'dom', () => 'from dom'),
       ],
@@ -313,14 +315,14 @@ describe('runWithFallback', () => {
     // 20 is pino's numeric value for the debug level. The skipped strategies are the only
     // records: the one that answered is not logged.
     expect(records).toMatchObject([
-      { level: 20, strategy: 'api', tier: 'api', message: 'TradingViewApi is missing' },
-      {
-        level: 20,
-        strategy: 'internal',
-        tier: 'internal',
-        message: 'The chart model is missing',
-      },
+      { level: 20, strategy: 'api', code: 'CAPABILITY_UNAVAILABLE' },
+      { level: 20, strategy: 'internal', code: 'CAPABILITY_UNAVAILABLE' },
     ]);
+    for (const record of records) {
+      expect(record).not.toHaveProperty('message');
+      expect(record).not.toHaveProperty('tier');
+      expect(JSON.stringify(record)).not.toContain('missing');
+    }
   });
 
   test('logs the strategies it tried before it gave up', async () => {
@@ -338,8 +340,8 @@ describe('runWithFallback', () => {
     );
 
     expect(records).toMatchObject([
-      { level: 20, strategy: 'api', tier: 'api' },
-      { level: 20, strategy: 'dom', tier: 'dom' },
+      { level: 20, strategy: 'api' },
+      { level: 20, strategy: 'dom' },
     ]);
   });
 });
