@@ -1,12 +1,17 @@
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 import {
   applyView,
   missingChartMembers,
+  readSymbolListing,
   readView,
   restorabilityProblems,
+  restoreChart,
+  type ChartSnapshot,
+  type ChartState,
 } from '../../e2e/setup.js';
 import { loadTvFixture } from '../../helpers/fake-tv/fixture.js';
-import { createFakeTvWindow } from '../../helpers/fake-tv/window.js';
+import { createFakeTvWindow, inspectFakeWindow } from '../../helpers/fake-tv/window.js';
 
 // The checks the end-to-end chart suite makes, by reading only, before it changes the user's chart:
 // that the tools can put the chart back as it is, and that the chart API has what the tools use, so
@@ -188,5 +193,84 @@ describe('the exact view restore', () => {
     applyView(win, view);
 
     expect(scale.barSpacing()).toBeCloseTo(4.87, 9);
+  });
+});
+
+// The chart can show a symbol through the exchange of its data feed, BATS:AAPL for NASDAQ:AAPL
+// (seen on the app), and setting that name would switch to another listing.
+describe('readSymbolListing', () => {
+  test('reads the listing of a symbol the chart shows through its data feed', () => {
+    const win = createFakeTvWindow(fixture, { feeds: { 'NASDAQ:AAPL': 'BATS:AAPL' } });
+
+    expect(win.TradingViewApi?.activeChart().symbol()).toBe('BATS:AAPL');
+    expect(readSymbolListing(win as unknown as TvWindow)).toBe('NASDAQ:AAPL');
+  });
+
+  test('answers null when the series names no listing, or the chart cannot be reached', () => {
+    const invalid = createFakeTvWindow(fixture);
+    inspectFakeWindow(invalid).state.symbolInvalid = true;
+    const booting = createFakeTvWindow(fixture, { withoutApi: true });
+    const throwing = {
+      TradingViewApi: {
+        activeChart: () => {
+          throw new Error('No chart is active');
+        },
+      },
+    };
+
+    for (const win of [invalid, booting, throwing]) {
+      expect(readSymbolListing(win as unknown as TvWindow)).toBeNull();
+    }
+  });
+});
+
+describe('restoreChart', () => {
+  // A client whose chart shows `state` and that answers every change with success. It records the
+  // tools called, with their arguments.
+  function recordingClient(state: ChartState): { client: Client; calls: unknown[][] } {
+    const calls: unknown[][] = [];
+    const client = {
+      callTool: ({ name, arguments: args }: { name: string; arguments?: unknown }) => {
+        calls.push([name, args]);
+        const envelope = { ok: true, data: name === 'chart_get_state' ? state : {}, meta: {} };
+        return Promise.resolve({
+          content: [{ type: 'text', text: JSON.stringify(envelope) }],
+          structuredContent: envelope,
+        });
+      },
+    } as unknown as Client;
+    return { client, calls };
+  }
+
+  const SNAPSHOT: ChartSnapshot = {
+    symbol: 'BATS:AAPL',
+    listing: 'NASDAQ:AAPL',
+    resolution: '1D',
+    chartType: 1,
+    visibleRange: { from: STATE.visibleRange.from, to: STATE.visibleRange.to },
+  };
+
+  test('puts the symbol back by its listing, not by the name of its data feed', async () => {
+    const { client, calls } = recordingClient({
+      ...STATE,
+      symbol: 'NASDAQ:MSFT',
+      chartTypeName: 'candles',
+    });
+
+    await restoreChart(client, SNAPSHOT);
+
+    expect(calls).toContainEqual(['chart_set_symbol', { symbol: 'NASDAQ:AAPL' }]);
+  });
+
+  test('leaves the symbol alone when the chart shows it already', async () => {
+    const { client, calls } = recordingClient({
+      ...STATE,
+      symbol: 'BATS:AAPL',
+      chartTypeName: 'candles',
+    });
+
+    await restoreChart(client, SNAPSHOT);
+
+    expect(calls.map(([name]) => name)).toEqual(['chart_get_state', 'chart_set_visible_range']);
   });
 });

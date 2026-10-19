@@ -67,7 +67,7 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
       return;
     }
     try {
-      snapshot = await snapshotChart(e2e.client);
+      snapshot = await snapshotChart(e2e.client, e2e.ctx);
     } catch (error) {
       if (error instanceof UnrestorableChartError) {
         skipReason = `${error.message}; nothing was changed.`;

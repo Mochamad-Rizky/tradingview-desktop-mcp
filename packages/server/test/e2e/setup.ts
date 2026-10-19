@@ -43,7 +43,12 @@ export function e2eEnabled(): boolean {
 }
 
 export interface ChartSnapshot {
+  // The symbol as the chart shows it, to compare with.
   symbol: string;
+  // The symbol to put back: the listing the series has resolved (NASDAQ:AAPL), since the chart can
+  // show a symbol through the exchange of its data feed (BATS:AAPL), and setting that name would
+  // switch to another listing. The symbol as shown when the series names none.
+  listing: string;
   resolution: string;
   chartType: number;
   visibleRange: { from: number; to: number };
@@ -198,18 +203,37 @@ export class UnrestorableChartError extends Error {
 
 // What the chart shows, for restoreChart to put back. A state restoreChart could not put back is
 // refused with UnrestorableChartError, before anything is changed.
-export async function snapshotChart(client: Client): Promise<ChartSnapshot> {
+export async function snapshotChart(client: Client, ctx: ToolContext): Promise<ChartSnapshot> {
   const state = await readChartState(client);
   const problems = restorabilityProblems(state);
   if (problems.length > 0 || state.visibleRange === null) {
     throw new UnrestorableChartError(problems);
   }
+  const page = await ctx.connection.chartPage();
+  const listing = await page.bridge.evaluate(readSymbolListing, []);
   return {
     symbol: state.symbol,
+    listing:
+      listing !== null && accepts(chartSetSymbol.inputSchema, { symbol: listing })
+        ? listing
+        : state.symbol,
     resolution: state.resolution,
     chartType: state.chartType,
     visibleRange: { from: state.visibleRange.from, to: state.visibleRange.to },
   };
+}
+
+// The listing the series of the active chart has resolved, the pro_name of its symbol info, or null
+// when the series does not say (while a symbol loads, or for one that does not exist). It only
+// reads.
+export function readSymbolListing(win: TvWindow): string | null {
+  try {
+    const info = win.TradingViewApi?.activeChart()._chartWidget?.model().mainSeries().symbolInfo();
+    const listing = info?.pro_name;
+    return typeof listing === 'string' && listing.trim() !== '' ? listing : null;
+  } catch {
+    return null;
+  }
 }
 
 // The members of the active chart the chart tools use, through the chart API and the time scale,
@@ -262,10 +286,10 @@ export async function findMissingChartMembers(ctx: ToolContext): Promise<string[
   return page.bridge.evaluate(missingChartMembers, []);
 }
 
-// Puts the chart back as `snapshot` describes it, through the tools: the symbol, the timeframe and
-// the chart type where they differ, and the visible range always, since a new symbol or timeframe
-// moves the view as well. Every step is tried even when an earlier one fails, and the failures are
-// thrown together at the end.
+// Puts the chart back as `snapshot` describes it, through the tools: the symbol (by its listing),
+// the timeframe and the chart type where they differ, and the visible range always, since a new
+// symbol or timeframe moves the view as well. Every step is tried even when an earlier one fails,
+// and the failures are thrown together at the end.
 export async function restoreChart(client: Client, snapshot: ChartSnapshot): Promise<void> {
   const failures: string[] = [];
   const step = async (name: string, args: Record<string, unknown>): Promise<void> => {
@@ -282,7 +306,7 @@ export async function restoreChart(client: Client, snapshot: ChartSnapshot): Pro
     failures.push(error instanceof Error ? error.message : String(error));
   }
   if (state?.symbol !== snapshot.symbol) {
-    await step('chart_set_symbol', { symbol: snapshot.symbol });
+    await step('chart_set_symbol', { symbol: snapshot.listing });
   }
   if (state?.resolution !== snapshot.resolution) {
     await step('chart_set_timeframe', { timeframe: snapshot.resolution });
