@@ -42,7 +42,8 @@ pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm test:coverage
 
 There are three levels, described in [docs/testing.md](docs/testing.md):
 
-- **Unit** tests use fakes and never open a socket.
+- **Unit** tests use fakes and open no socket, apart from the tests of the fake debug-port server,
+  which listen on the loopback address.
 - **Integration** tests start the real server and talk to it with MCP clients, against a fake
   debug-port server and a fake TradingView window. They refuse to run against a build older than
   the sources, so run `pnpm build` first.

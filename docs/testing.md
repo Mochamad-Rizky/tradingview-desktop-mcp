@@ -24,7 +24,8 @@ pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm test:coverage
 `packages/server/test/unit/` covers pure logic, schemas, mappers, the launcher with injected OS
 dependencies, the fixture scrubber, and the page functions. Each page function runs twice in its
 test: directly, and as source text through the real page bridge into a `vm` context, so that a
-function that leans on anything outside itself fails there. A unit test never opens a socket.
+function that leans on anything outside itself fails there. Unit tests open no socket, apart from
+the tests of the fake CDP server itself, which start it on the loopback address.
 
 ## Integration tests
 
