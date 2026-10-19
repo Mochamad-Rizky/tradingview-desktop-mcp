@@ -209,7 +209,9 @@ export function readChartSnapshot(
 // symbol the chart shows after the change and the listing it stands for (null when the series does
 // not say), and the change counts as one only when the chart shows another symbol than before: a
 // bare ticker is loaded again even when it names the symbol shown. A chart that shows the symbol
-// already, as itself or through its feed, is left alone.
+// already, as itself or through its feed, is left alone. The INVALID_INPUT of an unknown symbol
+// names as previous the listing the chart showed, for the caller to switch back to, since setting
+// the name of a feed would switch to another listing; without a listing it names the symbol shown.
 export function setSymbolViaApi(
   win: TvWindow,
   symbol: string,
@@ -270,6 +272,8 @@ export function setSymbolViaApi(
   if (previous.toUpperCase() === wanted || (!wasInvalid && listed?.toUpperCase() === wanted)) {
     return { symbol: previous, previous, changed: false, listing: listed };
   }
+  // Only reported with an unknown symbol, which a series flagged before cannot report.
+  const restorable = listed ?? previous;
   return new Promise<
     | { symbol: string; previous: string; changed: boolean; listing: string | null }
     | PageErrorSentinel
@@ -300,7 +304,7 @@ export function setSymbolViaApi(
           code: 'INVALID_INPUT',
           message: `Unknown symbol ${symbol}`,
           hint: 'Check the spelling, or use the EXCHANGE:SYMBOL form such as NASDAQ:AAPL.',
-          details: { requested: symbol, previous },
+          details: { requested: symbol, previous: restorable },
         },
       });
       return true;

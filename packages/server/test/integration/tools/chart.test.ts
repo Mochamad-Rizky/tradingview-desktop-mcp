@@ -826,6 +826,26 @@ describe('chart_set_symbol and the data feed of a symbol', () => {
   });
 });
 
+describe('chart_set_symbol and the data feed of an unknown symbol', () => {
+  test('chart_set_symbol switches an unknown symbol back to the listing the chart showed through its feed', async () => {
+    const win = createFakeTvWindow(fixture, { feeds: { 'NASDAQ:AAPL': 'BATS:AAPL' } });
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:NOPE' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'INVALID_INPUT',
+      details: { requested: 'NASDAQ:NOPE', kept: 'BATS:AAPL' },
+    });
+    // Back to the listing, not to the name of its feed, which is another listing.
+    expect(
+      inspectFakeWindow(win)
+        .callsTo('chart.setSymbol')
+        .map(([symbol]) => symbol),
+    ).toEqual(['NASDAQ:NOPE', 'NASDAQ:AAPL']);
+  });
+});
+
 describe('chart_set_symbol through the interface', () => {
   test('chart_set_symbol through the symbol search follows TradingView to the name of the data feed', async () => {
     const ui = chartUi({

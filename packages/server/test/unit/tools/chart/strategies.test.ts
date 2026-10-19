@@ -279,6 +279,35 @@ describe('confirming a symbol entered through the symbol search', () => {
     expect(sent).toContain('Input.insertText');
   });
 
+  // The chart shows NASDAQ:AAPL through the exchange of its data feed, as BATS:AAPL (seen on the
+  // app): switching back to that name would switch to another listing.
+  test('the symbol search gives the listing of a symbol shown through its data feed to switch back to', async () => {
+    const before = { ...SNAPSHOT, symbol: 'BATS:AAPL', seriesName: 'BATS:AAPL' };
+    const { page } = interfacePage([
+      before,
+      { ...before, symbol: 'NASDAQ:NOPE', symbolInvalid: true },
+    ]);
+    const search = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:NOPE', 500), 1);
+
+    const error = await failureOf(search.run());
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.details).toStrictEqual({ requested: 'NASDAQ:NOPE', previous: 'NASDAQ:AAPL' });
+  });
+
+  test('the symbol search gives the symbol shown to switch back to when the series names nothing', async () => {
+    const before = { ...SNAPSHOT, symbol: 'BATS:AAPL', seriesSymbol: null, seriesName: null };
+    const { page } = interfacePage([
+      before,
+      { ...before, symbol: 'NASDAQ:NOPE', symbolInvalid: true },
+    ]);
+    const search = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:NOPE', 500), 1);
+
+    const error = await failureOf(search.run());
+
+    expect(error.details).toStrictEqual({ requested: 'NASDAQ:NOPE', previous: 'BATS:AAPL' });
+  });
+
   test('the symbol search confirms a symbol once the series has resolved it and holds bars', async () => {
     const { page } = interfacePage([
       SNAPSHOT,

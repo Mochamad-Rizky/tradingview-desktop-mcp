@@ -364,7 +364,9 @@ function loaded(now: Snapshot): now is Snapshot & { symbol: string } {
 // second part takes what is left of the wait, and at least SETTLE_MIN_MS, so that a switch seen at
 // the last moment still gets the time to be resolved. A symbol that is neither loaded nor flagged by
 // then is reported as not confirmed, by the name the chart shows last. A flag that was up before
-// belongs to the symbol the chart showed then, so it says nothing about the new one.
+// belongs to the symbol the chart showed then, so it says nothing about the new one. An unknown
+// symbol is reported with the listing the chart showed to switch back to, as the chart API reports
+// it, or with the symbol shown when the series named none.
 async function confirmSymbol(
   page: PageHandle,
   target: ChartTarget,
@@ -377,6 +379,9 @@ async function confirmSymbol(
     return { symbol: null, previous: null, changed: null, confirmed: false, listing: null };
   }
   const flagged = (now: Snapshot): boolean => now.symbolInvalid && !before.symbolInvalid;
+  // Only reported when the flag goes up now, so the series was not flagged before and its name is
+  // the listing the chart showed.
+  const restorable = before.seriesSymbol ?? previous;
   // A snapshot of null, a chart that cannot be read any more, ends the wait as well.
   const switched = await pollUntil(
     () => snapshotOf(page, target),
@@ -388,7 +393,7 @@ async function confirmSymbol(
     return { symbol: null, previous: null, changed: null, confirmed: false, listing: null };
   }
   if (flagged(switched.last)) {
-    throw unknownSymbol(requested, previous);
+    throw unknownSymbol(requested, restorable);
   }
   if (!switched.satisfied) {
     throw new TvMcpError(
@@ -412,7 +417,7 @@ async function confirmSymbol(
   );
   const last = settled.last;
   if (last !== null && flagged(last)) {
-    throw unknownSymbol(requested, previous);
+    throw unknownSymbol(requested, restorable);
   }
   const symbol = last?.symbol ?? shown;
   return {

@@ -427,6 +427,29 @@ describe('setSymbolViaApi', () => {
     expect(callsTo(win, 'chart.setSymbol')).toHaveLength(1);
   });
 
+  // The chart shows NASDAQ:AAPL through the exchange of its data feed, as BATS:AAPL: switching back
+  // to that name would switch to another listing.
+  test('setSymbolViaApi gives the listing of a symbol shown through its data feed to switch back to', async () => {
+    const { error } = await failureOfBoth(
+      setSymbolViaApi,
+      ['NASDAQ:NOPE', null, 60_000],
+      chart(undefined, fixture, { feeds: { 'NASDAQ:AAPL': 'BATS:AAPL' } }),
+    );
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.details).toEqual({ requested: 'NASDAQ:NOPE', previous: 'NASDAQ:AAPL' });
+  });
+
+  test('setSymbolViaApi gives the symbol shown to switch back to when the series names no listing', async () => {
+    const make = chart(({ series }) => {
+      Object.assign(series, { symbolInfo: () => ({ full_name: 'BATS:AAPL' }) });
+    });
+
+    const { error } = await failureOfBoth(setSymbolViaApi, ['NASDAQ:NOPE', null, 60_000], make);
+
+    expect(error.details).toEqual({ requested: 'NASDAQ:NOPE', previous: 'NASDAQ:AAPL' });
+  });
+
   test('setSymbolViaApi notices a symbol that the series flags as unknown only later', async () => {
     const make = chart(({ chart: target, series }) => {
       let invalid = false;
