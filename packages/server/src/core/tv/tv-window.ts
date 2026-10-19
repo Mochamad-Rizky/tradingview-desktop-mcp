@@ -18,9 +18,9 @@ export interface TvWindow {
   TVD?: TvdLike;
   // When the web app was built, such as "2026-10-16T17:55:37".
   BUILD_TIME?: string;
-  // The webpack chunk list, the way into the module registry (notes, section 4.7). Typed as a
-  // plain list because nothing pushes to it yet.
-  webpackChunktradingview?: unknown[];
+  // The webpack chunk list, the way into the module registry (notes, section 4.7). Only the page
+  // library (page-lib.ts) pushes to it.
+  webpackChunktradingview?: WebpackChunkListLike;
   // A real page has all of these. The DOM members are optional because the shared fake window
   // models the chart API and no DOM, so page code checks for a member before it relies on it.
   // querySelector is declared with the one signature page code uses: the DOM lib types it with a
@@ -178,6 +178,39 @@ export interface TimePointsLike {
 export interface LogicalRangeLike {
   left(): number;
   right(): number;
+}
+
+// window.webpackChunktradingview (notes, section 4.7). The webpack runtime of the app replaces push
+// on this list with its chunk callback. A chunk with a chunk ID the runtime has not seen gets its
+// module factories registered and its callback called with the require function of the app. Either
+// way the chunk is then appended to the list and its IDs count as loaded, so a chunk ID that comes
+// back gets nothing. Before the runtime has loaded, the list is a plain array and push only
+// appends.
+export interface WebpackChunkListLike {
+  push(chunk: WebpackChunk): unknown;
+}
+
+// A chunk as page code sends it: its IDs, no module factory (one would add a module to the app),
+// and the callback that receives require.
+export type WebpackChunk = [
+  chunkIds: string[],
+  factories: Record<string, never>,
+  callback: (require: WebpackRequireLike) => void,
+];
+
+// The require function of the app, as far as page code may use it: its module cache, c, which maps
+// module IDs to the records of the modules whose factories have run. Calling require for a module
+// that is not cached runs the factory of that module, and so does calling a factory in m, so the
+// function itself and m are left out on purpose.
+export interface WebpackRequireLike {
+  readonly c?: Readonly<Record<string, WebpackModuleLike | undefined>>;
+}
+
+// A record of the module cache, { id, loaded, exports } on the observed build. An ES module defines
+// each export on its exports object as a getter, which throws while the module has not set up the
+// binding behind it.
+export interface WebpackModuleLike {
+  readonly exports?: unknown;
 }
 
 // window.TVD. Only reloadTab, a last-resort recovery step, is described. The object also carries

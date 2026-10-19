@@ -1,6 +1,7 @@
 import type { JsonValue } from '../../../src/utils/json.js';
 import type { TvStateFixture } from './fixture.js';
 import { syntheticBars, type SyntheticBar } from './synthetic-bars.js';
+import { createFakeWebpack } from './webpack.js';
 
 // A stand-in for the window of a TradingView chart tab, built from a TvStateFixture. It models
 // only the members of TradingViewApi, the chart widget API and the chart model that the server
@@ -14,6 +15,9 @@ import { syntheticBars, type SyntheticBar } from './synthetic-bars.js';
 // which follow the symbol the chart shows. The fake does not model
 // per-symbol data, and bars() deliberately lacks search(), range() and each(), because their
 // behavior is unverified on the real app and the server must not depend on them.
+//
+// The webpack chunk list is a plain empty list, as before the webpack runtime has loaded, unless
+// the webpackModules option asks for the fake runtime of webpack.ts.
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -45,6 +49,11 @@ export interface FakeTvOverrides {
   // whose US stock data comes from Cboe (seen on the app). A chart starts on the feed of the fixture
   // symbol, and a feed name is a known symbol too. Default: every symbol shows as it was set.
   feeds?: Readonly<Record<string, string>>;
+  // The modules in the cache of the webpack registry, by module ID, each given as its exports
+  // object. With it the chunk list is the one of a fake webpack runtime (createFakeWebpack), which
+  // hands the page library a require whose cache holds these modules. Default: a plain empty list,
+  // where a push hands nothing back.
+  webpackModules?: Record<string, Record<string, unknown>>;
 }
 
 export interface FakeBars {
@@ -449,7 +458,8 @@ export function createFakeTvWindow(
       },
     },
     BUILD_TIME: fixture.buildTime,
-    webpackChunktradingview: [],
+    webpackChunktradingview:
+      overrides.webpackModules === undefined ? [] : createFakeWebpack(overrides.webpackModules),
     document: {
       get visibilityState() {
         return state.visibilityState;

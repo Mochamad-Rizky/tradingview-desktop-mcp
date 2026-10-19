@@ -2,6 +2,7 @@ import type { Protocol } from 'devtools-protocol/types/protocol.js';
 import type { CdpSession } from '../cdp/types.js';
 import { isErrorCode, PlanLimitError, TvMcpError, type ErrorCode } from '../errors.js';
 import type { JsonObject, JsonValue } from '../../utils/json.js';
+import { createPageLib, type PageLib } from './page-lib.js';
 import type { TvWindow } from './tv-window.js';
 
 // How a page function reports an expected failure, such as an unknown symbol or a plan limit. An
@@ -20,6 +21,14 @@ export type PageFunction<A extends JsonValue[], R extends JsonValue | null> = (
   ...args: A
 ) => R | PageErrorSentinel | Promise<R | PageErrorSentinel>;
 
+// A page function that also takes the page library (page-lib.ts), between the window and its
+// arguments. The rules of a PageFunction apply to it as well.
+export type PageLibFunction<A extends JsonValue[], R extends JsonValue | null> = (
+  win: TvWindow,
+  lib: PageLib,
+  ...args: A
+) => R | PageErrorSentinel | Promise<R | PageErrorSentinel>;
+
 export interface PageBridge {
   // Runs `fn` in the page with `args` and resolves with what it returned, awaiting a promise; an
   // undefined result becomes null. Fails with PAGE_EVALUATION_FAILED when the function throws or
@@ -27,6 +36,14 @@ export interface PageBridge {
   // of CdpSession.send (TIMEOUT, CDP_UNREACHABLE, ...) unchanged.
   evaluate<A extends JsonValue[], R extends JsonValue | null>(
     fn: PageFunction<A, R>,
+    args: A,
+    options?: { timeoutMs?: number },
+  ): Promise<R>;
+  // Like evaluate, for a page function that needs the page library: the library is built in the
+  // page for this call and handed to `fn` after the window. Results and failures are those of
+  // evaluate.
+  evaluateWithLib<A extends JsonValue[], R extends JsonValue | null>(
+    fn: PageLibFunction<A, R>,
     args: A,
     options?: { timeoutMs?: number },
   ): Promise<R>;
@@ -137,6 +154,24 @@ function resultValue(result: Protocol.Runtime.RemoteObject): unknown {
 }
 
 export function createPageBridge(session: CdpSession, defaults: { timeoutMs: number }): PageBridge {
+  // Evaluates the expression that calls a page function and maps what comes back, the same way for
+  // both methods.
+  const run = async (expression: string, options?: { timeoutMs?: number }): Promise<unknown> => {
+    const { result, exceptionDetails } = await session.send(
+      'Runtime.evaluate',
+      { expression, returnByValue: true, awaitPromise: true },
+      { timeoutMs: options?.timeoutMs ?? defaults.timeoutMs },
+    );
+    if (exceptionDetails !== undefined) {
+      throw evaluationFailure(exceptionDetails);
+    }
+    const value = resultValue(result);
+    if (hasSentinelKey(value)) {
+      throw sentinelError(value);
+    }
+    return value;
+  };
+
   return {
     async evaluate<A extends JsonValue[], R extends JsonValue | null>(
       fn: PageFunction<A, R>,
@@ -148,20 +183,20 @@ export function createPageBridge(session: CdpSession, defaults: { timeoutMs: num
       // which is also a valid JavaScript literal. The one difference: a "__proto__" key sets the
       // prototype of the object literal instead of adding a member.
       const expression = `(${fn.toString()})(window, ...${JSON.stringify(args)})`;
-      const { result, exceptionDetails } = await session.send(
-        'Runtime.evaluate',
-        { expression, returnByValue: true, awaitPromise: true },
-        { timeoutMs: options?.timeoutMs ?? defaults.timeoutMs },
-      );
-      if (exceptionDetails !== undefined) {
-        throw evaluationFailure(exceptionDetails);
-      }
-      const value = resultValue(result);
-      if (hasSentinelKey(value)) {
-        throw sentinelError(value);
-      }
       // The page function's own type promises R; what came back is JSON either way.
-      return value as R;
+      return (await run(expression, options)) as R;
+    },
+
+    async evaluateWithLib<A extends JsonValue[], R extends JsonValue | null>(
+      fn: PageLibFunction<A, R>,
+      args: A,
+      options?: { timeoutMs?: number },
+    ): Promise<R> {
+      // As in evaluate, with the library built from its source text inside the expression, so that
+      // it exists only for this call and nothing of it stays on the page.
+      const lib = `(${createPageLib.toString()})(window)`;
+      const expression = `(${fn.toString()})(window, ${lib}, ...${JSON.stringify(args)})`;
+      return (await run(expression, options)) as R;
     },
   };
 }

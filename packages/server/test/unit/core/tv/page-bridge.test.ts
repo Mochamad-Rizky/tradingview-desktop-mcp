@@ -5,6 +5,7 @@ import {
   isPageErrorSentinel,
   type PageBridge,
 } from '../../../../src/core/tv/page-bridge.js';
+import { createPageLib, type PageLib } from '../../../../src/core/tv/page-lib.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 
@@ -457,6 +458,134 @@ describe('createPageBridge', () => {
 
     await expect(bridge.evaluate(readBuildTime, [])).rejects.toBe(timeout);
     await expect(bridge.evaluate(readBuildTime, [])).rejects.toBe(unreachable);
+  });
+});
+
+describe('evaluateWithLib', () => {
+  // Page functions that take the library, as the domain modules write them.
+  function readExportType(win: TvWindow, lib: PageLib, name: string): string {
+    return `${typeof lib.findExport(name)}:${win.location.href}`;
+  }
+
+  function hasPlanConfig(win: TvWindow, lib: PageLib): boolean {
+    return win.BUILD_TIME !== undefined && lib.findModuleWith(['getConfig']) !== null;
+  }
+
+  // How a call ended, in a form that two calls can be compared by.
+  async function outcomeOf(call: Promise<unknown>): Promise<unknown> {
+    try {
+      return { value: await call };
+    } catch (error) {
+      if (error instanceof TvMcpError) {
+        return { error: error.toPayload(), planLimit: error instanceof PlanLimitError };
+      }
+      throw error;
+    }
+  }
+
+  test('evaluateWithLib builds the expression with the library before the arguments', async () => {
+    const { bridge, sent } = bridgeAnswering(returned('function'));
+
+    await bridge.evaluateWithLib(readExportType, ['getConfig']);
+    await bridge.evaluateWithLib(hasPlanConfig, []);
+
+    const lib = `(${createPageLib.toString()})(window)`;
+    expect(sent).toEqual([
+      {
+        method: 'Runtime.evaluate',
+        params: {
+          expression: `(${readExportType.toString()})(window, ${lib}, ...["getConfig"])`,
+          returnByValue: true,
+          awaitPromise: true,
+        },
+        options: { timeoutMs: DEFAULT_TIMEOUT_MS },
+      },
+      {
+        method: 'Runtime.evaluate',
+        params: {
+          expression: `(${hasPlanConfig.toString()})(window, ${lib}, ...[])`,
+          returnByValue: true,
+          awaitPromise: true,
+        },
+        options: { timeoutMs: DEFAULT_TIMEOUT_MS },
+      },
+    ]);
+  });
+
+  test('evaluateWithLib uses the timeout of the call, and the default without one', async () => {
+    const { bridge, sent } = bridgeAnswering(returned(true));
+
+    await bridge.evaluateWithLib(hasPlanConfig, [], { timeoutMs: 250 });
+    await bridge.evaluateWithLib(hasPlanConfig, []);
+    await bridge.evaluateWithLib(hasPlanConfig, [], {});
+
+    expect(sent.map(({ options }) => options)).toEqual([
+      { timeoutMs: 250 },
+      { timeoutMs: DEFAULT_TIMEOUT_MS },
+      { timeoutMs: DEFAULT_TIMEOUT_MS },
+    ]);
+  });
+
+  const exception = { type: 'object', subtype: 'error', description: 'TypeError: x\n    at y' };
+  test.each<[string, unknown]>([
+    ['a value', returned({ found: true, names: ['getConfig'] })],
+    ['an undefined result', { result: { type: 'undefined' } }],
+    [
+      'a PLAN_LIMIT sentinel',
+      sentinel({
+        code: 'PLAN_LIMIT',
+        message: 'Your plan allows 2 indicators per chart',
+        hint: 'Remove an indicator first.',
+        details: { feature: 'INDICATORS_ON_CHART', limit: 2 },
+      }),
+    ],
+    [
+      'a sentinel with a hint and details',
+      sentinel({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'The plan limits are not reachable',
+        hint: 'Check app_health.',
+        details: { exportName: 'ProductFeatures' },
+      }),
+    ],
+    ['a sentinel with an unknown code', sentinel({ code: 'NO_SUCH_CODE', message: 'Failed' })],
+    ['a malformed sentinel', returned({ __tvmcpError: 'INVALID_INPUT' })],
+    [
+      'an exception',
+      {
+        result: exception,
+        exceptionDetails: {
+          exceptionId: 1,
+          text: 'Uncaught',
+          lineNumber: 0,
+          columnNumber: 0,
+          exception,
+        },
+      },
+    ],
+    [
+      'a value JSON cannot carry',
+      { result: { type: 'number', unserializableValue: 'NaN', description: 'NaN' } },
+    ],
+    ['a result without its value', { result: { type: 'object', className: 'HTMLDivElement' } }],
+  ])('evaluateWithLib maps %s like evaluate', async (_label, response) => {
+    const plain = await outcomeOf(bridgeAnswering(response).bridge.evaluate(readBuildTime, []));
+
+    const withLib = await outcomeOf(
+      bridgeAnswering(response).bridge.evaluateWithLib(readExportType, ['getConfig']),
+    );
+
+    expect(withLib).toEqual(plain);
+  });
+
+  test('evaluateWithLib passes failures of the session through unchanged', async () => {
+    const timeout = new TimeoutError('CDP Runtime.evaluate on PAGE1', DEFAULT_TIMEOUT_MS);
+    const { session } = fakeSession(() => {
+      throw timeout;
+    });
+    const bridge = createPageBridge(session, { timeoutMs: DEFAULT_TIMEOUT_MS });
+
+    await expect(bridge.evaluateWithLib(hasPlanConfig, [])).rejects.toBe(timeout);
   });
 });
 

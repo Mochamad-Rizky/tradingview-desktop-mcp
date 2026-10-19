@@ -6,6 +6,7 @@ import {
   type TvStateFixture,
 } from '../../helpers/fake-tv/fixture.js';
 import { syntheticBars } from '../../helpers/fake-tv/synthetic-bars.js';
+import type { FakeWebpackRequire } from '../../helpers/fake-tv/webpack.js';
 import {
   createFakeTvWindow,
   inspectFakeWindow,
@@ -705,6 +706,21 @@ describe('createFakeTvWindow', () => {
       expect(win.webpackChunktradingview).toEqual([]);
       expect(Array.isArray(win.webpackChunktradingview)).toBe(true);
       expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
+    });
+
+    test('puts a fake webpack runtime holding webpackModules behind the chunk list', () => {
+      const exports = { studyMetaInfoRepository: {} };
+      const win = createFakeTvWindow(fixture, { webpackModules: { 1: exports } });
+      let handed: FakeWebpackRequire | undefined;
+
+      win.webpackChunktradingview.push([
+        ['probe'],
+        {},
+        (given: FakeWebpackRequire) => (handed = given),
+      ]);
+
+      expect(handed?.c[1]?.exports).toBe(exports);
+      expect(win.webpackChunktradingview).toHaveLength(1);
     });
 
     test('withoutApi omits TradingViewApi but keeps the rest of the page', () => {
