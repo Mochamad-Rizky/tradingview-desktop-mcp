@@ -7,6 +7,7 @@ import { TvMcpError } from '../../src/core/errors.js';
 import { ToolEventBus, type ToolCallEvent } from '../../src/core/events.js';
 import { registerResources } from '../../src/resources/index.js';
 import { createMcpServer, createServerDeps, type ServerDeps } from '../../src/server.js';
+import { appTools } from '../../src/tools/app/index.js';
 import { batchTools } from '../../src/tools/batch/index.js';
 import { createToolRegistry, registerToolsWithServer } from '../../src/tools/registry.js';
 import { defineTool, type ToolRegistry } from '../../src/tools/types.js';
@@ -26,6 +27,8 @@ import {
 } from '../helpers/tool-context.js';
 
 const HEALTH_URI = 'tradingview://app/health';
+// What a server offers when nothing narrows its tools: the tools of the app, then the batch.
+const APP_TOOL_NAMES = appTools.map(({ name }) => name);
 
 // Everything a test starts is closed here, newest first, so a client goes before its server and a
 // connection manager before the fake app it talks to.
@@ -115,8 +118,8 @@ test('lists registered tools with descriptions and input schemas', async () => {
 
   const { tools } = await client.listTools();
 
-  expect(tools.map(({ name }) => name)).toEqual(['batch_run']);
-  expect(tools[0]).toMatchObject({
+  expect(tools.map(({ name }) => name)).toEqual([...APP_TOOL_NAMES, 'batch_run']);
+  expect(tools.find(({ name }) => name === 'batch_run')).toMatchObject({
     name: 'batch_run',
     title: expect.any(String) as string,
     description: expect.stringContaining('20') as string,
@@ -461,7 +464,9 @@ test('resource read errors come back as MCP errors and the server keeps working'
       }) as unknown,
     }),
   );
-  await expect(client.listTools()).resolves.toMatchObject({ tools: [{ name: 'batch_run' }] });
+  await expect(client.listTools()).resolves.toMatchObject({
+    tools: expect.arrayContaining([expect.objectContaining({ name: 'batch_run' })]) as unknown,
+  });
 });
 
 // A mistake of the client is "invalid params" in JSON-RPC terms; anything else is the server's.
@@ -548,7 +553,7 @@ test('createMcpServer creates the dependencies it is not given', () => {
     discover: expect.any(Function) as unknown,
   });
   expect(ctx.session).toEqual({ createdDrawingIds: new Set(), createdAlertIds: new Set() });
-  expect(registry.list().map(({ name }) => name)).toEqual(['batch_run']);
+  expect(registry.list().map(({ name }) => name)).toEqual([...APP_TOOL_NAMES, 'batch_run']);
 });
 
 test('createMcpServer registers the tools of the profile and the tool filter only', () => {
@@ -559,15 +564,26 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
       .registry.list()
       .map(({ name }) => name);
 
-  expect(toolsOf({ profile: 'core' })).toEqual(['batch_run']);
+  expect(toolsOf({ profile: 'core' })).toEqual([...APP_TOOL_NAMES, 'batch_run']);
   expect(toolsOf({ profile: 'full', toolPatterns: ['batch_*'] })).toEqual(['batch_run']);
+  expect(toolsOf({ profile: 'full', toolPatterns: ['app_*'] })).toEqual(APP_TOOL_NAMES);
+  expect(toolsOf({ profile: 'core', toolPatterns: ['app_h*', 'batch_*'] })).toEqual([
+    'app_health',
+    'batch_run',
+  ]);
+  // Only the tools that say they read.
+  expect(toolsOf({ profile: 'readonly' })).toEqual([
+    'app_health',
+    'app_discover',
+    'app_get_ui_state',
+  ]);
   expect(lines).toEqual([]);
 
-  expect(toolsOf({ profile: 'readonly' })).toEqual([]);
-  expect(toolsOf({ toolPatterns: ['chart_*'] })).toEqual([]);
+  expect(toolsOf({ profile: 'readonly', toolPatterns: ['batch_*'] })).toEqual([]);
+  expect(toolsOf({ toolPatterns: ['nosuchdomain_*'] })).toEqual([]);
   // A server without tools is most likely a typo in the filter, so it says so.
   expect(lines).toEqual([
-    expect.objectContaining({ level: 40, profile: 'readonly', patterns: [] }),
-    expect.objectContaining({ level: 40, profile: 'full', patterns: ['chart_*'] }),
+    expect.objectContaining({ level: 40, profile: 'readonly', patterns: ['batch_*'] }),
+    expect.objectContaining({ level: 40, profile: 'full', patterns: ['nosuchdomain_*'] }),
   ]);
 });

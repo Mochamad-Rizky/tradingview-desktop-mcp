@@ -14,12 +14,13 @@ import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 import pkg from '../../package.json' with { type: 'json' };
 import { ToolEventBus } from '../../src/core/events.js';
 import { createMcpServer } from '../../src/server.js';
+import { appTools } from '../../src/tools/app/index.js';
 import { startStdioTransport } from '../../src/transports/stdio.js';
 import { startFakeCdpServer, type FakeCdpServer } from '../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
 import { loadTvFixture } from '../helpers/fake-tv/fixture.js';
 import { createFakeTvWindow } from '../helpers/fake-tv/window.js';
-import { connectStdioClient } from '../helpers/mcp-client.js';
+import { callTool, connectStdioClient } from '../helpers/mcp-client.js';
 import {
   quietLogger,
   refusingLauncher,
@@ -66,7 +67,10 @@ describe('startStdioTransport', () => {
     cleanups.push(() => client.close());
 
     const { tools } = await client.listTools();
-    expect(tools.map(({ name }) => name)).toEqual(['batch_run']);
+    expect(tools.map(({ name }) => name)).toEqual([
+      ...appTools.map(({ name }) => name),
+      'batch_run',
+    ]);
   });
 
   // The client closing its end of the pipe is how a desktop client stops a stdio server. Each case
@@ -212,7 +216,7 @@ describe('the built CLI over stdio', () => {
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  test('stdio client lists tools and reads the app health resource', async () => {
+  test('stdio client lists tools, calls the app tools and reads the app health resource', async () => {
     const app = await startApp();
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -227,8 +231,26 @@ describe('the built CLI over stdio', () => {
 
     const { tools } = await client.listTools();
     const read = await client.readResource({ uri: HEALTH_URI });
+    // The tools send their page functions into the page as source text, and the built bundle is
+    // what has to hold them in a form the page can run.
+    const health = await callTool(client, 'app_health');
+    const uiState = await callTool(client, 'app_get_ui_state');
 
     expect(tools.map(({ name }) => name)).toContain('batch_run');
+    expect(health.structuredContent).toMatchObject({
+      ok: true,
+      data: {
+        cdp: { reachable: true },
+        chart: { found: true, tabs: 1 },
+        app: { ready: true },
+        capabilities: { tradingViewApi: true, activeChart: true, chartModel: true },
+      },
+    });
+    // The chart of the fake app has no DOM, so the page function ran and said so.
+    expect(uiState.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: 'NOT_AVAILABLE' },
+    });
     const [content] = read.contents;
     const text = content !== undefined && 'text' in content ? content.text : '';
     expect(JSON.parse(text)).toMatchObject({

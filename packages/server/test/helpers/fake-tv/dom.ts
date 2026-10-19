@@ -198,12 +198,14 @@ export interface FakeDomWindow {
     elementFromPoint?: (x: number, y: number) => FakeElement | null;
     // Assignable, so that a test can move the focus.
     activeElement?: FakeElement | null;
+    // Assignable, so that a test can enter and leave fullscreen.
+    fullscreenElement?: FakeElement | null;
   };
   getComputedStyle?: (element: FakeElement) => FakeComputedStyle;
 }
 
 export type FakeDomMember =
-  'querySelector' | 'elementFromPoint' | 'getComputedStyle' | 'activeElement';
+  'querySelector' | 'elementFromPoint' | 'getComputedStyle' | 'activeElement' | 'fullscreenElement';
 
 export interface FakeDomOptions {
   // Members to leave out, the way a page or a fake without them would be.
@@ -215,6 +217,9 @@ export interface FakeDomOptions {
   // where nothing was focused. The body is not part of the elements the window is built from, so
   // it takes no part in elementFromPoint.
   focus?: FakeElement | null;
+  // The element that fills the screen in the browser's fullscreen mode. By default none does, which
+  // a page says with null.
+  fullscreen?: FakeElement | null;
 }
 
 function rectContains(rect: FakeRect, x: number, y: number): boolean {
@@ -269,6 +274,9 @@ export function createFakeDomWindow(
       options.focus === undefined
         ? fakeElement({ tag: 'body', children: elements })
         : options.focus;
+  }
+  if (!without.has('fullscreenElement')) {
+    fakeWindow.document.fullscreenElement = options.fullscreen ?? null;
   }
   return fakeWindow as unknown as TvWindow;
 }

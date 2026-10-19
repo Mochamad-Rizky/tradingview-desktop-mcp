@@ -28,6 +28,8 @@ export interface TvWindow {
   document: Pick<Document, 'visibilityState'> & {
     querySelector?(selectors: string): Element | null;
     elementFromPoint?(x: number, y: number): Element | null;
+    // The element that fills the screen in the browser's fullscreen mode, or null when none does.
+    fullscreenElement?: Element | null;
     // The element that has the focus: the body when nothing was focused, and null in a document
     // that has no body.
     activeElement?: Element | null;

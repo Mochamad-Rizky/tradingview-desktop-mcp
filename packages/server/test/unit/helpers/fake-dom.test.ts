@@ -263,13 +263,34 @@ describe('the fake DOM', () => {
     expect(document.activeElement).toBe(button);
   });
 
+  test('has no element in fullscreen unless a test puts one there, like a page', () => {
+    const element = fakeElement({ matches: [BUTTON] });
+
+    const byDefault = domOf(createFakeDomWindow([element])).document.fullscreenElement;
+    const chosen = domOf(createFakeDomWindow([element], { fullscreen: element })).document
+      .fullscreenElement;
+    const { document } = domOf(createFakeDomWindow([element]));
+    document.fullscreenElement = element;
+
+    // A page reports null, not undefined, when nothing is in fullscreen.
+    expect(byDefault).toBeNull();
+    expect(chosen).toBe(element);
+    expect(document.fullscreenElement).toBe(element);
+  });
+
   test('can leave out the members a page or a fake might lack', () => {
     const element = fakeElement({ matches: [BUTTON] });
 
     const full = domOf(createFakeDomWindow([element]));
     const bare = domOf(
       createFakeDomWindow([element], {
-        without: ['querySelector', 'elementFromPoint', 'getComputedStyle', 'activeElement'],
+        without: [
+          'querySelector',
+          'elementFromPoint',
+          'getComputedStyle',
+          'activeElement',
+          'fullscreenElement',
+        ],
       }),
     );
     const partial = domOf(createFakeDomWindow([element], { without: ['elementFromPoint'] }));
@@ -278,11 +299,14 @@ describe('the fake DOM', () => {
     expect(typeof full.document.elementFromPoint).toBe('function');
     expect(typeof full.getComputedStyle).toBe('function');
     expect(full.document.activeElement).toBeDefined();
+    expect(full.document.fullscreenElement).toBeNull();
     expect(bare.document.querySelector).toBeUndefined();
     expect(bare.document.elementFromPoint).toBeUndefined();
     expect(bare.getComputedStyle).toBeUndefined();
     expect(bare.document.activeElement).toBeUndefined();
+    expect(bare.document.fullscreenElement).toBeUndefined();
     expect(bare.document.visibilityState).toBe('visible');
+    expect(partial.document.fullscreenElement).toBeNull();
     expect(typeof partial.document.querySelector).toBe('function');
     expect(partial.document.elementFromPoint).toBeUndefined();
     expect(typeof partial.getComputedStyle).toBe('function');
