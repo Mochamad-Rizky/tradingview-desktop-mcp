@@ -552,6 +552,46 @@ describe('createFakeTvWindow', () => {
       expect(known).toHaveBeenCalledOnce();
     });
 
+    test('names the symbol it shows in the symbol info', async () => {
+      const win = createFakeTvWindow(fixture);
+
+      await chartOf(win).setSymbol('NASDAQ:MSFT');
+
+      expect(seriesOf(win).symbolInfo()).toMatchObject({
+        name: 'MSFT',
+        full_name: 'NASDAQ:MSFT',
+        pro_name: 'NASDAQ:MSFT',
+      });
+    });
+
+    test('names a symbol by the exchange of its data feed once loaded, when asked to', async () => {
+      const win = createFakeTvWindow(fixture, { feeds: { 'NASDAQ:MSFT': 'BATS:MSFT' } });
+      const shownAtDataReady: string[] = [];
+
+      const done = chartOf(win).setSymbol('NASDAQ:MSFT', {
+        dataReady: () => shownAtDataReady.push(chartOf(win).symbol()),
+      });
+
+      // As on the app: the symbol as set at once, and the feed's name once it is resolved.
+      expect(chartOf(win).symbol()).toBe('NASDAQ:MSFT');
+      await done;
+      expect(shownAtDataReady).toEqual(['BATS:MSFT']);
+      expect(seriesOf(win).symbolInfo()).toMatchObject({
+        name: 'MSFT',
+        full_name: 'BATS:MSFT',
+        pro_name: 'NASDAQ:MSFT',
+      });
+    });
+
+    test('starts on the data feed of the fixture symbol, and knows the feed as a symbol', async () => {
+      const win = createFakeTvWindow(fixture, { feeds: { 'NASDAQ:AAPL': 'BATS:AAPL' } });
+
+      expect(chartOf(win).symbol()).toBe('BATS:AAPL');
+      expect(seriesOf(win).symbolInfo()).toMatchObject({ pro_name: 'NASDAQ:AAPL' });
+      await chartOf(win).setSymbol('BATS:AAPL');
+      expect(seriesOf(win).isSymbolInvalid()).toBe(false);
+    });
+
     test('an unknown symbol leaves the series without bars, symbol info or visible range', async () => {
       const win = createFakeTvWindow(fixture);
 

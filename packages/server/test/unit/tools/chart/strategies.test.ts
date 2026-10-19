@@ -293,6 +293,7 @@ describe('confirming a symbol entered through the symbol search', () => {
       previous: 'NASDAQ:AAPL',
       changed: true,
       confirmed: true,
+      listing: 'NASDAQ:MSFT',
     });
   });
 
@@ -305,6 +306,7 @@ describe('confirming a symbol entered through the symbol search', () => {
       previous: 'NASDAQ:AAPL',
       changed: true,
       confirmed: false,
+      listing: null,
     });
   });
 
@@ -366,8 +368,24 @@ describe('the interface strategies on their own', () => {
       previous: 'NASDAQ:AAPL',
       changed: false,
       confirmed: true,
+      listing: 'NASDAQ:AAPL',
     });
     // Only the chart was read: nothing was looked up to act on.
+    expect(asked).toEqual([readChartSnapshot]);
+  });
+
+  // The chart shows the symbol through the exchange of its data feed, and the series names it.
+  test('typing on the chart leaves the chart alone when it shows the symbol through its data feed', async () => {
+    const { page, asked } = stubPage(() => ({ ...SNAPSHOT, symbol: 'BATS:AAPL' }));
+    const typing = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:AAPL', 500), 2);
+
+    await expect(typing.run()).resolves.toStrictEqual({
+      symbol: 'BATS:AAPL',
+      previous: 'BATS:AAPL',
+      changed: false,
+      confirmed: true,
+      listing: 'NASDAQ:AAPL',
+    });
     expect(asked).toEqual([readChartSnapshot]);
   });
 

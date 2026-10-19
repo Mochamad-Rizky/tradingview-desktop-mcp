@@ -183,11 +183,15 @@ export async function revertUnknownSymbol(
 // through the interface on a page whose chart API cannot be read, so that it could not be checked.
 // `confirmed` says whether TradingView confirmed the symbol: the chart API reports the data of a new
 // symbol as loaded, and through the interface the series has resolved it and holds bars for it.
+// `listing` is the symbol the series has resolved (the pro_name of its symbol info, such as
+// NASDAQ:AAPL), which the chart may show through the exchange of its data feed (BATS:AAPL), or null
+// when the series does not say.
 export interface SymbolChange {
   symbol: string | null;
   previous: string | null;
   changed: boolean | null;
   confirmed: boolean;
+  listing: string | null;
 }
 
 export interface TimeframeChange {
@@ -202,13 +206,20 @@ function snapshotOf(page: PageHandle, target: ChartTarget): Promise<Snapshot | n
   return page.bridge.evaluate(readChartSnapshot, [target.index]);
 }
 
-// Whether the chart shows the symbol already. TradingView writes symbols in capitals and reads them
-// in any case, so case does not count.
+// Whether the chart shows the symbol already, as itself or through the exchange of its data feed,
+// in which case the series names it as the symbol it has resolved. A series flagged for an unknown
+// symbol has resolved nothing the chart shows, so its name does not count then. TradingView writes
+// symbols in capitals and reads them in any case, so case does not count.
 function showsSymbol(
   snapshot: Snapshot | null,
   symbol: string,
 ): snapshot is Snapshot & { symbol: string } {
-  return snapshot?.symbol?.toUpperCase() === symbol.toUpperCase();
+  const wanted = symbol.toUpperCase();
+  return (
+    typeof snapshot?.symbol === 'string' &&
+    (snapshot.symbol.toUpperCase() === wanted ||
+      (!snapshot.symbolInvalid && snapshot.seriesSymbol?.toUpperCase() === wanted))
+  );
 }
 
 // The interface reaches the active chart only.
@@ -357,7 +368,7 @@ async function confirmSymbol(
 ): Promise<SymbolChange> {
   const previous = before?.symbol ?? null;
   if (before === null || previous === null) {
-    return { symbol: null, previous: null, changed: null, confirmed: false };
+    return { symbol: null, previous: null, changed: null, confirmed: false, listing: null };
   }
   const flagged = (now: Snapshot): boolean => now.symbolInvalid && !before.symbolInvalid;
   // A snapshot of null, a chart that cannot be read any more, ends the wait as well.
@@ -368,7 +379,7 @@ async function confirmSymbol(
   );
   const shown = switched.last?.symbol ?? null;
   if (switched.last === null || shown === null) {
-    return { symbol: null, previous: null, changed: null, confirmed: false };
+    return { symbol: null, previous: null, changed: null, confirmed: false, listing: null };
   }
   if (flagged(switched.last)) {
     throw unknownSymbol(requested, previous);
@@ -401,6 +412,7 @@ async function confirmSymbol(
     previous,
     changed: true,
     confirmed: settled.last !== null && loadedAs(settled.last, shown),
+    listing: settled.last?.seriesSymbol ?? null,
   };
 }
 
@@ -466,6 +478,7 @@ export function symbolStrategies(
             previous: before.symbol,
             changed: false,
             confirmed: true,
+            listing: before.seriesSymbol,
           };
         }
         await requireClickable(page, SELECTORS.header.symbolSearch, 'The symbol search button');
@@ -508,6 +521,7 @@ export function symbolStrategies(
             previous: before.symbol,
             changed: false,
             confirmed: true,
+            listing: before.seriesSymbol,
           };
         }
         await requireNoTextField(page);

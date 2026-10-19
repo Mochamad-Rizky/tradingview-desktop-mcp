@@ -386,6 +386,7 @@ describe('setSymbolViaApi', () => {
       symbol: 'NASDAQ:MSFT',
       previous: 'NASDAQ:AAPL',
       changed: true,
+      listing: 'NASDAQ:MSFT',
     });
     const calls = callsTo(win, 'chart.setSymbol');
     expect(calls).toHaveLength(1);
@@ -466,6 +467,7 @@ describe('setSymbolViaApi', () => {
       symbol: 'NASDAQ:AAPL',
       previous: 'NASDAQ:AAPL',
       changed: false,
+      listing: 'NASDAQ:AAPL',
     });
     expect(callsOf(win)).toEqual([]);
   });
@@ -477,8 +479,76 @@ describe('setSymbolViaApi', () => {
       symbol: 'NASDAQ:AAPL',
       previous: 'NASDAQ:AAPL',
       changed: false,
+      listing: 'NASDAQ:AAPL',
     });
     expect(callsOf(win)).toEqual([]);
+  });
+
+  // TradingView names a symbol by the exchange of its data feed (BATS:AAPL for NASDAQ:AAPL, seen
+  // on the app), and its symbol info keeps the listing as pro_name.
+  test('setSymbolViaApi leaves the chart alone when it shows the symbol through its data feed', async () => {
+    const { result, win } = await resultOf(
+      setSymbolViaApi,
+      ['NASDAQ:AAPL', null, 5000],
+      chart(undefined, fixture, { feeds: { 'NASDAQ:AAPL': 'BATS:AAPL' } }),
+    );
+
+    expect(result).toStrictEqual({
+      symbol: 'BATS:AAPL',
+      previous: 'BATS:AAPL',
+      changed: false,
+      listing: 'NASDAQ:AAPL',
+    });
+    expect(callsOf(win)).toEqual([]);
+  });
+
+  test('setSymbolViaApi reports the name the chart gives a symbol once loaded, and its listing', async () => {
+    const { result } = await resultOf(
+      setSymbolViaApi,
+      ['NASDAQ:MSFT', null, 5000],
+      chart(undefined, fixture, { feeds: { 'NASDAQ:MSFT': 'BATS:MSFT' } }),
+    );
+
+    expect(result).toStrictEqual({
+      symbol: 'BATS:MSFT',
+      previous: 'NASDAQ:AAPL',
+      changed: true,
+      listing: 'NASDAQ:MSFT',
+    });
+  });
+
+  test('setSymbolViaApi does not trust the listing of a series flagged for an unknown symbol', async () => {
+    const make = chart(({ series }) => {
+      Object.assign(series, {
+        isSymbolInvalid: () => true,
+        symbolInfo: () => ({ ...fixture.symbolInfo, pro_name: 'NASDAQ:MSFT' }),
+      });
+    });
+
+    const { win } = await resultOf(setSymbolViaApi, ['NASDAQ:MSFT', null, 5000], make);
+
+    expect(callsTo(win, 'chart.setSymbol')).toHaveLength(1);
+  });
+
+  // TradingView reloads a bare ticker even when it resolves to the symbol shown (seen on the app).
+  test('setSymbolViaApi reports no change when TradingView reloads the symbol the chart showed', async () => {
+    const make = chart(({ chart: target }) => {
+      Object.assign(target, {
+        setSymbol: (_symbol: string, options?: { dataReady?: () => void }) => {
+          setTimeout(() => options?.dataReady?.(), 10);
+          return Promise.resolve(true);
+        },
+      });
+    });
+
+    const { result } = await resultOf(setSymbolViaApi, ['AAPL', null, 5000], make);
+
+    expect(result).toStrictEqual({
+      symbol: 'NASDAQ:AAPL',
+      previous: 'NASDAQ:AAPL',
+      changed: false,
+      listing: 'NASDAQ:AAPL',
+    });
   });
 
   test('setSymbolViaApi returns TIMEOUT when neither the data nor the flag comes', async () => {
@@ -579,7 +649,16 @@ describe('setSymbolViaApi', () => {
 
   test('setSymbolViaApi changes the chart at chartIndex', async () => {
     const make = chart(({ api, chart: first }, win) => {
-      const second = { ...first, symbol: () => 'NYSE:IBM' };
+      let shown = 'NYSE:IBM';
+      const second = {
+        ...first,
+        symbol: () => shown,
+        setSymbol: (symbol: string, options?: { dataReady?: () => void }): Promise<true> => {
+          shown = symbol;
+          queueMicrotask(() => options?.dataReady?.());
+          return Promise.resolve(true);
+        },
+      };
       win.TradingViewApi = {
         ...api,
         chartsCount: () => 2,

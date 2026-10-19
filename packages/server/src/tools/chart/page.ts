@@ -197,16 +197,27 @@ export function readChartSnapshot(
 // answer is INVALID_INPUT as soon as it turns true (details: requested, previous). A flag that was
 // already true before the call belongs to the symbol the chart showed then, so it says nothing about
 // the new one, and only dataReady or the deadline can end the wait. Without either signal within
-// `timeoutMs` the answer is TIMEOUT. A chart that shows the symbol already is left alone.
+// `timeoutMs` the answer is TIMEOUT.
+//
+// Once TradingView has resolved a symbol, the chart names it by the exchange of its data feed, the
+// full_name of the symbol info, while pro_name keeps its listing: BATS:AAPL for NASDAQ:AAPL on an
+// account whose US stock data comes from Cboe (seen on the app). The answer therefore carries the
+// symbol the chart shows after the change and the listing it stands for (null when the series does
+// not say), and the change counts as one only when the chart shows another symbol than before: a
+// bare ticker is loaded again even when it names the symbol shown. A chart that shows the symbol
+// already, as itself or through its feed, is left alone.
 export function setSymbolViaApi(
   win: TvWindow,
   symbol: string,
   chartIndex: number | null,
   timeoutMs: number,
 ):
-  | { symbol: string; previous: string; changed: boolean }
+  | { symbol: string; previous: string; changed: boolean; listing: string | null }
   | PageErrorSentinel
-  | Promise<{ symbol: string; previous: string; changed: boolean } | PageErrorSentinel> {
+  | Promise<
+      | { symbol: string; previous: string; changed: boolean; listing: string | null }
+      | PageErrorSentinel
+    > {
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
   let found: Partial<ChartWidgetApiLike> | null | undefined;
   try {
@@ -225,17 +236,20 @@ export function setSymbolViaApi(
   // Checked above: the members called without a guard are there.
   const chart = found as ChartWidgetApiLike;
   const previous = chart.symbol();
-  // TradingView writes symbols in capitals and reads them in any case, so case does not count.
-  if (previous.toUpperCase() === symbol.toUpperCase()) {
-    return { symbol: previous, previous, changed: false };
-  }
-
   let series: Partial<SeriesLike> | undefined;
   try {
     series = chart._chartWidget?.model().mainSeries();
   } catch {
     series = undefined;
   }
+  const listing = (): string | null => {
+    try {
+      const name = series?.symbolInfo?.()?.pro_name;
+      return typeof name === 'string' ? name : null;
+    } catch {
+      return null;
+    }
+  };
   const isInvalid = (): boolean => {
     try {
       return series?.isSymbolInvalid?.() === true;
@@ -244,72 +258,89 @@ export function setSymbolViaApi(
     }
   };
   const wasInvalid = isInvalid();
-
-  return new Promise<{ symbol: string; previous: string; changed: boolean } | PageErrorSentinel>(
-    (resolve) => {
-      let settled = false;
-      // The watch starts before setSymbol is called, because dataReady can come during the call.
-      const stop = (): void => {
-        settled = true;
-        clearInterval(poll);
-        clearTimeout(deadline);
-      };
-      const finish = (
-        value: { symbol: string; previous: string; changed: boolean } | PageErrorSentinel,
-      ): void => {
-        if (!settled) {
-          stop();
-          resolve(value);
-        }
-      };
-      const failIfUnknown = (): boolean => {
-        if (wasInvalid || !isInvalid()) {
-          return false;
-        }
-        finish({
-          __tvmcpError: {
-            code: 'INVALID_INPUT',
-            message: `Unknown symbol ${symbol}`,
-            hint: 'Check the spelling, or use the EXCHANGE:SYMBOL form such as NASDAQ:AAPL.',
-            details: { requested: symbol, previous },
-          },
-        });
-        return true;
-      };
-      const poll = setInterval(failIfUnknown, 100);
-      const deadline = setTimeout(() => {
-        finish({
-          __tvmcpError: {
-            code: 'TIMEOUT',
-            message: `The chart did not finish loading ${symbol} within ${String(timeoutMs)} ms`,
-            hint:
-              'TradingView may be slow or offline. Call chart_get_state to see which symbol the ' +
-              'chart shows now.',
-            details: { requested: symbol, previous, timeoutMs },
-          },
-        });
-      }, timeoutMs);
-
-      let result: unknown;
-      try {
-        result = chart.setSymbol(symbol, {
-          dataReady: () => {
-            if (!failIfUnknown()) {
-              finish({ symbol: chart.symbol(), previous, changed: true });
-            }
-          },
-        });
-      } catch (error) {
-        // The call failed, and with it the change: the watch ends, and the failure is the answer.
+  // TradingView writes symbols in capitals and reads them in any case, so case does not count. A
+  // series flagged for an unknown symbol has resolved nothing the chart shows, so its listing does
+  // not count then.
+  const wanted = symbol.toUpperCase();
+  const listed = listing();
+  if (previous.toUpperCase() === wanted || (!wasInvalid && listed?.toUpperCase() === wanted)) {
+    return { symbol: previous, previous, changed: false, listing: listed };
+  }
+  return new Promise<
+    | { symbol: string; previous: string; changed: boolean; listing: string | null }
+    | PageErrorSentinel
+  >((resolve) => {
+    let settled = false;
+    // The watch starts before setSymbol is called, because dataReady can come during the call.
+    const stop = (): void => {
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(deadline);
+    };
+    const finish = (
+      value:
+        | { symbol: string; previous: string; changed: boolean; listing: string | null }
+        | PageErrorSentinel,
+    ): void => {
+      if (!settled) {
         stop();
-        throw error;
+        resolve(value);
       }
-      // What the promise of setSymbol means is not recorded, so dataReady and the flag decide, and a
-      // promise that fails must not end up as an unhandled rejection of the page.
-      Promise.resolve(result).catch(() => undefined);
-      failIfUnknown();
-    },
-  );
+    };
+    const failIfUnknown = (): boolean => {
+      if (wasInvalid || !isInvalid()) {
+        return false;
+      }
+      finish({
+        __tvmcpError: {
+          code: 'INVALID_INPUT',
+          message: `Unknown symbol ${symbol}`,
+          hint: 'Check the spelling, or use the EXCHANGE:SYMBOL form such as NASDAQ:AAPL.',
+          details: { requested: symbol, previous },
+        },
+      });
+      return true;
+    };
+    const poll = setInterval(failIfUnknown, 100);
+    const deadline = setTimeout(() => {
+      finish({
+        __tvmcpError: {
+          code: 'TIMEOUT',
+          message: `The chart did not finish loading ${symbol} within ${String(timeoutMs)} ms`,
+          hint:
+            'TradingView may be slow or offline. Call chart_get_state to see which symbol the ' +
+            'chart shows now.',
+          details: { requested: symbol, previous, timeoutMs },
+        },
+      });
+    }, timeoutMs);
+
+    let result: unknown;
+    try {
+      result = chart.setSymbol(symbol, {
+        dataReady: () => {
+          if (!failIfUnknown()) {
+            const shown = chart.symbol();
+            finish({
+              symbol: shown,
+              previous,
+              changed: shown.toUpperCase() !== previous.toUpperCase(),
+              listing: listing(),
+            });
+          }
+        },
+      });
+    } catch (error) {
+      // The call failed, and with it the change: the watch ends, and the failure is the answer.
+      stop();
+      throw error;
+    }
+    // The promise of setSymbol resolves with true once the data has loaded or failed to, for an
+    // unknown symbol too (seen on the app), so it says nothing that dataReady and the flag do
+    // not; a promise that fails must not end up as an unhandled rejection of the page.
+    Promise.resolve(result).catch(() => undefined);
+    failIfUnknown();
+  });
 }
 
 // Switches the chart to `resolution` and resolves once its data has loaded (dataReady), or answers

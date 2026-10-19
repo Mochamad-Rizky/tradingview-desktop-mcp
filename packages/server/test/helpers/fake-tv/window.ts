@@ -10,7 +10,8 @@ import { syntheticBars, type SyntheticBar } from './synthetic-bars.js';
 // bars and no symbol info, and getVisibleRange answers zeros, as the real app does.
 //
 // Data is static per fixture. Bars are the same series whatever the symbol or resolution, and
-// symbolInfo() and quotes() always describe the fixture symbol. The fake does not model
+// symbolInfo() and quotes() describe the fixture symbol, apart from the names in the symbol info,
+// which follow the symbol the chart shows. The fake does not model
 // per-symbol data, and bars() deliberately lacks search(), range() and each(), because their
 // behavior is unverified on the real app and the server must not depend on them.
 //
@@ -38,6 +39,12 @@ export interface FakeTvOverrides {
   // shows there; dozens were seen on the app. They follow the last bar by the bar step. Default
   // 0: the time scale ends at the last bar.
   futurePoints?: number;
+  // What chart.symbol() shows for a symbol once TradingView has resolved it, by the symbol as it
+  // was set: the chart names a symbol by the exchange of its data feed, which the symbol info calls
+  // full_name, while pro_name keeps the listing. { 'NASDAQ:AAPL': 'BATS:AAPL' } models an account
+  // whose US stock data comes from Cboe (seen on the app). A chart starts on the feed of the fixture
+  // symbol, and a feed name is a known symbol too. Default: every symbol shows as it was set.
+  feeds?: Readonly<Record<string, string>>;
 }
 
 export interface FakeBars {
@@ -183,6 +190,10 @@ export function createFakeTvWindow(
 ): FakeTvWindow {
   const bars = syntheticBars(fixture.bars);
   const times = bars.map((bar) => bar[0]);
+  const feeds = new Map(Object.entries(overrides.feeds ?? {}));
+  // The listing a symbol the chart shows stands for: the symbol whose feed it is, or itself.
+  const listingOf = (shown: string): string =>
+    [...feeds].find(([, feed]) => feed === shown)?.[0] ?? shown;
   const offset = overrides.sessionOffsetSeconds ?? 0;
   const lastTime = times.at(-1);
   // The times of the time points: the bars, then the points after the last one.
@@ -198,10 +209,13 @@ export function createFakeTvWindow(
         ];
   // The times the chart reports for the time points: getVisibleRange speaks in these.
   const publicTimes = pointTimes.map((time) => time - offset);
-  const knownSymbols = new Set(fixture.knownSymbols);
+  const knownSymbols = new Set([
+    ...fixture.knownSymbols,
+    ...(overrides.feeds ? Object.values(overrides.feeds) : []),
+  ]);
   const calls: FakeCall[] = [];
   const state: FakeTvState = {
-    symbol: fixture.symbol,
+    symbol: feeds.get(fixture.symbol) ?? fixture.symbol,
     resolution: fixture.resolution,
     chartType: fixture.chartType,
     visibleRange: {
@@ -325,7 +339,18 @@ export function createFakeTvWindow(
 
   const mainSeries: FakeMainSeries = {
     bars: () => barContainer,
-    symbolInfo: () => (state.symbolInvalid ? null : structuredClone(fixture.symbolInfo)),
+    symbolInfo: () => {
+      if (state.symbolInvalid) {
+        return null;
+      }
+      const listing = listingOf(state.symbol);
+      return {
+        ...structuredClone(fixture.symbolInfo),
+        name: listing.slice(listing.lastIndexOf(':') + 1),
+        full_name: state.symbol,
+        pro_name: listing,
+      };
+    },
     quotes: () => structuredClone(fixture.quote),
     isSymbolInvalid: () => state.symbolInvalid,
   };
@@ -348,6 +373,15 @@ export function createFakeTvWindow(
       state.symbol = symbol;
       state.symbolInvalid = !knownSymbols.has(symbol);
       if (!state.symbolInvalid) {
+        // Once resolved, the chart shows the symbol by its data feed, before dataReady runs.
+        const feed = feeds.get(symbol);
+        if (feed !== undefined) {
+          queueMicrotask(() => {
+            if (state.symbol === symbol) {
+              state.symbol = feed;
+            }
+          });
+        }
         notifyDataReady(options);
       }
       return Promise.resolve(true);

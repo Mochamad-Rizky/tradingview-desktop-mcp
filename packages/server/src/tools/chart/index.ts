@@ -138,7 +138,8 @@ export const chartSetSymbol = defineTool({
   title: 'Change the chart symbol',
   description:
     'Switches a chart to another symbol and waits until its data has loaded. Returns symbol (as ' +
-    'TradingView names it, which can differ from the input: AAPL may become NASDAQ:AAPL), ' +
+    'TradingView names it, which can differ from the input: AAPL may become NASDAQ:AAPL, and a ' +
+    'symbol can show through the exchange of its data feed, such as BATS:AAPL for NASDAQ:AAPL), ' +
     'previous and changed (false when the chart showed the symbol already, in which case nothing ' +
     'is done). A symbol TradingView does not know fails with INVALID_INPUT, and the chart is ' +
     'switched back to the symbol it showed (error.details.kept); details say so if switching back ' +
@@ -204,7 +205,10 @@ export const chartSetSymbol = defineTool({
             'be unknown; call chart_get_state to see what the chart shows.',
         );
       }
-      if (!sameSymbol(symbol, value.symbol)) {
+      // The chart may show the symbol through the exchange of its data feed (BATS:AAPL for
+      // NASDAQ:AAPL), in which case the listing the series resolved names the one asked for.
+      const listed = value.listing !== null && sameSymbol(symbol, value.listing);
+      if (!sameSymbol(symbol, value.symbol) && !listed) {
         // Enter in the symbol search applies the highlighted result, which need not be the one
         // asked for, and the chart API resolves a symbol its own way too.
         warnings.push(

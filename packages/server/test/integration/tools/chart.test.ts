@@ -747,6 +747,39 @@ const textsOf = (app: FakeCdpServer): string[] =>
     .filter(({ method }) => method === 'Input.insertText')
     .map(({ params }) => (params as { text: string }).text);
 
+describe('chart_set_symbol and the data feed of a symbol', () => {
+  // TradingView names a symbol by the exchange of its data feed once it is resolved, BATS:AAPL for
+  // NASDAQ:AAPL on an account whose US stock data comes from Cboe (seen on the app).
+  test('chart_set_symbol does not warn when the chart names the symbol by its data feed', async () => {
+    const win = createFakeTvWindow(fixture, { feeds: { 'NASDAQ:MSFT': 'BATS:MSFT' } });
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+    expect(dataOf(result)).toStrictEqual({
+      symbol: 'BATS:MSFT',
+      previous: 'NASDAQ:AAPL',
+      changed: true,
+    });
+    expect(warningsOf(result)).toEqual([]);
+  });
+
+  test('chart_set_symbol leaves alone a chart that shows the symbol through its data feed', async () => {
+    const win = createFakeTvWindow(fixture, { feeds: { 'NASDAQ:AAPL': 'BATS:AAPL' } });
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:AAPL' });
+
+    expect(dataOf(result)).toStrictEqual({
+      symbol: 'BATS:AAPL',
+      previous: 'BATS:AAPL',
+      changed: false,
+    });
+    expect(warningsOf(result)).toEqual([]);
+    expect(inspectFakeWindow(win).callsTo('chart.setSymbol')).toEqual([]);
+  });
+});
+
 describe('chart_set_symbol through the interface', () => {
   test('chart_set_symbol uses the symbol search dialog when the chart API cannot change the symbol', async () => {
     const ui = chartUi({ searchButton: true, api: { without: ['setSymbol'] } });
