@@ -285,16 +285,25 @@ export const appReconnect = defineTool({
     'connects again and picks the chart tab anew. Use it when calls keep failing after ' +
     'TradingView was restarted, a tab was replaced or the page was reloaded. With reloadTab: ' +
     'true it first asks TradingView Desktop to reload the chart tab, which also recovers a page ' +
-    'that is stuck; the page needs a few seconds to come back, so check app_health afterwards. ' +
-    'Reloading loses unsaved edits in the tab, such as Pine Editor text. It does not start ' +
-    'TradingView: use app_launch for that. Returns reset (true) and reloadRequested.',
+    'that is stuck. That needs confirm: true as well, because reloading loses unsaved edits in ' +
+    'the tab, such as Pine Editor text; without it nothing is reloaded and nothing is dropped. ' +
+    'The page needs a few seconds to come back, so check app_health afterwards. It does not ' +
+    'start TradingView: use app_launch for that. Returns reset (true) and reloadRequested.',
   inputSchema: {
     reloadTab: z
       .boolean()
       .default(false)
       .describe(
         'Also reload the chart tab before the connections are dropped (default false). Use it ' +
-          'only when the page is stuck: the tab loses unsaved edits, such as Pine Editor text.',
+          'only when the page is stuck: the tab loses unsaved edits, such as Pine Editor text. ' +
+          'It also needs confirm: true.',
+      ),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe(
+        'Must be true together with reloadTab: true, to confirm that the chart tab may be ' +
+          'reloaded, which loses unsaved edits such as Pine Editor text. Ignored without reloadTab.',
       ),
   },
   annotations: {
@@ -304,7 +313,16 @@ export const appReconnect = defineTool({
     openWorldHint: false,
   },
   core: true,
-  async handler({ reloadTab: reload }, ctx) {
+  async handler({ reloadTab: reload, confirm }, ctx) {
+    // Before anything else, so that a refusal touches neither the page nor the sessions: a reload
+    // is the one reconnect that can cost the user work (design spec 5.3).
+    if (reload && confirm !== true) {
+      throw new TvMcpError('CONFIRMATION_REQUIRED', 'Reloading the chart tab needs confirmation', {
+        hint:
+          'Reloading the chart page can discard unsaved Pine Editor changes. Save your work, then ' +
+          'call app_reconnect again with reloadTab: true and confirm: true.',
+      });
+    }
     if (reload) {
       try {
         const page = await ctx.connection.chartPage();

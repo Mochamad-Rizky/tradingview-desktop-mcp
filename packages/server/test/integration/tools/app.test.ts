@@ -851,12 +851,67 @@ describe('app_reconnect', () => {
     expect(app.connectionCount(CHART_ID)).toBe(2);
   });
 
-  test('app_reconnect with reloadTab calls TVD.reloadTab', async () => {
+  test('app_reconnect with reloadTab requires confirm', async () => {
+    const win = createFakeTvWindow(fixture);
+    const { client, app } = await startHarness({ win });
+    await callTool(client, 'app_health');
+    const sentBefore = app.calls.length;
+
+    for (const args of [{ reloadTab: true }, { reloadTab: true, confirm: false }]) {
+      const result = await callTool(client, 'app_reconnect', args);
+
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect(result.structuredContent, JSON.stringify(args)).toMatchObject({
+        ok: false,
+        error: {
+          code: 'CONFIRMATION_REQUIRED',
+          hint: expect.stringContaining('confirm: true') as string,
+        },
+      });
+      const { hint } = (result.structuredContent as { error: { hint: string } }).error;
+      expect(hint).toMatch(/unsaved Pine Editor changes/);
+    }
+
+    // Nothing happened: the page was not asked to reload and was sent nothing at all.
+    expect(inspectFakeWindow(win).calls).toEqual([]);
+    expect(app.calls).toHaveLength(sentBefore);
+    // And the sessions were not dropped, or the next call would have connected anew.
+    const health = await callTool(client, 'app_health');
+    expect(dataOf(health)).toMatchObject({ app: { ready: true } });
+    expect(app.connectionCount(CHART_ID)).toBe(1);
+    expect(app.openConnectionCount(CHART_ID)).toBe(1);
+  });
+
+  test('app_reconnect with reloadTab asks for confirmation before it looks for TradingView', async () => {
+    const client = await startOffline();
+
+    const result = await callTool(client, 'app_reconnect', { reloadTab: true });
+
+    // Not CDP_UNREACHABLE: the answer needs no look at the app.
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: 'CONFIRMATION_REQUIRED' },
+    });
+  });
+
+  test('app_reconnect needs no confirmation to drop the sessions, and ignores one', async () => {
     const win = createFakeTvWindow(fixture);
     const { client, app } = await startHarness({ win });
     await callTool(client, 'app_health');
 
-    const result = await callTool(client, 'app_reconnect', { reloadTab: true });
+    const result = await callTool(client, 'app_reconnect', { confirm: true });
+
+    expect(dataOf(result)).toEqual({ reset: true, reloadRequested: false });
+    expect(inspectFakeWindow(win).calls).toEqual([]);
+    await expect.poll(() => app.openConnectionCount()).toBe(0);
+  });
+
+  test('app_reconnect with reloadTab and confirm calls TVD.reloadTab', async () => {
+    const win = createFakeTvWindow(fixture);
+    const { client, app } = await startHarness({ win });
+    await callTool(client, 'app_health');
+
+    const result = await callTool(client, 'app_reconnect', { reloadTab: true, confirm: true });
 
     expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
     expect(inspectFakeWindow(win).calls).toHaveLength(1);
@@ -880,7 +935,7 @@ describe('app_reconnect', () => {
     await callTool(client, 'app_health');
     expect(app.openConnectionCount()).toBe(1);
 
-    const result = await callTool(client, 'app_reconnect', { reloadTab: true });
+    const result = await callTool(client, 'app_reconnect', { reloadTab: true, confirm: true });
 
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
@@ -901,7 +956,7 @@ describe('app_reconnect', () => {
   test('app_reconnect with reloadTab fails with CDP_UNREACHABLE when TradingView is down', async () => {
     const client = await startOffline();
 
-    const result = await callTool(client, 'app_reconnect', { reloadTab: true });
+    const result = await callTool(client, 'app_reconnect', { reloadTab: true, confirm: true });
 
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
@@ -915,7 +970,7 @@ describe('app_reconnect', () => {
       chartTab(id, createFakeTvWindow(fixture, { visibilityState: 'hidden' }));
     const { client } = await startHarness({ targets: appWith([hidden(TAB_A), hidden(TAB_B)]) });
 
-    const result = await callTool(client, 'app_reconnect', { reloadTab: true });
+    const result = await callTool(client, 'app_reconnect', { reloadTab: true, confirm: true });
 
     expect(result.structuredContent).toMatchObject({
       ok: false,
@@ -959,6 +1014,15 @@ describe('the app tools as a client sees them', () => {
       },
     });
     expect(launch?.inputSchema.required ?? []).toEqual([]);
+    const reconnect = app.find(({ name }) => name === 'app_reconnect');
+    expect(reconnect?.inputSchema).toMatchObject({
+      type: 'object',
+      properties: {
+        reloadTab: { type: 'boolean', default: false },
+        confirm: { type: 'boolean' },
+      },
+    });
+    expect(reconnect?.inputSchema.required ?? []).toEqual([]);
   });
 
   test('the readonly profile offers the tools of the app that only read', async () => {

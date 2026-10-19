@@ -73,13 +73,25 @@ test('app_launch explains what confirm is for', () => {
   expect(confirm).toMatch(/unsaved/i);
 });
 
-test('app_reconnect warns that reloading the tab discards what is not saved in it', () => {
+test('app_reconnect warns that reloading the tab discards what is not saved in it, and asks to confirm', () => {
   const { description } = toolNamed('app_reconnect');
   const reload = descriptionOf(toolNamed('app_reconnect'), 'reloadTab');
 
   expect(description).toMatch(/app_health/);
+  expect(description).toMatch(/reloadTab: true/);
+  expect(description).toMatch(/confirm: true/);
+  expect(description).toMatch(/unsaved/i);
   expect(reload).toMatch(/reload/i);
   expect(reload).toMatch(/not saved|unsaved/i);
+  expect(reload).toMatch(/confirm: true/);
+});
+
+test('app_reconnect explains what confirm is for', () => {
+  const confirm = descriptionOf(toolNamed('app_reconnect'), 'confirm');
+
+  expect(confirm).toMatch(/reloadTab: true/);
+  expect(confirm).toMatch(/unsaved/i);
+  expect(confirm).toMatch(/ignored/i);
 });
 
 test('app_health tells what to do when TradingView is down', () => {
@@ -101,6 +113,7 @@ test.each([
   ['app_launch', { port: 1 }],
   ['app_reconnect', {}],
   ['app_reconnect', { reloadTab: true }],
+  ['app_reconnect', { reloadTab: true, confirm: true }],
 ])(
   'the input schema of %s gives the same value when it parses its own output: %j',
   (name, input) => {
@@ -131,9 +144,22 @@ test.each([
   expect(schema.safeParse(input).success).toBe(false);
 });
 
-test('app_reconnect refuses reloadTab that is not a boolean', () => {
+test.each([
+  ['reloadTab as text', { reloadTab: 'yes' }],
+  ['confirm as a number', { confirm: 1 }],
+  ['confirm as text', { confirm: 'true' }],
+])('app_reconnect refuses %s', (_case, input) => {
   const schema = z.object(toolNamed('app_reconnect').inputSchema);
 
-  expect(schema.safeParse({ reloadTab: 'yes' }).success).toBe(false);
+  expect(schema.safeParse(input).success).toBe(false);
+});
+
+test('app_reconnect fills in reloadTab: false and leaves confirm out when it is not given', () => {
+  const schema = z.object(toolNamed('app_reconnect').inputSchema);
+
   expect(schema.parse({})).toEqual({ reloadTab: false });
+  expect(schema.parse({ reloadTab: true, confirm: true })).toEqual({
+    reloadTab: true,
+    confirm: true,
+  });
 });
