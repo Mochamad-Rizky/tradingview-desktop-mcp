@@ -320,9 +320,24 @@ describe('readChartSnapshot', () => {
       from: fixture.visibleRange.from,
       to: fixture.visibleRange.to,
       seriesSymbol: 'NASDAQ:AAPL',
+      seriesName: 'NASDAQ:AAPL',
       barCount: fixture.bars.count,
     });
     expect(callsOf(win)).toEqual([]);
+  });
+
+  // The chart names a resolved symbol by its data feed, the full_name, while pro_name keeps the
+  // listing (seen on the app).
+  test('readChartSnapshot reads both names the symbol info gives the series', async () => {
+    const make = chart(undefined, fixture, { feeds: { 'NASDAQ:AAPL': 'BATS:AAPL' } });
+
+    const { result } = await resultOf(readChartSnapshot, [null], make);
+
+    expect(result).toMatchObject({
+      symbol: 'BATS:AAPL',
+      seriesSymbol: 'NASDAQ:AAPL',
+      seriesName: 'BATS:AAPL',
+    });
   });
 
   test('readChartSnapshot names the series symbol by its full name when it has no pro name', async () => {
@@ -367,6 +382,7 @@ describe('readChartSnapshot', () => {
       from: null,
       to: null,
       seriesSymbol: null,
+      seriesName: null,
       barCount: null,
     });
   });

@@ -140,10 +140,12 @@ export function readChartState(
 
 // What the chart shows, for a strategy that changed it through the interface and has to see whether
 // the change took: the symbol, the resolution, whether the series flags the symbol as unknown, the
-// visible range, the symbol the series has resolved (the pro_name of its symbol info, or else the
-// full_name), which names the new symbol once TradingView has found it, and how many bars the
-// series holds. Each part is null (or false) when the page cannot say, and the whole is null when
-// the chart cannot be reached. It never throws.
+// visible range, the symbol the series has resolved (seriesSymbol: the pro_name of its symbol info,
+// the listing, or else the full_name), the full_name on its own (seriesName: the name the chart uses
+// once the symbol is resolved, which can be the exchange of its data feed), and how many bars the
+// series holds. The symbol info names the new symbol only once TradingView has found it. Each part
+// is null (or false) when the page cannot say, and the whole is null when the chart cannot be
+// reached. It never throws.
 export function readChartSnapshot(
   win: TvWindow,
   chartIndex: number | null,
@@ -154,6 +156,7 @@ export function readChartSnapshot(
   from: number | null;
   to: number | null;
   seriesSymbol: string | null;
+  seriesName: string | null;
   barCount: number | null;
 } | null {
   const attempt = (read: () => unknown): unknown => {
@@ -187,6 +190,7 @@ export function readChartSnapshot(
     from: number(range?.from),
     to: number(range?.to),
     seriesSymbol: text(info?.pro_name) ?? text(info?.full_name),
+    seriesName: text(info?.full_name),
     barCount: number(attempt(() => series?.bars?.().size())),
   };
 }

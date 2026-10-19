@@ -502,6 +502,10 @@ interface ChartUiOptions {
   flagLagMs?: number;
   // Whether the series resolves a symbol it knows, so that its symbol info names it. Default true.
   resolvesSymbols?: boolean;
+  // The name of the data feed TradingView shows a symbol it knows by, once it has resolved it a
+  // moment after Enter (NASDAQ:MSFT becomes BATS:MSFT, seen on the app). Until then the series has
+  // no symbol info, as on the app.
+  feedOf?: Record<string, string>;
   // Where the focus goes once Enter has closed a dialog: back where it was (the default), or into
   // a text field outside any dialog.
   focusAfterEnter?: 'outside-field';
@@ -602,8 +606,15 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
   // The symbol the series has resolved, which its symbol info names: it follows a symbol the app
   // knows, and stays on the last one it found for a symbol it does not.
   let resolved = fixture.symbol;
+  // The full name, when it is the name of a data feed rather than the listing; and whether the
+  // series is between a symbol and its resolution, with no symbol info.
+  let feedName: string | null = null;
+  let resolving = false;
   Object.assign(chartOf(tv).chart._chartWidget.model().mainSeries(), {
-    symbolInfo: () => ({ ...fixture.symbolInfo, pro_name: resolved, full_name: resolved }),
+    symbolInfo: () =>
+      resolving
+        ? null
+        : { ...fixture.symbolInfo, pro_name: resolved, full_name: feedName ?? resolved },
   });
   let dialog: 'symbol' | 'interval' | null = null;
   let typed = '';
@@ -699,7 +710,17 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
         } else if (dialog === 'symbol') {
           const applied = options.enterApplies?.[typed] ?? typed;
           state.symbol = applied;
-          if (fixture.knownSymbols.includes(applied)) {
+          const feed = options.feedOf?.[applied];
+          if (feed !== undefined && fixture.knownSymbols.includes(applied)) {
+            state.symbolInvalid = false;
+            resolving = true;
+            setTimeout(() => {
+              state.symbol = feed;
+              resolved = applied;
+              feedName = feed;
+              resolving = false;
+            }, 30);
+          } else if (fixture.knownSymbols.includes(applied)) {
             state.symbolInvalid = false;
             if (options.resolvesSymbols !== false) {
               resolved = applied;
@@ -781,6 +802,26 @@ describe('chart_set_symbol and the data feed of a symbol', () => {
 });
 
 describe('chart_set_symbol through the interface', () => {
+  test('chart_set_symbol through the symbol search follows TradingView to the name of the data feed', async () => {
+    const ui = chartUi({
+      searchButton: true,
+      api: { without: ['setSymbol'] },
+      feedOf: { 'NASDAQ:MSFT': 'BATS:MSFT' },
+    });
+    const { client } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+    expect(viaOf(result)).toBe('dom');
+    expect(dataOf(result)).toStrictEqual({
+      symbol: 'BATS:MSFT',
+      previous: 'NASDAQ:AAPL',
+      changed: true,
+    });
+    // Neither "not confirmed" nor "another symbol": the chart settled on the feed of NASDAQ:MSFT.
+    expect(warningsOf(result)).toEqual([]);
+  });
+
   test('chart_set_symbol uses the symbol search dialog when the chart API cannot change the symbol', async () => {
     const ui = chartUi({ searchButton: true, api: { without: ['setSymbol'] } });
     const { client, app } = await startUi(ui);

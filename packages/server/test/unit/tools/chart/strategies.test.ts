@@ -59,6 +59,7 @@ const SNAPSHOT = {
   from: 1721433600,
   to: 1729987200,
   seriesSymbol: 'NASDAQ:AAPL',
+  seriesName: 'NASDAQ:AAPL',
   barCount: 300,
 };
 
@@ -307,6 +308,50 @@ describe('confirming a symbol entered through the symbol search', () => {
       changed: true,
       confirmed: false,
       listing: null,
+    });
+  });
+
+  // Once TradingView has resolved a symbol, the chart names it by the exchange of its data feed:
+  // NASDAQ:MSFT becomes BATS:MSFT (seen on the app). The wait follows the chart to that name.
+  test('the symbol search follows the chart to the name TradingView gives the symbol once resolved', async () => {
+    const { page } = interfacePage([
+      SNAPSHOT,
+      { ...unresolved('NASDAQ:MSFT'), seriesSymbol: null, seriesName: null, barCount: 0 },
+      {
+        ...SNAPSHOT,
+        symbol: 'BATS:MSFT',
+        seriesSymbol: 'NASDAQ:MSFT',
+        seriesName: 'BATS:MSFT',
+      },
+    ]);
+    const search = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:MSFT', 500), 1);
+    const started = Date.now();
+
+    await expect(search.run()).resolves.toStrictEqual({
+      symbol: 'BATS:MSFT',
+      previous: 'NASDAQ:AAPL',
+      changed: true,
+      confirmed: true,
+      listing: 'NASDAQ:MSFT',
+    });
+    // Confirmed as soon as the chart settled, not after the whole wait.
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  test('the symbol search reports no change when the symbol settles on the one the chart showed', async () => {
+    const before = { ...SNAPSHOT, symbol: 'BATS:AAPL' };
+    const { page } = interfacePage([
+      before,
+      { ...before, symbol: 'AAPL', seriesSymbol: null, seriesName: null, barCount: 0 },
+      { ...before, seriesName: 'BATS:AAPL' },
+    ]);
+    const search = strategyAt(symbolStrategies(page, ACTIVE, 'AAPL', 500), 1);
+
+    await expect(search.run()).resolves.toMatchObject({
+      symbol: 'BATS:AAPL',
+      previous: 'BATS:AAPL',
+      changed: false,
+      confirmed: true,
     });
   });
 

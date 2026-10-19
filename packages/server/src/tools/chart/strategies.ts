@@ -338,27 +338,33 @@ async function waitForTextField(page: PageHandle, waitMs: number, failure: strin
 }
 
 // Whether the series has loaded the symbol the chart shows: the flag of an unknown symbol is down,
-// the symbol info of the series names the symbol, and the series holds bars.
-function loadedAs(now: Snapshot, shown: string): boolean {
+// the series holds bars, and its symbol info names what the chart shows, by the full name the chart
+// uses once the symbol is resolved (BATS:AAPL) or by the listing (NASDAQ:AAPL, or AAPL for a chart
+// that shows a bare ticker). Symbol info that names another symbol is left over from the one before.
+function loaded(now: Snapshot): now is Snapshot & { symbol: string } {
+  const shown = now.symbol;
   return (
     !now.symbolInvalid &&
-    now.symbol === shown &&
+    shown !== null &&
     (now.barCount ?? 0) > 0 &&
-    now.seriesSymbol !== null &&
-    sameSymbol(now.seriesSymbol, shown)
+    ((now.seriesName !== null && now.seriesName.toUpperCase() === shown.toUpperCase()) ||
+      (now.seriesSymbol !== null && sameSymbol(now.seriesSymbol, shown)))
   );
 }
 
 // After a symbol was entered through the interface. The chart shows the new symbol at once, and only
 // afterwards does TradingView resolve it and load its data, or flag it as unknown, so the wait has
 // two parts. The first lasts until the chart shows another symbol, or flags the new one as unknown
-// while it keeps showing the old one. The second lasts until the series has loaded the new symbol
-// (loadedAs), or until the flag goes up, which is reported as INVALID_INPUT like the chart API
-// reports it, for the tool to switch the chart back. The second part takes what is left of the wait,
-// and at least SETTLE_MIN_MS, so that a switch seen at the last moment still gets the time to be
-// resolved. A symbol that is neither loaded nor flagged by then is reported as not confirmed. A flag
-// that was up before belongs to the symbol the chart showed then, so it says nothing about the new
-// one.
+// while it keeps showing the old one. The second lasts until the series has loaded what the chart
+// shows (loaded), or until the flag goes up, which is reported as INVALID_INPUT like the chart API
+// reports it, for the tool to switch the chart back. TradingView renames a symbol once it has
+// resolved it, to the exchange of its data feed (NASDAQ:AAPL becomes BATS:AAPL, seen on the app), so
+// the second part follows the chart to the name it settles on instead of holding it to the text
+// that was entered, and the change counts as one only when that name is another than before. The
+// second part takes what is left of the wait, and at least SETTLE_MIN_MS, so that a switch seen at
+// the last moment still gets the time to be resolved. A symbol that is neither loaded nor flagged by
+// then is reported as not confirmed, by the name the chart shows last. A flag that was up before
+// belongs to the symbol the chart showed then, so it says nothing about the new one.
 async function confirmSymbol(
   page: PageHandle,
   target: ChartTarget,
@@ -398,21 +404,23 @@ async function confirmSymbol(
   }
   const settled = await pollUntil(
     () => snapshotOf(page, target),
-    (now) => now === null || flagged(now) || loadedAs(now, shown),
+    (now) => now === null || flagged(now) || loaded(now),
     {
       intervalMs: POLL_INTERVAL_MS,
       timeoutMs: Math.max(waitMs - switched.waitedMs, SETTLE_MIN_MS),
     },
   );
-  if (settled.last !== null && flagged(settled.last)) {
+  const last = settled.last;
+  if (last !== null && flagged(last)) {
     throw unknownSymbol(requested, previous);
   }
+  const symbol = last?.symbol ?? shown;
   return {
-    symbol: shown,
+    symbol,
     previous,
-    changed: true,
-    confirmed: settled.last !== null && loadedAs(settled.last, shown),
-    listing: settled.last?.seriesSymbol ?? null,
+    changed: symbol.toUpperCase() !== previous.toUpperCase(),
+    confirmed: last !== null && loaded(last),
+    listing: last?.seriesSymbol ?? null,
   };
 }
 
