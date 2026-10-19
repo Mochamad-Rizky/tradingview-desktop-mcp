@@ -538,6 +538,8 @@ test.each<[string, string, (port: number) => Record<string, string>, number]>([
   ['a refused Host, encoded', '/mcp/Sekrit1%2FSekrit2%2FSekrit3', foreignHost, 403],
   ['a refused Origin, encoded', '/mcp/Sekrit1%2FSekrit2%2FSekrit3', foreignOrigin, 403],
   ['an unknown path, encoded in lower case', '/x/Sekrit1%2fSekrit2%2fSekrit3', noHeaders, 404],
+  // An escape that does not decode must not keep the encoded token after it from being found.
+  ['a malformed escape before it', '/x/%E0%A4/Sekrit1%2FSekrit2%2FSekrit3', noHeaders, 404],
 ])(
   'no part of a token with a slash reaches the logs, for %s',
   async (_case, path, headers, status) => {
