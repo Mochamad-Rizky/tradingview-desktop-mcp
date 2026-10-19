@@ -16,8 +16,8 @@ import { VERSION } from './version.js';
 
 // The parts of a server that belong to the process rather than to one client. There must be one of
 // each per process: a target may only ever have one session, because input is serialized per
-// session; launches take turns inside one launcher; and the dashboard watches one event bus. The
-// HTTP transport creates them once and hands them to the server of every session.
+// session; launches take turns inside one launcher; and the dashboard watches one event bus. A
+// process creates them once with createServerDeps and hands them to the server of every session.
 export interface ServerDeps {
   connection: ConnectionManager;
   launcher: Launcher;
@@ -49,6 +49,20 @@ function createDefaultLauncher(config: Readonly<Config>, connection: ConnectionM
   });
 }
 
+// The dependencies of a process: the ones given, and the others created from the configuration.
+// A process that serves several clients calls this once and hands the result to every server.
+// Nothing is started: no connection is opened before the first call that needs one.
+export function createServerDeps(
+  config: Readonly<Config>,
+  deps: Partial<ServerDeps> = {},
+): ServerDeps {
+  const logger = deps.logger ?? createLogger({ level: config.logLevel });
+  const connection = deps.connection ?? createConnection(config, logger);
+  const launcher = deps.launcher ?? createDefaultLauncher(config, connection);
+  const events = deps.events ?? new ToolEventBus();
+  return { logger, connection, launcher, events };
+}
+
 // A server for one client, with the tools that the profile and the tool filter select, and the
 // resources. A dependency that is not given is created, which suits a process with one client
 // (stdio); a process with several (HTTP) passes the same set to every server. Creating a server
@@ -57,10 +71,7 @@ export function createMcpServer(
   config: Readonly<Config>,
   deps: Partial<ServerDeps> = {},
 ): { server: McpServer; registry: ToolRegistry; ctx: ToolContext } {
-  const logger = deps.logger ?? createLogger({ level: config.logLevel });
-  const connection = deps.connection ?? createConnection(config, logger);
-  const launcher = deps.launcher ?? createDefaultLauncher(config, connection);
-  const events = deps.events ?? new ToolEventBus();
+  const { logger, connection, launcher, events } = createServerDeps(config, deps);
   const session: SessionState = { createdDrawingIds: new Set(), createdAlertIds: new Set() };
   const base = { config, logger, connection, launcher, events, session };
 

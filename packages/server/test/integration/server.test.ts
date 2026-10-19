@@ -6,7 +6,7 @@ import { ConnectionManager, type HealthReport } from '../../src/core/connection.
 import { TvMcpError } from '../../src/core/errors.js';
 import { ToolEventBus, type ToolCallEvent } from '../../src/core/events.js';
 import { registerResources } from '../../src/resources/index.js';
-import { createMcpServer, type ServerDeps } from '../../src/server.js';
+import { createMcpServer, createServerDeps, type ServerDeps } from '../../src/server.js';
 import { batchTools } from '../../src/tools/batch/index.js';
 import { createToolRegistry, registerToolsWithServer } from '../../src/tools/registry.js';
 import { defineTool, type ToolRegistry } from '../../src/tools/types.js';
@@ -482,6 +482,21 @@ test.each([
     code: rpc,
     message: expect.stringContaining('No chart tab is open') as string,
     data: { code, message: 'No chart tab is open', hint: 'Open a chart in TradingView.' },
+  });
+});
+
+test('createServerDeps keeps the dependencies it is given and creates the others', async () => {
+  const events = new ToolEventBus();
+
+  const deps = createServerDeps(testConfig(), { logger: quietLogger, events });
+  cleanups.push(() => deps.connection.close());
+
+  expect(deps.logger).toBe(quietLogger);
+  expect(deps.events).toBe(events);
+  expect(deps.connection).toBeInstanceOf(ConnectionManager);
+  // The connection it creates watches the configured debug port, where nothing answers here.
+  await expect(deps.connection.health()).resolves.toMatchObject({
+    cdp: { reachable: false, endpoint: 'http://127.0.0.1:9' },
   });
 });
 
