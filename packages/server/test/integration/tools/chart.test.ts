@@ -487,6 +487,13 @@ interface ChartUiOptions {
   // What Enter in the symbol search applies for a typed text, when it is not the text itself: the
   // highlighted result of the search.
   enterApplies?: Record<string, string>;
+  // How long after an unknown symbol is applied the series flags it. By default at once.
+  flagLagMs?: number;
+  // Whether the series resolves a symbol it knows, so that its symbol info names it. Default true.
+  resolvesSymbols?: boolean;
+  // Where the focus goes once Enter has closed a dialog: back where it was (the default), or into
+  // a text field outside any dialog.
+  focusAfterEnter?: 'outside-field';
   // The chart API of the page: complete, without the members named, or none at all.
   api?: 'complete' | 'none' | { without: string[]; chartsCount?: number };
   // A text field outside any dialog that has the focus at the start.
@@ -562,7 +569,7 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
     attributes: { type: 'search' },
     rect: box(600, 10, 100, 30),
   });
-  if (options.focusedField === true) {
+  if (options.focusedField === true || options.focusAfterEnter === 'outside-field') {
     elements.push(outsideField);
   }
   // A dialog of the portal, open over the header toolbar.
@@ -581,6 +588,12 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
     ...(options.searchButtonIs === 'off-screen' ? { viewport: { width: 1200, height: 800 } } : {}),
   }) as unknown as FakeDomWindow;
   const resting = page.document.activeElement ?? null;
+  // The symbol the series has resolved, which its symbol info names: it follows a symbol the app
+  // knows, and stays on the last one it found for a symbol it does not.
+  let resolved = fixture.symbol;
+  Object.assign(chartOf(tv).chart._chartWidget.model().mainSeries(), {
+    symbolInfo: () => ({ ...fixture.symbolInfo, pro_name: resolved, full_name: resolved }),
+  });
   let dialog: 'symbol' | 'interval' | null = null;
   let typed = '';
   const open = (kind: 'symbol' | 'interval', text: string): void => {
@@ -675,12 +688,25 @@ function chartUi(options: ChartUiOptions = {}): ChartUi {
         } else if (dialog === 'symbol') {
           const applied = options.enterApplies?.[typed] ?? typed;
           state.symbol = applied;
-          state.symbolInvalid = !fixture.knownSymbols.includes(applied);
+          if (fixture.knownSymbols.includes(applied)) {
+            state.symbolInvalid = false;
+            if (options.resolvesSymbols !== false) {
+              resolved = applied;
+            }
+          } else if (options.flagLagMs === undefined) {
+            state.symbolInvalid = true;
+          } else {
+            state.symbolInvalid = false;
+            setTimeout(() => {
+              state.symbolInvalid = true;
+            }, options.flagLagMs);
+          }
         } else if (dialog === 'interval') {
           state.resolution = typed;
         }
         dialog = null;
-        page.document.activeElement = resting;
+        page.document.activeElement =
+          options.focusAfterEnter === 'outside-field' ? outsideField : resting;
         tookEffect();
       }
       return {};
@@ -791,21 +817,79 @@ describe('chart_set_symbol through the interface', () => {
     expect(inputOf(app)).toEqual([]);
   });
 
-  test('chart_set_symbol reports an unknown symbol typed into the dialog, and that it could not switch back', async () => {
+  test('chart_set_symbol reports an unknown symbol typed into the dialog, and switches back through the dialog', async () => {
     const ui = chartUi({ searchButton: true, api: { without: ['setSymbol'] } });
-    const { client } = await startUi(ui);
+    const { client, app } = await startUi(ui);
 
     const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:NOPE' });
 
     const error = errorOf(result);
     expect(error).toMatchObject({ code: 'INVALID_INPUT', message: 'Unknown symbol NASDAQ:NOPE' });
-    expect(error?.details).toStrictEqual({
+    expect(error?.details).toStrictEqual({ requested: 'NASDAQ:NOPE', kept: 'NASDAQ:AAPL' });
+    expect(textsOf(app)).toEqual(['NASDAQ:NOPE', 'NASDAQ:AAPL']);
+    expect(inspectFakeWindow(ui.tv).state.symbol).toBe('NASDAQ:AAPL');
+  });
+
+  // The chart shows the new symbol at once, and the series flags it as unknown only after that.
+  test.each([
+    ['the symbol search', { searchButton: true }, ['NASDAQ:NOPE', 'NASDAQ:AAPL']],
+    ['typing on the chart', {}, ['ASDAQ:NOPE', 'ASDAQ:AAPL']],
+  ])(
+    'chart_set_symbol through %s reports a symbol whose unknown flag comes after the switch, and switches back',
+    async (_case, options, texts) => {
+      const ui = chartUi({ ...options, flagLagMs: 150, api: { without: ['setSymbol'] } });
+      const { client, app } = await startUi(ui);
+
+      const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:NOPE' });
+
+      const error = errorOf(result);
+      expect(error).toMatchObject({ code: 'INVALID_INPUT', message: 'Unknown symbol NASDAQ:NOPE' });
+      expect(error?.details).toStrictEqual({ requested: 'NASDAQ:NOPE', kept: 'NASDAQ:AAPL' });
+      expect(textsOf(app)).toEqual(texts);
+      const state = inspectFakeWindow(ui.tv).state;
+      expect(state.symbol).toBe('NASDAQ:AAPL');
+      expect(state.symbolInvalid).toBe(false);
+    },
+  );
+
+  test('chart_set_symbol says that switching back failed when the interface cannot be used for it', async () => {
+    const ui = chartUi({
+      searchButton: true,
+      focusAfterEnter: 'outside-field',
+      api: { without: ['setSymbol'] },
+    });
+    const { client } = await startUi(ui);
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:NOPE' });
+
+    expect(errorOf(result)?.details).toStrictEqual({
       requested: 'NASDAQ:NOPE',
       kept: null,
       previous: 'NASDAQ:AAPL',
       revertFailed: true,
       revertError: 'CAPABILITY_UNAVAILABLE',
     });
+  });
+
+  test('chart_set_symbol warns when TradingView neither confirms nor flags the new symbol within the wait', async () => {
+    const ui = chartUi({
+      searchButton: true,
+      resolvesSymbols: false,
+      api: { without: ['setSymbol'] },
+    });
+    const { client } = await startUi(ui, 1000);
+
+    const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:MSFT' });
+
+    expect(viaOf(result)).toBe('dom');
+    expect(dataOf(result)).toStrictEqual({
+      symbol: 'NASDAQ:MSFT',
+      previous: 'NASDAQ:AAPL',
+      changed: true,
+    });
+    expect(warningsOf(result)).toEqual([expect.stringMatching(/did not confirm/)]);
+    // The switch was seen at once, and the new symbol still got at least a second and a half.
+    expect(envelopeOf(result).meta.durationMs).toBeGreaterThanOrEqual(1500);
   });
 
   test('chart_set_symbol times out when the chart keeps its symbol after the dialog', async () => {
@@ -872,9 +956,11 @@ describe('chart_set_symbol through the interface', () => {
 
     const result = await callTool(client, 'chart_set_symbol', { symbol: 'NASDAQ:NOPE' });
 
-    expect(errorOf(result)).toMatchObject({
-      code: 'INVALID_INPUT',
-      details: { requested: 'NASDAQ:NOPE', previous: 'NASDAQ:AAPL', revertFailed: true },
+    // The chart never left the old symbol, so switching back had nothing to do.
+    expect(errorOf(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(errorOf(result)?.details).toStrictEqual({
+      requested: 'NASDAQ:NOPE',
+      kept: 'NASDAQ:AAPL',
     });
   });
 

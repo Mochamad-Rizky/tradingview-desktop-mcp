@@ -190,19 +190,28 @@ export const chartSetSymbol = defineTool({
       if (previous === undefined) {
         throw error;
       }
-      throw await revertUnknownSymbol(page, target, symbol, previous, waitMs);
+      throw await revertUnknownSymbol(page, target, symbol, previous, waitMs, ctx.logger);
     }
     const { value, via } = outcome;
     const warnings: string[] = [];
     if (value.symbol === null) {
       warnings.push(UNCHECKED);
-    } else if (!sameSymbol(symbol, value.symbol)) {
-      // Enter in the symbol search applies the highlighted result, which need not be the one asked
-      // for, and the chart API resolves a symbol its own way too.
-      warnings.push(
-        `The chart shows ${value.symbol} instead of ${symbol}; TradingView may have chosen another ` +
-          'match. Give the symbol in the EXCHANGE:SYMBOL form to pick one.',
-      );
+    } else {
+      if (!value.confirmed) {
+        warnings.push(
+          `The chart shows ${value.symbol}, but TradingView did not confirm within the wait that ` +
+            'it found the symbol and loaded its data. It may still be loading, or the symbol may ' +
+            'be unknown; call chart_get_state to see what the chart shows.',
+        );
+      }
+      if (!sameSymbol(symbol, value.symbol)) {
+        // Enter in the symbol search applies the highlighted result, which need not be the one
+        // asked for, and the chart API resolves a symbol its own way too.
+        warnings.push(
+          `The chart shows ${value.symbol} instead of ${symbol}; TradingView may have chosen ` +
+            'another match. Give the symbol in the EXCHANGE:SYMBOL form to pick one.',
+        );
+      }
     }
     return {
       data: { symbol: value.symbol, previous: value.previous, changed: value.changed },

@@ -303,8 +303,20 @@ describe('readChartSnapshot', () => {
       symbolInvalid: false,
       from: fixture.visibleRange.from,
       to: fixture.visibleRange.to,
+      seriesSymbol: 'NASDAQ:AAPL',
+      barCount: fixture.bars.count,
     });
     expect(callsOf(win)).toEqual([]);
+  });
+
+  test('readChartSnapshot names the series symbol by its full name when it has no pro name', async () => {
+    const make = chart(({ series }) => {
+      Object.assign(series, { symbolInfo: () => ({ full_name: 'NYSE:IBM' }) });
+    });
+
+    const { result } = await resultOf(readChartSnapshot, [null], make);
+
+    expect(result).toMatchObject({ seriesSymbol: 'NYSE:IBM' });
   });
 
   test('readChartSnapshot says when the series flags the symbol as invalid', async () => {
@@ -323,7 +335,11 @@ describe('readChartSnapshot', () => {
     };
     const make = chart(({ chart: target, series }) => {
       Object.assign(target, { symbol: () => 7, resolution: fail, getVisibleRange: fail });
-      Object.assign(series, { isSymbolInvalid: fail });
+      Object.assign(series, {
+        isSymbolInvalid: fail,
+        symbolInfo: () => ({ pro_name: 5 }),
+        bars: fail,
+      });
     });
 
     const { result } = await resultOf(readChartSnapshot, [null], make);
@@ -334,6 +350,8 @@ describe('readChartSnapshot', () => {
       symbolInvalid: false,
       from: null,
       to: null,
+      seriesSymbol: null,
+      barCount: null,
     });
   });
 

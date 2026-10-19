@@ -138,9 +138,11 @@ export function readChartState(
 }
 
 // What the chart shows, for a strategy that changed it through the interface and has to see whether
-// the change took: the symbol, the resolution, whether the series flags the symbol as unknown, and
-// the visible range. Each part is null (or false) when the page cannot say, and the whole is null
-// when the chart cannot be reached. It never throws.
+// the change took: the symbol, the resolution, whether the series flags the symbol as unknown, the
+// visible range, the symbol the series has resolved (the pro_name of its symbol info, or else the
+// full_name), which names the new symbol once TradingView has found it, and how many bars the
+// series holds. Each part is null (or false) when the page cannot say, and the whole is null when
+// the chart cannot be reached. It never throws.
 export function readChartSnapshot(
   win: TvWindow,
   chartIndex: number | null,
@@ -150,6 +152,8 @@ export function readChartSnapshot(
   symbolInvalid: boolean;
   from: number | null;
   to: number | null;
+  seriesSymbol: string | null;
+  barCount: number | null;
 } | null {
   const attempt = (read: () => unknown): unknown => {
     try {
@@ -173,12 +177,16 @@ export function readChartSnapshot(
     { from?: unknown; to?: unknown } | null | undefined;
   const series = attempt(() => chart._chartWidget?.model().mainSeries()) as
     Partial<SeriesLike> | undefined;
+  const info = attempt(() => series?.symbolInfo?.()) as
+    { pro_name?: unknown; full_name?: unknown } | null | undefined;
   return {
     symbol: text(attempt(() => chart.symbol?.())),
     resolution: text(attempt(() => chart.resolution?.())),
     symbolInvalid: attempt(() => series?.isSymbolInvalid?.()) === true,
     from: number(range?.from),
     to: number(range?.to),
+    seriesSymbol: text(info?.pro_name) ?? text(info?.full_name),
+    barCount: number(attempt(() => series?.bars?.().size())),
   };
 }
 

@@ -58,7 +58,59 @@ const SNAPSHOT = {
   symbolInvalid: false,
   from: 1721433600,
   to: 1729987200,
+  seriesSymbol: 'NASDAQ:AAPL',
+  barCount: 300,
 };
+
+type Snapshot = NonNullable<ReturnType<typeof readChartSnapshot>>;
+
+// A chart with a symbol search button, whose dialog takes the focus once the button is clicked, for
+// the symbol search strategy to run through. The chart reads as `snapshots` say, one after another,
+// the last one over and over; a null snapshot is a chart that cannot be read. The input events that
+// reach the page are recorded and answered.
+function interfacePage(
+  snapshots: (Snapshot | null)[],
+  options: { withoutSetter?: boolean } = {},
+): { page: PageHandle; sent: string[] } {
+  const sent: string[] = [];
+  let reads = 0;
+  let focusLooks = 0;
+  const { page } = stubPage((fn) => {
+    if (fn === setSymbolViaApi && options.withoutSetter === true) {
+      throw new TvMcpError('CAPABILITY_UNAVAILABLE', 'No setter on this page');
+    }
+    if (fn === readChartSnapshot) {
+      const snapshot = snapshots[Math.min(reads, snapshots.length - 1)] ?? null;
+      reads += 1;
+      return snapshot;
+    }
+    if (fn === describeElement) {
+      return {
+        found: true,
+        visible: true,
+        unsafe: false,
+        coverage: 'clear',
+        obscuredBy: '',
+        rect: { x: 10, y: 10, width: 80, height: 30 },
+      };
+    }
+    if (fn === describeFocusedElement) {
+      // Nothing has the focus before the click, and the field of the dialog has it after.
+      focusLooks += 1;
+      const editable = focusLooks > 1;
+      return { unsafe: false, editable, opaque: false, focused: editable ? 'input' : 'body' };
+    }
+    throw new Error('Unexpected page function');
+  });
+  const session: CdpSession = {
+    ...page.session,
+    send: (method: string) => {
+      sent.push(method);
+      return Promise.resolve({});
+    },
+  };
+  return { page: { ...page, session }, sent };
+}
 
 const ACTIVE = { index: null, activeIndex: null };
 
@@ -160,10 +212,35 @@ describe('revertUnknownSymbol', () => {
       changed: true,
     }));
 
-    const error = await revertUnknownSymbol(page, ACTIVE, 'NASDAQ:NOPE', 'NASDAQ:AAPL', 500);
+    const error = await revertUnknownSymbol(
+      page,
+      ACTIVE,
+      'NASDAQ:NOPE',
+      'NASDAQ:AAPL',
+      500,
+      quietLogger,
+    );
 
     expect(asked).toEqual([setSymbolViaApi]);
     expect(error.details).toStrictEqual({ requested: 'NASDAQ:NOPE', kept: 'NASDAQ:AAPL' });
+  });
+
+  test('revertUnknownSymbol says that a switch back it could not check was not checked', async () => {
+    // No setter, so the symbol search switches back, on a chart that cannot be read any more.
+    const { page, sent } = interfacePage([null], { withoutSetter: true });
+
+    const error = await revertUnknownSymbol(
+      page,
+      ACTIVE,
+      'NASDAQ:NOPE',
+      'NASDAQ:AAPL',
+      500,
+      quietLogger,
+    );
+
+    expect(sent).toContain('Input.insertText');
+    expect(error.details).toStrictEqual({ requested: 'NASDAQ:NOPE', kept: 'NASDAQ:AAPL' });
+    expect(error.hint).toMatch(/switched back to NASDAQ:AAPL, which could not be checked/);
   });
 
   test('revertUnknownSymbol lets a failure that is not ours through, for the log to keep', async () => {
@@ -172,9 +249,76 @@ describe('revertUnknownSymbol', () => {
       throw failure;
     });
 
-    await expect(revertUnknownSymbol(page, ACTIVE, 'NASDAQ:NOPE', 'NASDAQ:AAPL', 500)).rejects.toBe(
-      failure,
-    );
+    await expect(
+      revertUnknownSymbol(page, ACTIVE, 'NASDAQ:NOPE', 'NASDAQ:AAPL', 500, quietLogger),
+    ).rejects.toBe(failure);
+  });
+});
+
+describe('confirming a symbol entered through the symbol search', () => {
+  const unresolved = (symbol: string, symbolInvalid = false): Snapshot => ({
+    ...SNAPSHOT,
+    symbol,
+    symbolInvalid,
+  });
+
+  // The chart shows the new symbol at once; that it is unknown comes a poll later.
+  test('the symbol search reports a symbol whose unknown flag comes after the switch', async () => {
+    const { page, sent } = interfacePage([
+      SNAPSHOT,
+      unresolved('NASDAQ:NOPE'),
+      unresolved('NASDAQ:NOPE', true),
+    ]);
+    const search = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:NOPE', 500), 1);
+
+    const error = await failureOf(search.run());
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.details).toStrictEqual({ requested: 'NASDAQ:NOPE', previous: 'NASDAQ:AAPL' });
+    expect(sent).toContain('Input.insertText');
+  });
+
+  test('the symbol search confirms a symbol once the series has resolved it and holds bars', async () => {
+    const { page } = interfacePage([
+      SNAPSHOT,
+      unresolved('NASDAQ:MSFT'),
+      { ...unresolved('NASDAQ:MSFT'), seriesSymbol: 'NASDAQ:MSFT', barCount: null },
+      { ...unresolved('NASDAQ:MSFT'), seriesSymbol: 'NASDAQ:MSFT', barCount: 0 },
+      { ...unresolved('NASDAQ:MSFT'), seriesSymbol: 'NASDAQ:MSFT' },
+    ]);
+    const search = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:MSFT', 500), 1);
+
+    await expect(search.run()).resolves.toStrictEqual({
+      symbol: 'NASDAQ:MSFT',
+      previous: 'NASDAQ:AAPL',
+      changed: true,
+      confirmed: true,
+    });
+  });
+
+  test('the symbol search reports a symbol as not confirmed when the chart cannot be read after the switch', async () => {
+    const { page } = interfacePage([SNAPSHOT, unresolved('NASDAQ:MSFT'), null]);
+    const search = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:MSFT', 500), 1);
+
+    await expect(search.run()).resolves.toStrictEqual({
+      symbol: 'NASDAQ:MSFT',
+      previous: 'NASDAQ:AAPL',
+      changed: true,
+      confirmed: false,
+    });
+  });
+
+  // The flag was up for the symbol the chart showed before, so only the series can tell.
+  test('the symbol search does not take a flag that was up before for the verdict on the new symbol', async () => {
+    const shownInvalid = { ...SNAPSHOT, symbol: 'NASDAQ:OLD', symbolInvalid: true };
+    const { page } = interfacePage([
+      shownInvalid,
+      { ...shownInvalid, symbol: 'NASDAQ:MSFT' },
+      { ...unresolved('NASDAQ:MSFT'), seriesSymbol: 'NASDAQ:MSFT' },
+    ]);
+    const search = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:MSFT', 500), 1);
+
+    await expect(search.run()).resolves.toMatchObject({ symbol: 'NASDAQ:MSFT', confirmed: true });
   });
 });
 
@@ -221,6 +365,7 @@ describe('the interface strategies on their own', () => {
       symbol: 'NASDAQ:AAPL',
       previous: 'NASDAQ:AAPL',
       changed: false,
+      confirmed: true,
     });
     // Only the chart was read: nothing was looked up to act on.
     expect(asked).toEqual([readChartSnapshot]);

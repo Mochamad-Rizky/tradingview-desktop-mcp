@@ -12,7 +12,7 @@ import {
 import { SELECTORS, UNSAFE_SELECTORS } from '../../core/tv/selectors.js';
 import { runWithFallback, type Strategy } from '../../core/tv/tiers.js';
 import { pollUntil } from '../../utils/poll.js';
-import { sameResolution } from './mappers.js';
+import { sameResolution, sameSymbol } from './mappers.js';
 import {
   readChartLayout,
   readChartSnapshot,
@@ -44,6 +44,9 @@ const POLL_INTERVAL_MS = 100;
 const DIALOG_WAIT_MS = 3000;
 // A preset changes the range at once, or after the data of a new timeframe, which this allows for.
 const PRESET_WAIT_MS = 3000;
+// How long a symbol entered through the interface is at least given, once the chart shows it, to be
+// resolved or flagged as unknown, even when the switch itself took most of the wait.
+const SETTLE_MIN_MS = 1500;
 
 export function pageWaitMs(callTimeoutMs: number): number {
   return Math.max(callTimeoutMs - PAGE_ANSWER_MARGIN_MS, MIN_PAGE_WAIT_MS);
@@ -134,18 +137,24 @@ export function unknownSymbolPrevious(error: unknown, requested: string): string
     : undefined;
 }
 
-// Switches the chart back to the symbol it showed before an unknown one, and returns the error to
-// report: INVALID_INPUT with details.kept, the symbol the chart is back on, or, when switching back
-// failed too, details that say so with the code of that failure.
+// Switches the chart back to the symbol it showed before an unknown one, the same ways a symbol is
+// set (the chart API, then the interface), and returns the error to report: INVALID_INPUT with
+// details.kept, the symbol the chart is back on, or, when switching back failed too, details that
+// say so with the code of that failure.
 export async function revertUnknownSymbol(
   page: PageHandle,
   target: ChartTarget,
   requested: string,
   previous: string,
   waitMs: number,
+  logger: Logger,
 ): Promise<TvMcpError> {
+  let restored: SymbolChange;
   try {
-    await page.bridge.evaluate(setSymbolViaApi, [previous, target.index, waitMs]);
+    ({ value: restored } = await runWithFallback(
+      symbolStrategies(page, target, previous, waitMs),
+      logger,
+    ));
   } catch (error) {
     if (!isTvMcpError(error)) {
       throw error;
@@ -158,20 +167,27 @@ export async function revertUnknownSymbol(
       details: { requested, kept: null, previous, revertFailed: true, revertError: error.code },
     });
   }
+  // A switch back through the interface on a chart that cannot be read any more is not checked,
+  // and the hint says so.
+  const kept = restored.symbol ?? previous;
+  const unchecked = restored.symbol === null ? ', which could not be checked' : '';
   return new TvMcpError('INVALID_INPUT', `Unknown symbol ${requested}`, {
     hint:
-      `TradingView could not find ${requested}, so the chart was switched back to ${previous}. ` +
-      'Check the spelling, or use the EXCHANGE:SYMBOL form such as NASDAQ:AAPL.',
-    details: { requested, kept: previous },
+      `TradingView could not find ${requested}, so the chart was switched back to ${kept}` +
+      `${unchecked}. Check the spelling, or use the EXCHANGE:SYMBOL form such as NASDAQ:AAPL.`,
+    details: { requested, kept },
   });
 }
 
-// What a change of the symbol or the timeframe came to. All three are null when the change was made
+// What a change of the symbol or the timeframe came to. The values are null when the change was made
 // through the interface on a page whose chart API cannot be read, so that it could not be checked.
+// `confirmed` says whether TradingView confirmed the symbol: the chart API reports the data of a new
+// symbol as loaded, and through the interface the series has resolved it and holds bars for it.
 export interface SymbolChange {
   symbol: string | null;
   previous: string | null;
   changed: boolean | null;
+  confirmed: boolean;
 }
 
 export interface TimeframeChange {
@@ -310,9 +326,28 @@ async function waitForTextField(page: PageHandle, waitMs: number, failure: strin
   }
 }
 
-// After a symbol was entered through the interface: waits until the chart shows another symbol, or
-// the series flags the new one as unknown, which is reported as INVALID_INPUT like the chart API
-// reports it.
+// Whether the series has loaded the symbol the chart shows: the flag of an unknown symbol is down,
+// the symbol info of the series names the symbol, and the series holds bars.
+function loadedAs(now: Snapshot, shown: string): boolean {
+  return (
+    !now.symbolInvalid &&
+    now.symbol === shown &&
+    (now.barCount ?? 0) > 0 &&
+    now.seriesSymbol !== null &&
+    sameSymbol(now.seriesSymbol, shown)
+  );
+}
+
+// After a symbol was entered through the interface. The chart shows the new symbol at once, and only
+// afterwards does TradingView resolve it and load its data, or flag it as unknown, so the wait has
+// two parts. The first lasts until the chart shows another symbol, or flags the new one as unknown
+// while it keeps showing the old one. The second lasts until the series has loaded the new symbol
+// (loadedAs), or until the flag goes up, which is reported as INVALID_INPUT like the chart API
+// reports it, for the tool to switch the chart back. The second part takes what is left of the wait,
+// and at least SETTLE_MIN_MS, so that a switch seen at the last moment still gets the time to be
+// resolved. A symbol that is neither loaded nor flagged by then is reported as not confirmed. A flag
+// that was up before belongs to the symbol the chart showed then, so it says nothing about the new
+// one.
 async function confirmSymbol(
   page: PageHandle,
   target: ChartTarget,
@@ -322,22 +357,23 @@ async function confirmSymbol(
 ): Promise<SymbolChange> {
   const previous = before?.symbol ?? null;
   if (before === null || previous === null) {
-    return { symbol: null, previous: null, changed: null };
+    return { symbol: null, previous: null, changed: null, confirmed: false };
   }
+  const flagged = (now: Snapshot): boolean => now.symbolInvalid && !before.symbolInvalid;
   // A snapshot of null, a chart that cannot be read any more, ends the wait as well.
-  const { satisfied, last } = await pollUntil(
+  const switched = await pollUntil(
     () => snapshotOf(page, target),
-    (now) => now?.symbol !== previous || (now.symbolInvalid && !before.symbolInvalid),
+    (now) => now?.symbol !== previous || flagged(now),
     { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
   );
-  const shown = last?.symbol ?? null;
-  if (last === null || shown === null) {
-    return { symbol: null, previous: null, changed: null };
+  const shown = switched.last?.symbol ?? null;
+  if (switched.last === null || shown === null) {
+    return { symbol: null, previous: null, changed: null, confirmed: false };
   }
-  if (last.symbolInvalid && !before.symbolInvalid) {
+  if (flagged(switched.last)) {
     throw unknownSymbol(requested, previous);
   }
-  if (!satisfied) {
+  if (!switched.satisfied) {
     throw new TvMcpError(
       'TIMEOUT',
       `The chart still shows ${previous} after ${requested} was entered`,
@@ -349,7 +385,23 @@ async function confirmSymbol(
       },
     );
   }
-  return { symbol: shown, previous, changed: true };
+  const settled = await pollUntil(
+    () => snapshotOf(page, target),
+    (now) => now === null || flagged(now) || loadedAs(now, shown),
+    {
+      intervalMs: POLL_INTERVAL_MS,
+      timeoutMs: Math.max(waitMs - switched.waitedMs, SETTLE_MIN_MS),
+    },
+  );
+  if (settled.last !== null && flagged(settled.last)) {
+    throw unknownSymbol(requested, previous);
+  }
+  return {
+    symbol: shown,
+    previous,
+    changed: true,
+    confirmed: settled.last !== null && loadedAs(settled.last, shown),
+  };
 }
 
 // After a timeframe was chosen through the interface: waits until the chart shows another one.
@@ -396,7 +448,11 @@ export function symbolStrategies(
     {
       tier: 'api',
       name: 'chart api',
-      run: () => page.bridge.evaluate(setSymbolViaApi, [symbol, target.index, waitMs]),
+      // The chart API reports the data of the new symbol as loaded, which confirms it.
+      run: async () => ({
+        ...(await page.bridge.evaluate(setSymbolViaApi, [symbol, target.index, waitMs])),
+        confirmed: true,
+      }),
     },
     {
       tier: 'dom',
@@ -405,7 +461,12 @@ export function symbolStrategies(
         requireActiveChart(target, 'The symbol search');
         const before = await snapshotOf(page, target);
         if (showsSymbol(before, symbol)) {
-          return { symbol: before.symbol, previous: before.symbol, changed: false };
+          return {
+            symbol: before.symbol,
+            previous: before.symbol,
+            changed: false,
+            confirmed: true,
+          };
         }
         await requireClickable(page, SELECTORS.header.symbolSearch, 'The symbol search button');
         await requireNoTextField(page);
@@ -442,7 +503,12 @@ export function symbolStrategies(
         }
         const before = await snapshotOf(page, target);
         if (showsSymbol(before, symbol)) {
-          return { symbol: before.symbol, previous: before.symbol, changed: false };
+          return {
+            symbol: before.symbol,
+            previous: before.symbol,
+            changed: false,
+            confirmed: true,
+          };
         }
         await requireNoTextField(page);
         return begun('typing on the chart', async (stage) => {
