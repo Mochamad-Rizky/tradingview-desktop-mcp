@@ -100,6 +100,16 @@ test('chart_set_symbol tells that an unknown symbol is refused and the chart swi
   expect(descriptionOf(toolNamed('chart_set_symbol'), 'symbol')).toMatch(/NASDAQ:AAPL/);
 });
 
+test('chart_set_symbol and chart_set_timeframe tell when a change counts as none', () => {
+  const symbol = toolNamed('chart_set_symbol').description;
+  const timeframe = toolNamed('chart_set_timeframe').description;
+
+  expect(symbol).toMatch(/data feed/);
+  // TradingView loads a bare ticker of the symbol shown again, which ends where it started.
+  expect(symbol).toMatch(/bare ticker/);
+  expect(timeframe).toMatch(/keeps the timeframe it showed/);
+});
+
 test('chart_set_type offers every chart type by name', () => {
   const type = toolNamed('chart_set_type').inputSchema.type;
 

@@ -140,12 +140,14 @@ export const chartSetSymbol = defineTool({
     'Switches a chart to another symbol and waits until its data has loaded. Returns symbol (as ' +
     'TradingView names it, which can differ from the input: AAPL may become NASDAQ:AAPL, and a ' +
     'symbol can show through the exchange of its data feed, such as BATS:AAPL for NASDAQ:AAPL), ' +
-    'previous and changed (false when the chart showed the symbol already, in which case nothing ' +
-    'is done). A symbol TradingView does not know fails with INVALID_INPUT, and the chart is ' +
-    'switched back to the symbol it showed (error.details.kept); details say so if switching back ' +
-    'failed too. TIMEOUT when the data does not load within the call timeout. Uses the chart API, ' +
-    'and falls back to the symbol search dialog and to typing the symbol on the chart, which reach ' +
-    'the active chart only.',
+    'previous and changed, which is false when the chart shows the same symbol afterwards: when it ' +
+    'showed the symbol already, as itself or through its data feed, nothing is done, and a bare ' +
+    'ticker of the symbol shown (AAPL while NASDAQ:AAPL is shown) is loaded again by TradingView ' +
+    'and ends where it started. A symbol TradingView does not know fails with INVALID_INPUT, and ' +
+    'the chart is switched back to the symbol it showed (error.details.kept); details say so if ' +
+    'switching back failed too. TIMEOUT when the data does not load within the call timeout. Uses ' +
+    'the chart API, and falls back to the symbol search dialog and to typing the symbol on the ' +
+    'chart, which reach the active chart only.',
   inputSchema: {
     symbol: z
       .string()
@@ -233,7 +235,8 @@ export const chartSetTimeframe = defineTool({
     'Changes the timeframe (interval) of a chart and waits until its data has loaded. Takes ' +
     'TradingView resolutions and the usual aliases: 1h is 60, 1d is 1D, and lowercase m is minutes ' +
     'while uppercase M is months. Returns resolution (the TradingView resolution the chart shows), ' +
-    'previous and changed (false when the chart showed it already). A timeframe it cannot read ' +
+    'previous and changed (false when the chart showed it already, or keeps the timeframe it ' +
+    'showed because TradingView did not take the new one). A timeframe it cannot read ' +
     'fails with INVALID_INPUT, which lists the accepted forms; a warning says when the chart ' +
     'settles on another timeframe. TIMEOUT when the data does not load within the call timeout, ' +
     'which can also mean that the plan does not offer the timeframe. Uses the chart API, and falls ' +
