@@ -47,7 +47,9 @@ const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 // /mcp, /mcp/ and /mcp/<token>, for connector UIs that cannot send headers. A token that holds a
 // reserved character comes percent-encoded as one segment.
 const MCP_ROUTE = /^\/mcp(?:\/([^/]+))?\/?$/;
-const TOKEN_PATH = /^\/mcp\/[^/]+/;
+// Everything after /mcp/ can be a token, or a part of one that holds a slash.
+const MCP_SUBPATH = /^\/mcp\/./;
+const REDACTED = '<redacted>';
 const REDACTED_PATH = '/mcp/<redacted>';
 const MCP_METHODS = ['GET', 'POST', 'DELETE'];
 const HEALTH_METHODS = ['GET', 'HEAD'];
@@ -85,6 +87,18 @@ function sendJson(
 // Refusals of the MCP protocol itself take the JSON-RPC shape the SDK uses for its own.
 function sendRpcError(res: ServerResponse, status: number, code: number, message: string): void {
   sendJson(res, status, { jsonrpc: '2.0', error: { code, message }, id: null });
+}
+
+// Each run of percent-escapes is decoded on its own, so one malformed escape cannot keep the rest
+// of the text from being read.
+function decodeEscapes(text: string): string {
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (escapes) => {
+    try {
+      return decodeURIComponent(escapes);
+    } catch {
+      return escapes;
+    }
+  });
 }
 
 // null for a malformed escape, which no token can match.
@@ -163,9 +177,18 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   // Known once the port is bound, which is before the first request.
   let allowedHosts: string[] = [];
 
-  // A path can carry the token, and a wrong one can be the real one with a typo.
-  const redact = (text: string): string =>
-    text.replace(TOKEN_PATH, REDACTED_PATH).replaceAll(token, '<redacted>');
+  // What a client sends can carry the token: under /mcp/ whole, cut by a slash it holds, or with a
+  // typo; anywhere as it is or percent-encoded in any form. No part of it may reach a log.
+  const redact = (text: string): string => {
+    if (MCP_SUBPATH.test(text)) {
+      return REDACTED_PATH;
+    }
+    const decoded = decodeEscapes(text);
+    if (decoded !== text && decoded.includes(token)) {
+      return REDACTED;
+    }
+    return text.replaceAll(token, REDACTED);
+  };
 
   const refuse = (
     req: IncomingMessage,

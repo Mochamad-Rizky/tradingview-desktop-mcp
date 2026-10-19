@@ -489,6 +489,40 @@ test('logs never contain the token', async () => {
   expect(lines).toContainEqual(expect.objectContaining({ path: '/mcp/<redacted>' }));
 });
 
+// A token may hold a slash, and a client may send it as it is or percent-encoded in any case.
+const SLASHED_TOKEN = 'Sekrit1/Sekrit2/Sekrit3';
+const TOKEN_PARTS = ['Sekrit1', 'Sekrit2', 'Sekrit3'];
+const foreignHost = (port: number) => ({ Host: `evil.example:${String(port)}` });
+const foreignOrigin = () => ({ Origin: 'https://evil.example' });
+const noHeaders = () => ({});
+
+test.each<[string, string, (port: number) => Record<string, string>, number]>([
+  ['a refused Host', '/mcp/Sekrit1/Sekrit2/Sekrit3', foreignHost, 403],
+  ['a refused Origin', '/mcp/Sekrit1/Sekrit2/Sekrit3', foreignOrigin, 403],
+  ['an unknown path under /mcp', '/mcp/Sekrit1/Sekrit2/Sekrit3', noHeaders, 404],
+  // Not the whole token, so only cutting everything after /mcp/ keeps its parts out.
+  ['a truncated token under /mcp', '/mcp/Sekrit1/Sekrit2', noHeaders, 404],
+  ['an unknown path elsewhere', '/x/Sekrit1/Sekrit2/Sekrit3', noHeaders, 404],
+  ['a refused Host, encoded', '/mcp/Sekrit1%2FSekrit2%2FSekrit3', foreignHost, 403],
+  ['a refused Origin, encoded', '/mcp/Sekrit1%2FSekrit2%2FSekrit3', foreignOrigin, 403],
+  ['an unknown path, encoded in lower case', '/x/Sekrit1%2fSekrit2%2fSekrit3', noHeaders, 404],
+])(
+  'no part of a token with a slash reaches the logs, for %s',
+  async (_case, path, headers, status) => {
+    const { handle, lines } = await start({ authToken: SLASHED_TOKEN });
+
+    const response = await send(handle.port, { path, headers: headers(handle.port) });
+
+    expect(response.status).toBe(status);
+    // The request was logged, so the check below is not vacuous.
+    await expect.poll(() => lines.some((line) => 'path' in line)).toBe(true);
+    const logged = JSON.stringify(lines);
+    for (const part of TOKEN_PARTS) {
+      expect(logged).not.toContain(part);
+    }
+  },
+);
+
 test('an unexpected failure is answered with 500, logged, and does not stop the server', async () => {
   const { logger, lines } = capturingLogger();
   const handle = await startHttpTransport({
