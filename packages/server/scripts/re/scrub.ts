@@ -397,11 +397,16 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
         'scrubFixture first.',
     );
   }
+  // A recording holds no older history, quote caches or search results, so the fixture gets none:
+  // the history ends at the recorded bars, and the caches and the search are empty.
   return parseTvStateFixture({
     ...scrubbed,
     knownSymbols: KNOWN_SYMBOLS,
     planLimits: {},
     bars: spec,
+    history: { totalBars: rows.length, endOfDataType: 'end' },
+    quoteCache: { fields: {}, full: {}, watchlist: {} },
+    search: { remaining: 0, symbols: [] },
   });
 }
 

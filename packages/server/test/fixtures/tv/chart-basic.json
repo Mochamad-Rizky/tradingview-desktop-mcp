@@ -99,5 +99,125 @@
     "currency_code": "USD"
   },
   "planLimits": { "INDICATORS_ON_CHART": 2, "SAVED_PINE_SCRIPTS": 1, "WATCHLIST_SYMBOLS": 30 },
-  "bars": { "count": 300, "startTime": 1704153600, "stepSeconds": 86400, "seed": 42 }
+  "bars": { "count": 300, "startTime": 1704153600, "stepSeconds": 86400, "seed": 42 },
+  "history": { "totalBars": 300, "endOfDataType": "end" },
+  "quoteCache": {
+    "fields": {
+      "NASDAQ:MSFT": {
+        "last_price": 211.37,
+        "change": 1.12,
+        "change_percent": 0.53,
+        "bid": 211.36,
+        "ask": 211.38,
+        "bid_size": 300,
+        "ask_size": 100,
+        "open_price": 210.25,
+        "high_price": 212.04,
+        "low_price": 209.88,
+        "prev_close_price": 210.25,
+        "volume": 1520400,
+        "lp_time": 1729987200,
+        "currency_code": "USD",
+        "description": "Microsoft Corporation"
+      },
+      "NASDAQ:NVDA": {}
+    },
+    "full": {
+      "NYSE:IBM": {
+        "last_price": 57.81,
+        "change": -0.42,
+        "change_percent": -0.72,
+        "volume": 802100,
+        "lp_time": 1729987140,
+        "currency_code": "USD"
+      }
+    },
+    "watchlist": {
+      "FX:EURUSD": {
+        "last_price": 1.0731,
+        "bid": 1.073,
+        "ask": 1.0732,
+        "lp_time": 1729987195,
+        "currency_code": "USD"
+      }
+    }
+  },
+  "search": {
+    "remaining": 37,
+    "symbols": [
+      {
+        "symbol": "<em>AAPL</em>",
+        "description": "<em>Apple</em> Inc.",
+        "exchange": "NASDAQ",
+        "type": "stock",
+        "typespecs": ["common"],
+        "currency_code": "USD",
+        "country": "US"
+      },
+      {
+        "symbol": "<em>AAPL</em>",
+        "description": "<em>Apple</em> Inc.",
+        "exchange": "Cboe BZX",
+        "prefix": "BATS",
+        "type": "stock",
+        "typespecs": ["common"],
+        "currency_code": "USD",
+        "country": "US"
+      },
+      {
+        "symbol": "<em>AAPL</em>34",
+        "description": "<em>Apple</em> Inc. DRN",
+        "exchange": "BMFBOVESPA",
+        "type": "dr",
+        "typespecs": [],
+        "currency_code": "BRL",
+        "country": "BR"
+      },
+      {
+        "symbol": "MSFT",
+        "description": "Microsoft Corporation",
+        "exchange": "NASDAQ",
+        "type": "stock",
+        "typespecs": ["common"],
+        "currency_code": "USD",
+        "country": "US"
+      },
+      {
+        "symbol": "IBM",
+        "description": "International Business Machines Corporation",
+        "exchange": "NYSE",
+        "type": "stock",
+        "typespecs": ["common"],
+        "currency_code": "USD",
+        "country": "US"
+      },
+      {
+        "symbol": "BTCUSDT",
+        "description": "Bitcoin / TetherUS",
+        "exchange": "BINANCE",
+        "type": "spot",
+        "typespecs": ["crypto"],
+        "currency_code": "USDT"
+      },
+      {
+        "symbol": "EURUSD",
+        "description": "Euro / U.S. Dollar",
+        "exchange": "FX",
+        "type": "forex",
+        "typespecs": [],
+        "currency_code": "USD"
+      },
+      {
+        "symbol": "ES",
+        "description": "E-mini S&P 500 Futures",
+        "exchange": "CME_MINI",
+        "type": "futures",
+        "typespecs": [],
+        "currency_code": "USD",
+        "contracts": [
+          { "symbol": "ES1!", "description": "E-mini S&P 500 Futures", "type": "futures" }
+        ]
+      }
+    ]
+  }
 }

@@ -25,6 +25,22 @@ export interface TvStateFixture {
   planLimits: Record<string, number>;
   // Not stored as bars: syntheticBars() expands this spec, so fixtures hold no price data.
   bars: { count: number; startTime: number; stepSeconds: number; seed: number };
+  // How far back the history of the symbol reaches: totalBars counts the loaded bars together with
+  // the older ones requestMoreData can still load (history.ts), and endOfDataType is what the
+  // series reports once no more can be loaded ("end" when the first bar of the symbol was reached).
+  history: { totalBars: number; endOfDataType: string };
+  // The quotes the caches of the app hold for symbols the chart does not show, by symbol, as their
+  // values (quotes.ts): fields is the shared quote field cache (QUOTE_FIELDS_CACHE), full the
+  // "full" quote session, watchlist the cache of the watchlist widget. Empty values stand for an
+  // entry whose status is "error". Prices are synthetic.
+  quoteCache: {
+    fields: Record<string, Record<string, JsonValue>>;
+    full: Record<string, Record<string, JsonValue>>;
+    watchlist: Record<string, Record<string, JsonValue>>;
+  };
+  // What the symbol search of the app answers: the items, written with the <em> highlight markup
+  // the search can put in symbol and description, and the count it says it has not returned yet.
+  search: { remaining: number; symbols: Record<string, JsonValue>[] };
 }
 
 // Strict, so a field a recording adds but this interface lacks fails loudly instead of being
@@ -55,6 +71,16 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
     startTime: z.number(),
     stepSeconds: z.number(),
     seed: z.number(),
+  }),
+  history: z.strictObject({ totalBars: z.number(), endOfDataType: z.string() }),
+  quoteCache: z.strictObject({
+    fields: z.record(z.string(), z.record(z.string(), z.json())),
+    full: z.record(z.string(), z.record(z.string(), z.json())),
+    watchlist: z.record(z.string(), z.record(z.string(), z.json())),
+  }),
+  search: z.strictObject({
+    remaining: z.number(),
+    symbols: z.array(z.record(z.string(), z.json())),
   }),
 });
 

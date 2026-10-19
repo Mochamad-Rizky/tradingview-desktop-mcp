@@ -264,7 +264,11 @@ describe('createFakeTvWindow', () => {
       throw new Error('A booted fake series has symbol info');
     }
     info.name = 'changed';
-    seriesOf(win).quotes().last_price = 0;
+    const quote = seriesOf(win).quotes();
+    if (quote === null) {
+      throw new Error('A booted fake series has a quote');
+    }
+    quote.last_price = 0;
 
     expect(chart.getAllStudies()).toHaveLength(2);
     expect(chart.getAllShapes()).toHaveLength(3);
@@ -708,7 +712,7 @@ describe('createFakeTvWindow', () => {
       expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
     });
 
-    test('puts the plan feature modules of the fixture in the webpack cache by default', () => {
+    test('puts the plan feature and quote cache modules of the fixture in the webpack cache by default', () => {
       const win = createFakeTvWindow(fixture);
       let handed: FakeWebpackRequire | undefined;
 
@@ -721,9 +725,13 @@ describe('createFakeTvWindow', () => {
       const exports = Object.values(handed?.c ?? {}).map((record) =>
         Object.keys(record.exports as object).sort(),
       );
+      // In the order of the module IDs, which are integer keys.
       expect(exports).toEqual([
         ['ProductFeatures', 'ProductFeaturesEnum', 'UNLIMITED_FEATURE_LIMIT'],
+        ['quoteSessionAdapters'],
+        ['QUOTE_FIELDS_CACHE', 'snapshoter'],
         ['canUpgradePlan', 'enabled', 'getConfig', 'getProductFeaturesConfig'],
+        ['getQuoteSessionInstance', 'getQuoteSessionNoEnsure'],
       ]);
     });
 
@@ -836,4 +844,223 @@ describe('createFakeTvWindow', () => {
       expect(result).toBe('NASDAQ:MSFT');
     });
   });
+});
+
+describe('history, quote caches and symbol search', () => {
+  const fixture = loadTvFixture();
+  const withHistory = (totalBars: number, endOfDataType = 'end'): TvStateFixture => ({
+    ...fixture,
+    history: { totalBars, endOfDataType },
+  });
+
+  // The exports of the default webpack cache, by name.
+  function exportsOf(win: FakeTvWindow): Record<string, unknown> {
+    let handed: FakeWebpackRequire | undefined;
+    (win.webpackChunktradingview as { push(chunk: unknown): unknown }).push([
+      ['probe'],
+      {},
+      (given: FakeWebpackRequire) => (handed = given),
+    ]);
+    const found: Record<string, unknown> = {};
+    for (const record of Object.values(handed?.c ?? {})) {
+      Object.assign(found, record.exports);
+    }
+    return found;
+  }
+
+  test('requestMoreData loads older bars in front after the load time, up to the history', async () => {
+    const win = createFakeTvWindow(withHistory(450));
+    const series = seriesOf(win);
+    const firstBefore = series.bars().valueAt(0);
+
+    series.requestMoreData(100);
+
+    expect([series.isLoading(), series.requestMoreDataAvailable(), series.status()]).toEqual([
+      true,
+      false,
+      2,
+    ]);
+    expect(series.bars().size()).toBe(300);
+    await delay(30);
+    expect([series.isLoading(), series.requestMoreDataAvailable(), series.status()]).toEqual([
+      false,
+      true,
+      3,
+    ]);
+    expect(series.bars().size()).toBe(400);
+    expect(series.bars().valueAt(100)).toEqual(firstBefore);
+    expect(series.bars().valueAt(0)?.[0]).toBe(fixture.bars.startTime - 100 * DAY);
+    expect([series.endOfData(), series.endOfDataType()]).toEqual([false, null]);
+
+    series.requestMoreData(100);
+    await delay(30);
+
+    // Only 50 older bars were left: the end of the data, with bars still added.
+    expect(series.bars().size()).toBe(450);
+    expect([series.endOfData(), series.endOfDataType()]).toEqual([true, 'end']);
+    expect(inspectFakeWindow(win).callsTo('series.requestMoreData')).toEqual([[100], [100]]);
+  });
+
+  test('a request that finds no older bar ends the data and leaves requests unavailable', async () => {
+    const series = seriesOf(createFakeTvWindow(withHistory(300, 'limit')));
+
+    expect(series.endOfData()).toBe(false);
+    series.requestMoreData(5000);
+    await delay(30);
+
+    expect(series.bars().size()).toBe(300);
+    expect([series.endOfData(), series.endOfDataType()]).toEqual([true, 'limit']);
+    expect([series.isLoading(), series.requestMoreDataAvailable()]).toEqual([false, false]);
+  });
+
+  test.each([
+    ['without a count', undefined],
+    ['with a count of zero', 0],
+  ])('requestMoreData does nothing %s', (_case, count) => {
+    const series = seriesOf(createFakeTvWindow(withHistory(450)));
+
+    series.requestMoreData(count);
+
+    expect([series.isLoading(), series.requestMoreDataAvailable()]).toEqual([false, true]);
+  });
+
+  test('requestMoreData does nothing while a request runs or the symbol is unknown', async () => {
+    const win = createFakeTvWindow(withHistory(450), { historyLoadMs: 20 });
+    const series = seriesOf(win);
+
+    series.requestMoreData(10);
+    series.requestMoreData(10);
+    await delay(40);
+    expect(series.bars().size()).toBe(310);
+
+    await chartOf(win).setSymbol('NASDAQ:NOPE');
+    series.requestMoreData(10);
+    expect(series.isLoading()).toBe(false);
+    expect(series.quotes()).toBeNull();
+  });
+
+  test('the time scale follows the bars that history loading adds', async () => {
+    const win = createFakeTvWindow(withHistory(400));
+    seriesOf(win).requestMoreData(100);
+    await delay(30);
+
+    expect(timeScaleOf(win).points().range().value()).toEqual({ firstIndex: 0, lastIndex: 399 });
+    expect(chartOf(win)._convertIndexToPublicTime(0)).toBe(fixture.bars.startTime - 100 * DAY);
+  });
+
+  test('the quote field cache answers its entries, an empty one as an error', () => {
+    const cache = exportsOf(createFakeTvWindow(fixture)).QUOTE_FIELDS_CACHE as {
+      get(symbol: string): unknown;
+      getTimes(symbol: string): Map<string, number> | null;
+      fields(): string[];
+    };
+
+    expect(cache.get('NASDAQ:MSFT')).toEqual({
+      symbolname: 'NASDAQ:MSFT',
+      status: 'ok',
+      values: fixture.quoteCache.fields['NASDAQ:MSFT'],
+    });
+    expect(cache.get('NASDAQ:NVDA')).toEqual({
+      symbolname: 'NASDAQ:NVDA',
+      status: 'error',
+      values: {},
+    });
+    expect(cache.get('NYSE:IBM')).toBeNull();
+    expect(cache.getTimes('NASDAQ:MSFT')?.has('last_price')).toBe(true);
+    expect(cache.getTimes('NYSE:IBM')).toBeNull();
+    expect(cache.fields()).toContain('last_price');
+  });
+
+  test('the full quote session and the watchlist cache hold their entries', () => {
+    const exports = exportsOf(createFakeTvWindow(fixture));
+    const noEnsure = exports.getQuoteSessionNoEnsure as (type?: string) => {
+      internals(): { data(): Record<string, { values: unknown; subscribers_count: number }> };
+    } | null;
+    const adapters = exports.quoteSessionAdapters as {
+      _lastSymbolData: Map<string, { values: unknown }>;
+    };
+
+    expect(noEnsure()?.internals().data()['NYSE:IBM']).toMatchObject({
+      symbolname: 'NYSE:IBM',
+      status: 'ok',
+      subscribers_count: 1,
+      values: fixture.quoteCache.full['NYSE:IBM'],
+    });
+    expect(noEnsure('watchlist')).toBeUndefined();
+    expect(adapters._lastSymbolData.get('FX:EURUSD')?.values).toEqual(
+      fixture.quoteCache.watchlist['FX:EURUSD'],
+    );
+  });
+
+  test('the members that would create a quote session or send a request record their calls', async () => {
+    const win = createFakeTvWindow(fixture);
+    const exports = exportsOf(win);
+    const session = (
+      exports.getQuoteSessionInstance as (type?: string) => {
+        snapshot(symbol: string): Promise<unknown>;
+        subscribe(...args: unknown[]): void;
+      }
+    )();
+
+    session.subscribe('client', ['NYSE:IBM']);
+    await expect(session.snapshot('NYSE:IBM')).rejects.toThrow(/not received/);
+    (exports.snapshoter as () => unknown)();
+    (exports.quoteSessionAdapters as { get(id: string, type: string): unknown }).get('w', 'full');
+
+    expect(inspectFakeWindow(win).calls.map(({ name }) => name)).toEqual([
+      'getQuoteSessionInstance',
+      'quoteSession.subscribe',
+      'quoteSession.snapshot',
+      'snapshoter',
+      'quoteSessionAdapters.get',
+    ]);
+  });
+
+  test('searchSymbols keeps the items that match, with their markup, and records the call', async () => {
+    const win = createFakeTvWindow(fixture);
+
+    const response = await apiOf(win).searchSymbols({ text: 'aapl', serverHighlight: false });
+
+    expect(response.symbols.map((item) => item.exchange)).toEqual([
+      'NASDAQ',
+      'Cboe BZX',
+      'BMFBOVESPA',
+    ]);
+    expect(response.symbols[0]?.symbol).toBe('<em>AAPL</em>');
+    expect(response.symbols_remaining).toBe(37);
+    expect(inspectFakeWindow(win).callsTo('TradingViewApi.searchSymbols')).toEqual([
+      [{ text: 'aapl', serverHighlight: false }],
+    ]);
+  });
+
+  test('searchSymbols filters by exchange or prefix and by type', async () => {
+    const api = apiOf(createFakeTvWindow(fixture));
+
+    const bats = await api.searchSymbols({ text: 'AAPL', exchange: 'BATS' });
+    const crypto = await api.searchSymbols({ text: '', type: 'bitcoin,crypto' });
+
+    expect(bats.symbols.map((item) => item.exchange)).toEqual(['Cboe BZX']);
+    expect(crypto.symbols.map((item) => item.symbol)).toEqual(['BTCUSDT']);
+  });
+
+  test('searchSymbols rejects a type the app does not know, as the app does', async () => {
+    await expect(
+      apiOf(createFakeTvWindow(fixture)).searchSymbols({ text: 'x', type: 'crypto' }),
+    ).rejects.toThrow('Value is undefined');
+  });
+});
+
+test('a request brings at most historyBatchBars bars', async () => {
+  const fixture = loadTvFixture();
+  const win = createFakeTvWindow(
+    { ...fixture, history: { totalBars: 1000, endOfDataType: 'end' } },
+    { historyBatchBars: 50 },
+  );
+  const series = seriesOf(win);
+
+  series.requestMoreData(500);
+  await delay(30);
+
+  expect(series.bars().size()).toBe(350);
+  expect(series.requestMoreDataAvailable()).toBe(true);
 });

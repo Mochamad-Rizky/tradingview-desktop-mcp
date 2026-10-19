@@ -61,6 +61,30 @@ export interface TradingViewApiLike {
   // code can only check that they are there.
   replayApi?(): Promise<unknown>;
   pineEditorApi?(): unknown;
+  // The symbol search of the app, the request its search dialog sends (an HTTP GET to the symbol
+  // search service; no data session is involved). It rejects for a type it does not know and for
+  // an answer that is not 2xx.
+  searchSymbols?(options: SymbolSearchOptionsLike): Promise<SymbolSearchResponseLike>;
+}
+
+// The options of searchSymbols that page code passes. The app knows more (paging, language, broker
+// filters), which the server leaves out. type is one of "", stocks, funds, futures, forex, cfd,
+// "bitcoin,crypto", index, bond, economic and options. serverHighlight false asks for no markup;
+// the dialog itself asks for <em> highlights in symbol and description.
+export interface SymbolSearchOptionsLike {
+  text: string;
+  exchange?: string;
+  type?: string;
+  serverHighlight: boolean;
+}
+
+// What searchSymbols resolves with. The items were read from the consumers in the dialog, never
+// observed (calling it sends a request), so they are typed loosely: symbol, description, exchange,
+// prefix, type, typespecs, currency_code, country, full_name, and contracts for a futures root.
+// symbols_remaining counts the results not returned yet.
+export interface SymbolSearchResponseLike {
+  symbols?: unknown;
+  symbols_remaining?: unknown;
 }
 
 // The API of one chart, from activeChart() or chart(index) (notes, section 4.3).
@@ -121,14 +145,30 @@ export interface SeriesLike {
   // and isin. Null from the moment a symbol is set until it is resolved, and for good when it
   // cannot be (seen on the app).
   symbolInfo(): Record<string, unknown> | null;
-  // The live quote: last_price, bid, ask, bid_size, ask_size, change, change_percent, low_price,
-  // lp_time, currency_code and fundamentals.
-  quotes(): Record<string, unknown>;
+  // The live quote: last_price, change, change_percent, bid, ask, bid_size, ask_size, open_price,
+  // high_price, low_price, prev_close_price, volume, lp_time (Unix seconds), currency_code and
+  // about a thousand fundamentals. It is the live object the app merges updates into, so page code
+  // copies fields out of it. The wire names lp, ch and chp never appear: the app renames them
+  // before it keeps a quote. Null while the series has no data.
+  quotes(): Record<string, unknown> | null;
   // Whether the symbol the series was given could not be resolved, in which case dataReady does not
   // run: the series status is InvalidSymbol (seen on the app). It turns true about 150 ms after
   // setSymbol is given an unknown symbol, while symbol() keeps the text as set and symbolInfo()
   // stays null.
   isSymbolInvalid(): boolean;
+  // Older history. requestMoreData asks for `count` more bars
+  // before the first one and returns at once; it does nothing unless the series is ready, has bars
+  // laid out on the chart and requestMoreDataAvailable() is true. A request that is sent makes
+  // requestMoreDataAvailable() false and isLoading() true at once; the bars arrive at the front,
+  // which makes it true again, and isLoading() turns false. A request that brings no bar leaves it
+  // false for good. endOfData() tells that no more history comes, and endOfDataType() why: "end"
+  // when the first bar of the symbol was reached, another text (not observed) for the history
+  // limit of the plan, null before the end.
+  requestMoreData(count?: number): void;
+  requestMoreDataAvailable(): boolean;
+  endOfData(): boolean;
+  endOfDataType(): string | null;
+  isLoading(): boolean;
 }
 
 // mainSeries().bars(): the loaded bars, oldest first. The real container also has search(),
@@ -211,6 +251,40 @@ export interface WebpackRequireLike {
 // binding behind it.
 export interface WebpackModuleLike {
   readonly exports?: unknown;
+}
+
+// The quote caches of the app, which page code reads by the names of their webpack exports (section
+// 4.7). None of the reads below creates a session or sends a request; the
+// members next to them that would (getQuoteSessionInstance, snapshoter, quoteSessionAdapters.get,
+// and the snapshot and subscribe of a session) are left out on purpose.
+//
+// An entry of a cache. values holds only the fields the app has received, and is empty for an
+// entry whose status is "error".
+export interface QuoteEntryLike {
+  symbolname?: unknown;
+  status?: unknown;
+  values?: unknown;
+}
+
+// The export QUOTE_FIELDS_CACHE, which every quote session of the app feeds. It is keyed by the
+// symbol as the app subscribed it: EXCHANGE:TICKER, or an encoded ={...} form.
+export interface QuoteFieldsCacheLike {
+  get(symbol: string): QuoteEntryLike | null;
+}
+
+// What the export getQuoteSessionNoEnsure answers for a session type such as "full": the session
+// when the app created it, else undefined. data() maps a symbol to its entry.
+export interface QuoteSessionLike {
+  internals(): { data(): Record<string, QuoteEntryLike | undefined> };
+}
+
+// The export quoteSessionAdapters: only its cache of the watchlist widget, a Map from a symbol to
+// its entry. Its own get(clientId, type) creates an adapter.
+export interface QuoteSessionAdaptersLike {
+  readonly _lastSymbolData?: {
+    has(symbol: string): boolean;
+    get(symbol: string): QuoteEntryLike | undefined;
+  };
 }
 
 // window.TVD. Only reloadTab, a last-resort recovery step, is described. The object also carries

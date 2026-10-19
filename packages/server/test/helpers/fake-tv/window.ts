@@ -1,7 +1,10 @@
 import type { JsonValue } from '../../../src/utils/json.js';
 import type { TvStateFixture } from './fixture.js';
-import { syntheticBars, type SyntheticBar } from './synthetic-bars.js';
+import { createFakeHistory } from './history.js';
 import { createPlanLimitModules } from './plan-limits.js';
+import { createQuoteModules } from './quotes.js';
+import { createFakeSearch, type FakeSearchOptions, type FakeSearchResponse } from './search.js';
+import type { SyntheticBar } from './synthetic-bars.js';
 import { createFakeWebpack } from './webpack.js';
 
 // A stand-in for the window of a TradingView chart tab, built from a TvStateFixture. It models
@@ -15,12 +18,16 @@ import { createFakeWebpack } from './webpack.js';
 // symbolInfo() and quotes() describe the fixture symbol, apart from the names in the symbol info,
 // which follow the symbol the chart shows. The fake does not model
 // per-symbol data, and bars() deliberately lacks search(), range() and each(), because their
-// behavior is unverified on the real app and the server must not depend on them.
+// behavior is unverified on the real app and the server must not depend on them. The one change
+// to the bars is older history, which requestMoreData loads up to the history of the fixture
+// (history.ts). quotes() is null while the series has no data, as for an unknown symbol.
 //
 // The webpack chunk list is the one of the fake runtime of webpack.ts. Its cache holds the two
-// modules of the plan features, driven by the planLimits of the fixture (plan-limits.ts), unless
-// the webpackModules option puts other modules there. A plain empty list, as before the webpack
-// runtime has loaded, is what withoutWebpackRuntime asks for.
+// modules of the plan features, driven by the planLimits of the fixture (plan-limits.ts), and the
+// three modules of the quote caches, driven by its quoteCache (quotes.ts), unless the
+// webpackModules option puts other modules there. A plain empty list, as before the webpack
+// runtime has loaded, is what withoutWebpackRuntime asks for. TradingViewApi.searchSymbols answers
+// from the search items of the fixture (search.ts).
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -60,6 +67,10 @@ export interface FakeTvOverrides {
   // A plain empty chunk list, where a push hands nothing back, as before the webpack runtime has
   // loaded. Wins over webpackModules.
   withoutWebpackRuntime?: boolean;
+  // How long a requestMoreData call takes to bring its bars. Default 10 ms.
+  historyLoadMs?: number;
+  // The most bars one requestMoreData call brings. Default: as many as were asked for.
+  historyBatchBars?: number;
 }
 
 export interface FakeBars {
@@ -81,8 +92,14 @@ export interface FakeTimeScale {
 export interface FakeMainSeries {
   bars(): FakeBars;
   symbolInfo(): Record<string, JsonValue> | null;
-  quotes(): Record<string, JsonValue>;
+  quotes(): Record<string, JsonValue> | null;
   isSymbolInvalid(): boolean;
+  requestMoreData(count?: number): void;
+  requestMoreDataAvailable(): boolean;
+  endOfData(): boolean;
+  endOfDataType(): string | null;
+  isLoading(): boolean;
+  status(): number;
 }
 
 export interface FakeSetOptions {
@@ -119,6 +136,7 @@ export interface FakeTradingViewApi {
   layoutId(): string;
   isConnected(): boolean;
   getIntervals(): string[];
+  searchSymbols(options: FakeSearchOptions): Promise<FakeSearchResponse>;
 }
 
 export interface FakeLocation {
@@ -143,8 +161,11 @@ export interface FakeTvWindow {
 
 // One mutating call, by the dotted name of the member: TradingViewApi.setActiveChart,
 // chart.setSymbol, chart.setResolution, chart.setChartType, chart.setVisibleRange,
-// timeScale.zoomToBarsRange, timeScale.scrollToBar and TVD.reloadTab. A call is recorded
-// before it is validated, so refused and throwing calls show up too. Reads are not recorded.
+// timeScale.zoomToBarsRange, timeScale.scrollToBar, series.requestMoreData and TVD.reloadTab.
+// Calls that send a request are recorded too: TradingViewApi.searchSymbols, and the members of
+// the quote modules that would create a quote session or send a request (quotes.ts). A call is
+// recorded before it is validated, so refused and throwing calls show up too. Reads are not
+// recorded.
 export interface FakeCall {
   readonly name: string;
   readonly args: readonly unknown[];
@@ -203,27 +224,11 @@ export function createFakeTvWindow(
   fixture: TvStateFixture,
   overrides: FakeTvOverrides = {},
 ): FakeTvWindow {
-  const bars = syntheticBars(fixture.bars);
-  const times = bars.map((bar) => bar[0]);
   const feeds = new Map(Object.entries(overrides.feeds ?? {}));
   // The listing a symbol the chart shows stands for: the symbol whose feed it is, or itself.
   const listingOf = (shown: string): string =>
     [...feeds].find(([, feed]) => feed === shown)?.[0] ?? shown;
   const offset = overrides.sessionOffsetSeconds ?? 0;
-  const lastTime = times.at(-1);
-  // The times of the time points: the bars, then the points after the last one.
-  const pointTimes =
-    lastTime === undefined
-      ? []
-      : [
-          ...times,
-          ...Array.from(
-            { length: overrides.futurePoints ?? 0 },
-            (_, index) => lastTime + (index + 1) * fixture.bars.stepSeconds,
-          ),
-        ];
-  // The times the chart reports for the time points: getVisibleRange speaks in these.
-  const publicTimes = pointTimes.map((time) => time - offset);
   const knownSymbols = new Set([
     ...fixture.knownSymbols,
     ...(overrides.feeds ? Object.values(overrides.feeds) : []),
@@ -246,6 +251,31 @@ export function createFakeTvWindow(
   const record = (name: string, args: readonly unknown[]): void => {
     calls.push({ name, args });
   };
+
+  // The bars of the series, which grow at the front as older history loads. A request needs bars
+  // to load in front of.
+  const history = createFakeHistory(fixture, {
+    loadMs: overrides.historyLoadMs ?? 10,
+    batchBars: overrides.historyBatchBars ?? Infinity,
+    canRequest: () => !state.symbolInvalid,
+    record,
+  });
+  // The times of the time points: the bars, then the points after the last one.
+  const pointTimes = (): number[] => {
+    const times = history.bars().map((bar) => bar[0]);
+    const lastTime = times.at(-1);
+    return lastTime === undefined
+      ? []
+      : [
+          ...times,
+          ...Array.from(
+            { length: overrides.futurePoints ?? 0 },
+            (_, index) => lastTime + (index + 1) * fixture.bars.stepSeconds,
+          ),
+        ];
+  };
+  // The times the chart reports for the time points: getVisibleRange speaks in these.
+  const publicTimes = (): number[] => pointTimes().map((time) => time - offset);
 
   // setSymbol and setResolution make their chart the active one unless told not to, as the app
   // does. The fake has one chart, at index 0.
@@ -295,15 +325,15 @@ export function createFakeTvWindow(
   };
 
   // The bars a page sees: none while the series is flagged for an unknown symbol.
-  const loaded = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : bars);
+  const loaded = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : history.bars());
   // The time points a page sees, which go with the bars.
-  const points = (): readonly number[] => (loaded().length === 0 ? [] : publicTimes);
+  const points = (): readonly number[] => (loaded().length === 0 ? [] : publicTimes());
 
   // What timePointToIndex answers on the app, for a time in the time base of the rows: the index of
   // the first time point at or after the time, the last point for a time after every point, and
   // null when there are no points or the time is not a number.
   const firstPointAtOrAfter = (time: number): number | null => {
-    const internal = loaded().length === 0 ? [] : pointTimes;
+    const internal = loaded().length === 0 ? [] : pointTimes();
     if (internal.length === 0 || Number.isNaN(time)) {
       return null;
     }
@@ -317,8 +347,9 @@ export function createFakeTvWindow(
     if (Number.isNaN(index)) {
       throw new RangeError('Bar index must be a number');
     }
-    const clamped = Math.min(Math.max(Math.round(index), 0), publicTimes.length - 1);
-    return publicTimes[clamped] ?? Number.NaN;
+    const times = publicTimes();
+    const clamped = Math.min(Math.max(Math.round(index), 0), times.length - 1);
+    return times[clamped] ?? Number.NaN;
   };
 
   const barContainer: FakeBars = {
@@ -374,8 +405,16 @@ export function createFakeTvWindow(
         pro_name: listing,
       };
     },
-    quotes: () => structuredClone(fixture.quote),
+    quotes: () => (state.symbolInvalid ? null : structuredClone(fixture.quote)),
     isSymbolInvalid: () => state.symbolInvalid,
+    requestMoreData: (count) => {
+      history.requestMoreData(count);
+    },
+    requestMoreDataAvailable: () => history.requestMoreDataAvailable(),
+    endOfData: () => history.endOfData(),
+    endOfDataType: () => history.endOfDataType(),
+    isLoading: () => history.isLoading(),
+    status: () => history.status(),
   };
 
   // Stable like the model of the real widget: the same objects come back on every call.
@@ -455,6 +494,7 @@ export function createFakeTvWindow(
     layoutId: () => fixture.layout.id,
     isConnected: () => state.connected,
     getIntervals: () => [...fixture.intervals],
+    searchSymbols: createFakeSearch(fixture.search, record),
   };
 
   const win: FakeTvWindow = {
@@ -467,7 +507,12 @@ export function createFakeTvWindow(
     webpackChunktradingview:
       overrides.withoutWebpackRuntime === true
         ? []
-        : createFakeWebpack(overrides.webpackModules ?? createPlanLimitModules(fixture.planLimits)),
+        : createFakeWebpack(
+            overrides.webpackModules ?? {
+              ...createPlanLimitModules(fixture.planLimits),
+              ...createQuoteModules(fixture.quoteCache, record),
+            },
+          ),
     document: {
       get visibilityState() {
         return state.visibilityState;
