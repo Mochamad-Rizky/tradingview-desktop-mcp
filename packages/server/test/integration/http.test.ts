@@ -356,6 +356,38 @@ test('answers 405 for a method a route does not take', async () => {
   expect(health.headers.allow).toBe('GET, HEAD');
 });
 
+// The session id travels in a header anyone along the way can read, so it must never stand in for
+// the token.
+test('refuses a known session without the token', async () => {
+  const { handle } = await start();
+  const sessionId = await initialize(handle.port);
+
+  const response = await send(handle.port, {
+    method: 'POST',
+    headers: { ...MCP_HEADERS, 'Mcp-Session-Id': sessionId },
+    body: PING,
+  });
+
+  expect(response.status).toBe(401);
+  expect((await ping(handle.port, sessionId)).status).toBe(200);
+});
+
+// A CORS preflight (OPTIONS) and a HEAD are not MCP requests. Without the token they learn no more
+// than any other request; with it they are refused as methods /mcp does not take.
+test.each(['OPTIONS', 'HEAD'])(
+  'refuses %s on /mcp: 401 without the token, 405 with it',
+  async (method) => {
+    const { handle } = await start();
+
+    const anonymous = await send(handle.port, { method });
+    const authorized = await send(handle.port, { method, headers: AUTH });
+
+    expect(anonymous.status).toBe(401);
+    expect(authorized.status).toBe(405);
+    expect(authorized.headers.allow).toBe('GET, POST, DELETE');
+  },
+);
+
 test('answers 404 for any other path', async () => {
   const { handle } = await start();
 
