@@ -50,6 +50,8 @@ export interface TvStateFixture {
       description: string;
       shortDescription: string;
       hidden?: boolean | undefined;
+      // The inputs of its metadata, with their default values. None when left out.
+      inputs?: FixtureStudyInput[] | undefined;
     }[];
     standardScripts: {
       scriptIdPart: string;
@@ -57,6 +59,8 @@ export interface TvStateFixture {
       scriptTitle?: string | undefined;
       version: string;
       kind: 'study' | 'strategy' | 'library';
+      // The inputs a study of the script has once it is on the chart. None when left out.
+      inputs?: FixtureStudyInput[] | undefined;
     }[];
   };
 }
@@ -73,7 +77,9 @@ export interface TvStateFixture {
 // - styles: the titles of the plots, by plot id, written HTML-entity encoded as the app keeps them;
 //   ohlcPlots: the titles of the bars an ohlc_* plot draws, by its target.
 // - inputs: the inputs the user sees, with their values. A Pine study gets the hidden internals
-//   (text, pineId, pineVersion) in front of them.
+//   (text, pineId, pineVersion) in front of them. An input can carry the bounds of its metadata
+//   (min, max) and confirm, which makes the app ask for its value in a dialog when the study is
+//   added.
 // - warmup: how many of the first bars have no value yet (NaN), as a moving average has none
 //   before its length; preHistory: how many rows the study keeps before the first bar, at the
 //   indices of the app for them (-1e6 and below).
@@ -105,7 +111,22 @@ export interface FixtureStudyInput {
   value: JsonValue;
   options?: string[] | undefined;
   isHidden?: boolean | undefined;
+  min?: number | undefined;
+  max?: number | undefined;
+  confirm?: boolean | undefined;
 }
+
+const fixtureStudyInputSchema = z.strictObject({
+  id: z.string(),
+  name: z.string(),
+  type: z.string(),
+  value: z.json(),
+  options: z.array(z.string()).optional(),
+  isHidden: z.boolean().optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  confirm: z.boolean().optional(),
+});
 
 // Strict, so a field a recording adds but this interface lacks fails loudly instead of being
 // ignored by every fake.
@@ -131,18 +152,7 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
       strategy: z.boolean().optional(),
       styles: z.record(z.string(), z.string()).optional(),
       ohlcPlots: z.record(z.string(), z.string()).optional(),
-      inputs: z
-        .array(
-          z.strictObject({
-            id: z.string(),
-            name: z.string(),
-            type: z.string(),
-            value: z.json(),
-            options: z.array(z.string()).optional(),
-            isHidden: z.boolean().optional(),
-          }),
-        )
-        .optional(),
+      inputs: z.array(fixtureStudyInputSchema).optional(),
       warmup: z.number().optional(),
       preHistory: z.number().optional(),
     }),
@@ -182,6 +192,7 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
         description: z.string(),
         shortDescription: z.string(),
         hidden: z.boolean().optional(),
+        inputs: z.array(fixtureStudyInputSchema).optional(),
       }),
     ),
     standardScripts: z.array(
@@ -191,6 +202,7 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
         scriptTitle: z.string().optional(),
         version: z.string(),
         kind: z.enum(['study', 'strategy', 'library']),
+        inputs: z.array(fixtureStudyInputSchema).optional(),
       }),
     ),
   }),

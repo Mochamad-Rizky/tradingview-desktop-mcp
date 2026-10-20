@@ -13,9 +13,9 @@
       "pine": { "scriptIdPart": "STD;SMA", "version": "36.0" },
       "styles": { "plot_0": "MA" },
       "inputs": [
-        { "id": "in_0", "name": "Length", "type": "integer", "value": 9 },
+        { "id": "in_0", "name": "Length", "type": "integer", "value": 9, "min": 1, "max": 5000 },
         { "id": "in_1", "name": "Source", "type": "source", "value": "close" },
-        { "id": "in_2", "name": "Offset", "type": "integer", "value": 0 }
+        { "id": "in_2", "name": "Offset", "type": "integer", "value": 0, "min": -500, "max": 500 }
       ],
       "warmup": 8
     },
@@ -28,7 +28,14 @@
       "pine": { "scriptIdPart": "STD;RSI", "version": "41.0" },
       "styles": { "plot_0": "RSI", "plot_1": "RSI-based MA" },
       "inputs": [
-        { "id": "in_0", "name": "RSI Length", "type": "integer", "value": 14 },
+        {
+          "id": "in_0",
+          "name": "RSI Length",
+          "type": "integer",
+          "value": 14,
+          "min": 1,
+          "max": 2000
+        },
         { "id": "in_1", "name": "Source", "type": "source", "value": "close" },
         {
           "id": "in_2",
@@ -256,7 +263,28 @@
   },
   "studyCatalog": {
     "builtins": [
-      { "id": "Volume@tv-basicstudies", "description": "Volume", "shortDescription": "Vol" },
+      {
+        "id": "Volume@tv-basicstudies",
+        "description": "Volume",
+        "shortDescription": "Vol",
+        "inputs": [
+          {
+            "id": "length",
+            "name": "MA Length",
+            "type": "integer",
+            "value": 20,
+            "min": 1,
+            "max": 2000
+          },
+          {
+            "id": "col_prev_close",
+            "name": "Color based on previous close",
+            "type": "bool",
+            "value": false
+          },
+          { "id": "symbol", "name": "Symbol", "type": "symbol", "value": "", "isHidden": true }
+        ]
+      },
       {
         "id": "RSI@tv-basicstudies",
         "description": "Relative strength index",
@@ -266,7 +294,24 @@
       {
         "id": "VbPFixed@tv-volumebyprice",
         "description": "Volume Profile Fixed Range",
-        "shortDescription": "VPFR"
+        "shortDescription": "VPFR",
+        "inputs": [
+          {
+            "id": "rowsLayout",
+            "name": "Rows Layout",
+            "type": "text",
+            "value": "Number Of Rows",
+            "options": ["Number Of Rows", "Ticks Per Row"]
+          },
+          {
+            "id": "rows",
+            "name": "Row Size",
+            "type": "integer",
+            "value": 24,
+            "min": 1,
+            "max": 1000000
+          }
+        ]
       },
       {
         "id": "VbPVisible@tv-volumebyprice",
@@ -280,7 +325,33 @@
         "scriptName": "Moving Average Convergence Divergence",
         "scriptTitle": "MACD",
         "version": "28.0",
-        "kind": "study"
+        "kind": "study",
+        "inputs": [
+          {
+            "id": "in_0",
+            "name": "Fast Length",
+            "type": "integer",
+            "value": 12,
+            "min": 1,
+            "max": 50
+          },
+          {
+            "id": "in_1",
+            "name": "Slow Length",
+            "type": "integer",
+            "value": 26,
+            "min": 1,
+            "max": 50
+          },
+          { "id": "in_2", "name": "Source", "type": "source", "value": "close" },
+          {
+            "id": "in_3",
+            "name": "Oscillator MA Type",
+            "type": "text",
+            "value": "EMA",
+            "options": ["SMA", "EMA"]
+          }
+        ]
       },
       {
         "scriptIdPart": "STD;RSI",

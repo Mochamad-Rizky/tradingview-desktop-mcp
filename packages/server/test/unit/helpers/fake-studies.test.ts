@@ -289,3 +289,226 @@ describe('the indicator catalog', () => {
     await expect(requestBuiltinScripts()).rejects.toThrow('Network error');
   });
 });
+
+describe('changes to the studies', () => {
+  // A chart with room for `limit` counted studies; the fixture holds two.
+  const roomy = (limit = 5): TvStateFixture => ({
+    ...fixture,
+    planLimits: { ...fixture.planLimits, INDICATORS_ON_CHART: limit },
+  });
+  const dialogsOf = (win: FakeTvWindow) =>
+    inspectFakeWindow(win).calls.filter(({ name }) => name.startsWith('dialog.'));
+
+  test('createStudy by description adds the first built-in of that description, with its inputs', async () => {
+    const win = createFakeTvWindow(roomy());
+    const chart = chartOf(win);
+
+    const id = await chart.createStudy('volume', true, false, undefined, undefined, {
+      checkLimit: true,
+    });
+
+    expect(id).toBe('NEW001');
+    expect(chart.getAllStudies().at(-1)).toEqual({ id: 'NEW001', name: 'Volume' });
+    const api = chart.getStudyById('NEW001');
+    expect(api.study().metaInfo().id).toBe('Volume@tv-basicstudies');
+    expect(api.title()).toBe('Vol');
+    expect(api.getInputValues()).toEqual([
+      { id: 'length', value: 20 },
+      { id: 'col_prev_close', value: false },
+      { id: 'symbol', value: '' },
+    ]);
+    expect(api.getInputsInfo()[0]).toEqual({
+      id: 'length',
+      name: 'MA Length',
+      localizedName: 'MA Length',
+      type: 'integer',
+      defval: 20,
+      min: 1,
+      max: 2000,
+    });
+    expect(inspectFakeWindow(win).callsTo('chart.createStudy')).toEqual([
+      ['volume', true, false, undefined, undefined, { checkLimit: true }],
+    ]);
+    // The first match counts, even when it is hidden.
+    await chart.createStudy('Relative Strength Index');
+    expect(chart.getStudyById('NEW002').study().metaInfo().id).toBe('RSI@tv-basicstudies');
+    await expect(chart.createStudy('No Such Study')).rejects.toThrow(
+      'unexpected study id:no such study',
+    );
+  });
+
+  test('createStudy by description with checkLimit shows the limit warning and resolves null', async () => {
+    const win = createFakeTvWindow(fixture);
+    const chart = chartOf(win);
+
+    const refused = await chart.createStudy(
+      'Relative Strength Index',
+      false,
+      false,
+      undefined,
+      undefined,
+      {
+        checkLimit: true,
+      },
+    );
+
+    expect(refused).toBeNull();
+    expect(dialogsOf(win)).toEqual([{ name: 'dialog.tooManyStudies', args: [2] }]);
+    expect(chart.getAllStudies()).toHaveLength(2);
+    // A study the app does not count passes, and without checkLimit nothing on the client blocks.
+    expect(
+      await chart.createStudy('Volume', false, false, undefined, undefined, { checkLimit: true }),
+    ).toBe('NEW001');
+    expect(await chart.createStudy('Relative Strength Index')).toBe('NEW002');
+  });
+
+  test('createStudy with a descriptor adds a standard script or a built-in and ignores the rest', async () => {
+    const win = createFakeTvWindow(roomy());
+    const chart = chartOf(win);
+
+    const pine = await chart.createStudy({ type: 'pine', pineId: 'STD;MACD', pineVersion: 'last' });
+    const java = await chart.createStudy({ type: 'java', studyId: 'VbPFixed@tv-volumebyprice' });
+
+    expect([pine, java]).toEqual(['NEW001', 'NEW002']);
+    const macd = chart.getStudyById('NEW001');
+    expect(chart.getAllStudies().slice(2)).toEqual([
+      { id: 'NEW001', name: 'Moving Average Convergence Divergence' },
+      { id: 'NEW002', name: 'Volume Profile Fixed Range' },
+    ]);
+    expect(macd.study().metaInfo()).toMatchObject({
+      pine: { version: '28.0' },
+      scriptIdPart: 'STD;MACD',
+    });
+    expect(macd.getInputsInfo().filter(({ isHidden }) => isHidden !== true)).toHaveLength(4);
+    expect(chart.getStudyById('NEW002').study().metaInfo().id).toBe('VbPFixed@tv-volumebyprice');
+    await expect(
+      chart.createStudy({ type: 'pine', pineId: 'STD;Nope', pineVersion: '1.0' }),
+    ).rejects.toBe('cannot_get_metainfo');
+    expect(dialogsOf(win)).toEqual([]);
+  });
+
+  test('createStudy with a descriptor opens the paywall on a full chart and rejects', async () => {
+    const win = createFakeTvWindow(fixture);
+
+    await expect(
+      chartOf(win).createStudy({ type: 'pine', pineId: 'STD;MACD', pineVersion: '28.0' }),
+    ).rejects.toBe('Failed to create study');
+
+    expect(dialogsOf(win)).toEqual([{ name: 'dialog.paywall', args: ['studyLimit'] }]);
+  });
+
+  test('createStudy with a descriptor waits on the inputs dialog for studies that need one', async () => {
+    const custom = roomy();
+    custom.studyCatalog = {
+      ...custom.studyCatalog,
+      builtins: [
+        { id: 'Spread@tv-basicstudies', description: 'Spread', shortDescription: 'Spread' },
+        {
+          id: 'Anchored@tv-basicstudies',
+          description: 'Anchored',
+          shortDescription: 'Anchored',
+          inputs: [{ id: 'start', name: 'Start', type: 'time', value: 0, confirm: true }],
+        },
+      ],
+    };
+    const win = createFakeTvWindow(custom);
+    const chart = chartOf(win);
+
+    const outcomes = await Promise.race([
+      Promise.allSettled([
+        chart.createStudy({ type: 'java', studyId: 'Spread@tv-basicstudies' }),
+        chart.createStudy({ type: 'java', studyId: 'Anchored@tv-basicstudies' }),
+      ]),
+      delay(30).then(() => 'pending'),
+    ]);
+
+    expect(outcomes).toBe('pending');
+    expect(dialogsOf(win)).toEqual([
+      { name: 'dialog.studyInputs', args: ['Spread@tv-basicstudies'] },
+      { name: 'dialog.studyInputs', args: ['Anchored@tv-basicstudies'] },
+    ]);
+    expect(chart.getAllStudies()).toHaveLength(2);
+  });
+
+  test('canCreateStudy counts the studies against the limit, apart from those the app does not count', async () => {
+    const win = createFakeTvWindow(roomy(3));
+    const chart = chartOf(win);
+    const model = chart._chartWidget.model();
+
+    expect(model.canCreateStudy?.({ id: '' })).toEqual({ success: true });
+    await chart.createStudy('Volume');
+    expect(model.canCreateStudy?.({ id: '' })).toEqual({ success: true });
+    await chart.createStudy('Relative Strength Index');
+    expect(model.canCreateStudy?.({ id: '' })).toEqual({
+      success: false,
+      reason: 'general',
+      limitValue: 3,
+    });
+    expect(model.canCreateStudy?.({ id: 'VbPFixed@tv-volumebyprice' })).toEqual({ success: true });
+    expect(inspectFakeWindow(win).callsTo('chart.createStudy')).toHaveLength(2);
+  });
+
+  test('createStudy asks the canCreateStudy of the model, which a test can replace', async () => {
+    const win = createFakeTvWindow(roomy());
+    const chart = chartOf(win);
+    chart._chartWidget.model().canCreateStudy = () => ({ success: false, reason: 'forecast' });
+
+    // A forecast refusal passes checkLimit on the string path, and fails the descriptor path
+    // without the paywall.
+    expect(
+      await chart.createStudy('Volume', false, false, undefined, undefined, { checkLimit: true }),
+    ).toBe('NEW001');
+    await expect(
+      chart.createStudy({ type: 'pine', pineId: 'STD;MACD', pineVersion: '28.0' }),
+    ).rejects.toBe('Failed to create study');
+    expect(dialogsOf(win)).toEqual([]);
+  });
+
+  test('removeEntity removes a study undoably, and does nothing for an id not on the chart', () => {
+    const win = createFakeTvWindow(fixture);
+    const chart = chartOf(win);
+
+    chart.removeEntity('STUDY01');
+    chart.removeEntity('NOPE01');
+    chart.removeEntity('STUDY02', { disableUndo: true });
+
+    expect(chart.getAllStudies()).toEqual([]);
+    expect(() => chart.getStudyById('STUDY01')).toThrow('There is no such study');
+    expect(inspectFakeWindow(win).state.removedStudies).toEqual([
+      { id: 'STUDY01', undoable: true },
+      { id: 'STUDY02', undoable: false },
+    ]);
+    expect(inspectFakeWindow(win).callsTo('chart.removeEntity')).toEqual([
+      ['STUDY01'],
+      ['NOPE01'],
+      ['STUDY02', { disableUndo: true }],
+    ]);
+  });
+
+  test('setInputValues sets the inputs it has and setVisible shows or hides the study', () => {
+    const win = createFakeTvWindow(fixture);
+    const api = chartOf(win).getStudyById('STUDY01');
+
+    api.setInputValues([
+      { id: 'in_0', value: 21 },
+      { id: 'nope', value: 1 },
+    ]);
+    api.setVisible(false);
+
+    expect(api.getInputValues().find(({ id }) => id === 'in_0')).toEqual({ id: 'in_0', value: 21 });
+    expect(api.isVisible()).toBe(false);
+    expect(inspectFakeWindow(win).calls).toEqual([
+      {
+        name: 'study.setInputValues',
+        args: [
+          'STUDY01',
+          [
+            { id: 'in_0', value: 21 },
+            { id: 'nope', value: 1 },
+          ],
+        ],
+      },
+      { name: 'study.setVisible', args: ['STUDY01', false] },
+    ]);
+  });
+});

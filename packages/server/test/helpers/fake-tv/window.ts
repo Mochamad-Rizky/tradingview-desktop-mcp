@@ -4,7 +4,13 @@ import { createFakeHistory } from './history.js';
 import { createPlanLimitModules } from './plan-limits.js';
 import { createQuoteModules } from './quotes.js';
 import { createFakeSearch, type FakeSearchOptions, type FakeSearchResponse } from './search.js';
-import { createFakeStudies, createStudyCatalogModules, type FakeStudyApi } from './studies.js';
+import {
+  createFakeStudies,
+  createStudyCatalogModules,
+  type FakeCanCreateStudy,
+  type FakeStudies,
+  type FakeStudyApi,
+} from './studies.js';
 import type { SyntheticBar } from './synthetic-bars.js';
 import { createFakeWebpack } from './webpack.js';
 
@@ -28,7 +34,9 @@ import { createFakeWebpack } from './webpack.js';
 // three modules of the quote caches, driven by its quoteCache (quotes.ts), and the two modules of
 // the indicator catalog, driven by its studyCatalog (studies.ts), unless the webpackModules option
 // puts other modules there. The studies on the chart, with their inputs, plots and rows, come from
-// the studies of the fixture (studies.ts) and follow the bars. A plain empty list, as before the webpack
+// the studies of the fixture (studies.ts) and follow the bars. createStudy, removeEntity and the
+// setters of the study API change them, and the chart model checks the indicator limit of the plan
+// with canCreateStudy, which a test can replace or delete on the model (studies.ts). A plain empty list, as before the webpack
 // runtime has loaded, is what withoutWebpackRuntime asks for. TradingViewApi.searchSymbols answers
 // from the search items of the fixture (search.ts).
 //
@@ -116,6 +124,14 @@ export interface FakeSetOptions {
   doNotActivateChart?: boolean;
 }
 
+// The chart model, _chartWidget.model(). canCreateStudy is optional so that a test can delete it, as
+// on a build without it.
+export interface FakeChartModel {
+  mainSeries(): FakeMainSeries;
+  model(): { timeScale(): FakeTimeScale };
+  canCreateStudy?: (spec: { id: string }) => FakeCanCreateStudy;
+}
+
 export interface FakeChartWidgetApi {
   symbol(): string;
   resolution(): string;
@@ -125,15 +141,15 @@ export interface FakeChartWidgetApi {
   // Throws "There is no such study" for an id that is not on the chart.
   getStudyById(id: string): FakeStudyApi;
   getAllShapes(): { id: string; name: string }[];
+  createStudy: FakeStudies['createStudy'];
+  removeEntity: FakeStudies['removeEntity'];
   setSymbol(symbol: string, options?: FakeSetOptions): Promise<true>;
   setResolution(resolution: string, options?: FakeSetOptions): Promise<true>;
   setChartType(chartType: number): Promise<void>;
   setVisibleRange(range: { from: number; to: number }): never;
   // The time the chart reports for the time point at an index, or null for an index without one.
   _convertIndexToPublicTime(index: number): number | null;
-  readonly _chartWidget: {
-    model(): { mainSeries(): FakeMainSeries; model(): { timeScale(): FakeTimeScale } };
-  };
+  readonly _chartWidget: { model(): FakeChartModel };
 }
 
 export interface FakeTradingViewApi {
@@ -175,7 +191,10 @@ export interface FakeTvWindow {
 // timeScale.zoomToBarsRange, timeScale.scrollToBar, series.requestMoreData and TVD.reloadTab.
 // Calls that send a request are recorded too: TradingViewApi.searchSymbols, the members of the
 // quote modules that would create a quote session or send a request (quotes.ts), and
-// requestBuiltinScripts and studyMetaInfoRepository.requestMetaInfo (studies.ts). A call is
+// requestBuiltinScripts and studyMetaInfoRepository.requestMetaInfo (studies.ts). So are the changes
+// to studies, chart.createStudy, chart.removeEntity, study.setInputValues and study.setVisible
+// (each with the study id first), and the dialogs the app would open on the way, as dialog.paywall,
+// dialog.tooManyStudies and dialog.studyInputs (studies.ts). A call is
 // recorded before it is validated, so refused and throwing calls show up too. Reads are not
 // recorded.
 export interface FakeCall {
@@ -195,6 +214,8 @@ export interface FakeTvState {
   symbolInvalid: boolean;
   connected: boolean;
   visibilityState: VisibilityState;
+  // Every study removeEntity removed, in order, and whether the removal can be undone.
+  removedStudies: { id: string; undoable: boolean }[];
 }
 
 export interface FakeTvInspector {
@@ -258,6 +279,7 @@ export function createFakeTvWindow(
     symbolInvalid: false,
     connected: true,
     visibilityState: overrides.visibilityState ?? 'visible',
+    removedStudies: [],
   };
 
   const record = (name: string, args: readonly unknown[]): void => {
@@ -430,11 +452,15 @@ export function createFakeTvWindow(
     status: () => history.status(),
   };
 
-  const studies = createFakeStudies(fixture, loaded);
-
   // Stable like the model of the real widget: the same objects come back on every call.
   const coreModel = { timeScale: () => timeScale };
-  const chartModel = { mainSeries: () => mainSeries, model: () => coreModel };
+  const chartModel: FakeChartModel = { mainSeries: () => mainSeries, model: () => coreModel };
+  const studies = createFakeStudies(fixture, loaded, {
+    record,
+    canCreateStudy: (spec) => chartModel.canCreateStudy?.(spec),
+    removed: state.removedStudies,
+  });
+  chartModel.canCreateStudy = (spec) => studies.canCreateStudy(spec);
 
   const chart: FakeChartWidgetApi = {
     symbol: () => state.symbol,
@@ -444,6 +470,10 @@ export function createFakeTvWindow(
     getAllStudies: () => studies.getAllStudies(),
     getStudyById: (id) => studies.getStudyById(id),
     getAllShapes: () => fixture.shapes.map(({ id, name }) => ({ id, name })),
+    createStudy: (...args) => studies.createStudy(...args),
+    removeEntity: (id, options) => {
+      studies.removeEntity(id, options);
+    },
     setSymbol(symbol, options) {
       record('chart.setSymbol', options === undefined ? [symbol] : [symbol, options]);
       activate(options);

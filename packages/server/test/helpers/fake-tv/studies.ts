@@ -1,5 +1,5 @@
 import type { JsonValue } from '../../../src/utils/json.js';
-import type { FixtureStudy, TvStateFixture } from './fixture.js';
+import type { FixtureStudy, FixtureStudyInput, TvStateFixture } from './fixture.js';
 import type { SyntheticBar } from './synthetic-bars.js';
 
 // The studies on the chart and what the app knows of the indicators it can add, built from the
@@ -26,6 +26,33 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   the fixture, and requestBuiltinScripts, which answers with its standard Pine scripts. The calls
 //   that send a request record themselves: requestBuiltinScripts (a request on every call) and the
 //   requestMetaInfo of a repository that is not ready yet.
+//
+// The studies change (notes, section 7), and every change records itself:
+//
+// - createStudy(nameOrDescriptor, forceOverlay, lock, inputs, overrides, options) adds a study and
+//   resolves its id. A name is the description of a built-in, compared lower case, and the FIRST
+//   match counts, hidden built-ins included; no match rejects "unexpected study id:<name>". With
+//   options.checkLimit it asks canCreateStudy, and when that fails (forecast aside) the app shows
+//   its "too many studies" warning, recorded as dialog.tooManyStudies, and resolves null. A
+//   descriptor ({ type: "java", studyId } or { type: "pine", pineId, pineVersion }) ignores every
+//   other argument and always asks canCreateStudy: a failure for the general limit opens the
+//   paywall (dialog.paywall) and rejects "Failed to create study". It opens the inputs dialog of
+//   the app (dialog.studyInputs) for the studies that need one, Overlay, CorrelationCoefficient,
+//   Correlation Coeff, Spread and Ratio of tv-basicstudies or a study with a confirm input, and
+//   then waits for a person forever. A Pine id the fixture has no standard script for, or a java
+//   id it has no built-in for, rejects with the insertion error cannot_get_metainfo. A new study
+//   gets the inputs of its built-in or script, with their default values, and an id NEW001,
+//   NEW002 and so on.
+// - canCreateStudy({ id }) is pure: it fails with reason general and the limit as limitValue when
+//   the studies that count have reached INDICATORS_ON_CHART of the plan limits. Studies the app
+//   does not count (Volume, the volume profiles and a few more) always pass and never count.
+// - removeEntity(id, options) removes a study, undoable unless options.disableUndo (removed lists
+//   each removal); an id that is not on the chart does nothing, as the app only warns.
+// - The study API has setInputValues([{ id, value }]), which sets the value of each input it has
+//   and passes over other ids, and setVisible(visible).
+//
+// Nothing here opens a dialog: the members that would on the app record a dialog.* call instead,
+// so that a test can show that the server never got there.
 
 // The index the app gives to the rows before the first bar, and below (UNPLOTTABLE_TIME_POINT_INDEX).
 const UNPLOTTABLE = -1_000_000;
@@ -58,6 +85,9 @@ export interface FakeInputInfo {
   options?: string[];
   isHidden?: boolean;
   isFake?: boolean;
+  min?: number;
+  max?: number;
+  confirm?: boolean;
 }
 
 export interface FakeStudyMetaInfo {
@@ -85,13 +115,73 @@ export interface FakeStudyApi {
   isVisible(): boolean;
   getInputsInfo(): FakeInputInfo[];
   getInputValues(): { id: string; value: JsonValue }[];
+  setInputValues(values: { id: string; value: unknown }[]): void;
+  setVisible(visible: boolean): void;
   study(): FakeStudyCore;
+}
+
+export type FakeStudyDescriptor =
+  { type: 'java'; studyId: string } | { type: 'pine'; pineId: string; pineVersion: string };
+
+export interface FakeCanCreateStudy {
+  success: boolean;
+  reason?: string;
+  limitValue?: number;
 }
 
 export interface FakeStudies {
   getAllStudies(): { id: string; name: string }[];
   getStudyById(id: string): FakeStudyApi;
+  createStudy(
+    nameOrDescriptor: string | FakeStudyDescriptor,
+    forceOverlay?: boolean,
+    lock?: boolean,
+    inputs?: unknown,
+    overrides?: unknown,
+    options?: { checkLimit?: boolean },
+  ): Promise<string | null>;
+  removeEntity(id: string, options?: { disableUndo?: boolean }): void;
+  canCreateStudy(spec: { id: string }): FakeCanCreateStudy;
 }
+
+// What createFakeStudies needs besides the fixture: the recorder of the window, the check
+// createStudy asks (the canCreateStudy of the chart model, which a test can replace), and the list
+// each removal is noted in.
+export interface FakeStudiesOptions {
+  record: (name: string, args: readonly unknown[]) => void;
+  canCreateStudy: (spec: { id: string }) => FakeCanCreateStudy | undefined;
+  removed: { id: string; undoable: boolean }[];
+}
+
+// The built-in studies that never count against the indicator limit of the plan (notes, section
+// 7).
+const UNCOUNTED_STUDIES = new Set(
+  [
+    'Volume',
+    'Compare',
+    'Overlay',
+    'Dividends',
+    'Earnings',
+    'Splits',
+    'Sessions',
+    'InactivityGaps',
+    'AnchoredVWAP',
+    'RegressionTrend',
+    'LongShortPosition',
+  ]
+    .map((name) => `${name}@tv-basicstudies`)
+    .concat(
+      ['VbPAnchored', 'VbPFixed', 'VbPSessionsRough'].map((name) => `${name}@tv-volumebyprice`),
+      ['BarSetContinuousRollDates@tv-corestudies', 'ReplayStrategy@tv-scripting'],
+    ),
+);
+
+// The studies whose descriptor makes the app ask for their inputs in a dialog.
+const DIALOG_STUDIES = new Set(
+  ['Overlay', 'CorrelationCoefficient', 'Correlation Coeff', 'Spread', 'Ratio'].map(
+    (name) => `${name}@tv-basicstudies`,
+  ),
+);
 
 const roundPrice = (price: number): number => Math.round(price * 100) / 100;
 
@@ -139,6 +229,9 @@ function inputsOf(study: FixtureStudy): { info: FakeInputInfo; value: JsonValue 
       ...(input.options === undefined ? {} : { options: [...input.options] }),
       ...(input.isHidden === undefined ? {} : { isHidden: input.isHidden }),
       ...(study.pine === undefined ? {} : { isFake: true }),
+      ...(input.min === undefined ? {} : { min: input.min }),
+      ...(input.max === undefined ? {} : { max: input.max }),
+      ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
     },
     value: input.value,
   }));
@@ -191,8 +284,10 @@ function createPlotList(items: readonly FakePlotItem[]): FakePlotList {
 export function createFakeStudies(
   fixture: TvStateFixture,
   bars: () => readonly SyntheticBar[],
+  options: FakeStudiesOptions,
 ): FakeStudies {
   const step = fixture.bars.stepSeconds;
+  const { builtins, standardScripts } = fixture.studyCatalog;
 
   const rowsOf = (study: FixtureStudy): FakePlotItem[] => {
     const plots = plotsOf(study);
@@ -221,13 +316,13 @@ export function createFakeStudies(
     return [...before, ...plottable];
   };
 
-  const apiOf = (study: FixtureStudy): FakeStudyApi => {
+  // The API of a study whose metadata has the id metaId. Its visibility and the values of its
+  // inputs change with setVisible and setInputValues.
+  const apiOf = (study: FixtureStudy, metaId: string): FakeStudyApi => {
     const inputs = inputsOf(study);
+    let visible = study.visible ?? true;
     const metaInfo = (): FakeStudyMetaInfo => ({
-      id:
-        study.pine === undefined
-          ? `${study.name}@tv-basicstudies`
-          : `Script$${study.pine.scriptIdPart}@tv-scripting`,
+      id: metaId,
       description: study.name,
       shortDescription: study.title ?? study.name,
       plots: plotsOf(study),
@@ -261,24 +356,169 @@ export function createFakeStudies(
     }
     return {
       title: () => study.title ?? study.name,
-      isVisible: () => study.visible ?? true,
+      isVisible: () => visible,
       getInputsInfo: () => inputs.map(({ info }) => structuredClone(info)),
       getInputValues: () => inputs.map(({ info, value }) => ({ id: info.id, value })),
+      setInputValues(values) {
+        options.record('study.setInputValues', [study.id, values]);
+        for (const { id, value } of values) {
+          const input = inputs.find(({ info }) => info.id === id);
+          if (input !== undefined) {
+            input.value = value as JsonValue;
+          }
+        }
+      },
+      setVisible(shown) {
+        options.record('study.setVisible', [study.id, shown]);
+        visible = shown;
+      },
       study: () => core,
     };
   };
 
-  const apis = new Map(fixture.studies.map((study) => [study.id, apiOf(study)]));
+  // The studies on the chart, in the order the app lists them, each with the id of its metadata.
+  const entries: { study: FixtureStudy; metaId: string; api: FakeStudyApi }[] = [];
+  const add = (study: FixtureStudy, metaId?: string): string => {
+    const id =
+      metaId ??
+      (study.pine === undefined
+        ? `${study.name}@tv-basicstudies`
+        : `Script$${study.pine.scriptIdPart}@tv-scripting`);
+    entries.push({ study, metaId: id, api: apiOf(study, id) });
+    return study.id;
+  };
+  for (const study of fixture.studies) {
+    add(study);
+  }
+  let added = 0;
+  const nextId = (): string => {
+    added += 1;
+    return `NEW${String(added).padStart(3, '0')}`;
+  };
+  const addBuiltin = (builtin: (typeof builtins)[number]): string =>
+    add(
+      {
+        id: nextId(),
+        name: builtin.description,
+        title: builtin.shortDescription,
+        plots: [],
+        ...(builtin.inputs === undefined ? {} : { inputs: structuredClone(builtin.inputs) }),
+      },
+      builtin.id,
+    );
+  const addScript = (script: (typeof standardScripts)[number], version: string): string =>
+    add({
+      id: nextId(),
+      name: script.scriptName,
+      title: script.scriptTitle ?? script.scriptName,
+      plots: [],
+      pine: {
+        scriptIdPart: script.scriptIdPart,
+        version: version === 'last' ? script.version : version,
+      },
+      ...(script.kind === 'strategy' ? { strategy: true } : {}),
+      ...(script.inputs === undefined ? {} : { inputs: structuredClone(script.inputs) }),
+    });
+
+  const canCreateStudy = (spec: { id: string }): FakeCanCreateStudy => {
+    const id = typeof spec.id === 'string' ? spec.id : '';
+    if (UNCOUNTED_STUDIES.has(id)) {
+      return { success: true };
+    }
+    const limit = fixture.planLimits.INDICATORS_ON_CHART;
+    const counted = entries.filter(({ metaId }) => !UNCOUNTED_STUDIES.has(metaId)).length;
+    return limit !== undefined && counted >= limit
+      ? { success: false, reason: 'general', limitValue: limit }
+      : { success: true };
+  };
+
   return {
-    getAllStudies: () => fixture.studies.map(({ id, name }) => ({ id, name })),
+    getAllStudies: () => entries.map(({ study: { id, name } }) => ({ id, name })),
     getStudyById(id) {
-      const api = apis.get(id);
-      if (api === undefined) {
+      const entry = entries.find(({ study }) => study.id === id);
+      if (entry === undefined) {
         throw new Error('There is no such study');
       }
-      return api;
+      return entry.api;
+    },
+    canCreateStudy,
+    createStudy(...args) {
+      options.record('chart.createStudy', args);
+      const [nameOrDescriptor, , , , , createOptions] = args;
+      if (typeof nameOrDescriptor === 'string') {
+        const wanted = nameOrDescriptor.toLowerCase();
+        const builtin = builtins.find(({ description }) => description.toLowerCase() === wanted);
+        if (builtin === undefined) {
+          return Promise.reject(new Error(`unexpected study id:${wanted}`));
+        }
+        if (createOptions?.checkLimit === true) {
+          const check = options.canCreateStudy({ id: builtin.id });
+          if (check !== undefined && !check.success && check.reason !== 'forecast') {
+            options.record('dialog.tooManyStudies', [check.limitValue]);
+            return Promise.resolve(null);
+          }
+        }
+        return Promise.resolve(addBuiltin(builtin));
+      }
+      const descriptor = nameOrDescriptor;
+      const studyId = descriptor.type === 'java' ? descriptor.studyId : '';
+      const check = options.canCreateStudy({ id: studyId });
+      if (check !== undefined && !check.success) {
+        if (check.reason === 'general') {
+          options.record('dialog.paywall', ['studyLimit']);
+        }
+        // The app rejects with a string here, not an Error.
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        return Promise.reject('Failed to create study');
+      }
+      // What the descriptor stands for: its inputs, and how a study of it is added.
+      const builtin =
+        descriptor.type === 'java' ? builtins.find(({ id }) => id === studyId) : undefined;
+      const script =
+        descriptor.type === 'pine'
+          ? standardScripts.find(({ scriptIdPart }) => scriptIdPart === descriptor.pineId)
+          : undefined;
+      const known =
+        builtin !== undefined
+          ? { inputs: builtin.inputs, insert: () => addBuiltin(builtin) }
+          : script !== undefined && descriptor.type === 'pine'
+            ? { inputs: script.inputs, insert: () => addScript(script, descriptor.pineVersion) }
+            : undefined;
+      if (known === undefined) {
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        return Promise.reject('cannot_get_metainfo');
+      }
+      if (DIALOG_STUDIES.has(studyId) || (known.inputs ?? []).some(({ confirm }) => confirm)) {
+        options.record('dialog.studyInputs', [
+          descriptor.type === 'java' ? studyId : descriptor.pineId,
+        ]);
+        // The dialog waits for a person, who never comes.
+        return new Promise<never>(() => undefined);
+      }
+      return Promise.resolve(known.insert());
+    },
+    removeEntity(id, removeOptions) {
+      options.record(
+        'chart.removeEntity',
+        removeOptions === undefined ? [id] : [id, removeOptions],
+      );
+      const index = entries.findIndex(({ study }) => study.id === id);
+      if (index === -1) {
+        // The app only warns: "Can't find a source with id".
+        return;
+      }
+      entries.splice(index, 1);
+      options.removed.push({ id, undoable: removeOptions?.disableUndo !== true });
     },
   };
+}
+
+// The inputs of a built-in as its metadata holds them.
+function metaInputsOf(inputs: FixtureStudyInput[] | undefined): Record<string, JsonValue>[] {
+  return (inputs ?? []).map(({ value, ...rest }) => ({
+    ...structuredClone(rest),
+    defval: value,
+  })) as Record<string, JsonValue>[];
 }
 
 export interface FakeStudyCatalogOptions {
@@ -302,7 +542,7 @@ export function createStudyCatalogModules(
     ...(item.hidden === true ? { is_hidden_study: true } : {}),
     is_price_study: false,
     version: 1,
-    inputs: [],
+    inputs: metaInputsOf(item.inputs),
     plots: [],
   }));
   let ready = options.repositoryReady;
@@ -332,7 +572,16 @@ export function createStudyCatalogModules(
           return Promise.reject(new Error(options.builtinScriptsError));
         }
         return Promise.resolve(
-          catalog.standardScripts.map(({ kind, ...item }) => ({ ...item, extra: { kind } })),
+          // The inputs are what a study of the script gets on the chart, not part of the list.
+          catalog.standardScripts.map(
+            ({ scriptIdPart, scriptName, scriptTitle, version, kind }) => ({
+              scriptIdPart,
+              scriptName,
+              ...(scriptTitle === undefined ? {} : { scriptTitle }),
+              version,
+              extra: { kind },
+            }),
+          ),
         );
       },
     },
