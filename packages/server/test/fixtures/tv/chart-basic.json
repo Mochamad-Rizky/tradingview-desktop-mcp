@@ -5,8 +5,42 @@
   "chartType": 1,
   "visibleRange": { "from": 1721433600, "to": 1729987200 },
   "studies": [
-    { "id": "STUDY01", "name": "Moving Average", "plots": ["plot_0"] },
-    { "id": "STUDY02", "name": "Relative Strength Index", "plots": ["plot_0"] }
+    {
+      "id": "STUDY01",
+      "name": "Moving Average",
+      "plots": ["plot_0"],
+      "title": "MA 9 close",
+      "pine": { "scriptIdPart": "STD;SMA", "version": "36.0" },
+      "styles": { "plot_0": "MA" },
+      "inputs": [
+        { "id": "in_0", "name": "Length", "type": "integer", "value": 9 },
+        { "id": "in_1", "name": "Source", "type": "source", "value": "close" },
+        { "id": "in_2", "name": "Offset", "type": "integer", "value": 0 }
+      ],
+      "warmup": 8
+    },
+    {
+      "id": "STUDY02",
+      "name": "Relative Strength Index",
+      "plots": ["plot_0", "plot_1", { "id": "plot_2", "type": "bg_colorer" }],
+      "title": "RSI 14 close",
+      "visible": false,
+      "pine": { "scriptIdPart": "STD;RSI", "version": "41.0" },
+      "styles": { "plot_0": "RSI", "plot_1": "RSI-based MA" },
+      "inputs": [
+        { "id": "in_0", "name": "RSI Length", "type": "integer", "value": 14 },
+        { "id": "in_1", "name": "Source", "type": "source", "value": "close" },
+        {
+          "id": "in_2",
+          "name": "Type",
+          "type": "text",
+          "value": "SMA",
+          "options": ["None", "SMA", "EMA"]
+        }
+      ],
+      "warmup": 13,
+      "preHistory": 5
+    }
   ],
   "shapes": [
     { "id": "SHAPE01", "name": "trend_line" },
@@ -217,6 +251,62 @@
         "contracts": [
           { "symbol": "ES1!", "description": "E-mini S&P 500 Futures", "type": "futures" }
         ]
+      }
+    ]
+  },
+  "studyCatalog": {
+    "builtins": [
+      { "id": "Volume@tv-basicstudies", "description": "Volume", "shortDescription": "Vol" },
+      {
+        "id": "RSI@tv-basicstudies",
+        "description": "Relative strength index",
+        "shortDescription": "RSI",
+        "hidden": true
+      },
+      {
+        "id": "VbPFixed@tv-volumebyprice",
+        "description": "Volume Profile Fixed Range",
+        "shortDescription": "VPFR"
+      },
+      {
+        "id": "VbPVisible@tv-volumebyprice",
+        "description": "Volume Profile Visible Range",
+        "shortDescription": "VPVR"
+      }
+    ],
+    "standardScripts": [
+      {
+        "scriptIdPart": "STD;MACD",
+        "scriptName": "Moving Average Convergence Divergence",
+        "scriptTitle": "MACD",
+        "version": "28.0",
+        "kind": "study"
+      },
+      {
+        "scriptIdPart": "STD;RSI",
+        "scriptName": "Relative Strength Index",
+        "scriptTitle": "RSI",
+        "version": "41.0",
+        "kind": "study"
+      },
+      {
+        "scriptIdPart": "STD;SMA",
+        "scriptName": "Moving Average",
+        "scriptTitle": "MA",
+        "version": "36.0",
+        "kind": "study"
+      },
+      {
+        "scriptIdPart": "STD;RSI%1Strategy",
+        "scriptName": "RSI Strategy",
+        "version": "12.0",
+        "kind": "strategy"
+      },
+      {
+        "scriptIdPart": "STD;Volume%1Profile%1Library",
+        "scriptName": "Volume Profile Library",
+        "version": "3.0",
+        "kind": "library"
       }
     ]
   }

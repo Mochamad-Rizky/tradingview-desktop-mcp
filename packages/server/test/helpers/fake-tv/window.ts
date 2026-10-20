@@ -4,6 +4,7 @@ import { createFakeHistory } from './history.js';
 import { createPlanLimitModules } from './plan-limits.js';
 import { createQuoteModules } from './quotes.js';
 import { createFakeSearch, type FakeSearchOptions, type FakeSearchResponse } from './search.js';
+import { createFakeStudies, createStudyCatalogModules, type FakeStudyApi } from './studies.js';
 import type { SyntheticBar } from './synthetic-bars.js';
 import { createFakeWebpack } from './webpack.js';
 
@@ -24,8 +25,10 @@ import { createFakeWebpack } from './webpack.js';
 //
 // The webpack chunk list is the one of the fake runtime of webpack.ts. Its cache holds the two
 // modules of the plan features, driven by the planLimits of the fixture (plan-limits.ts), and the
-// three modules of the quote caches, driven by its quoteCache (quotes.ts), unless the
-// webpackModules option puts other modules there. A plain empty list, as before the webpack
+// three modules of the quote caches, driven by its quoteCache (quotes.ts), and the two modules of
+// the indicator catalog, driven by its studyCatalog (studies.ts), unless the webpackModules option
+// puts other modules there. The studies on the chart, with their inputs, plots and rows, come from
+// the studies of the fixture (studies.ts) and follow the bars. A plain empty list, as before the webpack
 // runtime has loaded, is what withoutWebpackRuntime asks for. TradingViewApi.searchSymbols answers
 // from the search items of the fixture (search.ts).
 //
@@ -73,6 +76,10 @@ export interface FakeTvOverrides {
   historyBatchBars?: number;
   // A requestMoreData call that brings no bar sets no end flag (history.ts). Default false.
   historyEndUnflagged?: boolean;
+  // Whether the study repository has its metadata already. Default true (studies.ts).
+  studyRepositoryReady?: boolean;
+  // The message requestBuiltinScripts rejects with. Default: it answers (studies.ts).
+  builtinScriptsError?: string;
 }
 
 export interface FakeBars {
@@ -115,6 +122,8 @@ export interface FakeChartWidgetApi {
   chartType(): number;
   getVisibleRange(): { from: number; to: number };
   getAllStudies(): { id: string; name: string }[];
+  // Throws "There is no such study" for an id that is not on the chart.
+  getStudyById(id: string): FakeStudyApi;
   getAllShapes(): { id: string; name: string }[];
   setSymbol(symbol: string, options?: FakeSetOptions): Promise<true>;
   setResolution(resolution: string, options?: FakeSetOptions): Promise<true>;
@@ -164,8 +173,9 @@ export interface FakeTvWindow {
 // One mutating call, by the dotted name of the member: TradingViewApi.setActiveChart,
 // chart.setSymbol, chart.setResolution, chart.setChartType, chart.setVisibleRange,
 // timeScale.zoomToBarsRange, timeScale.scrollToBar, series.requestMoreData and TVD.reloadTab.
-// Calls that send a request are recorded too: TradingViewApi.searchSymbols, and the members of
-// the quote modules that would create a quote session or send a request (quotes.ts). A call is
+// Calls that send a request are recorded too: TradingViewApi.searchSymbols, the members of the
+// quote modules that would create a quote session or send a request (quotes.ts), and
+// requestBuiltinScripts and studyMetaInfoRepository.requestMetaInfo (studies.ts). A call is
 // recorded before it is validated, so refused and throwing calls show up too. Reads are not
 // recorded.
 export interface FakeCall {
@@ -420,6 +430,8 @@ export function createFakeTvWindow(
     status: () => history.status(),
   };
 
+  const studies = createFakeStudies(fixture, loaded);
+
   // Stable like the model of the real widget: the same objects come back on every call.
   const coreModel = { timeScale: () => timeScale };
   const chartModel = { mainSeries: () => mainSeries, model: () => coreModel };
@@ -429,7 +441,8 @@ export function createFakeTvWindow(
     resolution: () => state.resolution,
     chartType: () => state.chartType,
     getVisibleRange: () => (state.symbolInvalid ? { from: 0, to: 0 } : { ...state.visibleRange }),
-    getAllStudies: () => fixture.studies.map(({ id, name }) => ({ id, name })),
+    getAllStudies: () => studies.getAllStudies(),
+    getStudyById: (id) => studies.getStudyById(id),
     getAllShapes: () => fixture.shapes.map(({ id, name }) => ({ id, name })),
     setSymbol(symbol, options) {
       record('chart.setSymbol', options === undefined ? [symbol] : [symbol, options]);
@@ -514,6 +527,11 @@ export function createFakeTvWindow(
             overrides.webpackModules ?? {
               ...createPlanLimitModules(fixture.planLimits),
               ...createQuoteModules(fixture.quoteCache, record),
+              ...createStudyCatalogModules(fixture.studyCatalog, {
+                repositoryReady: overrides.studyRepositoryReady ?? true,
+                builtinScriptsError: overrides.builtinScriptsError,
+                record,
+              }),
             },
           ),
     document: {

@@ -397,8 +397,9 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
         'scrubFixture first.',
     );
   }
-  // A recording holds no older history, quote caches or search results, so the fixture gets none:
-  // the history ends at the recorded bars, and the caches and the search are empty.
+  // A recording holds no older history, quote caches, search results or indicator catalog, so the
+  // fixture gets none: the history ends at the recorded bars, and the caches, the search and the
+  // catalog are empty.
   return parseTvStateFixture({
     ...scrubbed,
     knownSymbols: KNOWN_SYMBOLS,
@@ -407,6 +408,7 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
     history: { totalBars: rows.length, endOfDataType: 'end' },
     quoteCache: { fields: {}, full: {}, watchlist: {} },
     search: { remaining: 0, symbols: [] },
+    studyCatalog: { builtins: [], standardScripts: [] },
   });
 }
 

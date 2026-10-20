@@ -12,7 +12,7 @@ export interface TvStateFixture {
   resolution: string;
   chartType: number;
   visibleRange: { from: number; to: number };
-  studies: { id: string; name: string; plots: string[] }[];
+  studies: FixtureStudy[];
   shapes: { id: string; name: string }[];
   layout: { type: string; chartsCount: number; name: string; id: string };
   intervals: string[];
@@ -41,6 +41,70 @@ export interface TvStateFixture {
   // What the symbol search of the app answers: the items, written with the <em> highlight markup
   // the search can put in symbol and description, and the count it says it has not returned yet.
   search: { remaining: number; symbols: Record<string, JsonValue>[] };
+  // What the app knows of the indicators it can add (studies.ts): builtins are the metadata of the
+  // built-in studies its study repository holds, and standardScripts the standard Pine scripts
+  // that requestBuiltinScripts answers with, in the shapes the app keeps them in.
+  studyCatalog: {
+    builtins: {
+      id: string;
+      description: string;
+      shortDescription: string;
+      hidden?: boolean | undefined;
+    }[];
+    standardScripts: {
+      scriptIdPart: string;
+      scriptName: string;
+      scriptTitle?: string | undefined;
+      version: string;
+      kind: 'study' | 'strategy' | 'library';
+    }[];
+  };
+}
+
+// A study on the chart (studies.ts). Optional fields admit undefined, which is what the schema
+// gives for a field that is left out. A recording keeps only id, name and the ids of the plots; the
+// other fields are what the fake makes of the study, with defaults for a recording:
+// - plots: a plot id stands for a line plot; an object gives the type of the plot and, for a
+//   colorer or an ohlc_* plot, the id it targets.
+// - title: what the study API reports as its title, the name by default.
+// - visible: true by default.
+// - pine: the standard script or user script a Pine study runs; a study without it is a built-in.
+// - strategy: a strategy (a Pine strategy needs pine as well).
+// - styles: the titles of the plots, by plot id, written HTML-entity encoded as the app keeps them;
+//   ohlcPlots: the titles of the bars an ohlc_* plot draws, by its target.
+// - inputs: the inputs the user sees, with their values. A Pine study gets the hidden internals
+//   (text, pineId, pineVersion) in front of them.
+// - warmup: how many of the first bars have no value yet (NaN), as a moving average has none
+//   before its length; preHistory: how many rows the study keeps before the first bar, at the
+//   indices of the app for them (-1e6 and below).
+export interface FixtureStudy {
+  id: string;
+  name: string;
+  plots: (string | FixtureStudyPlot)[];
+  title?: string | undefined;
+  visible?: boolean | undefined;
+  pine?: { scriptIdPart: string; version: string } | undefined;
+  strategy?: boolean | undefined;
+  styles?: Record<string, string> | undefined;
+  ohlcPlots?: Record<string, string> | undefined;
+  inputs?: FixtureStudyInput[] | undefined;
+  warmup?: number | undefined;
+  preHistory?: number | undefined;
+}
+
+export interface FixtureStudyPlot {
+  id: string;
+  type: string;
+  target?: string | undefined;
+}
+
+export interface FixtureStudyInput {
+  id: string;
+  name: string;
+  type: string;
+  value: JsonValue;
+  options?: string[] | undefined;
+  isHidden?: boolean | undefined;
 }
 
 // Strict, so a field a recording adds but this interface lacks fails loudly instead of being
@@ -52,7 +116,36 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
   chartType: z.number(),
   visibleRange: z.strictObject({ from: z.number(), to: z.number() }),
   studies: z.array(
-    z.strictObject({ id: z.string(), name: z.string(), plots: z.array(z.string()) }),
+    z.strictObject({
+      id: z.string(),
+      name: z.string(),
+      plots: z.array(
+        z.union([
+          z.string(),
+          z.strictObject({ id: z.string(), type: z.string(), target: z.string().optional() }),
+        ]),
+      ),
+      title: z.string().optional(),
+      visible: z.boolean().optional(),
+      pine: z.strictObject({ scriptIdPart: z.string(), version: z.string() }).optional(),
+      strategy: z.boolean().optional(),
+      styles: z.record(z.string(), z.string()).optional(),
+      ohlcPlots: z.record(z.string(), z.string()).optional(),
+      inputs: z
+        .array(
+          z.strictObject({
+            id: z.string(),
+            name: z.string(),
+            type: z.string(),
+            value: z.json(),
+            options: z.array(z.string()).optional(),
+            isHidden: z.boolean().optional(),
+          }),
+        )
+        .optional(),
+      warmup: z.number().optional(),
+      preHistory: z.number().optional(),
+    }),
   ),
   shapes: z.array(z.strictObject({ id: z.string(), name: z.string() })),
   layout: z.strictObject({
@@ -81,6 +174,25 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
   search: z.strictObject({
     remaining: z.number(),
     symbols: z.array(z.record(z.string(), z.json())),
+  }),
+  studyCatalog: z.strictObject({
+    builtins: z.array(
+      z.strictObject({
+        id: z.string(),
+        description: z.string(),
+        shortDescription: z.string(),
+        hidden: z.boolean().optional(),
+      }),
+    ),
+    standardScripts: z.array(
+      z.strictObject({
+        scriptIdPart: z.string(),
+        scriptName: z.string(),
+        scriptTitle: z.string().optional(),
+        version: z.string(),
+        kind: z.enum(['study', 'strategy', 'library']),
+      }),
+    ),
   }),
 });
 
