@@ -267,7 +267,7 @@ describe('the indicator catalog', () => {
     expect(inspectFakeWindow(win).callsTo('studyMetaInfoRepository.requestMetaInfo')).toEqual([[]]);
   });
 
-  test('requestBuiltinScripts answers the standard scripts with their kind in extra, and records itself', async () => {
+  test('requestBuiltinScripts answers the standard scripts with their kind and short name in extra, and records itself', async () => {
     const { win, requestBuiltinScripts } = catalogOf();
 
     const scripts = (await requestBuiltinScripts()) as Record<string, unknown>[];
@@ -276,9 +276,8 @@ describe('the indicator catalog', () => {
     expect(scripts[1]).toEqual({
       scriptIdPart: 'STD;RSI',
       scriptName: 'Relative Strength Index',
-      scriptTitle: 'RSI',
       version: '41.0',
-      extra: { kind: 'study' },
+      extra: { kind: 'study', shortDescription: 'RSI' },
     });
     expect(inspectFakeWindow(win).callsTo('requestBuiltinScripts')).toEqual([[]]);
   });

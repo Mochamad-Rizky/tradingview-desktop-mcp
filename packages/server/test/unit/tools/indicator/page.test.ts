@@ -753,6 +753,36 @@ describe('readStudyCatalog', () => {
     });
   });
 
+  test('takes the short name of a standard script from its extra data, as the app lists it', async () => {
+    // The shape of an item seen on the app: no scriptTitle, the short name and the kind in extra.
+    const scripts = [
+      {
+        scriptIdPart: 'STD;RSI',
+        scriptName: 'Relative Strength Index',
+        version: '41.0',
+        lastVersionMaj: '41',
+        scriptAccess: 'open_no_auth',
+        scriptSource: '',
+        userId: 1,
+        extra: { kind: 'study', shortDescription: 'RSI', isBuiltIn: true },
+      },
+      { scriptIdPart: 'STD;X', scriptName: 'Ex', version: '1.0', extra: { shortDescription: '' } },
+    ];
+
+    const { result } = await libResultOf(
+      readStudyCatalog,
+      [],
+      withModules({ 2: { requestBuiltinScripts: () => Promise.resolve(scripts) } }),
+    );
+
+    expect(result).toMatchObject({
+      scripts: [
+        { id: 'STD;RSI', name: 'Relative Strength Index', shortName: 'RSI', isStrategy: false },
+        { id: 'STD;X', name: 'Ex', shortName: 'Ex' },
+      ],
+    });
+  });
+
   test('reports a script list that is not a list, or a request that throws, as missing', async () => {
     const repository = { isReady: () => true, getInternalMetaInfoArray: () => 'none' };
 

@@ -522,17 +522,18 @@ export interface StudyMetaInfoRepositoryLike {
 }
 
 // An item of the list of standard Pine scripts that the export requestBuiltinScripts resolves with
-// (a request to the pine facade, list?filter=standard, on every call). The shape is that of the
-// saved script list of the same service, read from the consumers of both in the web build:
+// (a request to the pine facade, list?filter=standard, on every call). Seen on the app:
 // scriptIdPart (STD;RSI), scriptName, version (the script version a Pine study descriptor takes as
-// pineVersion) and extra.kind (study, strategy or library; study when missing). scriptTitle is
-// not confirmed. Typed loosely because the list was never observed.
+// pineVersion), lastVersionMaj, scriptAccess, scriptSource, userId and extra, which holds the kind
+// (study, strategy or library; study when missing) and the short name (shortDescription, such as
+// RSI), with flags. An item has no scriptTitle; it is read when present all the same. Typed
+// loosely: page code checks each field.
 export interface StandardScriptLike {
   scriptIdPart?: unknown;
   scriptName?: unknown;
   scriptTitle?: unknown;
   version?: unknown;
-  extra?: { kind?: unknown } | null;
+  extra?: { kind?: unknown; shortDescription?: unknown } | null;
 }
 
 // window.TVD. Only reloadTab, a last-resort recovery step, is described. The object also carries

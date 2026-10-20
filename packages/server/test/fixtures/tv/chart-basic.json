@@ -479,7 +479,7 @@
       {
         "scriptIdPart": "STD;MACD",
         "scriptName": "Moving Average Convergence Divergence",
-        "scriptTitle": "MACD",
+        "shortDescription": "MACD",
         "version": "28.0",
         "kind": "study",
         "inputs": [
@@ -512,14 +512,14 @@
       {
         "scriptIdPart": "STD;RSI",
         "scriptName": "Relative Strength Index",
-        "scriptTitle": "RSI",
+        "shortDescription": "RSI",
         "version": "41.0",
         "kind": "study"
       },
       {
         "scriptIdPart": "STD;SMA",
         "scriptName": "Moving Average",
-        "scriptTitle": "MA",
+        "shortDescription": "MA",
         "version": "36.0",
         "kind": "study"
       },

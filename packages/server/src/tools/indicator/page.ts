@@ -315,9 +315,10 @@ export function readStudyCatalog(
 ):
   | Promise<
       | {
-          // A standard Pine script: the scriptIdPart as id, the name, the short title
-          // (scriptTitle, else the name), the script version (the pineVersion of a Pine study
-          // descriptor; null when the list gives none) and whether it is a strategy.
+          // A standard Pine script: the scriptIdPart as id, the name, the short name
+          // (scriptTitle, else extra.shortDescription, else the name), the script version (the
+          // pineVersion of a Pine study descriptor; null when the list gives none) and whether it
+          // is a strategy.
           scripts:
             | {
                 id: string;
@@ -412,7 +413,8 @@ export function readStudyCatalog(
           {
             id,
             name,
-            shortName: text(item.scriptTitle) ?? name,
+            // The app lists the short name in extra (shortDescription, such as RSI), and no title.
+            shortName: text(item.scriptTitle) ?? text(item.extra?.shortDescription) ?? name,
             version: text(item.version),
             isStrategy: kind === 'strategy',
           },

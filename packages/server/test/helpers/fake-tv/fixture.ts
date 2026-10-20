@@ -59,7 +59,8 @@ export interface TvStateFixture {
     standardScripts: {
       scriptIdPart: string;
       scriptName: string;
-      scriptTitle?: string | undefined;
+      // The short name, which the app lists as extra.shortDescription (an item has no title).
+      shortDescription?: string | undefined;
       version: string;
       kind: 'study' | 'strategy' | 'library';
       // The inputs a study of the script has once it is on the chart. None when left out.
@@ -469,7 +470,7 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
       z.strictObject({
         scriptIdPart: z.string(),
         scriptName: z.string(),
-        scriptTitle: z.string().optional(),
+        shortDescription: z.string().optional(),
         version: z.string(),
         kind: z.enum(['study', 'strategy', 'library']),
         inputs: z.array(fixtureStudyInputSchema).optional(),

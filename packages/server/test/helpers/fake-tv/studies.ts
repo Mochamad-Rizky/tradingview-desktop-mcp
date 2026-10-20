@@ -490,7 +490,7 @@ export function createFakeStudies(
     add({
       id: nextId(),
       name: script.scriptName,
-      title: script.scriptTitle ?? script.scriptName,
+      title: script.shortDescription ?? script.scriptName,
       plots: [],
       pine: {
         scriptIdPart: script.scriptIdPart,
@@ -661,12 +661,11 @@ export function createStudyCatalogModules(
         return Promise.resolve(
           // The inputs are what a study of the script gets on the chart, not part of the list.
           catalog.standardScripts.map(
-            ({ scriptIdPart, scriptName, scriptTitle, version, kind }) => ({
+            ({ scriptIdPart, scriptName, shortDescription, version, kind }) => ({
               scriptIdPart,
               scriptName,
-              ...(scriptTitle === undefined ? {} : { scriptTitle }),
               version,
-              extra: { kind },
+              extra: { kind, ...(shortDescription === undefined ? {} : { shortDescription }) },
             }),
           ),
         );
