@@ -64,11 +64,11 @@ export function createServerDeps(
   return { logger, connection, launcher, events };
 }
 
-// A server for one client, with the tools that the profile and the tool filter select, and the
-// resources and prompts, which they do not narrow. A dependency that is not given is created,
-// which suits a process with one client (stdio); a process with several (HTTP) passes the same set
-// to every server. Creating a server starts nothing: no connection is opened before the first call
-// that needs one.
+// A server for one client, with the tools that the profile and the tool filter select, the
+// resources of those tools, and the prompts, which they do not narrow. A dependency that is not
+// given is created, which suits a process with one client (stdio); a process with several (HTTP)
+// passes the same set to every server. Creating a server starts nothing: no connection is opened
+// before the first call that needs one.
 export function createMcpServer(
   config: Readonly<Config>,
   deps: Partial<ServerDeps> = {},

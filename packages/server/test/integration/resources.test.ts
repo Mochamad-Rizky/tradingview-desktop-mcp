@@ -1,5 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { Config } from '../../src/config/schema.js';
 import { createMcpServer } from '../../src/server.js';
 import { startFakeCdpServer } from '../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
@@ -82,9 +83,11 @@ async function startHarness(
   return { client: await connect(server), win };
 }
 
-// A server whose TradingView is down.
-async function startOffline(): Promise<Client> {
-  const { server } = createMcpServer(testConfig(), {
+// A server whose TradingView is down, with the tools that `selection` selects (all by default).
+async function startOffline(
+  selection: Partial<Pick<Config, 'profile' | 'toolPatterns'>> = {},
+): Promise<Client> {
+  const { server } = createMcpServer(testConfig(selection), {
     connection: unreachableConnection(),
     launcher: refusingLauncher(),
     logger: quietLogger,
@@ -130,6 +133,57 @@ test('lists every resource', async () => {
     // A resource is read, never run.
     expect(resource.description, resource.uri).toMatch(/changes nothing/);
   }
+});
+
+describe('the resources follow the tools', () => {
+  test('offers only the chart state resource under the tool filter chart_*', async () => {
+    const client = await startOffline({ toolPatterns: ['chart_*'] });
+
+    const { resources } = await client.listResources();
+
+    expect(resources.map(({ uri }) => uri)).toEqual([URIS.state]);
+    // A resource that is not offered cannot be read either: the text of the Pine Editor stays
+    // out of reach of a server that offers no Pine tool.
+    await expect(client.readResource({ uri: URIS.source })).rejects.toThrow(/not found/i);
+    await expect(client.readResource({ uri: URIS.report })).rejects.toThrow(/not found/i);
+  });
+
+  test('offers each resource only with its tool', async () => {
+    const pine = await startOffline({ toolPatterns: ['pine_*'] });
+    const picked = await startOffline({ toolPatterns: ['app_health', 'data_*', 'strategy_*'] });
+    const errorsOnly = await startOffline({ toolPatterns: ['pine_get_errors'] });
+
+    expect((await pine.listResources()).resources.map(({ uri }) => uri)).toEqual([
+      URIS.source,
+      URIS.errors,
+    ]);
+    expect((await picked.listResources()).resources.map(({ uri }) => uri)).toEqual([
+      URIS.health,
+      URIS.ohlcv,
+      URIS.report,
+    ]);
+    expect((await errorsOnly.listResources()).resources.map(({ uri }) => uri)).toEqual([
+      URIS.errors,
+    ]);
+  });
+
+  test.each(['readonly', 'core'] as const)(
+    'offers every resource under the %s profile, which keeps their tools',
+    async (profile) => {
+      const client = await startOffline({ profile });
+
+      const { resources } = await client.listResources();
+
+      expect(resources.map(({ uri }) => uri)).toEqual(Object.values(URIS));
+    },
+  );
+
+  test('offers no resource when no tool of one is selected', async () => {
+    const client = await startOffline({ toolPatterns: ['indicator_*'] });
+
+    expect(client.getServerCapabilities()?.resources).toBeUndefined();
+    await expect(client.readResource({ uri: URIS.state })).rejects.toThrow();
+  });
 });
 
 describe('the OHLCV resource', () => {

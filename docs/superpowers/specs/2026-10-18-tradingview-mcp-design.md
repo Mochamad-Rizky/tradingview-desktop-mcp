@@ -147,7 +147,7 @@ leave the server.
 ### 5.4 Tool profiles
 
 Some clients cap the number of tools (Cursor warns above 40). `--profile core|full|readonly` (default `full`) and
-`--tools <glob,…>` select what is registered. `readonly` registers only tools with `readOnlyHint: true`, which is the
+`--tools <glob,…>` select what is registered, and each resource follows its tool (§7). `readonly` registers only tools with `readOnlyHint: true`, which is the
 recommended profile when the HTTP endpoint is exposed through a tunnel.
 
 ## 6. Fallback tiers and page functions
@@ -232,7 +232,9 @@ Inputs are summarized; `?` marks optional fields. "Limit" names the plan feature
 
 Resources: `tradingview://app/health`, `tradingview://chart/state`, `tradingview://chart/ohlcv`,
 `tradingview://pine/source`, `tradingview://pine/errors`, `tradingview://strategy/report`,
-`tradingview://watchlist/active`.
+`tradingview://watchlist/active`. Each is registered only with the tool it shares its data with (`app_health`,
+`chart_get_state`, `data_get_ohlcv`, `pine_get_source`, `pine_get_errors`, `strategy_get_results`), so the profile
+and `--tools` narrow the resources as they narrow the tools.
 
 Prompts: `analyze_current_chart`, `write_and_backtest_strategy`, `debug_pine_script`, `replay_practice_session`,
 `multi_timeframe_review`.

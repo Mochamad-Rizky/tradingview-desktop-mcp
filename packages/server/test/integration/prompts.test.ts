@@ -111,7 +111,8 @@ test('lists the four prompts with their arguments', async () => {
   }
 });
 
-// Like the resources, the prompts do not depend on which tools the profile registers.
+// Unlike the resources, which follow their tools, the prompts do not depend on which tools the
+// profile registers.
 test.each(['core', 'full', 'readonly'] as const)(
   'offers the four prompts with the %s profile',
   async (profile) => {

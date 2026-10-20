@@ -17,9 +17,10 @@ plan limits, or call TradingView's servers.
 > editor and saved scripts, compile, smart compile with rule-based fixes, offline analysis, the
 > console, and the lines, labels, boxes and tables that scripts draw), Strategy Tester tools
 > (results, trades, equity) and `batch_run`, which runs several tools in one call. It also offers
-> resources (the chart state and bars, the Pine source and the last compile result, the strategy
-> report) and four prompts for common jobs. Drawings, alerts, replay and a web dashboard are
-> planned. It has been tried on macOS; Windows and Linux are best effort.
+> resources (the app health, the chart state and bars, the Pine source and the last compile result,
+> the strategy report), each along with the tool it shares its data with, and four prompts for
+> common jobs. Drawings, alerts, replay and a web dashboard are planned. It has been tried on macOS;
+> Windows and Linux are best effort.
 
 ## Quick start from source
 
@@ -176,7 +177,10 @@ By default the server offers all its tools (`--profile full`). Some clients acce
 number of tools. For them, `--profile core` offers a reduced set of the essential tools, and
 `--tools` takes name patterns such as `chart_*,data_*` to pick others. Some descriptions and hints
 name tools that `core` leaves out, such as `pine_open` and `pine_save`, which the assistant cannot
-call under `core`. `--profile readonly` offers only the tools that read.
+call under `core`. `--profile readonly` offers only the tools that read. The resources follow the
+tools: each one is offered only with the tool it shares its data with, such as
+`tradingview://pine/source` with `pine_get_source`, so `--tools 'chart_*'` offers the chart state
+and nothing of the Pine Editor.
 
 ## Contributing
 
