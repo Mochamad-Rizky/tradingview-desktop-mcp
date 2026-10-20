@@ -700,6 +700,40 @@ export interface ListedStudy {
   name: string;
 }
 
+// The chart a test that adds studies works on: the chart that was active when it started, by its
+// index, and the layout it is in, by its id, which stays in memory because it is the user's. The
+// cleanup lists and removes studies on that chart only, and only while it is still the active chart
+// of that layout, so that it never compares the studies of two charts.
+export interface StudyScope {
+  chartIndex: number;
+  layoutId: string | null;
+}
+
+// The scope of the active chart now. An index that cannot be read leaves nothing to pin the
+// cleanup to, so it fails, before the test changes anything.
+export async function readStudyScope(client: Client): Promise<StudyScope> {
+  const { data } = await callOk<{ chartIndex: number | null; layout: { id: string | null } }>(
+    client,
+    'chart_get_state',
+  );
+  if (data.chartIndex === null) {
+    throw new HarnessError(
+      'chart_get_state reports no index for the active chart, so the test would not know which ' +
+        'chart to clean up; nothing was changed',
+    );
+  }
+  return { chartIndex: data.chartIndex, layoutId: data.layout.id };
+}
+
+// The studies on the chart of `scope`.
+export async function listScopedStudies(client: Client, scope: StudyScope): Promise<ListedStudy[]> {
+  return (
+    await callOk<{ studies: ListedStudy[] }>(client, 'indicator_list', {
+      chartIndex: scope.chartIndex,
+    })
+  ).data.studies;
+}
+
 // The studies a test may have left on the chart: those on it now that were not on it before and
 // whose name says the test added them. A call that failed halfway, adding a study and then failing
 // to answer its id, leaves one. A study that was on the chart before is never among them, whatever
@@ -713,24 +747,65 @@ export function strayStudies(
   return now.filter(({ id, name }) => !kept.has(id) && isAdded(name)).map(({ id }) => id);
 }
 
-// Removes the studies strayStudies finds, each with confirm: true, because the session may not have
-// recorded a study that a call added before it failed. Answers the ids removed and the failures,
-// named by the tool and the code only.
+// How long the cleanup after a failed test lists the studies again for one that comes late, as
+// TradingView can add a study after the call that asked for it gave up (TIMEOUT).
+const LATE_STUDY_WAIT_MS = 3000;
+const LATE_STUDY_POLL_MS = 250;
+
+// Removes the studies strayStudies finds on the chart of `scope`, each with confirm: true, because
+// the session may not have recorded a study that a call added before it failed. It removes nothing,
+// and says why, when the active chart or its layout is no longer the one of `scope`, and when more
+// studies look added than the test could have added (`most`, 1 by default), since one of them would
+// then be the user's. With `waitMs` it lists again, for that long, while it finds none, for a study
+// that comes late. Answers the ids removed and the failures, which name tools, codes and counts
+// only.
 export async function removeStrayStudies(
   client: Client,
+  scope: StudyScope,
   before: readonly string[],
   isAdded: (name: string) => boolean,
+  options: { most?: number; waitMs?: number } = {},
 ): Promise<{ removed: string[]; failures: string[] }> {
-  let studies: ListedStudy[];
+  const most = options.most ?? 1;
+  let strays: string[];
   try {
-    studies = (await callOk<{ studies: ListedStudy[] }>(client, 'indicator_list')).data.studies;
+    const now = await readStudyScope(client);
+    if (now.chartIndex !== scope.chartIndex || now.layoutId !== scope.layoutId) {
+      return {
+        removed: [],
+        failures: [
+          'The active chart or its layout changed during the test, so no study was removed: ' +
+            'check the chart in TradingView',
+        ],
+      };
+    }
+    const found = await pollUntil(
+      async () => strayStudies(before, await listScopedStudies(client, scope), isAdded),
+      (ids) => ids.length > 0,
+      { intervalMs: LATE_STUDY_POLL_MS, timeoutMs: options.waitMs ?? 0 },
+    );
+    strays = found.last;
   } catch (error) {
     return { removed: [], failures: [describeFailure(error)] };
   }
+  if (strays.length > most) {
+    return {
+      removed: [],
+      failures: [
+        `${String(strays.length)} new studies have the name the test adds, more than the ` +
+          `${String(most)} it could have added, so none was removed: check the chart in ` +
+          'TradingView',
+      ],
+    };
+  }
   const removed: string[] = [];
   const failures: string[] = [];
-  for (const id of strayStudies(before, studies, isAdded)) {
-    const failure = await callFailureOf(client, 'indicator_remove', { id, confirm: true });
+  for (const id of strays) {
+    const failure = await callFailureOf(client, 'indicator_remove', {
+      id,
+      confirm: true,
+      chartIndex: scope.chartIndex,
+    });
     if (failure === null) {
       removed.push(id);
     } else {
@@ -740,19 +815,21 @@ export async function removeStrayStudies(
   return { removed, failures };
 }
 
-// Runs `change`, a test that adds studies (`isAdded` tells them by name), within the chart snapshot
-// of `plan`. However it ended, every study it left is removed (removeStrayStudies), then the chart
-// and its exact view are put back (restoreChartAndView), each step whatever the other did. The
-// failure of `change` is the one thrown, with a failed cleanup logged next to it; after a change
-// that passed, a failed cleanup fails it.
+// Runs `change`, a test that adds one study (`isAdded` tells it by name), within the chart snapshot
+// of `plan`. The chart it works on is pinned first (readStudyScope), and its studies are listed.
+// However the change ended, every study it left there is removed (removeStrayStudies, which after a
+// failed change waits a while for a study that comes late), then the chart and its exact view are
+// put back (restoreChartAndView), each step whatever the other did. The failure of `change` is the
+// one thrown, with a failed cleanup logged next to it; after a change that passed, a failed cleanup
+// fails it.
 export async function addThenCleanUp(
   e2e: E2eServer,
   plan: ChartChangePlan,
   isAdded: (name: string) => boolean,
   change: () => Promise<void>,
 ): Promise<void> {
-  const { data } = await callOk<{ studies: ListedStudy[] }>(e2e.client, 'indicator_list');
-  const before = data.studies.map(({ id }) => id);
+  const scope = await readStudyScope(e2e.client);
+  const before = (await listScopedStudies(e2e.client, scope)).map(({ id }) => id);
   let failure: unknown;
   let failed = false;
   try {
@@ -761,7 +838,9 @@ export async function addThenCleanUp(
     failure = error;
     failed = true;
   }
-  const { failures } = await removeStrayStudies(e2e.client, before, isAdded);
+  const { failures } = await removeStrayStudies(e2e.client, scope, before, isAdded, {
+    waitMs: failed ? LATE_STUDY_WAIT_MS : 0,
+  });
   failures.push(...(await restoreChartAndView(e2e, plan)));
   if (failed) {
     if (failures.length > 0) {

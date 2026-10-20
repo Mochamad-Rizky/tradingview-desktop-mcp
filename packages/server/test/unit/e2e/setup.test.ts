@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { createMcpServer } from '../../../src/server.js';
 import type { TvWindow } from '../../../src/core/tv/tv-window.js';
@@ -22,6 +23,7 @@ import {
   planLimitSkipReason,
   prepareChartChange,
   readLastEditedScript,
+  readStudyScope,
   readSymbolListing,
   readView,
   removeStrayStudies,
@@ -592,6 +594,12 @@ describe('the cleanup of a test that adds studies', () => {
   const servers: E2eServer[] = [];
   // The fixture with one indicator, so that the plan of two leaves a slot free.
   const ROOMY = { ...fixture, studies: fixture.studies.slice(0, 1) };
+  // The fixture with an empty chart and room for five indicators.
+  const EMPTY = {
+    ...fixture,
+    studies: [],
+    planLimits: { ...fixture.planLimits, INDICATORS_ON_CHART: 5 },
+  };
   const isRsi = (name: string) => /^relative strength index$/i.test(name);
 
   afterEach(async () => {
@@ -600,47 +608,173 @@ describe('the cleanup of a test that adds studies', () => {
     }
   });
 
+  async function serverOn(from = ROOMY, overrides: Parameters<typeof fakeE2eServer>[0] = {}) {
+    const server = await fakeE2eServer(overrides, from);
+    servers.push(server);
+    return server;
+  }
+
   async function studyIds(client: Client): Promise<string[]> {
     const { data } = await callOk<{ studies: { id: string }[] }>(client, 'indicator_list');
     return data.studies.map(({ id }) => id);
   }
 
-  test('removeStrayStudies removes, with confirm, a study the session never recorded', async () => {
-    const server = await fakeE2eServer({}, ROOMY);
-    servers.push(server);
-    const before = await studyIds(server.client);
-    // Added behind the session, as a call that failed halfway leaves one: indicator_remove would
-    // need confirm for it.
-    await server.win.TradingViewApi?.activeChart().createStudy({
+  // Adds a study of RSI behind the session, as a call that failed halfway leaves one:
+  // indicator_remove would need confirm for it.
+  async function addBehindTheSession(win: FakeTvWindow): Promise<void> {
+    await win.TradingViewApi?.activeChart().createStudy({
       type: 'pine',
       pineId: 'STD;RSI',
       pineVersion: 'last',
     });
+  }
+
+  // The tools the cleanup called after `from` events, each with the chartIndex it passed.
+  function cleanupCalls(ctx: ToolContext, from: number): [string, unknown][] {
+    return ctx.events
+      .recent()
+      .slice(from)
+      .filter(({ phase, tool }) => phase === 'start' && tool.startsWith('indicator_'))
+      .map(({ tool, args }) => [tool, (args as { chartIndex?: unknown } | undefined)?.chartIndex]);
+  }
+
+  test('readStudyScope pins the active chart by its index and its layout', async () => {
+    const server = await serverOn();
+
+    expect(await readStudyScope(server.client)).toEqual({ chartIndex: 0, layoutId: 'FIXTURE1' });
+  });
+
+  test('readStudyScope fails, naming no value, when the active chart index cannot be read', async () => {
+    const server = await serverOn();
+    const api = server.win.TradingViewApi;
+    if (api === undefined) {
+      throw new Error('The fake window has no API');
+    }
+    api.activeChartIndex = () => {
+      throw new Error('No layout yet');
+    };
+
+    const error = await readStudyScope(server.client).then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(HarnessError);
+    expect(String(error)).not.toMatch(/FIXTURE|\d/);
+  });
+
+  test('removeStrayStudies removes, with confirm, a study the session never recorded', async () => {
+    const server = await serverOn();
+    const scope = await readStudyScope(server.client);
+    const before = await studyIds(server.client);
+    await addBehindTheSession(server.win);
     expect(await studyIds(server.client)).toHaveLength(before.length + 1);
 
-    const { removed, failures } = await removeStrayStudies(server.client, before, isRsi);
+    const { removed, failures } = await removeStrayStudies(server.client, scope, before, isRsi);
 
     expect(failures).toEqual([]);
     expect(removed).toHaveLength(1);
     expect(await studyIds(server.client)).toEqual(before);
   });
 
+  test('removeStrayStudies lists and removes on the chart of its scope only', async () => {
+    const server = await serverOn();
+    const scope = await readStudyScope(server.client);
+    const before = await studyIds(server.client);
+    await addBehindTheSession(server.win);
+    const from = server.ctx.events.recent().length;
+
+    await removeStrayStudies(server.client, scope, before, isRsi);
+
+    expect(cleanupCalls(server.ctx, from)).toEqual([
+      ['indicator_list', 0],
+      ['indicator_remove', 0],
+    ]);
+  });
+
   test('removeStrayStudies leaves a study that was on the chart before, named the same', async () => {
     // The fixture chart holds a Relative Strength Index of the user.
-    const server = await fakeE2eServer();
-    servers.push(server);
+    const server = await serverOn(fixture);
+    const scope = await readStudyScope(server.client);
     const before = await studyIds(server.client);
 
-    expect(await removeStrayStudies(server.client, before, isRsi)).toEqual({
+    expect(await removeStrayStudies(server.client, scope, before, isRsi)).toEqual({
       removed: [],
       failures: [],
     });
     expect(await studyIds(server.client)).toEqual(before);
   });
 
+  test.each([
+    [
+      'another chart of the layout is active',
+      (win: FakeTvWindow) => {
+        win.TradingViewApi?.setActiveChart(1);
+      },
+    ],
+    [
+      'the chart is in another layout',
+      (win: FakeTvWindow) => {
+        const api = win.TradingViewApi;
+        if (api !== undefined) {
+          api.layoutId = () => 'OTHER_LAYOUT';
+        }
+      },
+    ],
+  ])('removeStrayStudies removes nothing, and says so, when %s', async (_case, change) => {
+    const server = await serverOn({ ...ROOMY, layout: { ...ROOMY.layout, chartsCount: 2 } });
+    const scope = await readStudyScope(server.client);
+    const before = await studyIds(server.client);
+    await addBehindTheSession(server.win);
+    change(server.win);
+
+    const { removed, failures } = await removeStrayStudies(server.client, scope, before, isRsi);
+
+    expect(removed).toEqual([]);
+    expect(failures).toEqual([
+      expect.stringMatching(/changed during the test.*no study was removed/),
+    ]);
+    expect(inspectFakeWindow(server.win).callsTo('chart.removeEntity')).toEqual([]);
+  });
+
+  test('removeStrayStudies removes nothing when more studies look added than the test could add', async () => {
+    const server = await serverOn(EMPTY);
+    const scope = await readStudyScope(server.client);
+    const before = await studyIds(server.client);
+    await addBehindTheSession(server.win);
+    await addBehindTheSession(server.win);
+
+    const refused = await removeStrayStudies(server.client, scope, before, isRsi);
+
+    expect(refused.removed).toEqual([]);
+    expect(refused.failures).toEqual([
+      expect.stringMatching(/^2 new studies .* more than the 1 .* none was removed/),
+    ]);
+    expect(inspectFakeWindow(server.win).callsTo('chart.removeEntity')).toEqual([]);
+    // A test that adds two says so.
+    const allowed = await removeStrayStudies(server.client, scope, before, isRsi, { most: 2 });
+    expect(allowed.removed).toHaveLength(2);
+  });
+
+  test('removeStrayStudies waits a while for a study that comes late, when asked to', async () => {
+    const server = await serverOn();
+    const scope = await readStudyScope(server.client);
+    const before = await studyIds(server.client);
+    setTimeout(() => {
+      void addBehindTheSession(server.win);
+    }, 300);
+
+    const { removed, failures } = await removeStrayStudies(server.client, scope, before, isRsi, {
+      waitMs: 3000,
+    });
+
+    expect(failures).toEqual([]);
+    expect(removed).toHaveLength(1);
+    expect(await studyIds(server.client)).toEqual(before);
+  });
+
   test('addThenCleanUp removes what a failed test added, puts the chart back, and throws its failure', async () => {
-    const server = await fakeE2eServer({}, ROOMY);
-    servers.push(server);
+    const server = await serverOn();
     const before = await studyIds(server.client);
     const plan = await prepareChartChange(server);
     const failure = new Error('the test failed');
@@ -658,9 +792,61 @@ describe('the cleanup of a test that adds studies', () => {
     }
   });
 
+  test('addThenCleanUp removes a study that comes after the test failed', async () => {
+    const server = await serverOn();
+    const before = await studyIds(server.client);
+    const plan = await prepareChartChange(server);
+    const failure = new Error('the add timed out');
+
+    let late: Promise<void> = Promise.resolve();
+
+    const run = addThenCleanUp(server, plan, isRsi, () => {
+      // As a TIMEOUT leaves it: TradingView adds the study after the call gave up on it.
+      late = delay(300).then(() => addBehindTheSession(server.win));
+      return Promise.reject(failure);
+    });
+
+    await expect(run).rejects.toBe(failure);
+    await late;
+    expect(await studyIds(server.client)).toEqual(before);
+  });
+
+  test('addThenCleanUp pins the chart before the change and cleans up on that chart only', async () => {
+    const server = await serverOn();
+    const plan = await prepareChartChange(server);
+    const from = server.ctx.events.recent().length;
+
+    await addThenCleanUp(server, plan, isRsi, async () => {
+      const { data } = await callOk<{ id: string }>(server.client, 'indicator_add', {
+        name: 'RSI',
+      });
+      await callOk(server.client, 'indicator_remove', { id: data.id });
+    });
+
+    const calls = cleanupCalls(server.ctx, from);
+    // The list before the change, and the list of the cleanup, are of chart 0.
+    expect(calls[0]).toEqual(['indicator_list', 0]);
+    expect(calls.at(-1)).toEqual(['indicator_list', 0]);
+  });
+
+  test('addThenCleanUp changes nothing when the active chart cannot be read', async () => {
+    const server = await serverOn();
+    const plan = await prepareChartChange(server);
+    const api = server.win.TradingViewApi;
+    if (api === undefined) {
+      throw new Error('The fake window has no API');
+    }
+    api.activeChartIndex = () => {
+      throw new Error('No layout yet');
+    };
+    const change = vi.fn(() => Promise.resolve());
+
+    await expect(addThenCleanUp(server, plan, isRsi, change)).rejects.toThrow(HarnessError);
+    expect(change).not.toHaveBeenCalled();
+  });
+
   test('addThenCleanUp passes when the test removed what it added', async () => {
-    const server = await fakeE2eServer({}, ROOMY);
-    servers.push(server);
+    const server = await serverOn();
     const before = await studyIds(server.client);
     const plan = await prepareChartChange(server);
 

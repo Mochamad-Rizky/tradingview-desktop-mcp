@@ -221,11 +221,15 @@ On a chart without a free indicator slot (2 of 2 on a Basic plan):
 
 With a free slot the adding tests run (the two that add a script from the editor only with
 `TV_E2E_ALLOW_DRAFTS=1`, above), each on its own study only, and within the chart snapshot and the
-exact restore of the chart suites. However a test ends, `addThenCleanUp` lists the studies and
-removes, with `confirm: true`, every study that was not on the chart before and has the name the
-test added (Relative Strength Index, or the title of the test script), because a call that failed
-halfway may have added one without answering its id. A study that was on the chart before is never
-touched, whatever its name.
+exact restore of the chart suites. Before such a test changes anything, `addThenCleanUp` pins the
+chart it works on, the active chart by its index and its layout, and lists its studies. However the
+test ends, it then removes, with `confirm: true` and on that chart only (`chartIndex`), every study
+that was not on the chart before and has the name the test added (Relative Strength Index, or the
+title of the test script), because a call that failed halfway may have added one without answering
+its id; after a failed test it lists the studies again for a few seconds, for a study TradingView
+adds late. It removes nothing, and fails the test with the reason, when the active chart or its
+layout changed during the test, or when more studies have that name than the test could have added.
+A study that was on the chart before is never touched, whatever its name.
 
 ### The Pine Editor guard
 
