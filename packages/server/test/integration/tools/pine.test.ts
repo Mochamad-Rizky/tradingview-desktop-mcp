@@ -58,11 +58,12 @@ async function connect(server: McpServer): Promise<Client> {
 async function startHarness(
   from: TvStateFixture = fixture,
   overrides: FakeTvOverrides = {},
+  callTimeoutMs = 5000,
 ): Promise<{ client: Client; win: FakeTvWindow; ctx: ToolContext }> {
   const win = createFakeTvWindow(from, overrides);
   const app = await startFakeCdpServer({ targets: loadTargetsFixture({ chartWindow: () => win }) });
   cleanups.push(() => app.close());
-  const config = testConfig({ cdpPort: app.port, callTimeoutMs: 5000 });
+  const config = testConfig({ cdpPort: app.port, callTimeoutMs });
   const { server, ctx } = createMcpServer(config, {
     launcher: refusingLauncher(),
     logger: quietLogger,
@@ -779,6 +780,7 @@ test('the Pine source tools say which of them read and which can replace text', 
 // The id every text is compiled as: it names no script.
 const COMPILE_ID = 'USER;00000000000000000000000000000000';
 const ISO = expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/) as string;
+const SECONDS = expect.any(Number) as number;
 const BROKEN =
   '//@version=6\r\nindicator("Broken")\r\nplot(undeclared_x)\r\nx = deprecated_f()\r\nlegacy_error\r\n';
 const BROKEN_ERRORS = [
@@ -835,7 +837,8 @@ describe('pine_compile', () => {
         warnings: [],
         addedToChart: false,
         studyId: null,
-        compiledAt: ISO,
+        compiledAt: SECONDS,
+        compiledAtIso: ISO,
       },
       meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
     });
@@ -880,7 +883,8 @@ describe('pine_compile', () => {
       warnings: BROKEN_WARNINGS,
       addedToChart: false,
       studyId: null,
-      compiledAt: ISO,
+      compiledAt: SECONDS,
+      compiledAtIso: ISO,
     });
     expect(ctx.session.lastPineCompile).toEqual(dataOf(result));
   });
@@ -937,7 +941,8 @@ describe('pine_compile', () => {
         warnings: [],
         addedToChart: true,
         studyId: 'NEW001',
-        compiledAt: ISO,
+        compiledAt: SECONDS,
+        compiledAtIso: ISO,
       },
       meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
     });
@@ -964,7 +969,8 @@ describe('pine_compile', () => {
       warnings: BROKEN_WARNINGS,
       addedToChart: true,
       studyId: 'NEW001',
-      compiledAt: ISO,
+      compiledAt: SECONDS,
+      compiledAtIso: ISO,
     });
     expect(warningsOf(result).join(' ')).toContain('draft');
     expect(ctx.session.createdStudyIds).toEqual(new Set(['NEW001']));
@@ -1026,6 +1032,71 @@ describe('pine_compile', () => {
     expect(ctx.session.createdStudyIds).toEqual(new Set());
   });
 
+  test('pine_compile with addToChart records only the Pine study, not one that appeared with it', async () => {
+    const { client, win, ctx } = await startHarness(withStudyRoom(5, withEditor()));
+    const chart = win.TradingViewApi?.activeChart();
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    if (facade === null || facade === undefined || chart === undefined) {
+      throw new Error('The editor must be open');
+    }
+    const add = facade.addToChart.bind(facade);
+    facade.addToChart = async () => {
+      await add();
+      // A built-in added at the same moment, after the script.
+      await chart.createStudy({ type: 'java', studyId: 'RSI@tv-basicstudies' });
+    };
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(studyIdsOf(win)).toEqual(['STUDY01', 'STUDY02', 'NEW001', 'NEW002']);
+    expect(dataOf(result)).toMatchObject({ success: true, addedToChart: true, studyId: 'NEW001' });
+    expect(ctx.session.createdStudyIds).toEqual(new Set(['NEW001']));
+  });
+
+  test('pine_compile with addToChart takes no study that is not a Pine study for the script', async () => {
+    const { client, win, ctx } = await startHarness(withStudyRoom(5, withEditor()));
+    const chart = win.TradingViewApi?.activeChart();
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    if (facade === null || facade === undefined || chart === undefined) {
+      throw new Error('The editor must be open');
+    }
+    facade.addToChart = async () => {
+      await chart.createStudy({ type: 'java', studyId: 'RSI@tv-basicstudies' });
+    };
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(dataOf(result)).toMatchObject({ success: false, addedToChart: false, studyId: null });
+    expect(ctx.session.createdStudyIds).toEqual(new Set());
+    expect(warningsOf(result).join(' ')).toContain(
+      'No new Pine study appeared on the chart, only NEW001',
+    );
+  });
+
+  test('pine_compile with addToChart gives the add only what is left of the wait', async () => {
+    // A call timeout of 2000 ms leaves the page 1000 ms; reading the source takes 400 of them.
+    const { client, win } = await startHarness(withStudyRoom(5, withEditor()), {}, 2000);
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    if (facade === null || facade === undefined) {
+      throw new Error('The editor must be open');
+    }
+    const read = facade.getSource.bind(facade);
+    facade.getSource = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return read();
+    };
+    facade.addToChart = () => new Promise(() => undefined);
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    const error = errorOf(result);
+    expect(error).toMatchObject({ code: 'TIMEOUT' });
+    expect(error?.hint).toContain('indicator_list');
+    const waited = error?.details?.waitMs;
+    expect(typeof waited).toBe('number');
+    expect(waited as number).toBeLessThanOrEqual(600);
+  });
+
   test('pine_compile with addToChart warns about a compile error the console gives no details of', async () => {
     const { client, win } = await startHarness(
       withStudyRoom(3, withEditor({ script: null, source: BROKEN, savedSource: BROKEN })),
@@ -1074,6 +1145,7 @@ describe('pine_get_errors', () => {
       addedToChart: false,
       studyId: null,
       compiledAt: null,
+      compiledAtIso: null,
     });
 
     const compiled = await callTool(client, 'pine_compile', { source: BROKEN });

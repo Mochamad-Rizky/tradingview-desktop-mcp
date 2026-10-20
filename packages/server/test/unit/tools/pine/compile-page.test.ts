@@ -526,14 +526,16 @@ describe('readAddedPineStudy', () => {
     expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02']], make)).toEqual({
       studyId: 'NEW001',
       compileError: true,
+      others: [],
     });
     expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02', 'NEW001']], make)).toEqual({
       studyId: null,
       compileError: null,
+      others: [],
     });
   });
 
-  test('prefers a Pine study, and reads no compile error from a study without the member', async () => {
+  test('takes only a Pine study, lists the others, and reads no compile error without the member', async () => {
     const make = (): object => ({
       TradingViewApi: {
         activeChart: () => ({
@@ -553,10 +555,18 @@ describe('readAddedPineStudy', () => {
     expect(await resultOf(readAddedPineStudy, [['OLD']], make)).toEqual({
       studyId: 'PINE',
       compileError: null,
+      others: ['JAVA', 'BAD'],
+    });
+    // A new study that is not a Pine study is never taken for the script.
+    expect(await resultOf(readAddedPineStudy, [['OLD', 'PINE']], make)).toEqual({
+      studyId: null,
+      compileError: null,
+      others: ['JAVA', 'BAD'],
     });
     expect(await resultOf(readAddedPineStudy, [['OLD']], () => ({}))).toEqual({
       studyId: null,
       compileError: null,
+      others: [],
     });
   });
 });

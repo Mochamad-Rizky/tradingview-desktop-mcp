@@ -40,16 +40,23 @@ const clamp = (value: number, low: number, high: number): number =>
 
 // The errors and warnings of a compilation, from the compile errors of the app ({ errors, warnings },
 // each a list of diagnostics { message, ctx?, start?, end? }) or the diagnostics the page functions
-// answer. Each is a PineCompileError: line and column are 1-based and point into the compiled text,
-// where a CRLF counts as one line break (so does a lone CR or LF); endLine and endColumn are where
-// it ends, the end column included, null when the compiler gave no end. A diagnostic without a
-// column (column 0 from the compiler, as legacy and runtime messages have) is reported at column 1
-// of its line with endColumn null, which stands for the whole line; one without any place at line
-// 1, column 1, with no end. The {name} placeholders of a message are filled from ctx, and a placeholder ctx has no
-// text, number or boolean for stays as it is. Positions are kept as the compiler gives them (1-based,
-// end column included; the compiler counts a CRLF as one line break, as seen on the app) and clamped
-// into `source`: a line past the last one becomes the last line, and a column past the end of its
-// line the column right after it. Anything that is not compile errors gives none.
+// answer. Anything that is not compile errors gives none.
+//
+// Each is a PineCompileError. line and column are 1-based and point into the compiled text, where a
+// CRLF counts as one line break (so does a lone CR or LF; the compiler counts a CRLF as one, as seen
+// on the app). endLine and endColumn are where it ends, the end column included, null when the
+// compiler gave no end. A diagnostic without a column (column 0 from the compiler, as legacy and
+// runtime messages have) is reported at column 1 of its line with endColumn null, which stands for
+// the whole line; one without any place at line 1, column 1, with no end.
+//
+// Columns are taken to count UTF-16 code units, the unit of JavaScript strings and of Monaco, the
+// code editor of the app, which takes the columns of the compiler as they are: a tab is one column,
+// é one, and a character outside the Basic Multilingual Plane (an emoji) two. Positions are kept as
+// the compiler gives them and only clamped into `source` in that unit: a line past the last one
+// becomes the last line, and a column past the end of its line the column right after it.
+//
+// The {name} placeholders of a message are filled from ctx; a placeholder ctx has no text, number
+// or boolean for stays as it is.
 export function normalizeCompileErrors(
   raw: unknown,
   source: string,
@@ -123,18 +130,20 @@ export type PineCompileError = ReturnType<typeof normalizeCompileErrors>['errors
 // the chart, null for a compilation alone. success is true when there are no errors and, for a
 // script added to the chart, the study was added and TradingView reports no compile error for it.
 // addedToChart and studyId say whether a study of the script was put on the chart and its id.
-// compiledAt is when the server got the result, as ISO 8601.
+// compiledAt is when the server got the result, in Unix seconds, and compiledAtIso the same as ISO
+// 8601; both are null only in the empty result pine_get_errors gives before any compilation.
 export function toCompileResult(
   diagnostics: { errors: PineCompileError[]; warnings: PineCompileError[] },
   added: { studyId: string | null; compileError: boolean | null } | null,
-  compiledAt: string,
+  compiledAt: number,
 ): {
   success: boolean;
   errors: PineCompileError[];
   warnings: PineCompileError[];
   addedToChart: boolean;
   studyId: string | null;
-  compiledAt: string;
+  compiledAt: number | null;
+  compiledAtIso: string | null;
 } {
   const studyId = added?.studyId ?? null;
   return {
@@ -146,6 +155,7 @@ export function toCompileResult(
     addedToChart: studyId !== null,
     studyId,
     compiledAt,
+    compiledAtIso: toIso(compiledAt),
   };
 }
 

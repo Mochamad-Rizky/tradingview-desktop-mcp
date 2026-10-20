@@ -2,7 +2,6 @@ import { z } from 'zod';
 import type { PageHandle } from '../../core/connection.js';
 import { TvMcpError } from '../../core/errors.js';
 import { pollUntil } from '../../utils/poll.js';
-import { toIso } from '../../utils/time.js';
 import { pageWaitMs } from '../chart/strategies.js';
 import { requireStudyRoom } from '../indicator/index.js';
 import { readStudyInsertContext } from '../indicator/page.js';
@@ -47,7 +46,8 @@ const ADDED_STUDY_POLL_MS = 100;
 
 const MAX_SOURCE = 500_000;
 
-const now = (): string => toIso(Date.now() / 1000);
+// Now, in whole Unix seconds.
+const now = (): number => Math.floor(Date.now() / 1000);
 
 // Compiles `source` without touching the editor or the chart, through the compiler of the app, and
 // answers the result, addedToChart false. An empty text is INVALID_INPUT; the failures of
@@ -114,7 +114,11 @@ async function addEditorScript(
   }
   // For the clamping of positions only; read before the app changes anything.
   const source = await editorSource(page);
-  const { before, consoleFrom } = await page.bridge.evaluateWithLib(addPineScriptToChart, [waitMs]);
+  // What is left of the wait after the checks, so that a slow add ends in the TIMEOUT of the page
+  // function, with its hint, within the time of the call.
+  const { before, consoleFrom } = await page.bridge.evaluateWithLib(addPineScriptToChart, [
+    Math.max(deadline - Date.now(), 0),
+  ]);
   const found = await pollUntil(
     () => page.bridge.evaluate(readAddedPineStudy, [before]),
     ({ studyId }) => studyId !== null,
@@ -123,7 +127,7 @@ async function addEditorScript(
       timeoutMs: Math.max(Math.min(ADDED_STUDY_WAIT_MS, deadline - Date.now()), 0),
     },
   );
-  const { studyId, compileError } = found.last;
+  const { studyId, compileError, others } = found.last;
   if (studyId !== null) {
     ctx.session.createdStudyIds.add(studyId);
     if (state.script === null || state.draft) {
@@ -135,7 +139,13 @@ async function addEditorScript(
   }
   const diagnostics = await page.bridge.evaluateWithLib(readPineConsoleDiagnostics, [consoleFrom]);
   const compiled = normalizeCompileErrors(diagnostics, source);
-  if (studyId === null) {
+  if (studyId === null && others.length > 0) {
+    warnings.push(
+      `No new Pine study appeared on the chart, only ${others.join(', ')}, which is not taken ` +
+        'for the script and not counted as added by this session. Check indicator_list and the ' +
+        'console of the Pine Editor (pine_get_console).',
+    );
+  } else if (studyId === null) {
     warnings.push(
       'No new study appeared on the chart: TradingView did not add the script. The console of ' +
         'the Pine Editor (pine_get_console) may say why.',
@@ -166,7 +176,7 @@ export const pineCompile = defineTool({
     'INVALID_INPUT. Returns success, errors and warnings (each with 1-based line and column, ' +
     'endLine and endColumn, the end column included or null for none, message and severity), ' +
     'addedToChart, studyId (the added study, which indicator_remove removes without confirm) and ' +
-    'compiledAt. Compile errors are a result, not a failure; a failure of TradingView to compile ' +
+    'compiledAt (Unix seconds) with compiledAtIso. Compile errors are a result, not a failure; a failure of TradingView to compile ' +
     'at all (such as a text too large) is NOT_AVAILABLE with its message. pine_get_errors ' +
     'returns the last result again.',
   inputSchema: {
@@ -223,9 +233,9 @@ export const pineGetErrors = defineTool({
   title: 'Read the last Pine compile errors',
   description:
     'Returns the result of the last pine_compile of this session again, unchanged: success, ' +
-    'errors, warnings, addedToChart, studyId and compiledAt. Before any compilation in this ' +
-    'session it returns an empty result: success true, no errors or warnings and compiledAt ' +
-    'null. It asks TradingView nothing and changes nothing; pine_compile compiles anew.',
+    'errors, warnings, addedToChart, studyId, compiledAt (Unix seconds) and compiledAtIso. ' +
+    'Before any compilation in this session it returns an empty result: success true, no errors ' +
+    'or warnings, and compiledAt and compiledAtIso null. It asks TradingView nothing and changes nothing; pine_compile compiles anew.',
   inputSchema: {},
   annotations: {
     readOnlyHint: true,
@@ -235,14 +245,14 @@ export const pineGetErrors = defineTool({
   },
   core: true,
   handler(_input, ctx) {
-    const data: Omit<PineCompileResult, 'compiledAt'> & { compiledAt: string | null } = ctx.session
-      .lastPineCompile ?? {
+    const data: PineCompileResult = ctx.session.lastPineCompile ?? {
       success: true,
       errors: [],
       warnings: [],
       addedToChart: false,
       studyId: null,
       compiledAt: null,
+      compiledAtIso: null,
     };
     return Promise.resolve({ data, via: 'internal' as const });
   },

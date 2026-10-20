@@ -1521,13 +1521,15 @@ export function addPineScriptToChart(
 }
 
 // The study on the active chart whose id is not in `before`, which the editor added: the last such
-// Pine study, else the last new study, else null. compileError is what hasCompileError of its study
-// core answers, null when it cannot be read. Changes nothing, and needs no page library, so the
-// caller may poll it.
+// Pine study, else null. Only a Pine study is taken for it, so that a study that appeared at the
+// same time for another reason is never taken for the script; others lists the ids of the new
+// studies that are not Pine studies (or whose metadata cannot be read). compileError is what
+// hasCompileError of its study core answers, null when it cannot be read. Changes nothing, and
+// needs no page library, so the caller may poll it.
 export function readAddedPineStudy(
   win: TvWindow,
   before: string[],
-): { studyId: string | null; compileError: boolean | null } {
+): { studyId: string | null; compileError: boolean | null; others: string[] } {
   const attempt = (read: () => unknown): unknown => {
     try {
       return read();
@@ -1552,12 +1554,14 @@ export function readAddedPineStudy(
     const pine: unknown = meta?.pine;
     return typeof pine === 'object' && pine !== null;
   };
-  const studyId = fresh.findLast(isPine) ?? fresh.at(-1) ?? null;
+  const pine = fresh.filter(isPine);
+  const others = fresh.filter((id) => !pine.includes(id));
+  const studyId = pine.at(-1) ?? null;
   if (studyId === null) {
-    return { studyId: null, compileError: null };
+    return { studyId: null, compileError: null, others };
   }
   const failed = attempt(() => coreOf(studyId)?.hasCompileError?.());
-  return { studyId, compileError: typeof failed === 'boolean' ? failed : null };
+  return { studyId, compileError: typeof failed === 'boolean' ? failed : null, others };
 }
 
 // The diagnostics the console of the open editor holds from entry `from` on (the length it had

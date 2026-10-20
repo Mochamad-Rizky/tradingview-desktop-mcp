@@ -38,6 +38,73 @@ test('compile errors keep 1-based positions for CRLF sources', () => {
   });
 });
 
+// Columns count UTF-16 code units, as JavaScript strings and Monaco do: these pin that unit, so that
+// a server that counted otherwise (bytes, code points, tab stops) would show up as a failure here
+// and in the E2E check of the same texts.
+test('columns count UTF-16 code units: a tab, a non-ASCII letter and an emoji', () => {
+  // undeclared_q starts after a tab (one column), after "é" (one column) and after an emoji (two).
+  const source =
+    '//@version=6\n\tplot(undeclared_q)\nx = "é" + undeclared_q\ny = "😀" + undeclared_q\n';
+  const at = (line: number, column: number) => ({
+    message: 'Undeclared identifier',
+    start: { line, column },
+    end: { line, column: column + 11 },
+  });
+  const raw = { errors: [at(2, 7), at(3, 11), at(4, 12), at(2, 2)] };
+
+  expect(normalizeCompileErrors(raw, source).errors).toEqual([
+    {
+      line: 2,
+      column: 7,
+      endLine: 2,
+      endColumn: 18,
+      message: 'Undeclared identifier',
+      severity: 'error',
+    },
+    {
+      line: 3,
+      column: 11,
+      endLine: 3,
+      endColumn: 22,
+      message: 'Undeclared identifier',
+      severity: 'error',
+    },
+    // The emoji line is 23 code units long: the end at column 23 is its last unit, not cut.
+    {
+      line: 4,
+      column: 12,
+      endLine: 4,
+      endColumn: 23,
+      message: 'Undeclared identifier',
+      severity: 'error',
+    },
+    // Column 2 right after the tab stays column 2.
+    {
+      line: 2,
+      column: 2,
+      endLine: 2,
+      endColumn: 13,
+      message: 'Undeclared identifier',
+      severity: 'error',
+    },
+  ]);
+  // The clamp works in the same unit: the column right after the end of each line is the last one.
+  const past = {
+    errors: [2, 3, 4].map((line) => ({
+      message: 'x',
+      start: { line, column: 99 },
+      end: { line, column: 99 },
+    })),
+  };
+  expect(
+    normalizeCompileErrors(past, source).errors.map(({ column, endColumn }) => [column, endColumn]),
+  ).toEqual([
+    [20, 20],
+    [23, 23],
+    [24, 24],
+  ]);
+});
+
 test('normalizeCompileErrors separates warnings', () => {
   const source = 'a\nb = deprecated_f()\nc\n';
   const raw = {
@@ -230,7 +297,7 @@ test('mergeConsoleMessages puts the newest first, keeps editor clocks and limits
 });
 
 test('toCompileResult succeeds without errors, and for a script added to the chart only once it compiled there', () => {
-  const at = '2026-10-20T10:00:00Z';
+  const at = 1_792_490_400;
   const clean = { errors: [], warnings: [] };
   const error = {
     line: 1,
@@ -248,6 +315,7 @@ test('toCompileResult succeeds without errors, and for a script added to the cha
     addedToChart: false,
     studyId: null,
     compiledAt: at,
+    compiledAtIso: '2026-10-20T10:00:00Z',
   });
   expect(toCompileResult({ errors: [error], warnings: [] }, null, at).success).toBe(false);
   expect(toCompileResult(clean, { studyId: 'NEW001', compileError: false }, at)).toMatchObject({
