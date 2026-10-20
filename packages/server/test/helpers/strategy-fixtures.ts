@@ -199,3 +199,25 @@ export function withStudies(base: TvStateFixture, ...studies: FixtureStudy[]): T
 export function strategyWith(report: Partial<FixtureStrategyReport>): FixtureStudy {
   return { ...SAMPLE_STRATEGY, report: { ...SAMPLE_REPORT, ...report } };
 }
+
+// `count` closed long trades, one every two bars from bar 10, whose profits zig-zag so that the
+// equity curve has peaks and valleys to keep: each trade earns 50 and every third one loses 100.
+// Quantities and prices are made up.
+export function generatedTrades(count: number): Json[] {
+  let cumulative = 0;
+  return Array.from({ length: count }, (_, position) => {
+    const profit = (position + 1) % 3 === 0 ? -100 : 50;
+    cumulative += profit;
+    return {
+      tradeNumber: position + 1,
+      entry: leg('le', 10 + position * 2, 100, 'Long'),
+      exit: leg('lx', 11 + position * 2, 100 + profit / 10, 'Exit long'),
+      isOpen: false,
+      quantity: 10,
+      profit: amount(profit, profit / 10),
+      runup: amount(Math.max(profit, 0), 0),
+      drawdown: amount(Math.max(-profit, 0), 0),
+      cumulativeProfit: amount(cumulative, cumulative / 100),
+    };
+  });
+}

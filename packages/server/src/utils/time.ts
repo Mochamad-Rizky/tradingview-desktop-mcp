@@ -3,7 +3,7 @@ import { TvMcpError } from '../core/errors.js';
 // Numbers above this are Unix milliseconds and the rest are seconds (design spec 5.1). As seconds
 // it is the year 5138 and as milliseconds it is March 1973, so a timestamp for any date after 1973
 // is read correctly whichever unit it is in.
-const MILLISECONDS_ABOVE = 1e11;
+export const MILLISECONDS_ABOVE = 1e11;
 
 // The earliest time a number can stand for: 1973-03-03T09:46:40Z, which is MILLISECONDS_ABOVE read
 // as milliseconds. A smaller number is far more likely to be a year (2024) or a compact date

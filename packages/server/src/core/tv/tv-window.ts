@@ -184,6 +184,11 @@ export interface CoreModelLike {
   // study API gives with study(). null for an id that is not a study. Only the core model has it,
   // not the chart model (notes of Plan 2, section Q5). A build may not have it.
   getStudyById?(id: string): StudyCoreLike | null;
+  // The strategy the Strategy Tester shows (notes of Plan 2, section Q6): a watched value whose
+  // value() is the source of that strategy, which is taken to have id() like every study core, or
+  // null while none is active (seen null on the app, which had no strategy). Typed loosely because
+  // a strategy source was never observed. A build may not have it.
+  activeStrategySource?(): { value?(): unknown };
 }
 
 // The main series of a chart.
@@ -378,6 +383,9 @@ export interface StudyInputInfoLike {
   min?: number;
   max?: number;
   confirm?: boolean;
+  // The id the app gives an input of a strategy that has a meaning of its own, such as
+  // initial_capital (notes of Plan 2, section Q6).
+  internalID?: string;
 }
 
 // The study core, api.study(). A strategy carries the own flag isStudyStrategy, which indicators do
@@ -389,6 +397,17 @@ export interface StudyCoreLike {
   // The rows of the study.
   data(): PlotListLike;
   readonly isStudyStrategy?: boolean;
+  // The report of a strategy (notes of Plan 2, section Q6): null until the app has computed it,
+  // else an object whose members, as far as they are confirmed, are currency, position,
+  // filledOrders, activeOrders and performance (all, long and short, with the figures under the
+  // names of the Strategy Tester, a number or a numeric string). Whether it has a list of trades is
+  // not known. Typed loosely because the raw report was never observed.
+  reportData?(): unknown;
+  // The filled orders of the report, null without them: each { id, b (buy), e (false for an exit),
+  // p (price), q (quantity), c (comment), tm }.
+  ordersData?(): unknown;
+  // The time-point index of the bar of each filled order, in the order of ordersData().
+  barsIndexes?(): unknown;
   // Whether the script of a Pine study failed to compile (set by setErrorCompilation of the app, as
   // after the Pine Editor added a script that does not compile). Pure.
   hasCompileError?(): boolean;

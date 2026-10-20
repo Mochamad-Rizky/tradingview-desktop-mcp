@@ -19,12 +19,14 @@ import { chartTools } from '../../src/tools/chart/index.js';
 import { dataTools } from '../../src/tools/data/index.js';
 import { indicatorTools } from '../../src/tools/indicator/index.js';
 import { pineTools } from '../../src/tools/pine/index.js';
+import { strategyTools } from '../../src/tools/strategy/index.js';
 import { startStdioTransport } from '../../src/transports/stdio.js';
 import { startFakeCdpServer, type FakeCdpServer } from '../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
-import { loadTvFixture } from '../helpers/fake-tv/fixture.js';
+import { loadTvFixture, type TvStateFixture } from '../helpers/fake-tv/fixture.js';
 import { createFakeTvWindow } from '../helpers/fake-tv/window.js';
 import { callTool, connectStdioClient } from '../helpers/mcp-client.js';
+import { SAMPLE_STRATEGY, withStudies } from '../helpers/strategy-fixtures.js';
 import {
   quietLogger,
   refusingLauncher,
@@ -77,6 +79,7 @@ describe('startStdioTransport', () => {
       ...dataTools.map(({ name }) => name),
       ...indicatorTools.map(({ name }) => name),
       ...pineTools.map(({ name }) => name),
+      ...strategyTools.map(({ name }) => name),
       'batch_run',
     ]);
   });
@@ -151,8 +154,8 @@ describe('the built CLI over stdio', () => {
     }
   });
 
-  async function startApp(): Promise<FakeCdpServer> {
-    const win = createFakeTvWindow(fixture);
+  async function startApp(from: TvStateFixture = fixture): Promise<FakeCdpServer> {
+    const win = createFakeTvWindow(from);
     const app = await startFakeCdpServer({
       targets: loadTargetsFixture({ chartWindow: () => win }),
     });
@@ -286,6 +289,51 @@ describe('the built CLI over stdio', () => {
       cdp: { reachable: true, endpoint: `http://127.0.0.1:${String(app.port)}` },
       chart: { found: true, tabs: 1 },
       app: { ready: true, connected: true, buildTime: fixture.buildTime },
+    });
+  });
+
+  test('stdio client reads the report of a strategy through the page function the bundle ships', async () => {
+    const app = await startApp(withStudies(fixture, SAMPLE_STRATEGY));
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [cli],
+      env: cliEnv(app),
+      stderr: 'pipe',
+    });
+    transport.stderr?.on('data', () => undefined);
+    const client = new Client({ name: 'tradingview-mcp-tests', version: '0.0.0' });
+    await client.connect(transport);
+    cleanups.push(() => client.close());
+
+    // The page function has closures, a pattern and helpers of its own, which the bundler must
+    // leave as they are, and it runs in the page whole.
+    const results = await callTool(client, 'strategy_get_results');
+    const trades = await callTool(client, 'strategy_get_trades', { limit: 2 });
+    const equity = await callTool(client, 'strategy_get_equity');
+
+    expect(results.structuredContent).toMatchObject({
+      ok: true,
+      data: {
+        strategy: { id: 'STRAT01', name: 'RSI Strategy' },
+        currency: 'USD',
+        initialCapital: 10_000,
+        performance: { all: { netProfit: 155, grossProfit: 205 } },
+      },
+      meta: { via: 'internal' },
+    });
+    expect(trades.structuredContent).toMatchObject({
+      ok: true,
+      data: {
+        total: 4,
+        trades: [
+          { number: 1, side: 'long' },
+          { number: 2, side: 'short' },
+        ],
+      },
+    });
+    expect(equity.structuredContent).toMatchObject({
+      ok: true,
+      data: { initialCapital: 10_000, downsampled: false },
     });
   });
 

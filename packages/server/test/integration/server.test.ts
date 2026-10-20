@@ -13,6 +13,7 @@ import { chartTools } from '../../src/tools/chart/index.js';
 import { dataTools } from '../../src/tools/data/index.js';
 import { indicatorTools } from '../../src/tools/indicator/index.js';
 import { pineTools } from '../../src/tools/pine/index.js';
+import { strategyTools } from '../../src/tools/strategy/index.js';
 import { createToolRegistry, registerToolsWithServer } from '../../src/tools/registry.js';
 import { defineTool, type ToolRegistry } from '../../src/tools/types.js';
 import { startFakeCdpServer } from '../helpers/fake-cdp/server.js';
@@ -32,8 +33,9 @@ import {
 
 const HEALTH_URI = 'tradingview://app/health';
 // What a server offers when nothing narrows its tools: the tools of the app, of the chart, of
-// market data, of indicators and of Pine, then the batch. Market depth is the one data tool outside
-// the core profile.
+// market data, of indicators, of Pine and of the Strategy Tester, then the batch. Market depth is
+// the one data tool outside the core profile, and the tools of the Strategy Tester are outside it
+// as well for now.
 const APP_TOOL_NAMES = appTools.map(({ name }) => name);
 const CHART_TOOL_NAMES = chartTools.map(({ name }) => name);
 const DATA_TOOL_NAMES = dataTools.map(({ name }) => name);
@@ -44,6 +46,10 @@ const READ_INDICATOR_TOOL_NAMES = indicatorTools
   .map(({ name }) => name);
 const PINE_TOOL_NAMES = pineTools.map(({ name }) => name);
 const READ_PINE_TOOL_NAMES = pineTools
+  .filter(({ annotations }) => annotations.readOnlyHint === true)
+  .map(({ name }) => name);
+const STRATEGY_TOOL_NAMES = strategyTools.map(({ name }) => name);
+const READ_STRATEGY_TOOL_NAMES = strategyTools
   .filter(({ annotations }) => annotations.readOnlyHint === true)
   .map(({ name }) => name);
 
@@ -141,6 +147,7 @@ test('lists registered tools with descriptions and input schemas', async () => {
     ...DATA_TOOL_NAMES,
     ...INDICATOR_TOOL_NAMES,
     ...PINE_TOOL_NAMES,
+    ...STRATEGY_TOOL_NAMES,
     'batch_run',
   ]);
   expect(tools.find(({ name }) => name === 'batch_run')).toMatchObject({
@@ -589,6 +596,7 @@ test('createMcpServer creates the dependencies it is not given', () => {
     ...DATA_TOOL_NAMES,
     ...INDICATOR_TOOL_NAMES,
     ...PINE_TOOL_NAMES,
+    ...STRATEGY_TOOL_NAMES,
     'batch_run',
   ]);
 });
@@ -626,6 +634,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     ...DATA_TOOL_NAMES,
     ...READ_INDICATOR_TOOL_NAMES,
     ...READ_PINE_TOOL_NAMES,
+    ...READ_STRATEGY_TOOL_NAMES,
   ]);
   expect(lines).toEqual([]);
 

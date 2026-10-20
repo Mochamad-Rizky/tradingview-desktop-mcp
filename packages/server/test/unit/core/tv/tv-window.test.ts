@@ -2,6 +2,7 @@ import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import { loadTvFixture } from '../../../helpers/fake-tv/fixture.js';
 import { syntheticBars } from '../../../helpers/fake-tv/synthetic-bars.js';
 import { createFakeTvWindow } from '../../../helpers/fake-tv/window.js';
+import { SAMPLE_STRATEGY, withStudies } from '../../../helpers/strategy-fixtures.js';
 
 // Page functions are written against TvWindow and tested against the shared fake window. These
 // tests fail to compile when the two drift apart, and walk the paths page code takes through the
@@ -85,6 +86,31 @@ describe('the TvWindow contract', () => {
     expect(typeof win.TradingView?.bottomWidgetBar?.close).toBe('function');
     expect(win.document.visibilityState).toBe('visible');
     expect(win.location.href).toBe('https://www.tradingview.com/chart/FIXTURE1/');
+  });
+
+  test('is satisfied by the shared fake window for a strategy, its report and the active source', () => {
+    const win: TvWindow = createFakeTvWindow(
+      withStudies(fixture, { ...SAMPLE_STRATEGY, activeStrategy: true }),
+    );
+
+    const chart = win.TradingViewApi?.activeChart();
+    const model = chart?._chartWidget?.model().model();
+    const core = model?.getStudyById?.('STRAT01');
+
+    expect(core?.isStudyStrategy).toBe(true);
+    expect(core).toBe(chart?.getStudyById('STRAT01').study());
+    expect(core?.reportData?.()).toMatchObject({ currency: 'USD' });
+    expect(core?.ordersData?.()).toHaveLength(7);
+    expect(core?.barsIndexes?.()).toHaveLength(7);
+    // The active source is a watched value whose value is the core of the strategy.
+    expect(model?.activeStrategySource?.().value?.()).toBe(core);
+    // The input of the initial capital carries the internal id the app gives it.
+    expect(
+      chart
+        ?.getStudyById('STRAT01')
+        .getInputsInfo()
+        .find(({ id }) => id === 'in_1')?.internalID,
+    ).toBe('initial_capital');
   });
 
   test('is satisfied by a fake tab whose app has not booted', () => {
