@@ -676,6 +676,86 @@ export async function changeThenRestore(
   }
 }
 
+// A study as indicator_list gives it, as far as the cleanup below reads it.
+export interface ListedStudy {
+  id: string;
+  name: string;
+}
+
+// The studies a test may have left on the chart: those on it now that were not on it before and
+// whose name says the test added them. A call that failed halfway, adding a study and then failing
+// to answer its id, leaves one. A study that was on the chart before is never among them, whatever
+// its name: it is the user's.
+export function strayStudies(
+  before: readonly string[],
+  now: readonly ListedStudy[],
+  isAdded: (name: string) => boolean,
+): string[] {
+  const kept = new Set(before);
+  return now.filter(({ id, name }) => !kept.has(id) && isAdded(name)).map(({ id }) => id);
+}
+
+// Removes the studies strayStudies finds, each with confirm: true, because the session may not have
+// recorded a study that a call added before it failed. Answers the ids removed and the failures,
+// named by the tool and the code only.
+export async function removeStrayStudies(
+  client: Client,
+  before: readonly string[],
+  isAdded: (name: string) => boolean,
+): Promise<{ removed: string[]; failures: string[] }> {
+  let studies: ListedStudy[];
+  try {
+    studies = (await callOk<{ studies: ListedStudy[] }>(client, 'indicator_list')).data.studies;
+  } catch (error) {
+    return { removed: [], failures: [describeFailure(error)] };
+  }
+  const removed: string[] = [];
+  const failures: string[] = [];
+  for (const id of strayStudies(before, studies, isAdded)) {
+    const failure = await callFailureOf(client, 'indicator_remove', { id, confirm: true });
+    if (failure === null) {
+      removed.push(id);
+    } else {
+      failures.push(failure);
+    }
+  }
+  return { removed, failures };
+}
+
+// Runs `change`, a test that adds studies (`isAdded` tells them by name), within the chart snapshot
+// of `plan`. However it ended, every study it left is removed (removeStrayStudies), then the chart
+// and its exact view are put back (restoreChartAndView), each step whatever the other did. The
+// failure of `change` is the one thrown, with a failed cleanup logged next to it; after a change
+// that passed, a failed cleanup fails it.
+export async function addThenCleanUp(
+  e2e: E2eServer,
+  plan: ChartChangePlan,
+  isAdded: (name: string) => boolean,
+  change: () => Promise<void>,
+): Promise<void> {
+  const { data } = await callOk<{ studies: ListedStudy[] }>(e2e.client, 'indicator_list');
+  const before = data.studies.map(({ id }) => id);
+  let failure: unknown;
+  let failed = false;
+  try {
+    await change();
+  } catch (error) {
+    failure = error;
+    failed = true;
+  }
+  const { failures } = await removeStrayStudies(e2e.client, before, isAdded);
+  failures.push(...(await restoreChartAndView(e2e, plan)));
+  if (failed) {
+    if (failures.length > 0) {
+      console.error(`The test could not clean up after it failed: ${failures.join('; ')}`);
+    }
+    throw failure;
+  }
+  if (failures.length > 0) {
+    throw new HarnessError(`The test could not clean up: ${failures.join('; ')}`);
+  }
+}
+
 // The chart shows what the snapshot says again, its range within one bar of the one it had. The
 // comparisons say which part differs, never its value, which is the user's.
 export async function expectChartRestored(e2e: E2eServer, snapshot: ChartSnapshot): Promise<void> {

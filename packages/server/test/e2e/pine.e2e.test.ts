@@ -7,21 +7,26 @@ import type {
 import { pollUntil } from '../../src/utils/poll.js';
 import { callTool } from '../helpers/mcp-client.js';
 import {
+  addThenCleanUp,
   callFailure,
   callOk,
   closeEditor,
   describeFailure,
   e2eEnabled,
   editorDifferences,
+  expectChartRestored,
   findEditorReopenProblems,
   findLastEditedScript,
   observe,
   openEditor,
   planLimitSkipReason,
+  prepareChartChange,
   readChartState,
   restoreEditor,
   snapshotEditor,
   startE2eServer,
+  type ChartChangePlan,
+  type ChartSnapshot,
   type E2eServer,
   type EditorSnapshot,
   type EditorTarget,
@@ -624,33 +629,59 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
     }
   }
 
-  // Adds `source` to the chart from the editor, hands the new study to `read`, and removes the study
-  // again, whatever `read` did; the editor is put back afterwards. The caller has checked the room.
+  // Adds `source` to the chart from the editor, within the chart snapshot of `plan`, hands the new
+  // study to `read` and removes it again, whatever `read` did. addThenCleanUp also removes a study of
+  // the script that a call left without telling its id (the chart lists it under the title of the
+  // script), and puts the chart and its exact view back; the editor is put back as well. The caller
+  // has checked the room.
   async function addThenRemove(
     source: string,
+    plan: ChartChangePlan & { snapshot: ChartSnapshot },
     read: (studyId: string) => Promise<void>,
   ): Promise<void> {
-    const { client } = started().e2e;
-    const studiesBefore = (await listStudies()).map(({ id }) => id);
-    const added: { id: string | null } = { id: null };
-    await editThenRestore(async () => {
-      try {
-        written.add(source);
-        await callOk(client, 'pine_new', { source });
-        const { data } = await callOk<CompileResult>(client, 'pine_compile', { addToChart: true });
-        added.id = data.studyId;
-        expect(data.addedToChart).toBe(true);
-        if (data.studyId !== null) {
-          await read(data.studyId);
-        }
-      } finally {
-        // This session added it, so it goes without confirm.
-        if (added.id !== null) {
-          await callOk(client, 'indicator_remove', { id: added.id });
-        }
-      }
-    });
-    expect((await listStudies()).map(({ id }) => id)).toEqual(studiesBefore);
+    const { e2e: server } = started();
+    const { client } = server;
+    const title = /^[ \t]*(?:indicator|strategy)\(\s*"([^"]*)"/m.exec(source)?.[1];
+    if (title === undefined) {
+      throw new Error('The test script declares no title to find its study by');
+    }
+    const before = (await listStudies()).map(({ id }) => id);
+    await addThenCleanUp(
+      server,
+      plan,
+      (name) => name === title,
+      () =>
+        editThenRestore(async () => {
+          written.add(source);
+          await callOk(client, 'pine_new', { source });
+          const { data } = await callOk<CompileResult>(client, 'pine_compile', {
+            addToChart: true,
+          });
+          expect(data.addedToChart).toBe(true);
+          expect(data.studyId).not.toBeNull();
+          if (data.studyId !== null) {
+            try {
+              await read(data.studyId);
+            } finally {
+              // This session added it, so it goes without confirm.
+              await callOk(client, 'indicator_remove', { id: data.studyId });
+            }
+          }
+        }),
+    );
+    expect((await listStudies()).map(({ id }) => id)).toEqual(before);
+    await expectChartRestored(server, plan.snapshot);
+  }
+
+  // The chart snapshot a test that adds a study needs, or why it cannot change the chart.
+  async function chartPlan(): Promise<
+    { plan: ChartChangePlan & { snapshot: ChartSnapshot } } | { skip: string }
+  > {
+    const plan = await prepareChartChange(started().e2e);
+    const { snapshot } = plan;
+    return snapshot === undefined
+      ? { skip: plan.skipReason ?? 'The chart could not be prepared for a change' }
+      : { plan: { ...plan, snapshot } };
   }
 
   // A tool called until `done` takes what it answers, for what a script computes after it is added.
@@ -806,8 +837,12 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
     if (editorSkip !== undefined) {
       return context.skip(editorSkip);
     }
+    const prepared = await chartPlan();
+    if ('skip' in prepared) {
+      return context.skip(prepared.skip);
+    }
 
-    await addThenRemove(DRAWING_SCRIPT, async (studyId) => {
+    await addThenRemove(DRAWING_SCRIPT, prepared.plan, async (studyId) => {
       const lines = await pollTool<{ lines: { studyId: string }[]; total: number }>(
         'pine_get_lines',
         { studyId },
@@ -851,8 +886,12 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
     if (editorSkip !== undefined) {
       return context.skip(editorSkip);
     }
+    const prepared = await chartPlan();
+    if ('skip' in prepared) {
+      return context.skip(prepared.skip);
+    }
 
-    await addThenRemove(STRATEGY_SCRIPT, async (studyId) => {
+    await addThenRemove(STRATEGY_SCRIPT, prepared.plan, async (studyId) => {
       const results = await pollTool<{
         strategy: { id: string };
         performance: { all: Record<string, number> };

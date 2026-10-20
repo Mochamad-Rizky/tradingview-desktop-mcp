@@ -4,12 +4,14 @@ import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 import type { SavedScriptRow } from '../../../src/tools/pine/page.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 import {
+  addThenCleanUp,
   applyView,
   callFailure,
   callOk,
   changeThenRestore,
   closeEditor,
   describeFailure,
+  expectChartRestored,
   editorDifferences,
   editorReopenProblems,
   findEditorReopenProblems,
@@ -21,11 +23,13 @@ import {
   readLastEditedScript,
   readSymbolListing,
   readView,
+  removeStrayStudies,
   restorabilityProblems,
   restoreChart,
   restoreChartAndView,
   restoreEditor,
   snapshotEditor,
+  strayStudies,
   templateType,
   type ChartSnapshot,
   type ChartState,
@@ -475,8 +479,9 @@ describe('planLimitSkipReason', () => {
 // fake window to stage and inspect the app. close() closes the server and the fake app.
 async function fakeE2eServer(
   overrides: Parameters<typeof createFakeTvWindow>[1] = {},
+  from = fixture,
 ): Promise<E2eServer & { win: FakeTvWindow; client: Client; ctx: ToolContext }> {
-  const win = createFakeTvWindow(fixture, overrides);
+  const win = createFakeTvWindow(from, overrides);
   const app = await startFakeCdpServer({ targets: loadTargetsFixture({ chartWindow: () => win }) });
   const { server, ctx } = createMcpServer(testConfig({ cdpPort: app.port, callTimeoutMs: 5000 }), {
     launcher: refusingLauncher(),
@@ -538,6 +543,117 @@ describe('the steps of a suite that changes the chart', () => {
     expect(plan.snapshot).toBeUndefined();
     expect(plan.skipReason).toMatch(/activeChart\(\)\.setResolution.*nothing was changed/);
     expect(await restoreChartAndView(server, plan)).toEqual([]);
+  });
+});
+
+describe('strayStudies', () => {
+  const isRsi = (name: string) => /^relative strength index$/i.test(name);
+
+  test('finds the studies that are new and named as the test added them', () => {
+    const now = [
+      { id: 'OLD001', name: 'Relative Strength Index' },
+      { id: 'NEW001', name: 'Relative Strength Index' },
+      { id: 'NEW002', name: 'Volume' },
+    ];
+
+    expect(strayStudies(['OLD001'], now, isRsi)).toEqual(['NEW001']);
+  });
+
+  test('never names a study that was on the chart before, whatever its name', () => {
+    const now = [
+      { id: 'OLD001', name: 'Relative Strength Index' },
+      { id: 'OLD002', name: 'relative strength index' },
+    ];
+
+    expect(strayStudies(['OLD001', 'OLD002'], now, isRsi)).toEqual([]);
+    expect(strayStudies(['OLD001', 'OLD002'], now, () => true)).toEqual([]);
+  });
+});
+
+describe('the cleanup of a test that adds studies', () => {
+  const servers: E2eServer[] = [];
+  // The fixture with one indicator, so that the plan of two leaves a slot free.
+  const ROOMY = { ...fixture, studies: fixture.studies.slice(0, 1) };
+  const isRsi = (name: string) => /^relative strength index$/i.test(name);
+
+  afterEach(async () => {
+    for (const server of servers.splice(0)) {
+      await server.close();
+    }
+  });
+
+  async function studyIds(client: Client): Promise<string[]> {
+    const { data } = await callOk<{ studies: { id: string }[] }>(client, 'indicator_list');
+    return data.studies.map(({ id }) => id);
+  }
+
+  test('removeStrayStudies removes, with confirm, a study the session never recorded', async () => {
+    const server = await fakeE2eServer({}, ROOMY);
+    servers.push(server);
+    const before = await studyIds(server.client);
+    // Added behind the session, as a call that failed halfway leaves one: indicator_remove would
+    // need confirm for it.
+    await server.win.TradingViewApi?.activeChart().createStudy({
+      type: 'pine',
+      pineId: 'STD;RSI',
+      pineVersion: 'last',
+    });
+    expect(await studyIds(server.client)).toHaveLength(before.length + 1);
+
+    const { removed, failures } = await removeStrayStudies(server.client, before, isRsi);
+
+    expect(failures).toEqual([]);
+    expect(removed).toHaveLength(1);
+    expect(await studyIds(server.client)).toEqual(before);
+  });
+
+  test('removeStrayStudies leaves a study that was on the chart before, named the same', async () => {
+    // The fixture chart holds a Relative Strength Index of the user.
+    const server = await fakeE2eServer();
+    servers.push(server);
+    const before = await studyIds(server.client);
+
+    expect(await removeStrayStudies(server.client, before, isRsi)).toEqual({
+      removed: [],
+      failures: [],
+    });
+    expect(await studyIds(server.client)).toEqual(before);
+  });
+
+  test('addThenCleanUp removes what a failed test added, puts the chart back, and throws its failure', async () => {
+    const server = await fakeE2eServer({}, ROOMY);
+    servers.push(server);
+    const before = await studyIds(server.client);
+    const plan = await prepareChartChange(server);
+    const failure = new Error('the test failed');
+
+    const run = addThenCleanUp(server, plan, isRsi, async () => {
+      await callOk(server.client, 'indicator_add', { name: 'RSI' });
+      await callOk(server.client, 'chart_set_timeframe', { timeframe: '60' });
+      throw failure;
+    });
+
+    await expect(run).rejects.toBe(failure);
+    expect(await studyIds(server.client)).toEqual(before);
+    if (plan.snapshot !== undefined) {
+      await expectChartRestored(server, plan.snapshot);
+    }
+  });
+
+  test('addThenCleanUp passes when the test removed what it added', async () => {
+    const server = await fakeE2eServer({}, ROOMY);
+    servers.push(server);
+    const before = await studyIds(server.client);
+    const plan = await prepareChartChange(server);
+
+    await addThenCleanUp(server, plan, isRsi, async () => {
+      const { data } = await callOk<{ id: string }>(server.client, 'indicator_add', {
+        name: 'RSI',
+      });
+      await callOk(server.client, 'indicator_remove', { id: data.id });
+    });
+
+    expect(await studyIds(server.client)).toEqual(before);
   });
 });
 

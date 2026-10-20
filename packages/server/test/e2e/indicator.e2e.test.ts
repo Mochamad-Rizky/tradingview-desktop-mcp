@@ -3,8 +3,8 @@ import type { TvWindow } from '../../src/core/tv/tv-window.js';
 import { readStudyInsertContext } from '../../src/tools/indicator/page.js';
 import { callTool } from '../helpers/mcp-client.js';
 import {
+  addThenCleanUp,
   callOk,
-  changeThenRestore,
   e2eEnabled,
   expectChartRestored,
   observe,
@@ -20,6 +20,11 @@ import {
 // plan: on a full chart indicator_add must refuse with PLAN_LIMIT and change nothing, no dialog
 // included; with a free slot a test adds RSI and removes it again, and touches only that study. No
 // test ever changes the inputs or the visibility of a study it did not add, or removes one.
+
+// The name the chart lists Relative Strength Index under, which the test that adds it removes by,
+// should a call fail halfway (addThenCleanUp).
+const isRelativeStrengthIndex = (name: string): boolean =>
+  /^(?:relative strength index|rsi)$/i.test(name.trim());
 
 interface StudyInput {
   id: string;
@@ -328,53 +333,43 @@ describe.skipIf(!e2eEnabled())('the indicator tools against TradingView Desktop'
       return context.skip(plan.skipReason ?? 'The chart could not be prepared for a change');
     }
 
-    // The study the test added and has not removed yet.
-    const added: { id: string | null } = { id: null };
-    try {
-      await changeThenRestore(client, snapshot, async () => {
-        const { data } = await callOk<{ id: string; name: string }>(client, 'indicator_add', {
-          name: 'RSI',
-        });
-        added.id = data.id;
-        const study = (await listStudies()).find(({ id }) => id === data.id);
-        expect(study?.isPine).toBe(true);
-        const values = await callOk<Values>(client, 'indicator_get_values', { id: data.id });
-        expect(values.data.plots.length).toBeGreaterThan(0);
-
-        // Its own study only: one integer input one higher, then back, and hidden, then shown.
-        const input = study?.inputs.find(({ type }) => type === 'integer');
-        if (input !== undefined && typeof input.value === 'number') {
-          const changed = await callOk<{ current: StudyInput[] }>(client, 'indicator_set_inputs', {
-            id: data.id,
-            inputs: { [input.id]: input.value + 1 },
-          });
-          expect(changed.data.current.find(({ id }) => id === input.id)?.value).toBe(
-            input.value + 1,
-          );
-          await callOk(client, 'indicator_set_inputs', {
-            id: data.id,
-            inputs: { [input.id]: input.value },
-          });
-        }
-        const hidden = await callOk<{ visible: boolean }>(client, 'indicator_set_visibility', {
-          id: data.id,
-          visible: false,
-        });
-        expect(hidden.data.visible).toBe(false);
-        await callOk(client, 'indicator_set_visibility', { id: data.id, visible: true });
-
-        // This session added it, so it goes without confirm.
-        const removed = await callOk<{ removed: string }>(client, 'indicator_remove', {
-          id: data.id,
-        });
-        expect(removed.data.removed).toBe(data.id);
-        added.id = null;
+    // However the test ends, a study of RSI it left is removed and the chart and its view are put
+    // back; no other study is touched.
+    await addThenCleanUp(e2eServer, plan, isRelativeStrengthIndex, async () => {
+      const { data } = await callOk<{ id: string; name: string }>(client, 'indicator_add', {
+        name: 'RSI',
       });
-    } finally {
-      if (added.id !== null) {
-        await callOk(client, 'indicator_remove', { id: added.id });
+      const study = (await listStudies()).find(({ id }) => id === data.id);
+      expect(study?.isPine).toBe(true);
+      const values = await callOk<Values>(client, 'indicator_get_values', { id: data.id });
+      expect(values.data.plots.length).toBeGreaterThan(0);
+
+      // Its own study only: one integer input one higher, then back, and hidden, then shown.
+      const input = study?.inputs.find(({ type }) => type === 'integer');
+      if (input !== undefined && typeof input.value === 'number') {
+        const changed = await callOk<{ current: StudyInput[] }>(client, 'indicator_set_inputs', {
+          id: data.id,
+          inputs: { [input.id]: input.value + 1 },
+        });
+        expect(changed.data.current.find(({ id }) => id === input.id)?.value).toBe(input.value + 1);
+        await callOk(client, 'indicator_set_inputs', {
+          id: data.id,
+          inputs: { [input.id]: input.value },
+        });
       }
-    }
+      const hidden = await callOk<{ visible: boolean }>(client, 'indicator_set_visibility', {
+        id: data.id,
+        visible: false,
+      });
+      expect(hidden.data.visible).toBe(false);
+      await callOk(client, 'indicator_set_visibility', { id: data.id, visible: true });
+
+      // This session added it, so it goes without confirm.
+      const removed = await callOk<{ removed: string }>(client, 'indicator_remove', {
+        id: data.id,
+      });
+      expect(removed.data.removed).toBe(data.id);
+    });
     expect((await listStudies()).map(({ id }) => id)).toEqual(before.map(({ id }) => id));
     await expectChartRestored(e2eServer, snapshot);
   });
