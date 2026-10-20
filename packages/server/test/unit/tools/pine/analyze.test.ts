@@ -96,6 +96,26 @@ describe('analyzePine', () => {
     expect(fixed(source)).toBe(source);
   });
 
+  test('a function declared after a call that never closes is still declared', () => {
+    // g( never closes; sma is declared on the line after it, and its parenthesis closes.
+    const source = `${HEAD}g(\nsma(x) => x\ny = sma(close)\n`;
+
+    expect(ids(source)).not.toContain('ta-namespace');
+  });
+
+  test('a long text full of calls that never close is analyzed in one pass', () => {
+    // 200 KB of calls without a closing parenthesis, each of which used to be searched to the end
+    // of the text for one: minutes for the largest source the tools take.
+    const source = 'f('.repeat(100_000);
+
+    const began = performance.now();
+    const diagnostics = analyzePine(source);
+    const elapsed = performance.now() - began;
+
+    expect(diagnostics.map(({ ruleId }) => ruleId)).toContain('missing-declaration');
+    expect(elapsed).toBeLessThan(1000);
+  });
+
   test('a tuple output named like its built-in does not hide the call', () => {
     const source = `${HEAD}[macd, signal, hist] = macd(close, 12, 26, 9)\n`;
     expect(fixed(source)).toBe(`${HEAD}[macd, signal, hist] = ta.macd(close, 12, 26, 9)\n`);

@@ -74,11 +74,31 @@ function startsLine(code: Token[], i: number): boolean {
   return code[j - 1]?.line !== line && code[j]?.column === 1;
 }
 
+// The index of the closing parenthesis of each opening one, by the index of the opening one, found
+// in one pass with a stack. An opening parenthesis that never closes has none; a closing one
+// without an opening one closes nothing.
+function closingParentheses(code: Token[]): Map<number, number> {
+  const closing = new Map<number, number>();
+  const open: number[] = [];
+  code.forEach(({ text }, index) => {
+    if (text === '(') {
+      open.push(index);
+    } else if (text === ')') {
+      const start = open.pop();
+      if (start !== undefined) {
+        closing.set(start, index);
+      }
+    }
+  });
+  return closing;
+}
+
 // The names declared by the script: `name = …` (also with a type or var before it) and
 // `name(…) =>` at the start of a top-level line. Tuple outputs are not counted: v4 scripts name an output
 // after the built-in they call, as in `[macd, signal, hist] = macd(…)`.
 export function declaredNames(code: Token[]): Set<string> {
   const names = new Set<string>();
+  const closing = closingParentheses(code);
   code.forEach((token, i) => {
     if (token.kind !== 'ident' || code[i - 1]?.text === '.') {
       return;
@@ -87,16 +107,9 @@ export function declaredNames(code: Token[]): Set<string> {
     if (next === '=') {
       names.add(token.text);
     } else if (next === '(') {
-      let depth = 0;
-      for (let j = i + 1; j < code.length; j += 1) {
-        const text = code[j]?.text;
-        depth += text === '(' ? 1 : text === ')' ? -1 : 0;
-        if (depth === 0) {
-          if (code[j + 1]?.text === '=>' && startsLine(code, i)) {
-            names.add(token.text);
-          }
-          break;
-        }
+      const end = closing.get(i + 1);
+      if (end !== undefined && code[end + 1]?.text === '=>' && startsLine(code, i)) {
+        names.add(token.text);
       }
     }
   });
