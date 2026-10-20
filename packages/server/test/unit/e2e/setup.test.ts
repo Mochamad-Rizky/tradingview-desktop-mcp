@@ -1,21 +1,41 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { createMcpServer } from '../../../src/server.js';
 import type { TvWindow } from '../../../src/core/tv/tv-window.js';
+import type { SavedScriptRow } from '../../../src/tools/pine/page.js';
+import type { ToolContext } from '../../../src/tools/types.js';
 import {
   applyView,
+  callFailure,
+  callOk,
+  closeEditor,
+  editorDifferences,
+  editorReopenProblems,
+  findEditorReopenProblems,
   missingChartMembers,
+  openEditor,
   planLimitSkipReason,
+  prepareChartChange,
+  readLastEditedScript,
   readSymbolListing,
   readView,
   restorabilityProblems,
   restoreChart,
+  restoreChartAndView,
+  restoreEditor,
+  snapshotEditor,
+  templateType,
   type ChartSnapshot,
   type ChartState,
+  type E2eServer,
 } from '../../e2e/setup.js';
 import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
 import { loadTvFixture } from '../../helpers/fake-tv/fixture.js';
-import { createFakeTvWindow, inspectFakeWindow } from '../../helpers/fake-tv/window.js';
+import {
+  createFakeTvWindow,
+  inspectFakeWindow,
+  type FakeTvWindow,
+} from '../../helpers/fake-tv/window.js';
 import { connectInMemoryClient } from '../../helpers/mcp-client.js';
 import { quietLogger, refusingLauncher, testConfig } from '../../helpers/tool-context.js';
 
@@ -277,7 +297,11 @@ describe('restoreChart', () => {
 
     await restoreChart(client, SNAPSHOT);
 
-    expect(calls.map(([name]) => name)).toEqual(['chart_get_state', 'chart_set_visible_range']);
+    expect(calls.map(([name]) => name)).toEqual([
+      'chart_get_state',
+      'data_get_ohlcv',
+      'chart_set_visible_range',
+    ]);
   });
 });
 
@@ -345,5 +369,427 @@ describe('planLimitSkipReason', () => {
 
     const bare = await clientOf({ webpackModules: {} });
     expect(await planLimitSkipReason(bare, 'INDICATORS_ON_CHART', 100, 1)).toBeNull();
+  });
+});
+
+// A server of this branch on a fake app, as startE2eServer gives one for the real app, with the
+// fake window to stage and inspect the app. close() closes the server and the fake app.
+async function fakeE2eServer(
+  overrides: Parameters<typeof createFakeTvWindow>[1] = {},
+): Promise<E2eServer & { win: FakeTvWindow; client: Client; ctx: ToolContext }> {
+  const win = createFakeTvWindow(fixture, overrides);
+  const app = await startFakeCdpServer({ targets: loadTargetsFixture({ chartWindow: () => win }) });
+  const { server, ctx } = createMcpServer(testConfig({ cdpPort: app.port, callTimeoutMs: 5000 }), {
+    launcher: refusingLauncher(),
+    logger: quietLogger,
+  });
+  const client = await connectInMemoryClient(server);
+  return {
+    client,
+    ctx,
+    win,
+    async close() {
+      await client.close();
+      await server.close();
+      await ctx.connection.close();
+      await app.close();
+    },
+  };
+}
+
+describe('the steps of a suite that changes the chart', () => {
+  const servers: E2eServer[] = [];
+
+  afterEach(async () => {
+    for (const server of servers.splice(0)) {
+      await server.close();
+    }
+  });
+
+  test('prepareChartChange takes the snapshot and the view of a chart the tools can put back', async () => {
+    const server = await fakeE2eServer();
+    servers.push(server);
+
+    const plan = await prepareChartChange(server);
+
+    expect(plan.skipReason).toBeUndefined();
+    expect(plan.snapshot).toMatchObject({ symbol: 'NASDAQ:AAPL', listing: 'NASDAQ:AAPL' });
+    expect(await restoreChartAndView(server, plan)).toEqual([]);
+  });
+
+  test('prepareChartChange names a member the chart API lacks, and takes no snapshot', async () => {
+    const server = await fakeE2eServer();
+    servers.push(server);
+    Reflect.deleteProperty(server.win.TradingViewApi?.activeChart() ?? {}, 'setResolution');
+
+    const plan = await prepareChartChange(server);
+
+    expect(plan.snapshot).toBeUndefined();
+    expect(plan.skipReason).toMatch(/activeChart\(\)\.setResolution.*nothing was changed/);
+    expect(await restoreChartAndView(server, plan)).toEqual([]);
+  });
+});
+
+describe('callFailure', () => {
+  const servers: E2eServer[] = [];
+
+  afterEach(async () => {
+    for (const server of servers.splice(0)) {
+      await server.close();
+    }
+  });
+
+  test('answers the error of a call that failed', async () => {
+    const server = await fakeE2eServer();
+    servers.push(server);
+
+    const error = await callFailure(server.client, 'indicator_get_values', { id: 'NOPE01' });
+
+    expect(error.code).toBe('INVALID_INPUT');
+  });
+
+  test('throws, without the data, for a call that succeeded', async () => {
+    const server = await fakeE2eServer();
+    servers.push(server);
+
+    await expect(callFailure(server.client, 'indicator_list')).rejects.toThrow(
+      /^indicator_list was expected to fail, but it succeeded$/,
+    );
+  });
+});
+
+describe('templateType', () => {
+  test('tells the template of a strategy or a library from that of an indicator', () => {
+    expect(templateType('//@version=6\nstrategy("My strategy", overlay = true)\n')).toBe(
+      'strategy',
+    );
+    expect(templateType('//@version=6\nlibrary("MyLibrary")\n')).toBe('library');
+    expect(templateType('//@version=6\nindicator("My script")\nplot(close)\n')).toBe('indicator');
+    expect(templateType('')).toBe('indicator');
+  });
+});
+
+describe('editorReopenProblems', () => {
+  const row = (scriptIdPart: string, version: string, modified: number): SavedScriptRow => ({
+    scriptIdPart,
+    scriptName: 'Script',
+    scriptTitle: 'Script',
+    version,
+    modified,
+    kind: 'study',
+  });
+  const saved = [
+    row('USER;new', '2.0', 300),
+    row('USER;old', '4.0', 100),
+    row('USER;draft', '0.1', 50),
+  ];
+
+  test('finds nothing for a new script, or for a saved script pine_open opens as shown', () => {
+    expect(editorReopenProblems(null, [], 1)).toEqual([]);
+    expect(editorReopenProblems({ id: 'USER;new', version: '2.0' }, saved, 1)).toEqual([]);
+    // A server draft is never open-limited, and no limit limits nothing.
+    expect(editorReopenProblems({ id: 'USER;draft', version: '0.1' }, saved, 1)).toEqual([]);
+    expect(editorReopenProblems({ id: 'USER;old', version: '4.0' }, saved, null)).toEqual([]);
+  });
+
+  test('objects to a script the saved scripts lack', () => {
+    expect(editorReopenProblems({ id: 'USER;gone', version: '1.0' }, saved, 1)).toEqual([
+      'pine_open would not find the script among the saved scripts',
+    ]);
+  });
+
+  test('objects to a version other than the one shown, or no version', () => {
+    expect(editorReopenProblems({ id: 'USER;new', version: '1.0' }, saved, 1)).toEqual([
+      'pine_open would open another version of the script than the one shown',
+    ]);
+    expect(editorReopenProblems({ id: 'USER;new', version: null }, saved, 1)).toHaveLength(1);
+  });
+
+  test('objects to a script the plan does not let TradingView open', () => {
+    expect(editorReopenProblems({ id: 'USER;old', version: '4.0' }, saved, 1)).toEqual([
+      'the plan lets TradingView open only the 1 most recently changed saved scripts',
+    ]);
+  });
+});
+
+// The guard of the suites that use the Pine Editor, on the fake app, whose editor is closed and
+// shows the saved script Fixture Script (2.0) when it opens.
+describe('the Pine Editor guard', () => {
+  const FIXTURE_SCRIPT = { id: 'USER;0f1e2d3c4b5a69788796a5b4c3d2e1f0', version: '2.0' };
+  const OWN_TEXT = '//@version=6\nindicator("written by the test")\nplot(close)\n';
+  const servers: E2eServer[] = [];
+
+  afterEach(async () => {
+    for (const server of servers.splice(0)) {
+      await server.close();
+    }
+  });
+
+  async function openedEditor() {
+    const server = await fakeE2eServer();
+    servers.push(server);
+    const pine = inspectFakeWindow(server.win).state.pineEditor;
+    expect(pine.placement).toBeNull();
+    await openEditor(server.ctx);
+    const shown = await snapshotEditor(server.ctx);
+    return { ...server, pine, shown, target: { script: shown.state.script, source: shown.source } };
+  }
+
+  test('snapshotEditor reads the script the editor shows and its text', async () => {
+    const { pine, shown } = await openedEditor();
+
+    expect(shown.state).toMatchObject({ open: true, modified: false, script: FIXTURE_SCRIPT });
+    expect(shown.source).toBe(pine.savedSource);
+    // The fake app has no pineDialogOpenState.
+    expect(shown.visible).toBeNull();
+  });
+
+  test('editorDifferences names the script, unsaved changes and the text, the text only when known', async () => {
+    const { shown } = await openedEditor();
+    const edited = {
+      ...shown,
+      state: { ...shown.state, modified: true },
+      ownModified: true,
+      source: OWN_TEXT,
+    };
+
+    expect(editorDifferences(shown, { script: FIXTURE_SCRIPT, source: shown.source })).toEqual([]);
+    expect(editorDifferences(edited, { script: FIXTURE_SCRIPT, source: shown.source })).toEqual([
+      'modified',
+      'text',
+    ]);
+    expect(editorDifferences(edited, { script: null, source: null })).toEqual([
+      'script',
+      'modified',
+    ]);
+    // The template of a new script is written anew, so its text is not compared.
+    const template = { ...shown, state: { ...shown.state, script: null }, source: 'other text' };
+    expect(editorDifferences(template, { script: null, source: OWN_TEXT })).toEqual([]);
+    // The flag the app keeps can lag while the editor is open: its own isModified() decides.
+    const lagging = { ...shown, state: { ...shown.state, modified: true }, ownModified: false };
+    expect(editorDifferences(lagging, { script: FIXTURE_SCRIPT, source: shown.source })).toEqual(
+      [],
+    );
+  });
+
+  test('restoreEditor opens the saved script again after the test wrote its own text', async () => {
+    const { client, ctx, pine, shown, target } = await openedEditor();
+    await callOk(client, 'pine_new', {});
+    await callOk(client, 'pine_set_source', { source: OWN_TEXT });
+
+    const restored = await restoreEditor(client, ctx, target, new Set([OWN_TEXT]));
+
+    expect(restored).toMatchObject({ problems: [], differedAtFirst: [] });
+    expect(pine.script).toEqual({ scriptIdPart: FIXTURE_SCRIPT.id, version: '2.0' });
+    expect(pine.source).toBe(shown.source);
+    expect(pine.source).toBe(pine.savedSource);
+  });
+
+  test('restoreEditor puts back a saved script it knows by its id only', async () => {
+    const { client, ctx, pine, shown } = await openedEditor();
+    await callOk(client, 'pine_new', {});
+    await callOk(client, 'pine_set_source', { source: OWN_TEXT });
+
+    const restored = await restoreEditor(
+      client,
+      ctx,
+      { script: FIXTURE_SCRIPT, source: null },
+      new Set([OWN_TEXT]),
+    );
+
+    expect(restored.problems).toEqual([]);
+    expect(pine.script).toEqual({ scriptIdPart: FIXTURE_SCRIPT.id, version: '2.0' });
+    expect(pine.source).toBe(shown.source);
+  });
+
+  test('restoreEditor does nothing when the editor shows its target', async () => {
+    const { client, ctx, win, target } = await openedEditor();
+
+    expect(await restoreEditor(client, ctx, target, new Set())).toEqual({
+      problems: [],
+      differedAtFirst: null,
+      waitedMs: null,
+    });
+
+    expect(inspectFakeWindow(win).callsTo('pineFacade.openScript')).toEqual([]);
+  });
+
+  test('restoreEditor leaves unsaved text it did not write as it is', async () => {
+    const { client, ctx, win, pine, target } = await openedEditor();
+    await callOk(client, 'pine_new', {});
+    await callOk(client, 'pine_set_source', { source: OWN_TEXT });
+    pine.source = 'typed by someone else';
+
+    expect((await restoreEditor(client, ctx, target, new Set([OWN_TEXT]))).problems).toEqual([
+      'The Pine Editor holds unsaved text this test did not write, so it was left as it is',
+    ]);
+
+    expect(pine.source).toBe('typed by someone else');
+    expect(inspectFakeWindow(win).callsTo('pineFacade.openScript')).toEqual([]);
+  });
+
+  test('restoreEditor starts the template of a new script again', async () => {
+    const { client, ctx, pine } = await openedEditor();
+    await callOk(client, 'pine_new', { type: 'strategy' });
+    const shown = await snapshotEditor(ctx);
+    await callOk(client, 'pine_set_source', { source: OWN_TEXT });
+
+    const restored = await restoreEditor(
+      client,
+      ctx,
+      { script: null, source: shown.source },
+      new Set([OWN_TEXT]),
+    );
+
+    expect(restored.problems).toEqual([]);
+    expect(pine.script).toBeNull();
+    expect(pine.source).toBe(shown.source);
+    expect(pine.source).toBe(pine.savedSource);
+  });
+
+  test('restoreEditor says what pine_open failed with, and nothing of the script', async () => {
+    const { client, ctx, pine, target } = await openedEditor();
+    await callOk(client, 'pine_new', {});
+    await callOk(client, 'pine_set_source', { source: OWN_TEXT });
+    pine.savedScripts = pine.savedScripts.filter(
+      ({ scriptIdPart }) => scriptIdPart !== FIXTURE_SCRIPT.id,
+    );
+
+    const { problems } = await restoreEditor(client, ctx, target, new Set([OWN_TEXT]));
+
+    expect(problems).toEqual([
+      'The Pine Editor could not be put back: pine_open failed with INVALID_INPUT',
+    ]);
+    expect(pine.source).toBe(OWN_TEXT);
+  });
+
+  // Makes the facade open a saved script at once but show its text only after `delayMs`, as the
+  // code editor of the app can: until then it shows the text it had, so it reads as modified.
+  function showOpenedTextLate(server: Awaited<ReturnType<typeof openedEditor>>, delayMs: number) {
+    const facade = server.win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    if (facade === null || facade === undefined) {
+      throw new Error('The fake editor is not open');
+    }
+    const openScript = facade.openScript.bind(facade);
+    facade.openScript = async (info) => {
+      const shownBefore = server.pine.source;
+      await openScript(info);
+      const opened = server.pine.source;
+      server.pine.source = shownBefore;
+      if (Number.isFinite(delayMs)) {
+        setTimeout(() => {
+          server.pine.source = opened;
+        }, delayMs);
+      }
+    };
+  }
+
+  test('restoreEditor waits for an editor that shows the text of the opened script a moment late', async () => {
+    const server = await openedEditor();
+    const { client, ctx, pine, shown, target } = server;
+    await callOk(client, 'pine_new', {});
+    await callOk(client, 'pine_set_source', { source: OWN_TEXT });
+    showOpenedTextLate(server, 300);
+
+    const restored = await restoreEditor(client, ctx, target, new Set([OWN_TEXT]));
+
+    expect(restored.problems).toEqual([]);
+    expect(restored.differedAtFirst).toEqual(['modified', 'text']);
+    expect(restored.waitedMs).toBeGreaterThanOrEqual(200);
+    expect(pine.source).toBe(shown.source);
+  });
+
+  test('restoreEditor says what still differs when the editor never shows the script', async () => {
+    const server = await openedEditor();
+    const { client, ctx, target } = server;
+    await callOk(client, 'pine_new', {});
+    await callOk(client, 'pine_set_source', { source: OWN_TEXT });
+    showOpenedTextLate(server, Number.POSITIVE_INFINITY);
+
+    const { problems } = await restoreEditor(client, ctx, target, new Set([OWN_TEXT]));
+
+    expect(problems).toEqual([
+      'The Pine Editor does not show the script it is to show again (it differs in modified, text)',
+    ]);
+  });
+
+  test('findEditorReopenProblems reads the saved scripts and the limit of the plan', async () => {
+    const { ctx } = await openedEditor();
+
+    expect(await findEditorReopenProblems(ctx, FIXTURE_SCRIPT)).toEqual([]);
+    expect(await findEditorReopenProblems(ctx, null)).toEqual([]);
+    // Fixture Strategy is older than Fixture Script, and the plan of the fixture allows one.
+    expect(
+      await findEditorReopenProblems(ctx, {
+        id: 'USER;1a2b3c4d5e6f708192a3b4c5d6e7f809',
+        version: '3.0',
+      }),
+    ).toEqual(['the plan lets TradingView open only the 1 most recently changed saved scripts']);
+  });
+
+  test('closeEditor hides the editor and keeps its text', async () => {
+    const { ctx, pine, shown } = await openedEditor();
+
+    expect(await closeEditor(ctx)).toEqual({ closed: true, placement: 'dialog' });
+
+    expect(pine.visible).toBe(false);
+    expect(pine.source).toBe(shown.source);
+  });
+});
+
+// The script the app keeps for the closed side panel of the Pine Editor, under the name of the
+// account, read for its id and version only.
+describe('readLastEditedScript', () => {
+  const page = (items: Record<string, unknown>) =>
+    ({
+      localStorage: {
+        getItem: (key: string) => (key in items ? JSON.stringify(items[key]) : null),
+      },
+    }) as unknown as TvWindow;
+
+  test('reads the id and version of a saved script and whether it has unsaved changes', () => {
+    const win = page({
+      last_edited_script: {
+        someone: {
+          scriptIdPart: 'USER;abc',
+          version: '3.0',
+          scriptName: 'Mine',
+          scriptSource: 'x',
+        },
+      },
+      has_unsaved_modifications: { someone: false },
+    });
+
+    expect(readLastEditedScript(win)).toEqual({
+      script: { id: 'USER;abc', version: '3.0' },
+      unsaved: false,
+    });
+    expect(JSON.stringify(readLastEditedScript(win))).not.toMatch(/Mine|someone/);
+  });
+
+  test('reads a new script as no script, and an unknown flag as null', () => {
+    const win = page({ last_edited_script: { someone: { scriptIdPart: '', version: '0.0' } } });
+
+    expect(readLastEditedScript(win)).toEqual({ script: null, unsaved: null });
+  });
+
+  test('answers null when the app keeps nothing, keeps it for several accounts, or it cannot be read', () => {
+    expect(readLastEditedScript(page({}))).toBeNull();
+    expect(
+      readLastEditedScript(
+        page({
+          last_edited_script: { one: { scriptIdPart: 'USER;a' }, two: { scriptIdPart: 'USER;b' } },
+        }),
+      ),
+    ).toBeNull();
+    expect(readLastEditedScript({} as unknown as TvWindow)).toBeNull();
+    const broken = {
+      localStorage: {
+        getItem: () => {
+          throw new Error('denied');
+        },
+      },
+    } as unknown as TvWindow;
+    expect(readLastEditedScript(broken)).toBeNull();
   });
 });

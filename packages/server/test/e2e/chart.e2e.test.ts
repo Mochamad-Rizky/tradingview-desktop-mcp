@@ -3,18 +3,16 @@ import { callTool } from '../helpers/mcp-client.js';
 import {
   barDistance,
   callOk,
+  changeThenRestore,
   e2eEnabled,
-  findMissingChartMembers,
+  expectChartRestored,
+  prepareChartChange,
   readChartState,
-  restoreChart,
-  restoreView,
-  snapshotChart,
-  snapshotView,
+  restoreChartAndView,
   startE2eServer,
-  UnrestorableChartError,
+  type ChartChangePlan,
   type ChartSnapshot,
   type E2eServer,
-  type ViewSnapshot,
 } from './setup.js';
 
 // The chart tools against the real TradingView Desktop. The suite changes the symbol, the
@@ -46,41 +44,20 @@ interface ErrorEnvelope {
   error: { code: string; message: string; details?: Record<string, unknown> };
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', () => {
   let e2e: E2eServer | undefined;
-  let snapshot: ChartSnapshot | undefined;
-  let view: ViewSnapshot | null = null;
-  // Why the suite does not run, when it does not. Set before anything has changed.
-  let skipReason: string | undefined;
+  // The snapshot and the view to put back, or why the suite does not run, found before anything
+  // has changed.
+  let plan: ChartChangePlan | undefined;
 
   beforeAll(async () => {
     e2e = await startE2eServer();
-    const missing = await findMissingChartMembers(e2e.ctx);
-    if (missing.length > 0) {
-      skipReason =
-        `The chart API lacks ${missing.join(', ')}, so the tools would fall back to clicks and ` +
-        'typing; nothing was changed.';
-      return;
-    }
-    try {
-      snapshot = await snapshotChart(e2e.client, e2e.ctx);
-    } catch (error) {
-      if (error instanceof UnrestorableChartError) {
-        skipReason = `${error.message}; nothing was changed.`;
-        return;
-      }
-      throw error;
-    }
-    view = await snapshotView(e2e.ctx);
+    plan = await prepareChartChange(e2e);
   });
 
   beforeEach((context) => {
-    if (skipReason !== undefined) {
-      context.skip(skipReason);
+    if (plan?.skipReason !== undefined) {
+      context.skip(plan.skipReason);
     }
   });
 
@@ -90,21 +67,7 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
     if (e2e === undefined) {
       return;
     }
-    const failures: string[] = [];
-    if (snapshot !== undefined) {
-      try {
-        await restoreChart(e2e.client, snapshot);
-      } catch (error) {
-        failures.push(messageOf(error));
-      }
-      if (view !== null) {
-        try {
-          await restoreView(e2e.ctx, view);
-        } catch (error) {
-          failures.push(messageOf(error));
-        }
-      }
-    }
+    const failures = plan === undefined ? [] : await restoreChartAndView(e2e, plan);
     await e2e.close();
     if (failures.length > 0) {
       throw new Error(failures.join('; '));
@@ -112,59 +75,16 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
   });
 
   function started(): { e2e: E2eServer; snapshot: ChartSnapshot } {
-    if (e2e === undefined || snapshot === undefined) {
+    if (e2e === undefined || plan?.snapshot === undefined) {
       throw new Error('The suite could not take a snapshot of the chart');
     }
-    return { e2e, snapshot };
-  }
-
-  // Runs `change` and restores the chart first thing after it, however it ended. A restore that
-  // fails after a failed test does not hide that test's own failure: the failure is thrown and the
-  // restore's error is logged next to it. After a test that passed, a failed restore fails it.
-  async function changeThenRestore(change: () => Promise<void>): Promise<void> {
-    const { e2e: server, snapshot: before } = started();
-    let failure: unknown;
-    let failed = false;
-    try {
-      await change();
-    } catch (error) {
-      failure = error;
-      failed = true;
-    }
-    try {
-      await restoreChart(server.client, before);
-    } catch (restoreError) {
-      if (!failed) {
-        throw restoreError;
-      }
-      console.error(
-        `The chart could not be restored after a failed test: ${messageOf(restoreError)}`,
-      );
-    }
-    if (failed) {
-      throw failure;
-    }
-  }
-
-  // The chart shows what the snapshot says again, its range within one bar of the one it had.
-  async function expectRestored(): Promise<void> {
-    const { e2e: server, snapshot: before } = started();
-    const state = await readChartState(server.client);
-    expect(state.symbol).toBe(before.symbol);
-    expect(state.resolution).toBe(before.resolution);
-    expect(state.chartType).toBe(before.chartType);
-    expect(state.visibleRange).not.toBeNull();
-    if (state.visibleRange !== null) {
-      const distance = await barDistance(server.ctx, state.visibleRange, before.visibleRange);
-      expect(distance.from).toBeLessThanOrEqual(1);
-      expect(distance.to).toBeLessThanOrEqual(1);
-    }
+    return { e2e, snapshot: plan.snapshot };
   }
 
   test('switches symbol and timeframe, then restores them', async () => {
     const { e2e: server, snapshot: before } = started();
     const timeframe = before.resolution === '60' ? '240' : '60';
-    await changeThenRestore(async () => {
+    await changeThenRestore(server.client, before, async () => {
       const switched = await callOk<SymbolResult>(server.client, 'chart_set_symbol', {
         symbol: TARGET_SYMBOL,
       });
@@ -192,12 +112,12 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
       expect(state.resolution).toBe(timeframe);
       expect(state.visibleRange).not.toBeNull();
     });
-    await expectRestored();
+    await expectChartRestored(server, before);
   });
 
   test('changes chart type and restores it', async () => {
-    const { e2e: server } = started();
-    await changeThenRestore(async () => {
+    const { e2e: server, snapshot: before } = started();
+    await changeThenRestore(server.client, before, async () => {
       for (const [type, id] of [
         ['candles', 1],
         ['line', 2],
@@ -213,12 +133,12 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
         expect((await readChartState(server.client)).chartType).toBe(id);
       }
     });
-    await expectRestored();
+    await expectChartRestored(server, before);
   });
 
   test('sets and restores the visible range', async () => {
-    const { e2e: server } = started();
-    await changeThenRestore(async () => {
+    const { e2e: server, snapshot: before } = started();
+    await changeThenRestore(server.client, before, async () => {
       const shown = (await callOk<Range>(server.client, 'chart_get_visible_range')).data;
       // A range inside the view, in its older half, where the chart has loaded bars.
       const width = shown.to - shown.from;
@@ -247,20 +167,22 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
       expect(distance.from).toBeLessThanOrEqual(1);
       expect(distance.to).toBeLessThanOrEqual(1);
     });
-    await expectRestored();
+    await expectChartRestored(server, before);
   });
 
   test('reports an unknown symbol and switches the chart back', async () => {
     const { e2e: server, snapshot: before } = started();
-    await changeThenRestore(async () => {
+    await changeThenRestore(server.client, before, async () => {
       const result = await callTool(server.client, 'chart_set_symbol', { symbol: UNKNOWN_SYMBOL });
 
       expect(result.isError).toBe(true);
       const { error } = result.structuredContent as unknown as ErrorEnvelope;
       expect(error.code).toBe('INVALID_INPUT');
-      expect(error.details).toMatchObject({ requested: UNKNOWN_SYMBOL, kept: before.symbol });
-      expect((await readChartState(server.client)).symbol).toBe(before.symbol);
+      expect(error.details?.requested).toBe(UNKNOWN_SYMBOL);
+      expect(error.details?.kept === before.symbol, 'the error names the symbol kept').toBe(true);
+      const kept = (await readChartState(server.client)).symbol;
+      expect(kept === before.symbol, 'the chart keeps its symbol').toBe(true);
     });
-    await expectRestored();
+    await expectChartRestored(server, before);
   });
 });

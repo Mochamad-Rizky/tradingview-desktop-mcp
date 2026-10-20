@@ -1,13 +1,14 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { z } from 'zod';
 import { loadConfig } from '../../src/config/load.js';
+import type { PageLib } from '../../src/core/tv/page-lib.js';
 import type {
   BarsLike,
   ChartWidgetApiLike,
   TimeScaleLike,
   TvWindow,
 } from '../../src/core/tv/tv-window.js';
-import type { PlanFeature } from '../../src/core/tv/plan-limits.js';
+import { getPlanLimits, type PlanFeature } from '../../src/core/tv/plan-limits.js';
 import { createMcpServer } from '../../src/server.js';
 import {
   chartSetSymbol,
@@ -20,7 +21,19 @@ import {
   normalizeTimeframe,
   sameResolution,
 } from '../../src/tools/chart/mappers.js';
+import { pageWaitMs } from '../../src/tools/chart/strategies.js';
+import { ensureEditorOpen, readEditorState } from '../../src/tools/pine/editor.js';
+import {
+  closePineEditor,
+  readPineSource,
+  readSavedPineScripts,
+  type PineEditorState,
+  type SavedScriptRow,
+} from '../../src/tools/pine/page.js';
+import { isOpenLimited, savedScriptLimit } from '../../src/tools/pine/scripts.js';
 import type { ToolContext } from '../../src/tools/types.js';
+import type { JsonValue } from '../../src/utils/json.js';
+import { pollUntil } from '../../src/utils/poll.js';
 import { parseTimeInput } from '../../src/utils/time.js';
 import { callTool, connectInMemoryClient, textOf } from '../helpers/mcp-client.js';
 import { quietLogger } from '../helpers/tool-context.js';
@@ -29,15 +42,22 @@ import { quietLogger } from '../helpers/tool-context.js';
 // running them (design spec 10). They run only with TV_E2E=1, against the debug port of TV_CDP_HOST
 // and TV_CDP_PORT (127.0.0.1:9222 by default).
 //
-// A suite may change only the symbol, the timeframe, the chart type and the visible range of the
-// active chart. Before it changes anything it checks, by reading only, that the chart API has what
-// the tools use (so that no tool falls back to clicks or typing) and that the chart can be put back
-// as it is (restorabilityProblems), and it skips its tests when either fails. It snapshots the four
-// before its first test and restores them after every test and after its last one, whether the
-// tests passed or not. Restoring goes through the tools, so it is tested too; afterwards the view
-// is put back exactly through the time scale (the same bars from edge to edge), because the tools
-// set a range in whole bars. Nothing else of the app is touched: no drawing, indicator, alert, layout, Pine script,
-// replay, watchlist or trading control, and the app is never reloaded, quit or started.
+// A suite may change the symbol, the timeframe, the chart type and the visible range of the active
+// chart, and load older history into it. Before it changes anything it checks, by reading only,
+// that the chart API has what the tools use (so that no tool falls back to clicks or typing) and
+// that the chart can be put back as it is (restorabilityProblems), and it skips its tests when
+// either fails. It snapshots the four before its first test and restores them after every test and
+// after its last one, whether the tests passed or not. Restoring goes through the tools, so it is
+// tested too; afterwards the view is put back exactly through the time scale (the same bars from
+// edge to edge), because the tools set a range in whole bars.
+//
+// The suites of Plan 2 also use the Pine Editor, under the guard below (snapshotEditor and
+// restoreEditor): only while it holds no unsaved changes, and it is put back afterwards, the script
+// it showed open again and the editor closed again when it was closed. Indicators and scripts are
+// added only within the plan limits (planLimitSkipReason) and removed again by the test that added
+// them. Nothing else of the app is touched: no drawing, indicator or saved script of the user, no
+// alert, layout, replay, watchlist or trading control, nothing is saved, and the app is never
+// reloaded, quit or started.
 
 export function e2eEnabled(): boolean {
   return process.env.TV_E2E === '1';
@@ -115,6 +135,35 @@ export async function callOk<T>(
     via: envelope.meta.via,
     warnings: envelope.meta.warnings ?? [],
   };
+}
+
+// The error of a tool call that failed, as its envelope gives it.
+export interface ToolFailure {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+// The error of a tool call that is expected to fail. A call that succeeds throws, without its data,
+// which can hold what the user has.
+export async function callFailure(
+  client: Client,
+  name: string,
+  args: Record<string, unknown> = {},
+): Promise<ToolFailure> {
+  const result = await callTool(client, name, args);
+  const envelope = result.structuredContent as { ok?: boolean; error?: ToolFailure } | undefined;
+  if (result.isError !== true || envelope?.ok !== false || envelope.error === undefined) {
+    throw new Error(`${name} was expected to fail, but it succeeded`);
+  }
+  return envelope.error;
+}
+
+// Prints what a suite saw of the app, to compare with the reverse-engineering notes after a
+// TradingView update: key names, types, counts and booleans only, never a value of the user's (no
+// symbol, price, name, id or text).
+export function observe(name: string, facts: JsonValue): void {
+  console.info(`observed ${name}: ${JSON.stringify(facts)}`);
 }
 
 // Why a test that needs room under a plan limit cannot run, or null when it can. `used` is how much
@@ -314,8 +363,8 @@ export async function findMissingChartMembers(ctx: ToolContext): Promise<string[
 
 // Puts the chart back as `snapshot` describes it, through the tools: the symbol (by its listing),
 // the timeframe and the chart type where they differ, and the visible range always, since a new
-// symbol or timeframe moves the view as well. Every step is tried even when an earlier one fails,
-// and the failures are thrown together at the end.
+// symbol or timeframe moves the view as well, once the chart has bars again. Every step is tried
+// even when an earlier one fails, and the failures are thrown together at the end.
 export async function restoreChart(client: Client, snapshot: ChartSnapshot): Promise<void> {
   const failures: string[] = [];
   const step = async (name: string, args: Record<string, unknown>): Promise<void> => {
@@ -345,6 +394,13 @@ export async function restoreChart(client: Client, snapshot: ChartSnapshot): Pro
       await step('chart_set_type', { type });
     }
   }
+  // After a change of symbol, timeframe or chart type the series loads again, and a range can be
+  // set only on bars: they are waited for, for a while.
+  await pollUntil(
+    () => callTool(client, 'data_get_ohlcv', { count: 1 }),
+    (result) => result.isError !== true,
+    { intervalMs: 200, timeoutMs: 15_000 },
+  );
   await step('chart_set_visible_range', {
     from: snapshot.visibleRange.from,
     to: snapshot.visibleRange.to,
@@ -465,4 +521,411 @@ export async function restoreView(ctx: ToolContext, view: ViewSnapshot): Promise
   if (!(await page.bridge.evaluate(applyView, [view]))) {
     throw new Error('The time scale of the chart cannot set its view on this build');
   }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// What a suite that changes the chart found before its first test: the snapshot and the exact view
+// to put back, or why it must not change the chart, in which case it changes nothing.
+export interface ChartChangePlan {
+  snapshot: ChartSnapshot | undefined;
+  view: ViewSnapshot | null;
+  skipReason: string | undefined;
+}
+
+// Reads, before the first change, that the chart API has every member the chart tools use and that
+// the chart can be put back as it is, then takes the snapshot and the view. Either check failing
+// gives the reason to skip, and nothing has been changed.
+export async function prepareChartChange(e2e: E2eServer): Promise<ChartChangePlan> {
+  const missing = await findMissingChartMembers(e2e.ctx);
+  if (missing.length > 0) {
+    return {
+      snapshot: undefined,
+      view: null,
+      skipReason:
+        `The chart API lacks ${missing.join(', ')}, so the tools would fall back to clicks and ` +
+        'typing; nothing was changed.',
+    };
+  }
+  let snapshot: ChartSnapshot;
+  try {
+    snapshot = await snapshotChart(e2e.client, e2e.ctx);
+  } catch (error) {
+    if (error instanceof UnrestorableChartError) {
+      return {
+        snapshot: undefined,
+        view: null,
+        skipReason: `${error.message}; nothing was changed.`,
+      };
+    }
+    throw error;
+  }
+  return { snapshot, view: await snapshotView(e2e.ctx), skipReason: undefined };
+}
+
+// Puts the chart back after the last test: through the tools, then the exact view, each tried
+// whatever the other did. Answers the failures, for the suite to throw once its server is closed.
+export async function restoreChartAndView(
+  e2e: E2eServer,
+  plan: ChartChangePlan,
+): Promise<string[]> {
+  const failures: string[] = [];
+  if (plan.snapshot === undefined) {
+    return failures;
+  }
+  try {
+    await restoreChart(e2e.client, plan.snapshot);
+  } catch (error) {
+    failures.push(messageOf(error));
+  }
+  if (plan.view !== null) {
+    try {
+      await restoreView(e2e.ctx, plan.view);
+    } catch (error) {
+      failures.push(messageOf(error));
+    }
+  }
+  return failures;
+}
+
+// Runs `change` and restores the chart first thing after it, however it ended. A restore that
+// fails after a failed test does not hide that test's own failure: the failure is thrown and the
+// restore's error is logged next to it. After a test that passed, a failed restore fails it.
+export async function changeThenRestore(
+  client: Client,
+  snapshot: ChartSnapshot,
+  change: () => Promise<void>,
+): Promise<void> {
+  let failure: unknown;
+  let failed = false;
+  try {
+    await change();
+  } catch (error) {
+    failure = error;
+    failed = true;
+  }
+  try {
+    await restoreChart(client, snapshot);
+  } catch (restoreError) {
+    if (!failed) {
+      throw restoreError;
+    }
+    console.error(
+      `The chart could not be restored after a failed test: ${messageOf(restoreError)}`,
+    );
+  }
+  if (failed) {
+    throw failure;
+  }
+}
+
+// The chart shows what the snapshot says again, its range within one bar of the one it had. The
+// comparisons say which part differs, never its value, which is the user's.
+export async function expectChartRestored(e2e: E2eServer, snapshot: ChartSnapshot): Promise<void> {
+  const state = await readChartState(e2e.client);
+  expect(state.symbol === snapshot.symbol, 'the symbol is back').toBe(true);
+  expect(state.resolution === snapshot.resolution, 'the timeframe is back').toBe(true);
+  expect(state.chartType === snapshot.chartType, 'the chart type is back').toBe(true);
+  expect(state.visibleRange, 'the chart reports a visible range').not.toBeNull();
+  if (state.visibleRange !== null) {
+    const distance = await barDistance(e2e.ctx, state.visibleRange, snapshot.visibleRange);
+    expect(distance.from).toBeLessThanOrEqual(1);
+    expect(distance.to).toBeLessThanOrEqual(1);
+  }
+}
+
+// What the Pine Editor shows, for a suite that changes it to put it back: its state as the tools
+// read it, whether its own text differs from the text of its script (isModified() of the facade;
+// the state also counts the flag of unsaved changes the app keeps, which lags while the editor is
+// open), whether it is on screen (null when the page cannot say), and its text, which is kept in
+// memory to compare and never printed or logged, because it is the user's (null while no editor is
+// open or the text cannot be read).
+export interface EditorSnapshot {
+  state: PineEditorState;
+  ownModified: boolean | null;
+  visible: boolean | null;
+  source: string | null;
+}
+
+// isModified() of the facade of the open editor, or null without one or an answer. It only reads.
+export function readEditorOwnModified(_win: TvWindow, lib: PageLib): boolean | null {
+  try {
+    const getOpen = lib.findExport('getOpenPineEditor') as
+      ((placement: string) => { getFacade(): { isModified?: () => unknown } | null } | null) | null;
+    for (const placement of ['dialog', 'bottom']) {
+      const entry = getOpen?.(placement);
+      if (entry !== null && entry !== undefined) {
+        const modified = entry.getFacade()?.isModified?.();
+        return typeof modified === 'boolean' ? modified : null;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Whether the Pine Editor is on screen as the side panel, by the export pineDialogOpenState of the
+// app (isVisibleWV), or null when the page does not say. It only reads.
+export function readEditorVisibility(_win: TvWindow, lib: PageLib): boolean | null {
+  try {
+    const open = lib.findExport('pineDialogOpenState') as {
+      isVisibleWV?: () => { value(): unknown };
+    } | null;
+    const visible = open?.isVisibleWV?.().value();
+    return typeof visible === 'boolean' ? visible : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function snapshotEditor(ctx: ToolContext): Promise<EditorSnapshot> {
+  const page = await ctx.connection.chartPage();
+  const state = await readEditorState(page);
+  const ownModified = await page.bridge.evaluateWithLib(readEditorOwnModified, []);
+  const visible = await page.bridge.evaluateWithLib(readEditorVisibility, []);
+  let source: string | null = null;
+  if (state.open) {
+    try {
+      source = (await page.bridge.evaluateWithLib(readPineSource, [])).source;
+    } catch {
+      source = null;
+    }
+  }
+  return { state, ownModified, visible, source };
+}
+
+// The script the side panel of the Pine Editor last held, as the app keeps it for its next open
+// (last_edited_script, with has_unsaved_modifications, both stored under the name of the account),
+// read for its id and version only: the name, the text and the account stay in the page. null when
+// the app keeps none, or keeps it for several accounts, so that it cannot tell which is this one.
+// script is null for a new script, and unsaved whether the app keeps unsaved changes of it. It
+// only reads.
+export function readLastEditedScript(win: TvWindow): {
+  script: { id: string; version: string | null } | null;
+  unsaved: boolean | null;
+} | null {
+  const only = (key: string): unknown => {
+    try {
+      const storage = (win as unknown as { localStorage?: { getItem(key: string): unknown } })
+        .localStorage;
+      const raw = storage?.getItem(key);
+      const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : null;
+      const values: unknown[] =
+        typeof parsed === 'object' && parsed !== null ? Object.values(parsed) : [];
+      return values.length === 1 ? values[0] : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const kept = only('last_edited_script');
+  if (typeof kept !== 'object' || kept === null) {
+    return null;
+  }
+  const last = kept as { scriptIdPart?: unknown; version?: unknown };
+  const unsaved = only('has_unsaved_modifications');
+  const id = last.scriptIdPart;
+  const version = last.version;
+  return {
+    script:
+      typeof id === 'string' && id !== ''
+        ? { id, version: typeof version === 'string' && version !== '' ? version : null }
+        : null,
+    unsaved: typeof unsaved === 'boolean' ? unsaved : null,
+  };
+}
+
+export async function findLastEditedScript(ctx: ToolContext) {
+  const page = await ctx.connection.chartPage();
+  return page.bridge.evaluate(readLastEditedScript, []);
+}
+
+// Opens the editor the way the Pine button of the toolbar does (the server's own ensureEditorOpen).
+// Seen on the app: the first open of a session shows the script the editor last held; after the
+// editor was closed, an open shows a new script instead, unless the last one has unsaved changes,
+// which the app always shows again.
+export async function openEditor(ctx: ToolContext): Promise<void> {
+  const page = await ctx.connection.chartPage();
+  await ensureEditorOpen(page, pageWaitMs(ctx.config.callTimeoutMs));
+}
+
+// Closes the editor through the close path of the server (closePineEditor). Seen on the app: the
+// side panel goes, and the editor leaves the registry of open editors.
+export async function closeEditor(
+  ctx: ToolContext,
+): Promise<{ closed: boolean; placement: string | null }> {
+  const page = await ctx.connection.chartPage();
+  return page.bridge.evaluateWithLib(closePineEditor, []);
+}
+
+const sameScript = (a: PineEditorState['script'], b: PineEditorState['script']): boolean =>
+  a === null || b === null ? a === b : a.id === b.id && a.version === b.version;
+
+// What a suite puts back in the editor after its tests: a script (null for a new one), shown
+// without unsaved changes, and its text when it is known (null when only the id is: the script the
+// editor last held while it was closed, which the app keeps by id). Of a new script the text only
+// tells its type: TradingView writes its template anew each time, so the text can differ (seen on
+// the app), and an unchanged template holds nothing of the user's.
+export interface EditorTarget {
+  script: PineEditorState['script'];
+  source: string | null;
+}
+
+// Which parts of `target` the editor does not show now: the script (id and version), no unsaved
+// changes of its own text, and the text of a saved script when the target has it. Empty when it
+// shows all of it. The flag of unsaved changes the app keeps is not asked: it is written when the
+// editor closes, so after a test it can still be set while the editor shows the target, and the
+// suites check it once the editor is closed again.
+export function editorDifferences(now: EditorSnapshot, target: EditorTarget): string[] {
+  const parts: string[] = [];
+  if (!sameScript(now.state.script, target.script)) {
+    parts.push('script');
+  }
+  if (now.ownModified ?? now.state.modified) {
+    parts.push('modified');
+  }
+  if (target.script !== null && target.source !== null && now.source !== target.source) {
+    parts.push('text');
+  }
+  return parts;
+}
+
+// Why pine_open could not show a saved script again after a test replaced it, one reason each, or
+// none: the saved scripts (readSavedPineScripts) must have it at its version, which pine_open opens,
+// and the plan must let TradingView open it (only the `limit` most recently changed saved scripts
+// can be). A new script (null) needs none of this: pine_new starts its template again.
+export function editorReopenProblems(
+  script: PineEditorState['script'],
+  saved: readonly SavedScriptRow[],
+  limit: number | null,
+): string[] {
+  if (script === null) {
+    return [];
+  }
+  const row = saved.find(({ scriptIdPart }) => scriptIdPart === script.id);
+  if (row === undefined) {
+    return ['pine_open would not find the script among the saved scripts'];
+  }
+  const problems: string[] = [];
+  if (script.version === null || row.version !== script.version) {
+    problems.push('pine_open would open another version of the script than the one shown');
+  }
+  if (isOpenLimited(saved, script.id, limit)) {
+    problems.push(
+      `the plan lets TradingView open only the ${String(limit)} most recently changed saved scripts`,
+    );
+  }
+  return problems;
+}
+
+export async function findEditorReopenProblems(
+  ctx: ToolContext,
+  script: PineEditorState['script'],
+): Promise<string[]> {
+  if (script === null) {
+    return [];
+  }
+  const page = await ctx.connection.chartPage();
+  const listing = await page.bridge.evaluateWithLib(readSavedPineScripts, []);
+  const limits = await getPlanLimits(page, ['SAVED_PINE_SCRIPTS']);
+  return editorReopenProblems(
+    script,
+    listing.scripts,
+    savedScriptLimit(listing, limits.SAVED_PINE_SCRIPTS),
+  );
+}
+
+// The type of the new script whose template `source` is, by its declaration, for pine_new to start
+// the same one again.
+export function templateType(source: string): 'indicator' | 'strategy' | 'library' {
+  if (/^[ \t]*strategy[ \t]*\(/m.test(source)) {
+    return 'strategy';
+  }
+  return /^[ \t]*library[ \t]*\(/m.test(source) ? 'library' : 'indicator';
+}
+
+// The code a tool call failed with, or null when it succeeded. Only the code is kept: the message of
+// a Pine tool can name a saved script of the user.
+async function failureCode(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string | null> {
+  const result = await callTool(client, name, args);
+  if (result.isError !== true) {
+    return null;
+  }
+  const envelope = result.structuredContent as { error?: { code?: unknown } } | undefined;
+  return typeof envelope?.error?.code === 'string' ? envelope.error.code : 'UNKNOWN';
+}
+
+// What came of putting the editor back: why it could not be (without any of its text or names;
+// empty when it was), and, when a tool had to be called, what differed from the target right after
+// the tool answered and how long the editor took to show it all.
+export interface EditorRestore {
+  problems: string[];
+  differedAtFirst: string[] | null;
+  waitedMs: number | null;
+}
+
+// Puts `target` back in the editor after a test changed it, through the tools: pine_open for a saved
+// script, pine_new for the template of a new one. Only text the test wrote itself (`written`) may be
+// discarded, so confirm: true is passed only while the editor holds such text; unsaved text of
+// anyone else is left as it is. The editor is open while this runs. The editor can show what a tool
+// did a moment after the tool answered, so it is read again until it shows the target, for at most
+// the page wait.
+export async function restoreEditor(
+  client: Client,
+  ctx: ToolContext,
+  target: EditorTarget,
+  written: ReadonlySet<string>,
+): Promise<EditorRestore> {
+  const now = await snapshotEditor(ctx);
+  if (editorDifferences(now, target).length === 0) {
+    return { problems: [], differedAtFirst: null, waitedMs: null };
+  }
+  if (now.state.modified && (now.source === null || !written.has(now.source))) {
+    return {
+      problems: [
+        'The Pine Editor holds unsaved text this test did not write, so it was left as it is',
+      ],
+      differedAtFirst: null,
+      waitedMs: null,
+    };
+  }
+  const confirm = now.state.modified ? { confirm: true } : {};
+  const tool = target.script === null ? 'pine_new' : 'pine_open';
+  const code =
+    target.script === null
+      ? await failureCode(client, tool, { type: templateType(target.source ?? ''), ...confirm })
+      : await failureCode(client, tool, { scriptId: target.script.id, ...confirm });
+  if (code !== null) {
+    return {
+      problems: [`The Pine Editor could not be put back: ${tool} failed with ${code}`],
+      differedAtFirst: null,
+      waitedMs: null,
+    };
+  }
+  let differedAtFirst: string[] | null = null;
+  const settled = await pollUntil(
+    async () => {
+      const parts = editorDifferences(await snapshotEditor(ctx), target);
+      differedAtFirst ??= parts;
+      return parts;
+    },
+    (parts) => parts.length === 0,
+    { intervalMs: 100, timeoutMs: pageWaitMs(ctx.config.callTimeoutMs) },
+  );
+  return {
+    problems: settled.satisfied
+      ? []
+      : [
+          'The Pine Editor does not show the script it is to show again (it differs in ' +
+            `${settled.last.join(', ')})`,
+        ],
+    differedAtFirst,
+    waitedMs: settled.waitedMs,
+  };
 }
