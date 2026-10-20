@@ -1,5 +1,5 @@
 import { TvMcpError } from '../../core/errors.js';
-import { toIso } from '../../utils/time.js';
+import { parseTimeInput, toIso } from '../../utils/time.js';
 import { isReportableTime } from '../chart/mappers.js';
 import type { PageErrorSentinel } from '../../core/tv/page-bridge.js';
 import type { editStudyInputs, readStudies, readStudyCatalog } from './page.js';
@@ -207,7 +207,35 @@ const TEXT_TYPES = new Set([
 ]);
 const TIME_TYPES = new Set(['time', 'bar_time']);
 
-// Why a value does not suit an input, or null when it does.
+// The value to set for a value that suits an input, or why it does not. A time input takes a time
+// as the time inputs of the tools do (design spec 5.1): an ISO 8601 date or date-time, or a Unix
+// timestamp in seconds or milliseconds; the app keeps it in Unix milliseconds, which it is set in.
+// Every other value is set as it is given.
+function checkValue(
+  spec: InputSpec,
+  value: InputValue,
+): { value: InputValue } | { problem: string } {
+  if (!TIME_TYPES.has(spec.type)) {
+    const problem = problemWith(spec, value);
+    return problem === null ? { value } : { problem };
+  }
+  const label = spec.name === spec.id ? spec.id : `${spec.name} (${spec.id})`;
+  let seconds: number | null;
+  try {
+    seconds = typeof value === 'boolean' ? null : parseTimeInput(value);
+  } catch {
+    seconds = null;
+  }
+  return seconds === null
+    ? {
+        problem:
+          `${label} must be a time, an ISO 8601 date or date-time or a Unix timestamp in seconds ` +
+          `or milliseconds (got ${JSON.stringify(value)})`,
+      }
+    : { value: seconds * 1000 };
+}
+
+// Why a value does not suit an input that is not a time, or null when it does.
 function problemWith(spec: InputSpec, value: InputValue): string | null {
   const label = spec.name === spec.id ? spec.id : `${spec.name} (${spec.id})`;
   const got = `got ${JSON.stringify(value)}`;
@@ -237,10 +265,6 @@ function problemWith(spec: InputSpec, value: InputValue): string | null {
     if (typeof value !== 'string') {
       return `${label} must be text (${got})`;
     }
-  } else if (TIME_TYPES.has(spec.type)) {
-    if (typeof value !== 'number' || !Number.isInteger(value)) {
-      return `${label} must be a time in Unix milliseconds (${got})`;
-    }
   } else {
     return `${label} has the type ${spec.type || 'unknown'}, which this tool cannot set`;
   }
@@ -252,9 +276,10 @@ function problemWith(spec: InputSpec, value: InputValue): string | null {
 
 // The values to set for `inputs`, keyed by input id or by name (case aside), checked against the
 // inputs a study has (hidden ones left out): numbers must be finite and within the bounds of the
-// metadata, an integer whole, a bool a boolean, text inputs text, and a value of an input with
-// options one of them. Every problem is collected, and any problem fails the whole set with
-// INVALID_INPUT, so that nothing is set by halves.
+// metadata, an integer whole, a bool a boolean, text inputs text, a time a time (set in Unix
+// milliseconds, checkValue), and a value of an input with options one of them. Every problem is
+// collected, and any problem fails the whole set with INVALID_INPUT, so that nothing is set by
+// halves.
 export function validateInputs(
   specs: readonly InputSpec[],
   inputs: Readonly<Record<string, InputValue>>,
@@ -273,11 +298,11 @@ export function validateInputs(
       problems.push(`${key} names the input ${spec.id} more than once`);
       continue;
     }
-    const problem = problemWith(spec, value);
-    if (problem === null) {
-      values.push({ id: spec.id, value });
+    const checked = checkValue(spec, value);
+    if ('value' in checked) {
+      values.push({ id: spec.id, value: checked.value });
     } else {
-      problems.push(problem);
+      problems.push(checked.problem);
     }
   }
   if (problems.length > 0) {

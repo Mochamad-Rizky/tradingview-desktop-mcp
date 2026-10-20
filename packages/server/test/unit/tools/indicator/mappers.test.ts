@@ -436,6 +436,32 @@ describe('validateInputs', () => {
     expect(failure(inputs).message).toMatch(pattern);
   });
 
+  test('reads a time input as ISO 8601 or as Unix seconds or milliseconds, and sets milliseconds', () => {
+    const start = specs.filter(({ id }) => id === 'in_8');
+
+    for (const value of [
+      '2024-01-02',
+      '2024-01-02T00:00:00Z',
+      1_704_153_600,
+      '1704153600',
+      1_704_153_600_000,
+    ]) {
+      expect(validateInputs(start, { Start: value }), String(value)).toEqual([
+        { id: 'in_8', value: 1_704_153_600_000 },
+      ]);
+    }
+  });
+
+  test.each([
+    ['a text that is no time', { Start: 'tomorrow' }],
+    ['a year as a number', { Start: 2024 }],
+    ['true', { Start: true }],
+  ])('refuses %s as a time, naming the forms a time takes', (_name, inputs) => {
+    expect(failure(inputs).message).toMatch(
+      /Start \(in_8\) must be a time, an ISO 8601 date or date-time or a Unix timestamp in seconds or milliseconds/,
+    );
+  });
+
   test('names an input without a name of its own by its id, and a type it does not have as unknown', () => {
     const bare = [spec({ id: 'x', type: '' })];
 

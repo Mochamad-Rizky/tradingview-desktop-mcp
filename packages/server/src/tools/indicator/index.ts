@@ -70,7 +70,8 @@ const inputValues = () =>
 const INPUTS_TEXT =
   'Input values by input id or name (case aside), as indicator_list reports them, such as ' +
   '{ "Length": 21, "Source": "hl2" }. Numbers must be within the bounds of the input, and a ' +
-  'value of an input with options one of them.';
+  'value of an input with options one of them. A time input takes ' +
+  `${TIME_INPUT}; indicator_list reports it in Unix milliseconds, as TradingView keeps it.`;
 
 // What the app knows of the indicators it can add, with a warning for each source it could not
 // read: the standard Pine scripts (each with the script version a Pine study descriptor takes as
