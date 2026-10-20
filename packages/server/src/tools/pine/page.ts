@@ -71,22 +71,20 @@ export function readPineEditorState(
       },
     };
   }
-  // Whether the app keeps unsaved changes for the editor at a placement (has_unsaved_modifications,
-  // read with the helpers of the app, which keep it per account), or null when that cannot be read.
-  // The app shows unsaved text of an editor whose side panel closed again when the editor opens,
-  // and isModified() then reads false (seen on the app), so its own guard asks this flag as well.
-  const keptUnsaved = (at: string): boolean | null => {
+  // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, under that bare
+  // key for every placement, read with the helper of the app, which keeps it per account), or null
+  // when that cannot be read. The app writes it when the editor closes and shows the unsaved text
+  // again when the editor opens, and isModified() then reads false (seen on the app), so its own
+  // guard asks this flag as well. While the editor is open the flag can lag: it stays set after the
+  // text was replaced until the editor closes, which only makes the guard ask for confirm.
+  const keptUnsaved = (): boolean | null => {
     try {
       const read = lib.findExport('getPersistedValue');
-      const keyOf = lib.findExport('getPersistenceKey');
       const key = lib.findExport('hasScriptModificationsKey');
-      if (typeof read !== 'function' || typeof keyOf !== 'function' || typeof key !== 'string') {
+      if (typeof read !== 'function' || typeof key !== 'string') {
         return null;
       }
-      const value: unknown = (read as (key: unknown, perUser: boolean) => unknown)(
-        (keyOf as (key: string, placement: string) => unknown)(key, at),
-        true,
-      );
+      const value: unknown = (read as (key: string, perUser: boolean) => unknown)(key, true);
       return value === null || value === undefined
         ? false
         : typeof value === 'boolean'
@@ -165,7 +163,7 @@ export function readPineEditorState(
   if (typeof changed?.value !== 'boolean') {
     unreadable.push('isModified');
   }
-  const kept = keptUnsaved(at);
+  const kept = keptUnsaved();
   if (kept === null) {
     unreadable.push('unsavedChanges');
   }
@@ -238,22 +236,20 @@ export function openPineEditor(
       return null;
     }
   };
-  // Whether the app keeps unsaved changes for the editor at a placement (has_unsaved_modifications,
-  // read with the helpers of the app, which keep it per account), or null when that cannot be read.
-  // The app shows unsaved text of an editor whose side panel closed again when the editor opens,
-  // and isModified() then reads false (seen on the app), so its own guard asks this flag as well.
-  const keptUnsaved = (at: string): boolean | null => {
+  // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, under that bare
+  // key for every placement, read with the helper of the app, which keeps it per account), or null
+  // when that cannot be read. The app writes it when the editor closes and shows the unsaved text
+  // again when the editor opens, and isModified() then reads false (seen on the app), so its own
+  // guard asks this flag as well. While the editor is open the flag can lag: it stays set after the
+  // text was replaced until the editor closes, which only makes the guard ask for confirm.
+  const keptUnsaved = (): boolean | null => {
     try {
       const read = lib.findExport('getPersistedValue');
-      const keyOf = lib.findExport('getPersistenceKey');
       const key = lib.findExport('hasScriptModificationsKey');
-      if (typeof read !== 'function' || typeof keyOf !== 'function' || typeof key !== 'string') {
+      if (typeof read !== 'function' || typeof key !== 'string') {
         return null;
       }
-      const value: unknown = (read as (key: unknown, perUser: boolean) => unknown)(
-        (keyOf as (key: string, placement: string) => unknown)(key, at),
-        true,
-      );
+      const value: unknown = (read as (key: string, perUser: boolean) => unknown)(key, true);
       return value === null || value === undefined
         ? false
         : typeof value === 'boolean'
@@ -305,7 +301,7 @@ export function openPineEditor(
     if (typeof changed?.value !== 'boolean') {
       unreadable.push('isModified');
     }
-    const kept = keptUnsaved(at);
+    const kept = keptUnsaved();
     if (kept === null) {
       unreadable.push('unsavedChanges');
     }
@@ -837,7 +833,6 @@ export function changePineEditor(
     };
   }
   let entry: Partial<OpenPineEditorLike> | null = null;
-  let placement: PineEditorPlacement = 'dialog';
   for (const candidate of ['dialog', 'bottom'] as const) {
     let found: unknown;
     try {
@@ -847,7 +842,6 @@ export function changePineEditor(
     }
     if (found !== null && found !== undefined) {
       entry = found;
-      placement = candidate;
       break;
     }
   }
@@ -942,20 +936,16 @@ export function changePineEditor(
       } catch {
         modified = undefined;
       }
-      // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, read with
-      // its own helpers, which keep it per account): unsaved text of an editor whose side panel
-      // closed comes back when it opens with isModified() false (seen on the app), so the guard of
-      // the app asks this flag too. null when it cannot be read.
+      // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, under that
+      // bare key, read with its own helper, which keeps it per account): unsaved text of an editor
+      // whose side panel closed comes back when it opens with isModified() false (seen on the app),
+      // so the guard of the app asks this flag too. null when it cannot be read.
       let kept: unknown = null;
       try {
         const read = lib.findExport('getPersistedValue');
-        const keyOf = lib.findExport('getPersistenceKey');
         const key = lib.findExport('hasScriptModificationsKey');
-        if (typeof read === 'function' && typeof keyOf === 'function' && typeof key === 'string') {
-          const value: unknown = (read as (key: unknown, perUser: boolean) => unknown)(
-            (keyOf as (key: string, at: string) => unknown)(key, placement),
-            true,
-          );
+        if (typeof read === 'function' && typeof key === 'string') {
+          const value: unknown = (read as (key: string, perUser: boolean) => unknown)(key, true);
           kept = value ?? false;
         }
       } catch {

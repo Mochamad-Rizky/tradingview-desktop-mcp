@@ -247,6 +247,29 @@ describe('readPineEditorState', () => {
     });
   });
 
+  test('reads the flag under the key the app keeps it under, for either placement', async () => {
+    const facade = { isModified: () => false, isDraft: () => true, getScriptIdVersion: () => null };
+    // The app writes and reads the flag under the bare key, whatever the placement of the editor.
+    const { result } = await libResultOf(
+      readPineEditorState,
+      [],
+      withModules({
+        getOpenPineEditor: (placement: string) =>
+          placement === 'bottom' ? { getFacade: () => facade } : null,
+        hasScriptModificationsKey: 'has_unsaved_modifications',
+        getPersistenceKey: (key: string, placement: string) =>
+          `${placement === 'bottom' ? 'bottom_' : ''}${key}`,
+        getPersistedValue: (key: string, perUser: boolean) =>
+          perUser && key === 'has_unsaved_modifications' ? true : null,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      state: { placement: 'bottom', modified: true },
+      unreadable: [],
+    });
+  });
+
   test('openPineEditor reads the flag of unsaved changes TradingView keeps as well', async () => {
     const facade = {
       isModified: () => false,

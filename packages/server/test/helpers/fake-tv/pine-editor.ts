@@ -842,9 +842,8 @@ export function createFakePineEditor(
           if (clear) {
             record('clearPersistedValue', [key]);
           }
-          const at = state.placement ?? config.opensAt;
-          const flagKey = `${at === 'bottom' ? 'bottom_' : ''}has_unsaved_modifications`;
-          if (key !== flagKey) {
+          // The app keeps the flag under this bare key whatever the placement of the editor.
+          if (key !== 'has_unsaved_modifications') {
             return null;
           }
           return perUser ? state.unsavedKept : { fixture_author: state.unsavedKept };
