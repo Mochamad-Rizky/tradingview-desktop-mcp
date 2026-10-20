@@ -25,7 +25,8 @@
     "test:e2e": "vitest run --project e2e",
     "test:coverage": "vitest run --project unit --project integration --coverage",
     "re:probe": "tsx scripts/re/probe.ts",
-    "re:record": "tsx scripts/re/record-fixtures.ts"
+    "re:record": "tsx scripts/re/record-fixtures.ts",
+    "docs:examples": "tsx scripts/docs/examples.ts"
   },
   "devDependencies": {
     "@types/chrome-remote-interface": "^0.34.0",

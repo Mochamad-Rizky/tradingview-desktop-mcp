@@ -50,6 +50,21 @@ The fake window models what the real app was seen to do, among others:
 No unit or integration test can reach a real app: the test configuration points the debug port at
 port 9, and the suites that could start a program mock `node:child_process`.
 
+### Usage examples
+
+[examples.md](examples.md) shows what an assistant does with the server: a prompt, the tool calls
+and their results. It is generated, not written: `pnpm docs:examples` runs the scenarios of
+`packages/server/scripts/docs/scenarios.ts` through the real server against the fake app with the
+`chart-basic` fixture, so the results have the real shape and synthetic values. The page is the same
+on every run, machine and time zone. The duration of a call is left out, and the one value that
+comes from the clock, the time of a Pine compilation, is fixed.
+
+The test "docs/examples.md is up to date" (`test/integration/docs-examples.test.ts`) runs the
+scenarios again and fails, saying to run `pnpm docs:examples`, when the committed page differs. The
+same file checks that the numbers in the summaries appear in the results above them, and that the
+prompts, the excerpts and the links in the README come from the page. Prettier skips the page
+(`.prettierignore`), so that formatting cannot make it differ from the generator output.
+
 ## Smoke test
 
 `scripts/smoke-node20.mjs` starts the built CLI (`packages/server/dist/cli.js --transport stdio`) the
