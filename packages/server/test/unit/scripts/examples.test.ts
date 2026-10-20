@@ -196,7 +196,12 @@ describe('renderExamples', () => {
         meta: { via: 'internal', warnings: ['careful'] },
       },
       { name: 'STD;MACD' },
-      { ok: false, error: { code: 'PLAN_LIMIT', message: 'The chart is full', details: {} } },
+      // The meta of an error holds only the duration, which the page leaves out.
+      {
+        ok: false,
+        error: { code: 'PLAN_LIMIT', message: 'The chart is full', details: {} },
+        meta: {},
+      },
     ]);
   });
 
@@ -220,6 +225,19 @@ describe('renderExamples', () => {
     expect(page).toContain('**Then it calls `indicator_add`**');
     expect(page).toContain('**The server returns an error**');
     expect(page.match(/\*\*The server returns\*\*/g)).toHaveLength(1);
+  });
+
+  test('renderExamples says that the server stamps the time of a compilation', () => {
+    const page = renderExamples([first]);
+
+    expect(page).toMatch(/time of a compilation is fixed as well, because the server stamps it/);
+    expect(page).not.toMatch(/fake app takes it from the clock/);
+  });
+
+  test('renderExamples says that the strategy report has not been seen on the real app', () => {
+    const page = renderExamples([first]);
+
+    expect(page).toMatch(/Strategy Tester[^.]*has not been read from the real app/);
   });
 
   test('renderExamples says that the duration is left out of the results', () => {

@@ -92,9 +92,12 @@ claude mcp add tradingview -- node /absolute/path/to/tradingview-mcp/packages/se
 ### Try these prompts
 
 Each prompt below is one of the examples in [docs/examples.md](docs/examples.md), which shows the
-tool calls the assistant makes and the full results. The excerpts are lines of those results. The
-values are synthetic: they come from a fake TradingView app with a made-up NASDAQ:AAPL chart, so the
-shape of every result is the real one, but nothing is market data and nothing comes from an account.
+tool calls the assistant makes and the results, with lists longer than three items cut and the
+duration of each call (`durationMs`) left out. The excerpts are lines of those results, and `…`
+marks where lines of other parts of a result are left out. The values are synthetic: they come from
+a fake TradingView app with a made-up NASDAQ:AAPL chart, so nothing is market data and nothing comes
+from an account; the results have the shape the server gives them, though the Strategy Tester
+report behind the backtest example has not been read from the real app yet.
 
 **"What am I looking at on my chart? Tell me the symbol, the timeframe and which indicators are on
 it."** The assistant reads the chart with `chart_get_state`
@@ -141,7 +144,9 @@ and compiles again, without changing the editor
 
 ```json
 "message": "Could not find function or function reference 'study'",
+…
 "applied": ["Replace study( with indicator(", "Replace rsi( with ta.rsi("]
+…
 "writtenBack": false
 ```
 
@@ -164,23 +169,26 @@ report back.
 ### Safety
 
 The tools that change your chart or your scripts are careful with what is already yours. Replacing
-unsaved text in the Pine Editor, saving a new version of a script you saved earlier, and removing an
-indicator that was already on your chart all need `confirm: true`, which the assistant should pass
-only after you agree. A plan limit, such as the number of indicators on a chart or of saved scripts,
-is checked before anything is added and reported as a `PLAN_LIMIT` error with the limit; the server
-does not work around it and does not let TradingView open its upgrade dialog. It deletes and renames
-no script.
+unsaved text in the Pine Editor, saving a new version of a script that this session of the server
+did not create, and removing an indicator that was already on your chart all need `confirm: true`,
+which the assistant should pass only after you agree. A plan limit, such as the number of
+indicators on a chart or of saved scripts, is checked before anything is added and reported as a
+`PLAN_LIMIT` error with the limit; when the limit cannot be read on your TradingView build, the
+tool does nothing and says so. The server does not work around a limit and does not let TradingView
+open its upgrade dialog. It deletes and renames no script.
 
 ### Tool profiles
 
 By default the server offers all its tools (`--profile full`). Some clients accept only a limited
 number of tools. For them, `--profile core` offers a reduced set of the essential tools, and
-`--tools` takes name patterns such as `chart_*,data_*` to pick others. Some descriptions and hints
-name tools that `core` leaves out, such as `pine_open` and `pine_save`, which the assistant cannot
-call under `core`. `--profile readonly` offers only the tools that read. The resources follow the
-tools: each one is offered only with the tool it shares its data with, such as
-`tradingview://pine/source` with `pine_get_source`, so `--tools 'chart_*'` offers the chart state
-and nothing of the Pine Editor.
+`--profile readonly` offers only the tools that read. `--tools` takes name patterns such as
+`chart_*,data_*` and narrows the profile further: a tool must be in the profile and match a
+pattern, so `--profile core --tools 'pine_*'` still leaves out `pine_open` and `pine_save`, which
+are not core tools; with the default profile, `--tools` alone picks the tools. Some descriptions and
+hints name tools that `core` leaves out, such as `pine_open` and `pine_save`, which the assistant
+cannot call under `core`. The resources follow the tools: each one is offered only with the tool
+it shares its data with, such as `tradingview://pine/source` with `pine_get_source`, so
+`--tools 'chart_*'` offers the chart state and nothing of the Pine Editor.
 
 ## Contributing
 

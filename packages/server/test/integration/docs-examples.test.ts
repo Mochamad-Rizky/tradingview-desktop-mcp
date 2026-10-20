@@ -87,7 +87,8 @@ describe('docs/examples.md', () => {
   });
 
   test('the page does not depend on the clock', async () => {
-    // The compile time is the one value of the fake app that comes from the clock.
+    // The compile time is the one value of a result that comes from the clock: the server stamps
+    // it when it compiles.
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(new Date('2031-05-17T03:21:09Z'));
@@ -217,23 +218,72 @@ describe('the README', () => {
     expect(new Set(prompts).size).toBe(6);
   });
 
-  test('each excerpt of a result in the README is two to four lines that the page shows', () => {
-    const shownLines = new Set(page.split('\n').map((line) => line.trim().replace(/,$/, '')));
-    const excerpts = [...tryThese().matchAll(/```json\n([\s\S]*?)```/g)].map((match) =>
+  // The excerpts of results in the README, each as its lines without their indent and trailing
+  // comma, where … marks lines left out between parts of a result.
+  const excerptsOf = (): string[][] =>
+    [...tryThese().matchAll(/```json\n([\s\S]*?)```/g)].map((match) =>
       (match[1] ?? '')
         .split('\n')
         .map((line) => line.trim().replace(/,$/, ''))
         .filter((line) => line !== ''),
     );
+  const GAP = '…';
+
+  test('each excerpt of a result in the README is two to four lines that the page shows', () => {
+    const shownLines = new Set(page.split('\n').map((line) => line.trim().replace(/,$/, '')));
+    const excerpts = excerptsOf();
 
     expect(excerpts).toHaveLength(6);
     for (const lines of excerpts) {
-      expect(lines.length).toBeGreaterThanOrEqual(2);
-      expect(lines.length).toBeLessThanOrEqual(4);
-      for (const line of lines) {
+      const shown = lines.filter((line) => line !== GAP);
+      expect(shown.length).toBeGreaterThanOrEqual(2);
+      expect(shown.length).toBeLessThanOrEqual(4);
+      for (const line of shown) {
         expect(shownLines.has(line), `The page has no line ${line}`).toBe(true);
       }
     }
+  });
+
+  test('an excerpt marks with … where its lines come from different parts of a result', () => {
+    // The indents a line of the page has, by its text: lines at one indent are members of one
+    // level of a result.
+    const indents = new Map<string, Set<number>>();
+    for (const line of page.split('\n')) {
+      const text = line.trim().replace(/,$/, '');
+      indents.set(
+        text,
+        (indents.get(text) ?? new Set()).add(line.length - line.trimStart().length),
+      );
+    }
+    const sameLevel = (a: string, b: string): boolean =>
+      [...(indents.get(a) ?? [])].some((indent) => indents.get(b)?.has(indent) === true);
+
+    for (const lines of excerptsOf()) {
+      lines.forEach((line, index) => {
+        const next = lines[index + 1];
+        if (line !== GAP && next !== undefined && next !== GAP) {
+          expect(sameLevel(line, next), `${line} and ${next} need ${GAP} between them`).toBe(true);
+        }
+      });
+    }
+  });
+
+  test('the README says what the page leaves out of the results', () => {
+    const intro = tryThese().split('**"')[0] ?? '';
+
+    expect(intro).not.toMatch(/full results/);
+    expect(intro).toMatch(/durationMs/);
+    expect(intro).toMatch(/cut/);
+  });
+
+  test('the README says which scripts need confirm for a new version, and how --tools and a profile combine', () => {
+    // A line break inside a paragraph is a space.
+    const safety = sectionOf('### Safety').replaceAll(/\s+/g, ' ');
+    const profiles = sectionOf('### Tool profiles').replaceAll(/\s+/g, ' ');
+
+    expect(safety).toMatch(/script that this session (?:of the server )?did not create/);
+    expect(profiles).toMatch(/--tools[\s\S]*narrow/);
+    expect(profiles).toMatch(/--profile core --tools 'pine_\*'/);
   });
 
   test('each link of the README into the page leads to a section of it', () => {
