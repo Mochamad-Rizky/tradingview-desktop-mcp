@@ -232,10 +232,11 @@ export const pineGetErrors = defineTool({
   domain: 'pine',
   title: 'Read the last Pine compile errors',
   description:
-    'Returns the result of the last pine_compile of this session again, unchanged: success, ' +
-    'errors, warnings, addedToChart, studyId, compiledAt (Unix seconds) and compiledAtIso. ' +
-    'Before any compilation in this session it returns an empty result: success true, no errors ' +
-    'or warnings, and compiledAt and compiledAtIso null. It asks TradingView nothing and changes nothing; pine_compile compiles anew.',
+    'Returns the result of the last pine_compile of this session again, unchanged (that of the ' +
+    'last attempt for pine_smart_compile): success, errors, warnings, addedToChart, studyId, ' +
+    'compiledAt (Unix seconds) and compiledAtIso. Before any compilation in this session it ' +
+    'returns an empty result: success true, no errors or warnings, and compiledAt and ' +
+    'compiledAtIso null. It asks TradingView nothing and changes nothing; pine_compile compiles anew.',
   inputSchema: {},
   annotations: {
     readOnlyHint: true,

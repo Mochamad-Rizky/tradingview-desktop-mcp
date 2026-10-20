@@ -775,6 +775,7 @@ test('the Pine source tools say which of them read and which can replace text', 
     pine_compile: [false, false],
     pine_get_errors: [true, false],
     pine_get_console: [true, false],
+    pine_smart_compile: [false, true],
   });
 });
 
@@ -1337,5 +1338,501 @@ describe('pine_analyze', () => {
 
     expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
     expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+  });
+});
+
+describe('pine_smart_compile', () => {
+  // A script written for Pine v4 under a v6 header, which the compiler rejects, and its fixed form.
+  const V4_IN_V6 = '//@version=6\nstudy("x")\nplot(rsi(close,14))\n';
+  const FIXED = '//@version=6\nindicator("x")\nplot(ta.rsi(close,14))\n';
+  const FIX_STUDY = 'Replace study( with indicator(';
+  const FIX_RSI = 'Replace rsi( with ta.rsi(';
+  const FIXED_DIFF = [
+    '@@ -1,3 +1,3 @@',
+    ' //@version=6',
+    '-study("x")',
+    '-plot(rsi(close,14))',
+    '+indicator("x")',
+    '+plot(ta.rsi(close,14))',
+    '',
+  ].join('\n');
+  const undeclared = (name: string, line: number, column: number) => ({
+    line,
+    column,
+    endLine: line,
+    endColumn: column + name.length - 1,
+    message: `Undeclared identifier "${name}"`,
+    severity: 'error',
+  });
+  const V4_ERRORS = [undeclared('study', 2, 1), undeclared('rsi', 3, 6)];
+  // The editor holding `source` as its saved text, so that it has no unsaved changes.
+  const saved = (source: string) => withEditor({ source, savedSource: source });
+
+  test('smart compile fixes v4-style calls in a v6 script in two attempts', async () => {
+    const { client, win, ctx } = await startHarness();
+
+    const result = await callTool(client, 'pine_smart_compile', { source: V4_IN_V6 });
+
+    expect(envelopeOf(result)).toStrictEqual({
+      ok: true,
+      data: {
+        success: true,
+        attempts: [
+          { errors: V4_ERRORS, applied: [FIX_STUDY, FIX_RSI] },
+          { errors: [], applied: [] },
+        ],
+        source: FIXED,
+        diff: FIXED_DIFF,
+        writtenBack: false,
+      },
+      meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([
+      [V4_IN_V6, COMPILE_ID],
+      [FIXED, COMPILE_ID],
+    ]);
+    // The text was given, so the editor is not opened, read or changed, and nothing is added.
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(callsOf(win, 'chart.createStudy')).toEqual([]);
+    expect(ctx.session.lastPineCompile).toMatchObject({
+      success: true,
+      errors: [],
+      addedToChart: false,
+      studyId: null,
+    });
+  });
+
+  test('smart compile with one attempt compiles once and changes nothing', async () => {
+    const { client, win, ctx } = await startHarness();
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      source: V4_IN_V6,
+      maxAttempts: 1,
+    });
+
+    // A fix is applied only when another compilation follows, so one attempt changes nothing.
+    expect(dataOf(result)).toStrictEqual({
+      success: false,
+      attempts: [{ errors: V4_ERRORS, applied: [] }],
+      source: V4_IN_V6,
+      diff: '',
+      writtenBack: false,
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([[V4_IN_V6, COMPILE_ID]]);
+    expect(ctx.session.lastPineCompile).toMatchObject({ success: false, errors: V4_ERRORS });
+  });
+
+  // Three v4 calls that the variables of the same names keep the analyzer from fixing, so only the
+  // errors of the compiler lead to them. A compiler that stops at its first error reports one a
+  // time, which takes one compilation each.
+  const SEVERAL =
+    '//@version=6\nindicator("x")\nrsi = rsi(close, 14)\nsma = sma(close, 14)\n' +
+    'ema = ema(close, 14)\nplot(rsi + sma + ema)\n';
+  const FIX_SMA = 'Replace sma( with ta.sma(';
+  const FIX_EMA = 'Replace ema( with ta.ema(';
+
+  test('smart compile stops after three attempts by default and returns the last errors', async () => {
+    const { client, win, ctx } = await startHarness();
+    editorOf(win).compileFirstErrorOnly = true;
+
+    const result = await callTool(client, 'pine_smart_compile', { source: SEVERAL });
+
+    const twoFixed = SEVERAL.replace('rsi = rsi(', 'rsi = ta.rsi(').replace(
+      'sma = sma(',
+      'sma = ta.sma(',
+    );
+    expect(dataOf(result)).toStrictEqual({
+      success: false,
+      attempts: [
+        { errors: [undeclared('rsi', 3, 7)], applied: [FIX_RSI] },
+        { errors: [undeclared('sma', 4, 7)], applied: [FIX_SMA] },
+        { errors: [undeclared('ema', 5, 7)], applied: [] },
+      ],
+      // The text of the last attempt, which the errors belong to.
+      source: twoFixed,
+      diff: [
+        '@@ -1,6 +1,6 @@',
+        ' //@version=6',
+        ' indicator("x")',
+        '-rsi = rsi(close, 14)',
+        '-sma = sma(close, 14)',
+        '+rsi = ta.rsi(close, 14)',
+        '+sma = ta.sma(close, 14)',
+        ' ema = ema(close, 14)',
+        ' plot(rsi + sma + ema)',
+        '',
+      ].join('\n'),
+      writtenBack: false,
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toHaveLength(3);
+    expect(ctx.session.lastPineCompile).toMatchObject({
+      success: false,
+      errors: [undeclared('ema', 5, 7)],
+    });
+  });
+
+  test('smart compile stops after maxAttempts and returns the last errors', async () => {
+    const { client, win, ctx } = await startHarness();
+    editorOf(win).compileFirstErrorOnly = true;
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      source: SEVERAL,
+      maxAttempts: 2,
+    });
+
+    expect(dataOf(result)).toMatchObject({
+      success: false,
+      attempts: [
+        { errors: [undeclared('rsi', 3, 7)], applied: [FIX_RSI] },
+        { errors: [undeclared('sma', 4, 7)], applied: [] },
+      ],
+      source: SEVERAL.replace('rsi = rsi(', 'rsi = ta.rsi('),
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toHaveLength(2);
+    expect(ctx.session.lastPineCompile).toMatchObject({
+      success: false,
+      errors: [undeclared('sma', 4, 7)],
+    });
+  });
+
+  test('smart compile goes on while fixes apply, up to five attempts', async () => {
+    const { client, win } = await startHarness();
+    editorOf(win).compileFirstErrorOnly = true;
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      source: SEVERAL,
+      maxAttempts: 5,
+    });
+
+    expect(dataOf(result)).toMatchObject({
+      success: true,
+      attempts: [
+        { applied: [FIX_RSI] },
+        { applied: [FIX_SMA] },
+        { applied: [FIX_EMA] },
+        { errors: [], applied: [] },
+      ],
+      source: SEVERAL.replace('rsi = rsi(', 'rsi = ta.rsi(')
+        .replace('sma = sma(', 'sma = ta.sma(')
+        .replace('ema = ema(', 'ema = ta.ema('),
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toHaveLength(4);
+  });
+
+  test('smart compile stops early when no fix applies and keeps the errors of the last attempt', async () => {
+    const { client, win, ctx } = await startHarness();
+    const source = '//@version=6\nstudy("x")\nplot(undeclared_a)\n';
+
+    const result = await callTool(client, 'pine_smart_compile', { source, maxAttempts: 5 });
+
+    // The first round fixes study, which leaves an error nothing here can fix.
+    const fixed = '//@version=6\nindicator("x")\nplot(undeclared_a)\n';
+    expect(dataOf(result)).toMatchObject({
+      success: false,
+      attempts: [
+        {
+          errors: [undeclared('study', 2, 1), undeclared('undeclared_a', 3, 6)],
+          applied: [FIX_STUDY],
+        },
+        { errors: [undeclared('undeclared_a', 3, 6)], applied: [] },
+      ],
+      source: fixed,
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([
+      [source, COMPILE_ID],
+      [fixed, COMPILE_ID],
+    ]);
+    // pine_get_errors has the full result of the last attempt, whose text the call returns.
+    const errors = await callTool(client, 'pine_get_errors', {});
+    expect(dataOf(errors)).toStrictEqual(ctx.session.lastPineCompile);
+    expect(dataOf(errors)).toMatchObject({
+      success: false,
+      errors: [undeclared('undeclared_a', 3, 6)],
+    });
+  });
+
+  test('smart compile with applyFixes false only compiles once', async () => {
+    const { client, win } = await startHarness();
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      source: V4_IN_V6,
+      applyFixes: false,
+    });
+
+    expect(dataOf(result)).toStrictEqual({
+      success: false,
+      attempts: [{ errors: V4_ERRORS, applied: [] }],
+      source: V4_IN_V6,
+      diff: '',
+      writtenBack: false,
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([[V4_IN_V6, COMPILE_ID]]);
+  });
+
+  test('smart compile returns a script that already compiles as it is', async () => {
+    const { client, win } = await startHarness();
+
+    const result = await callTool(client, 'pine_smart_compile', { source: FIXED });
+
+    expect(dataOf(result)).toStrictEqual({
+      success: true,
+      attempts: [{ errors: [], applied: [] }],
+      source: FIXED,
+      diff: '',
+      writtenBack: false,
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toHaveLength(1);
+  });
+
+  test('smart compile without source fixes the text of the editor and leaves the editor as it is', async () => {
+    const { client, win } = await startHarness(saved(V4_IN_V6));
+
+    const result = await callTool(client, 'pine_smart_compile', {});
+
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: false });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([
+      [V4_IN_V6, COMPILE_ID],
+      [FIXED, COMPILE_ID],
+    ]);
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(editorOf(win).source).toBe(V4_IN_V6);
+  });
+
+  test('smart compile works on a given text while the editor holds unsaved changes', async () => {
+    const { client, win } = await startHarness(modified());
+
+    const result = await callTool(client, 'pine_smart_compile', { source: V4_IN_V6 });
+
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: false });
+    expect(editorOf(win).source).toBe(EDITED);
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+  });
+
+  test('smart compile without source fails NOT_AVAILABLE while the editor is closed', async () => {
+    const { client, win, ctx } = await startHarness();
+
+    const result = await callTool(client, 'pine_smart_compile', {});
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    expect(errorOf(result)?.hint).toMatch(/pine_open.*pine_new|pine_new.*pine_open/);
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([]);
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+    expect(ctx.session.lastPineCompile).toBeNull();
+  });
+
+  test('smart compile writeBack refuses unsaved editor content without confirm', async () => {
+    const { client, win, ctx } = await startHarness(withEditor({ source: V4_IN_V6 }));
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'CONFIRMATION_REQUIRED',
+      details: { action: 'pine_smart_compile with writeBack' },
+    });
+    expect(errorOf(result)?.hint).toContain('confirm: true');
+    // Refused before anything was compiled, and nothing was written.
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([]);
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(editorOf(win).source).toBe(V4_IN_V6);
+    expect(ctx.session.lastPineCompile).toBeNull();
+  });
+
+  test('smart compile writeBack replaces unsaved editor content with confirm', async () => {
+    const { client, win } = await startHarness(withEditor({ source: V4_IN_V6 }));
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true, confirm: true });
+
+    expect(envelopeOf(result)).toStrictEqual({
+      ok: true,
+      data: {
+        success: true,
+        attempts: [
+          { errors: V4_ERRORS, applied: [FIX_STUDY, FIX_RSI] },
+          { errors: [], applied: [] },
+        ],
+        source: FIXED,
+        diff: FIXED_DIFF,
+        writtenBack: true,
+      },
+      meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
+    });
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([[FIXED]]);
+    expect(editorOf(win).source).toBe(FIXED);
+    // The editor now holds unsaved text; nothing was saved.
+    expect(editorOf(win).savedSource).toBe(fixture.pineEditor.savedSource);
+    expect(callsOf(win, 'pineFacade.saveScript')).toEqual([]);
+    expect(callsOf(win, 'pineEditorApi.saveNewScript')).toEqual([]);
+  });
+
+  test('smart compile writeBack needs no confirm when the editor has no unsaved changes', async () => {
+    const { client, win } = await startHarness(saved(V4_IN_V6));
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true });
+
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: true });
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([[FIXED]]);
+    expect(editorOf(win).source).toBe(FIXED);
+  });
+
+  test('smart compile writeBack writes the fixed text it was given into a closed editor, which it opens', async () => {
+    const { client, win } = await startHarness();
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      source: V4_IN_V6,
+      writeBack: true,
+    });
+
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: true });
+    expect(callsOf(win, 'pineEditorApi.open')).toHaveLength(1);
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([[FIXED]]);
+    expect(editorOf(win).source).toBe(FIXED);
+  });
+
+  test('smart compile writeBack checks again when it writes, so that opening an editor with unsaved text is refused', async () => {
+    // A closed editor restores the script it last held, here one with unsaved changes.
+    const { client, win, ctx } = await startHarness({
+      ...fixture,
+      pineEditor: { ...fixture.pineEditor, open: null, source: EDITED },
+    });
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      source: V4_IN_V6,
+      writeBack: true,
+    });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'CONFIRMATION_REQUIRED',
+      details: { action: 'pine_smart_compile with writeBack' },
+    });
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(editorOf(win).source).toBe(EDITED);
+    // The compilation happened, and pine_get_errors keeps its result.
+    expect(ctx.session.lastPineCompile).toMatchObject({ success: true });
+  });
+
+  test('smart compile writeBack writes nothing when the fixes changed nothing', async () => {
+    const { client, win } = await startHarness(saved(FIXED));
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true });
+
+    expect(dataOf(result)).toStrictEqual({
+      success: true,
+      attempts: [{ errors: [], applied: [] }],
+      source: FIXED,
+      diff: '',
+      writtenBack: false,
+    });
+    expect(warningsOf(result).join(' ')).toContain('left as it is');
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+  });
+
+  test('smart compile writeBack with applyFixes false writes nothing and asks for no confirm', async () => {
+    const { client, win } = await startHarness(withEditor({ source: V4_IN_V6 }));
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      applyFixes: false,
+      writeBack: true,
+    });
+
+    expect(dataOf(result)).toMatchObject({
+      success: false,
+      attempts: [{ errors: V4_ERRORS, applied: [] }],
+      source: V4_IN_V6,
+      writtenBack: false,
+    });
+    expect(warningsOf(result).join(' ')).toContain('left as it is');
+    expect(callsOf(win, 'translateScriptAsync')).toHaveLength(1);
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+  });
+
+  test('smart compile writeBack with one attempt writes nothing and asks for no confirm', async () => {
+    const { client, win } = await startHarness(withEditor({ source: V4_IN_V6 }));
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      maxAttempts: 1,
+      writeBack: true,
+    });
+
+    // A fix is applied only when another compilation follows, so there is nothing to write.
+    expect(dataOf(result)).toMatchObject({ success: false, source: V4_IN_V6, writtenBack: false });
+    expect(warningsOf(result).join(' ')).toContain('left as it is');
+    expect(callsOf(win, 'translateScriptAsync')).toHaveLength(1);
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+  });
+
+  test('smart compile keeps the line endings of the text it fixes and diffs without them', async () => {
+    const { client } = await startHarness();
+    const source = V4_IN_V6.replaceAll('\n', '\r\n');
+
+    const result = await callTool(client, 'pine_smart_compile', { source });
+
+    expect(dataOf(result)).toMatchObject({
+      success: true,
+      source: FIXED.replaceAll('\n', '\r\n'),
+      diff: FIXED_DIFF,
+    });
+  });
+
+  test('smart compile fixes a script without a version that the compiler rejects, adding the version', async () => {
+    const { client } = await startHarness();
+    // Without a version the compiler reads an old one, and the analyzer adds the version.
+    const source = 'indicator("x")\nplot(undeclared_a)\n';
+
+    const result = await callTool(client, 'pine_smart_compile', { source });
+
+    expect(dataOf(result)).toMatchObject({
+      success: false,
+      attempts: [
+        { errors: [undeclared('undeclared_a', 2, 6)], applied: ['Add //@version=6 on line 1'] },
+        { errors: [undeclared('undeclared_a', 3, 6)], applied: [] },
+      ],
+      source: `//@version=6\n${source}`,
+    });
+  });
+
+  test('smart compile reports a failure of the compiler as the typed error, not as compile errors', async () => {
+    const { client, win, ctx } = await startHarness();
+    editorOf(win).compileHttpError = 'The size of the script compilation request is too large.';
+
+    const result = await callTool(client, 'pine_smart_compile', { source: V4_IN_V6 });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: 'The size of the script compilation request is too large.',
+    });
+    expect(ctx.session.lastPineCompile).toBeNull();
+  });
+
+  test('smart compile refuses an empty text before compiling', async () => {
+    const { client, win } = await startHarness();
+
+    const result = await callTool(client, 'pine_smart_compile', { source: ' \n ' });
+
+    expect(errorOf(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([]);
+  });
+
+  test.each([0, 6, 2.5, -1])('smart compile refuses maxAttempts %s', async (maxAttempts) => {
+    const { client, win, ctx } = await startHarness();
+    const args = { source: V4_IN_V6, maxAttempts };
+
+    const viaClient = await callTool(client, 'pine_smart_compile', args);
+    const viaRegistry = await ctx.registry.call('pine_smart_compile', args, 'dashboard');
+
+    // The SDK refuses it first, with its own result, and the registry would refuse it as well.
+    expect(viaClient.isError).toBe(true);
+    expect(textOf(viaClient)).toContain('maxAttempts');
+    expect(errorOf(viaRegistry)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([]);
+  });
+
+  test.each([1, 5])('smart compile accepts maxAttempts %s', async (maxAttempts) => {
+    const { client } = await startHarness();
+
+    const result = await callTool(client, 'pine_smart_compile', { source: FIXED, maxAttempts });
+
+    expect(result.isError).toBeFalsy();
   });
 });

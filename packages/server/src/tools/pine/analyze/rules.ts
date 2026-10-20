@@ -50,6 +50,16 @@ const TA_NAMES = [
   'change',
 ];
 
+// What each v4 name that Pine v5 renamed or moved into a namespace became. The rename rules below
+// offer exactly these, and so do the fixes for compile errors (smart-compile.ts).
+export const V4_RENAMES: ReadonlyMap<string, string> = new Map([
+  ['study', 'indicator'],
+  ['security', 'request.security'],
+  ['tostring', 'str.tostring'],
+  ...TA_NAMES.map((name): [string, string] => [name, `ta.${name}`]),
+]);
+const renamed = (name: string): string => V4_RENAMES.get(name) ?? name;
+
 // Whether code[i] starts a line at column 1, optionally after export or method. Functions are
 // declared at the top level; an indented `name(…) =>` is a switch case.
 function startsLine(code: Token[], i: number): boolean {
@@ -116,7 +126,7 @@ function diagnostic(
   return { ruleId, severity, line: at.line, column: at.column, message, fix };
 }
 
-function renameFix(token: Token, replacement: string): PineFix {
+export function renameFix(token: Token, replacement: string): PineFix {
   return {
     description: `Replace ${token.text}( with ${replacement}(`,
     edits: [{ line: token.line, column: token.column, endColumn: token.endColumn, replacement }],
@@ -162,25 +172,15 @@ function declarationKind(ctx: RuleContext): string | null {
 
 export const RULES: Rule[] = [
   // missing-version and old-version read the //@version comment, so analyze.ts adds them.
-  renameRule('study-declaration', ['study'], () => 'indicator', 'was renamed in Pine v5'),
+  renameRule('study-declaration', ['study'], renamed, 'was renamed in Pine v5'),
   renameRule(
     'security-namespace',
     ['security'],
-    () => 'request.security',
+    renamed,
     'moved to the request namespace in Pine v5',
   ),
-  renameRule(
-    'ta-namespace',
-    TA_NAMES,
-    (name) => `ta.${name}`,
-    'moved to the ta namespace in Pine v5',
-  ),
-  renameRule(
-    'str-namespace',
-    ['tostring'],
-    () => 'str.tostring',
-    'moved to the str namespace in Pine v5',
-  ),
+  renameRule('ta-namespace', TA_NAMES, renamed, 'moved to the ta namespace in Pine v5'),
+  renameRule('str-namespace', ['tostring'], renamed, 'moved to the str namespace in Pine v5'),
   (ctx) =>
     missingDeclaration(ctx)
       ? [

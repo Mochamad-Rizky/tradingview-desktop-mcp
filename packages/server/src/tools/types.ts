@@ -43,7 +43,8 @@ export interface SessionState {
   // The ids of the Pine scripts pine_save saved as new scripts. Saving a new version of one needs
   // no confirmation.
   createdScriptIds: Set<string>;
-  // The result of the last pine_compile, which pine_get_errors returns; null before the first.
+  // The result of the last pine_compile, or of the last attempt of a pine_smart_compile, which
+  // pine_get_errors returns; null before the first.
   lastPineCompile: PineCompileResult | null;
 }
 

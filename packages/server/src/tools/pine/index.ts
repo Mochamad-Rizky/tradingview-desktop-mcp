@@ -5,7 +5,7 @@ import { getPlanLimits, requireBelowLimit } from '../../core/tv/plan-limits.js';
 import { pageWaitMs } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import { analyzePine, pineVersion } from './analyze/analyze.js';
-import { pineCompileTools } from './compile.js';
+import { compileSource, pineCompileTools } from './compile.js';
 import {
   ensureEditorOpen,
   notOpenError,
@@ -28,11 +28,12 @@ import {
   toSavedScript,
   type SavedScriptRow,
 } from './scripts.js';
+import { smartCompile } from './smart-compile.js';
 
 // The Pine tools (design spec 7, domain Pine). These start a new script, open a saved one, read
-// and replace the text of the Pine Editor, list the saved scripts and save; the compile tools
-// (compile.ts) join them in pineTools. Later tools of the domain (analysis, outputs) are added to
-// pineTools too.
+// and replace the text of the Pine Editor, list the saved scripts, save, analyze a text and compile
+// it with fixes; the compile tools (compile.ts) join them in pineTools. Later tools of the domain
+// (outputs) are added to pineTools too.
 //
 // They touch the user's saved scripts and the unsaved text of the editor, so they keep to these
 // rules (design spec 5.3): no text in the editor is replaced while it has unsaved changes unless
@@ -616,6 +617,131 @@ export const pineAnalyze = defineTool({
   },
 });
 
+// How the guard on unsaved text names pine_smart_compile when it writes back.
+const WRITE_BACK = 'pine_smart_compile with writeBack';
+
+// How many compilations pine_smart_compile makes at most when it is not told.
+const DEFAULT_ATTEMPTS = 3;
+
+export const pineSmartCompile = defineTool({
+  name: 'pine_smart_compile',
+  domain: 'pine',
+  title: 'Compile a Pine script and fix it',
+  description:
+    'Compiles a Pine script with the compiler of TradingView and, while it has errors, applies ' +
+    'deterministic fixes and compiles again, at most maxAttempts compilations (1 to 5, default ' +
+    `${String(DEFAULT_ATTEMPTS)}). ` +
+    'The fixes are fixed rules and no AI model is involved: the Pine v4 names that v5 renamed or ' +
+    'moved into a namespace (study to indicator, security to request.security, tostring to ' +
+    'str.tostring, and sma, ema, rsi, macd, stoch, atr, crossover, crossunder, highest, lowest ' +
+    'and change to ta.*) and a missing //@version=6, each applied where pine_analyze finds it or ' +
+    'a compile error points at it, and only to a script of version 5 or later or without a ' +
+    'version. With source it works on that text; without, on the text of the Pine Editor ' +
+    '(NOT_AVAILABLE when it is closed; pine_open or pine_new opens it). Returns success (whether ' +
+    'the last attempt compiled), attempts (in order, each with errors, those of that ' +
+    'compilation, and applied, the descriptions of the fixes applied after it, such as ' +
+    '"Replace rsi( with ta.rsi(", which made the text of the next attempt), source (the final ' +
+    'text, the one the last attempt compiled), diff (a unified diff of what the fixes changed, ' +
+    'line breaks aside, empty when nothing changed) and writtenBack. It stops early when no fix ' +
+    'changes the text. A fix is applied only when another compilation follows, so maxAttempts 1 ' +
+    'or applyFixes: false compiles once and changes nothing. Compile errors are a result; a ' +
+    'failure of TradingView to compile at all is NOT_AVAILABLE or TIMEOUT. Nothing is written to ' +
+    'the editor unless writeBack: true, which writes the final text into it, as pine_set_source ' +
+    'does, when it differs from the text the call started with. That needs confirm: true while ' +
+    'the editor holds unsaved changes, else the call fails with CONFIRMATION_REQUIRED before ' +
+    'anything is compiled and nothing is written. Nothing is saved or added to the chart. ' +
+    'pine_get_errors returns the full result of the last compilation, warnings included.',
+  inputSchema: {
+    source: sourceInput()
+      .optional()
+      .describe('The Pine source to compile and fix. Default: the text of the Pine Editor.'),
+    maxAttempts: z
+      .number()
+      .int()
+      .min(1)
+      .max(5)
+      .optional()
+      .describe(
+        'The most compilations to make, 1 to 5. Fixes are applied between two of them. ' +
+          `Default: ${String(DEFAULT_ATTEMPTS)}.`,
+      ),
+    applyFixes: z
+      .boolean()
+      .optional()
+      .describe('false to compile once and apply no fix. Default: true.'),
+    writeBack: z
+      .boolean()
+      .optional()
+      .describe(
+        'true to write the final text into the Pine Editor when the fixes changed it. ' +
+          'Default: false.',
+      ),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe(
+        'Must be true for writeBack while the Pine Editor holds unsaved changes, which the ' +
+          'written text then replaces. Default: false.',
+      ),
+  },
+  // Only writeBack changes anything, by replacing the text of the editor, which with confirm: true
+  // can be unsaved text.
+  annotations: REPLACES_TEXT,
+  core: true,
+  async handler({ source, maxAttempts, applyFixes: fix, writeBack, confirm }, ctx) {
+    const page = await ctx.connection.chartPage();
+    const warnings: string[] = [];
+    const attempts = maxAttempts ?? DEFAULT_ATTEMPTS;
+    // Before anything is compiled, so that a refusal wastes no compilation. The write checks
+    // again when it happens (changeEditor). Without a fix to make, and a fix is made only when
+    // another attempt follows, nothing is ever written.
+    if (writeBack === true && fix !== false && attempts > 1) {
+      requireUnmodifiedOrConfirmed(await readEditorState(page), confirm, WRITE_BACK);
+    }
+    let start = source;
+    if (start === undefined) {
+      const read = await readPineSourceData(ctx);
+      warnings.push(...read.warnings);
+      start = read.data.source;
+    }
+    const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
+    const run = await smartCompile((text) => compileSource(page, text, waitMs), start, {
+      maxAttempts: attempts,
+      applyFixes: fix !== false,
+    });
+    ctx.session.lastPineCompile = run.last;
+
+    let writtenBack = false;
+    if (writeBack === true && run.source === start) {
+      warnings.push(
+        'writeBack was asked for, but no fix changed the text, so the Pine Editor was left as ' +
+          'it is.',
+      );
+    } else if (writeBack === true) {
+      await changeEditor(
+        page,
+        ctx,
+        WRITE_BACK,
+        confirm,
+        (allowModified) => ({ kind: 'source', source: run.source, allowModified }),
+        warnings,
+      );
+      writtenBack = true;
+    }
+    return {
+      data: {
+        success: run.success,
+        attempts: run.attempts,
+        source: run.source,
+        diff: run.diff,
+        writtenBack,
+      },
+      via: 'internal',
+      warnings,
+    };
+  },
+});
+
 export const pineTools: AnyToolDefinition[] = [
   pineNew,
   pineOpen,
@@ -625,4 +751,5 @@ export const pineTools: AnyToolDefinition[] = [
   pineSave,
   pineAnalyze,
   ...pineCompileTools,
+  pineSmartCompile,
 ];
