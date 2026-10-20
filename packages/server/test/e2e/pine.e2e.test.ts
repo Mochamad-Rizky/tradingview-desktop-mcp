@@ -10,6 +10,7 @@ import {
   callFailure,
   callOk,
   closeEditor,
+  describeFailure,
   e2eEnabled,
   editorDifferences,
   findEditorReopenProblems,
@@ -248,10 +249,6 @@ function savedScriptShapes(
               ),
       };
     });
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // Whether the editor shows the script of `target`, whatever its text.
@@ -560,7 +557,7 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
         }
       }
     } catch (error) {
-      failures.push(messageOf(error));
+      failures.push(describeFailure(error));
     }
     await e2e.close();
     if (failures.length > 0) {
@@ -595,12 +592,17 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
       failure = error;
       failed = true;
     }
+    // Its problems name tools and codes only; an error is described the same way.
     const { problems, differedAtFirst, waitedMs } = await restoreEditor(
       server.client,
       server.ctx,
       back,
       written,
-    );
+    ).catch((error: unknown) => ({
+      problems: [`The Pine Editor could not be put back: ${describeFailure(error)}`],
+      differedAtFirst: null,
+      waitedMs: null,
+    }));
     if (differedAtFirst !== null) {
       // How the editor showed the script again after the tool that put it back answered.
       observe('pine editor put back', {

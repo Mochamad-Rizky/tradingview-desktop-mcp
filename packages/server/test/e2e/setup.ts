@@ -35,7 +35,7 @@ import type { ToolContext } from '../../src/tools/types.js';
 import type { JsonValue } from '../../src/utils/json.js';
 import { pollUntil } from '../../src/utils/poll.js';
 import { parseTimeInput } from '../../src/utils/time.js';
-import { callTool, connectInMemoryClient, textOf } from '../helpers/mcp-client.js';
+import { callTool, connectInMemoryClient } from '../helpers/mcp-client.js';
 import { quietLogger } from '../helpers/tool-context.js';
 
 // The harness of the end-to-end suites, which drive the real TradingView Desktop of the person
@@ -112,14 +112,73 @@ interface Envelope {
   meta: { via?: string; warnings?: string[] };
 }
 
+// An error of the harness itself, whose message is a fixed text with tool names and error codes
+// only: never a value of the user, such as the symbol of their chart, a price, a view or the name
+// of a script, so that it can go into a skip reason, a log line or a failed test as it is.
+export class HarnessError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HarnessError';
+  }
+}
+
+// A tool call that failed, named by the tool and the code of its error. The message of a tool can
+// name what the user has (chart_set_symbol names the symbol the chart went back to), so it is left
+// out.
+export class ToolCallError extends HarnessError {
+  constructor(
+    readonly tool: string,
+    readonly code: string,
+  ) {
+    super(`${tool} failed with ${code}`);
+    this.name = 'ToolCallError';
+  }
+}
+
+// The code of the error a tool call answered, UNKNOWN when its envelope names none.
+function errorCodeOf(result: Awaited<ReturnType<typeof callTool>>): string {
+  const envelope = result.structuredContent as { error?: { code?: unknown } } | undefined;
+  return typeof envelope?.error?.code === 'string' ? envelope.error.code : 'UNKNOWN';
+}
+
+// What a failure was, for a skip reason, a log line or an error to throw: the text of an error of
+// the harness, which holds no value; for any other error its code, or else its kind. Never the
+// message of another error, which can quote a tool or the page, and so what the user has.
+export function describeFailure(error: unknown): string {
+  if (error instanceof HarnessError) {
+    return error.message;
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && code !== '') {
+    return `an error with code ${code}`;
+  }
+  return error instanceof Error ? `an unexpected ${error.name}` : 'an unexpected error';
+}
+
+// How a tool call ended: null when it succeeded; else the tool and the code of its error, or that
+// the call itself threw (the transport broke). Never the text of either.
+async function callFailureOf(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string | null> {
+  let result: Awaited<ReturnType<typeof callTool>>;
+  try {
+    result = await callTool(client, name, args);
+  } catch {
+    return `${name} could not be called`;
+  }
+  return result.isError === true ? `${name} failed with ${errorCodeOf(result)}` : null;
+}
+
 export interface ToolSuccess<T> {
   data: T;
   via: string | undefined;
   warnings: string[];
 }
 
-// The data of a successful tool call. A failure throws with what the tool said, so that a failing
-// test says why.
+// The data of a successful tool call. A failure throws a ToolCallError, which says which tool
+// failed with which code, and not what the tool said, which can name what the user has.
 export async function callOk<T>(
   client: Client,
   name: string,
@@ -128,7 +187,7 @@ export async function callOk<T>(
   const result = await callTool(client, name, args);
   const envelope = result.structuredContent as Envelope | undefined;
   if (result.isError === true || envelope?.ok !== true) {
-    throw new Error(`${name} failed: ${textOf(result)}`);
+    throw new ToolCallError(name, errorCodeOf(result));
   }
   return {
     data: envelope.data as T,
@@ -222,7 +281,8 @@ function takenAsIs(time: number): boolean {
 // chart_set_visible_range, so each must pass the tool's own input schema and the checks its handler
 // makes: a symbol that is not blank, a timeframe normalizeTimeframe reads as the same one, a chart
 // type with a name (id 11 and any id the tools do not know have none), and a range of two times the
-// tools take as they are, the earlier first.
+// tools take as they are, the earlier first. A reason names the part, never its value, which is the
+// user's: it becomes the skip reason of a suite.
 export function restorabilityProblems(
   state: Pick<ChartState, 'symbol' | 'resolution' | 'chartType' | 'visibleRange'>,
 ): string[] {
@@ -231,7 +291,7 @@ export function restorabilityProblems(
     !accepts(chartSetSymbol.inputSchema, { symbol: state.symbol }) ||
     state.symbol.trim() === ''
   ) {
-    problems.push(`chart_set_symbol does not take the symbol ${JSON.stringify(state.symbol)}`);
+    problems.push('chart_set_symbol would not take the symbol the chart shows');
   }
   let timeframe: string | undefined;
   try {
@@ -244,13 +304,11 @@ export function restorabilityProblems(
     timeframe === undefined ||
     !sameResolution(timeframe, state.resolution)
   ) {
-    problems.push(
-      `chart_set_timeframe does not take the timeframe ${JSON.stringify(state.resolution)}`,
-    );
+    problems.push('chart_set_timeframe would not take the timeframe the chart shows');
   }
   const type = CHART_TYPE_NAMES_BY_ID[String(state.chartType)];
   if (type === undefined || !accepts(chartSetType.inputSchema, { type })) {
-    problems.push(`chart_set_type has no name for the chart type ${String(state.chartType)}`);
+    problems.push('chart_set_type has no name for the chart type the chart shows');
   }
   const range = state.visibleRange;
   if (range === null) {
@@ -261,15 +319,13 @@ export function restorabilityProblems(
     !takenAsIs(range.to) ||
     !(range.from < range.to)
   ) {
-    problems.push(
-      `chart_set_visible_range does not take the range from ${String(range.from)} to ${String(range.to)}`,
-    );
+    problems.push('chart_set_visible_range would not take the visible range the chart shows');
   }
   return problems;
 }
 
 // What snapshotChart throws for a chart it could not put back as it is.
-export class UnrestorableChartError extends Error {
+export class UnrestorableChartError extends HarnessError {
   constructor(readonly problems: string[]) {
     super(`The chart could not be put back as it is: ${problems.join('; ')}`);
     this.name = 'UnrestorableChartError';
@@ -364,21 +420,23 @@ export async function findMissingChartMembers(ctx: ToolContext): Promise<string[
 // Puts the chart back as `snapshot` describes it, through the tools: the symbol (by its listing),
 // the timeframe and the chart type where they differ, and the visible range always, since a new
 // symbol or timeframe moves the view as well, once the chart has bars again. Every step is tried
-// even when an earlier one fails, and the failures are thrown together at the end.
+// even when an earlier one fails, and the failures are thrown together at the end, as a
+// HarnessError that names each failed step by its tool and code only.
 export async function restoreChart(client: Client, snapshot: ChartSnapshot): Promise<void> {
   const failures: string[] = [];
   const step = async (name: string, args: Record<string, unknown>): Promise<void> => {
-    try {
-      await callOk(client, name, args);
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
+    const failure = await callFailureOf(client, name, args);
+    if (failure !== null) {
+      failures.push(failure);
     }
   };
   let state: ChartState | undefined;
   try {
     state = await readChartState(client);
   } catch (error) {
-    failures.push(error instanceof Error ? error.message : String(error));
+    failures.push(
+      error instanceof HarnessError ? error.message : 'chart_get_state could not be called',
+    );
   }
   if (state?.symbol !== snapshot.symbol) {
     await step('chart_set_symbol', { symbol: snapshot.listing });
@@ -406,7 +464,7 @@ export async function restoreChart(client: Client, snapshot: ChartSnapshot): Pro
     to: snapshot.visibleRange.to,
   });
   if (failures.length > 0) {
-    throw new Error(`The chart could not be restored: ${failures.join('; ')}`);
+    throw new HarnessError(`The chart could not be restored: ${failures.join('; ')}`);
   }
 }
 
@@ -519,12 +577,8 @@ export async function snapshotView(ctx: ToolContext): Promise<ViewSnapshot | nul
 export async function restoreView(ctx: ToolContext, view: ViewSnapshot): Promise<void> {
   const page = await ctx.connection.chartPage();
   if (!(await page.bridge.evaluate(applyView, [view]))) {
-    throw new Error('The time scale of the chart cannot set its view on this build');
+    throw new HarnessError('The time scale of the chart cannot set its view on this build');
   }
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // What a suite that changes the chart found before its first test: the snapshot and the exact view
@@ -578,13 +632,13 @@ export async function restoreChartAndView(
   try {
     await restoreChart(e2e.client, plan.snapshot);
   } catch (error) {
-    failures.push(messageOf(error));
+    failures.push(describeFailure(error));
   }
   if (plan.view !== null) {
     try {
       await restoreView(e2e.ctx, plan.view);
     } catch (error) {
-      failures.push(messageOf(error));
+      failures.push(describeFailure(error));
     }
   }
   return failures;
@@ -592,7 +646,8 @@ export async function restoreChartAndView(
 
 // Runs `change` and restores the chart first thing after it, however it ended. A restore that
 // fails after a failed test does not hide that test's own failure: the failure is thrown and the
-// restore's error is logged next to it. After a test that passed, a failed restore fails it.
+// restore's failure is logged next to it, by its steps and codes only (describeFailure). After a
+// test that passed, a failed restore fails it.
 export async function changeThenRestore(
   client: Client,
   snapshot: ChartSnapshot,
@@ -613,7 +668,7 @@ export async function changeThenRestore(
       throw restoreError;
     }
     console.error(
-      `The chart could not be restored after a failed test: ${messageOf(restoreError)}`,
+      `The chart could not be restored after a failed test: ${describeFailure(restoreError)}`,
     );
   }
   if (failed) {
@@ -846,21 +901,6 @@ export function templateType(source: string): 'indicator' | 'strategy' | 'librar
   return /^[ \t]*library[ \t]*\(/m.test(source) ? 'library' : 'indicator';
 }
 
-// The code a tool call failed with, or null when it succeeded. Only the code is kept: the message of
-// a Pine tool can name a saved script of the user.
-async function failureCode(
-  client: Client,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<string | null> {
-  const result = await callTool(client, name, args);
-  if (result.isError !== true) {
-    return null;
-  }
-  const envelope = result.structuredContent as { error?: { code?: unknown } } | undefined;
-  return typeof envelope?.error?.code === 'string' ? envelope.error.code : 'UNKNOWN';
-}
-
 // What came of putting the editor back: why it could not be (without any of its text or names;
 // empty when it was), and, when a tool had to be called, what differed from the target right after
 // the tool answered and how long the editor took to show it all.
@@ -896,14 +936,18 @@ export async function restoreEditor(
     };
   }
   const confirm = now.state.modified ? { confirm: true } : {};
-  const tool = target.script === null ? 'pine_new' : 'pine_open';
-  const code =
+  // Only the tool and the code of a failure are kept: the message of a Pine tool can name a saved
+  // script of the user.
+  const failure =
     target.script === null
-      ? await failureCode(client, tool, { type: templateType(target.source ?? ''), ...confirm })
-      : await failureCode(client, tool, { scriptId: target.script.id, ...confirm });
-  if (code !== null) {
+      ? await callFailureOf(client, 'pine_new', {
+          type: templateType(target.source ?? ''),
+          ...confirm,
+        })
+      : await callFailureOf(client, 'pine_open', { scriptId: target.script.id, ...confirm });
+  if (failure !== null) {
     return {
-      problems: [`The Pine Editor could not be put back: ${tool} failed with ${code}`],
+      problems: [`The Pine Editor could not be put back: ${failure}`],
       differedAtFirst: null,
       waitedMs: null,
     };

@@ -7,10 +7,13 @@ import {
   applyView,
   callFailure,
   callOk,
+  changeThenRestore,
   closeEditor,
+  describeFailure,
   editorDifferences,
   editorReopenProblems,
   findEditorReopenProblems,
+  HarnessError,
   missingChartMembers,
   openEditor,
   planLimitSkipReason,
@@ -59,6 +62,19 @@ const STATE = {
 
 const range = (from: number, to: number) => ({ from, to, fromIso: '', toIso: '' });
 
+// The values of a chart state as a message could hold them, plainly or quoted: a problem names the
+// part that cannot be put back, never its value, which is the user's (the symbol of their chart,
+// its timeframe, its view).
+function valuesOf(state: Pick<ChartState, 'symbol' | 'resolution' | 'chartType' | 'visibleRange'>) {
+  const values = [state.symbol, state.resolution, String(state.chartType)];
+  if (state.visibleRange !== null) {
+    values.push(String(state.visibleRange.from), String(state.visibleRange.to));
+  }
+  return values
+    .flatMap((value) => [value, JSON.stringify(value)])
+    .filter((value) => value.trim().length > 0);
+}
+
 describe('restorabilityProblems', () => {
   test('finds nothing to object to in a chart the tools can put back', () => {
     expect(restorabilityProblems(STATE)).toEqual([]);
@@ -68,36 +84,46 @@ describe('restorabilityProblems', () => {
   });
 
   test.each([
-    ['a chart type without a name (11)', { chartType: 11 }, /chart type 11/],
-    ['a chart type the tools do not know', { chartType: 99 }, /chart type 99/],
-    ['a timeframe the tools cannot read', { resolution: '1D,2' }, /timeframe "1D,2"/],
-    ['a timeframe longer than the tool takes', { resolution: '1'.repeat(17) }, /timeframe/],
-    ['an empty symbol', { symbol: '' }, /symbol ""/],
-    ['a blank symbol', { symbol: '   ' }, /symbol " {3}"/],
-    ['a symbol longer than the tool takes', { symbol: 'X'.repeat(201) }, /symbol/],
+    ['a chart type without a name (11)', { chartType: 11 }, /the chart type/],
+    ['a chart type the tools do not know', { chartType: 99 }, /the chart type/],
+    ['a timeframe the tools cannot read', { resolution: '1D,2' }, /the timeframe/],
+    ['a timeframe longer than the tool takes', { resolution: '1'.repeat(17) }, /the timeframe/],
+    ['an empty symbol', { symbol: '' }, /the symbol/],
+    ['a blank symbol', { symbol: '   ' }, /the symbol/],
+    ['a symbol longer than the tool takes', { symbol: 'X'.repeat(201) }, /the symbol/],
     ['no visible range', { visibleRange: null }, /no visible range/],
     [
       'a range whose ends are the wrong way round',
       { visibleRange: range(1_729_987_200, 1_721_433_600) },
-      /range/,
+      /the visible range/,
     ],
-    ['a range of one instant', { visibleRange: range(1_721_433_600, 1_721_433_600) }, /range/],
+    [
+      'a range of one instant',
+      { visibleRange: range(1_721_433_600, 1_721_433_600) },
+      /the visible range/,
+    ],
     [
       'a range in milliseconds',
       { visibleRange: range(1_721_433_600_000, 1_729_987_200_000) },
-      /range/,
+      /the visible range/,
     ],
-    ['a range that starts in 1970', { visibleRange: range(0, 1_729_987_200) }, /range/],
+    ['a range that starts in 1970', { visibleRange: range(0, 1_729_987_200) }, /the visible range/],
     [
       'a range with an end that is not a number',
       { visibleRange: range(1_721_433_600, Number.NaN) },
-      /range/,
+      /the visible range/,
     ],
-  ])('objects to %s', (_case, change, problem) => {
-    const problems = restorabilityProblems({ ...STATE, ...change });
+  ])('objects to %s, naming the part and never its value', (_case, change, part) => {
+    const state = { ...STATE, ...change };
+
+    const problems = restorabilityProblems(state);
 
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toMatch(problem);
+    expect(problems[0]).toMatch(part);
+    for (const value of valuesOf(state)) {
+      expect(problems[0]).not.toContain(value);
+    }
+    expect(problems[0]).not.toMatch(/XXX|\d/);
   });
 
   test('lists every problem it finds', () => {
@@ -288,6 +314,79 @@ describe('restoreChart', () => {
     expect(calls).toContainEqual(['chart_set_symbol', { symbol: 'NASDAQ:AAPL' }]);
   });
 
+  // A client whose chart shows `state` and that fails `failing` with an error whose message and
+  // details name the symbols, as chart_set_symbol does, or throws for it when `throws`.
+  function failingClient(state: ChartState, failing: string, throws = false): Client {
+    return {
+      callTool: ({ name }: { name: string }) => {
+        if (name === failing && throws) {
+          return Promise.reject(new Error('The transport broke while NASDAQ:ZZZZ loaded'));
+        }
+        const envelope =
+          name === failing
+            ? {
+                ok: false,
+                error: {
+                  code: 'INVALID_INPUT',
+                  message:
+                    'TradingView could not find NASDAQ:ZZZZ, so the chart was switched back to ' +
+                    'NASDAQ:MSFT',
+                  details: { requested: 'NASDAQ:ZZZZ', kept: 'NASDAQ:MSFT' },
+                },
+                meta: {},
+              }
+            : { ok: true, data: name === 'chart_get_state' ? state : {}, meta: {} };
+        return Promise.resolve({
+          content: [{ type: 'text', text: JSON.stringify(envelope) }],
+          structuredContent: envelope,
+          ...(name === failing ? { isError: true } : {}),
+        });
+      },
+    } as unknown as Client;
+  }
+
+  const SHOWS_MSFT = { ...STATE, symbol: 'NASDAQ:MSFT', chartTypeName: 'candles' };
+
+  test('names a step that failed by its tool and code only, never the text of the tool', async () => {
+    const restore = restoreChart(failingClient(SHOWS_MSFT, 'chart_set_symbol'), SNAPSHOT);
+
+    await expect(restore).rejects.toThrow(
+      /^The chart could not be restored: chart_set_symbol failed with INVALID_INPUT$/,
+    );
+    await expect(restore).rejects.toBeInstanceOf(HarnessError);
+  });
+
+  test('names a step whose call threw, without the message of the error', async () => {
+    const restore = restoreChart(failingClient(SHOWS_MSFT, 'chart_set_symbol', true), SNAPSHOT);
+
+    await expect(restore).rejects.toThrow(
+      /^The chart could not be restored: chart_set_symbol could not be called$/,
+    );
+  });
+
+  test('names a chart state it could not read by its code', async () => {
+    const restore = restoreChart(failingClient(SHOWS_MSFT, 'chart_get_state'), SNAPSHOT);
+
+    await expect(restore).rejects.toThrow(/chart_get_state failed with INVALID_INPUT/);
+    await expect(restore).rejects.not.toThrow(/ZZZZ|MSFT|AAPL/);
+  });
+
+  test('changeThenRestore logs a failed restore after a failed test by codes only', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const failure = new Error('the test failed');
+
+    const run = changeThenRestore(failingClient(SHOWS_MSFT, 'chart_set_symbol'), SNAPSHOT, () =>
+      Promise.reject(failure),
+    );
+
+    await expect(run).rejects.toBe(failure);
+    expect(logged).toHaveBeenCalledTimes(1);
+    const line = String(logged.mock.calls[0]?.[0]);
+    expect(line).toMatch(/chart_set_symbol failed with INVALID_INPUT/);
+    expect(line).not.toMatch(/ZZZZ|MSFT|AAPL/);
+    logged.mockRestore();
+  });
+
   test('leaves the symbol alone when the chart shows it already', async () => {
     const { client, calls } = recordingClient({
       ...STATE,
@@ -417,6 +516,18 @@ describe('the steps of a suite that changes the chart', () => {
     expect(await restoreChartAndView(server, plan)).toEqual([]);
   });
 
+  test('prepareChartChange names the part of a chart it could not put back, not its value', async () => {
+    const server = await fakeE2eServer();
+    servers.push(server);
+    await server.win.TradingViewApi?.activeChart().setChartType(11);
+
+    const plan = await prepareChartChange(server);
+
+    expect(plan.snapshot).toBeUndefined();
+    expect(plan.skipReason).toMatch(/the chart type.*nothing was changed/);
+    expect(plan.skipReason).not.toMatch(/\d|AAPL/);
+  });
+
   test('prepareChartChange names a member the chart API lacks, and takes no snapshot', async () => {
     const server = await fakeE2eServer();
     servers.push(server);
@@ -455,6 +566,54 @@ describe('callFailure', () => {
     await expect(callFailure(server.client, 'indicator_list')).rejects.toThrow(
       /^indicator_list was expected to fail, but it succeeded$/,
     );
+  });
+});
+
+describe('callOk', () => {
+  test('throws with the tool and the code of a failure only, never the text of the tool', async () => {
+    const envelope = {
+      ok: false,
+      error: {
+        code: 'INVALID_INPUT',
+        message:
+          'TradingView could not find NASDAQ:ZZZZ, so the chart was switched back to NASDAQ:MSFT',
+        details: { kept: 'NASDAQ:MSFT' },
+      },
+      meta: {},
+    };
+    const client = {
+      callTool: () =>
+        Promise.resolve({
+          isError: true,
+          content: [{ type: 'text', text: JSON.stringify(envelope) }],
+          structuredContent: envelope,
+        }),
+    } as unknown as Client;
+
+    const call = callOk(client, 'chart_set_symbol', { symbol: 'NASDAQ:ZZZZ' });
+
+    await expect(call).rejects.toThrow(/^chart_set_symbol failed with INVALID_INPUT$/);
+    await expect(call).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
+});
+
+describe('describeFailure', () => {
+  test('keeps the text of an error of the harness, which holds no value', () => {
+    expect(describeFailure(new HarnessError('The chart could not be restored'))).toBe(
+      'The chart could not be restored',
+    );
+  });
+
+  test('names any other error by its code or its kind, never by its message', () => {
+    const coded = Object.assign(new Error('CDP Runtime.evaluate timed out while NASDAQ:MSFT'), {
+      code: 'TIMEOUT',
+    });
+
+    expect(describeFailure(coded)).toBe('an error with code TIMEOUT');
+    expect(describeFailure(new TypeError('NASDAQ:MSFT is not a function'))).toBe(
+      'an unexpected TypeError',
+    );
+    expect(describeFailure('NASDAQ:MSFT')).toBe('an unexpected error');
   });
 });
 
