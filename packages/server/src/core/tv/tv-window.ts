@@ -14,6 +14,8 @@
 // before relying on it.
 export interface TvWindow {
   TradingViewApi?: TradingViewApiLike;
+  // The global of the app that holds its widgets (notes, section 4.1).
+  TradingView?: TradingViewGlobalLike;
   // The desktop bridge the preload script exposes (notes, section 2.4).
   TVD?: TvdLike;
   // When the web app was built, such as "2026-10-16T17:55:37".
@@ -57,10 +59,11 @@ export interface TradingViewApiLike {
   // this is true.
   isConnected(): boolean;
   getIntervals(): string[];
-  // The replay and Pine editor APIs (notes, sections 4.5 and 4.6) are not described here, so page
-  // code can only check that they are there.
+  // The replay API (notes, section 4.5) is not described here, so page code can only check that it
+  // is there.
   replayApi?(): Promise<unknown>;
-  pineEditorApi?(): unknown;
+  // The Pine Editor API (notes of Plan 2, section Q1), the same object on every call.
+  pineEditorApi?(): PineEditorApiLike;
   // The symbol search of the app, the request its search dialog sends (an HTTP GET to the symbol
   // search service; no data session is involved). It rejects for a type it does not know and for
   // an answer that is not 2xx.
@@ -456,4 +459,73 @@ export interface StandardScriptLike {
 // those members are left out on purpose.
 export interface TvdLike {
   reloadTab(): void;
+}
+
+// TradingViewApi.pineEditorApi() (notes of Plan 2, section Q1). Only the members page code uses
+// are described. It has no close(), isOpen() or isVisible(). deleteScript and renameScript are
+// left out on purpose: the server never deletes or renames a script.
+export interface PineEditorApiLike {
+  // Loads the chunk of the editor and opens it, as the side panel on the current layout. The Pine
+  // button of the toolbar passes { scriptInfo: { script: null }, openSourceId: "main_button",
+  // forceOpen: true }, which restores the script or draft the editor last held. Resolves once the
+  // chunk has loaded, which may be before the editor is mounted.
+  open(options?: PineEditorOpenOptions): Promise<void>;
+  // The facade of the editor at a placement, or null when none is open there.
+  getDialogFacade?(): PineEditorFacadeLike | null;
+  getBottomFacade?(): PineEditorFacadeLike | null;
+}
+
+export interface PineEditorOpenOptions {
+  scriptInfo?: { script: null };
+  openSourceId?: string;
+  forceOpen?: boolean;
+}
+
+// What the export getOpenPineEditor(placement) of the editor registry answers for "dialog" or
+// "bottom" while an editor is open there, and null otherwise. The registry is a Map that only
+// knows these two placements; the side panel of the current layout is taken to register as
+// "dialog", which was inferred, not observed. getFacade is a pure getter.
+export interface OpenPineEditorLike {
+  getFacade(): PineEditorFacadeLike | null;
+}
+
+// The facade of an open editor. Only the readers page code uses are described; the members that
+// replace the text or reset the script (releaseScript, destroy) are left out on purpose.
+export interface PineEditorFacadeLike {
+  // Whether the text in the editor differs from the text of the script as it was opened or saved.
+  isModified(): boolean;
+  // Whether the script is new: no id, no version, or a version whose major part is 0 (a server
+  // draft).
+  isDraft(): boolean;
+  // The id and version of the script, or null without an id. The version can be missing.
+  getScriptIdVersion(): { scriptIdPart: string; version?: string } | null;
+  // The text in the editor. Rejects while the code editor is not mounted.
+  getSource(): Promise<string>;
+}
+
+// window.TradingView, as far as page code uses it.
+export interface TradingViewGlobalLike {
+  bottomWidgetBar?: BottomWidgetBarLike;
+}
+
+// The bar of widgets at the bottom of the chart page. close() minimizes it, which hides the widget
+// it shows, a Pine Editor at the bottom placement among them, and keeps the widget with its text.
+export interface BottomWidgetBarLike {
+  close(): void;
+}
+
+// The service locator of the app, a module whose exports are found together (hasService, service
+// and four more). service throws for a descriptor nothing is registered for, so page code asks
+// hasService first, as the app does.
+export interface ServiceLocatorLike {
+  hasService(descriptor: unknown): boolean;
+  service(descriptor: unknown): unknown;
+}
+
+// The page layout service, service(PAGE_LAYOUT_SERVICE), whose descriptor is the export
+// PAGE_LAYOUT_SERVICE of its own module. It knows the side panels by id; the Pine Editor is "pine".
+// closeSidePanel closes a panel, and does nothing for a panel that is not open.
+export interface PageLayoutServiceLike {
+  hasSidePanel?(id: string): boolean;
+  closeSidePanel(id: string): void;
 }

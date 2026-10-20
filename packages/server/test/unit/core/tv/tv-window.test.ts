@@ -64,6 +64,10 @@ describe('the TvWindow contract', () => {
     expect(win.BUILD_TIME).toBe(fixture.buildTime);
     expect(Array.isArray(win.webpackChunktradingview)).toBe(true);
     expect(typeof win.TVD?.reloadTab).toBe('function');
+    const pine = api?.pineEditorApi?.();
+    expect(typeof pine?.open).toBe('function');
+    expect([pine?.getDialogFacade?.(), pine?.getBottomFacade?.()]).toEqual([null, null]);
+    expect(typeof win.TradingView?.bottomWidgetBar?.close).toBe('function');
     expect(win.document.visibilityState).toBe('visible');
     expect(win.location.href).toBe('https://www.tradingview.com/chart/FIXTURE1/');
   });
