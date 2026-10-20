@@ -3,6 +3,7 @@ import { createPageBridge } from '../../../../src/core/tv/page-bridge.js';
 import { createPageLib } from '../../../../src/core/tv/page-lib.js';
 import {
   getPlanLimits,
+  inPlanLimitedTurn,
   PLAN_FEATURES,
   readPlanLimits,
   requireBelowLimit,
@@ -213,5 +214,43 @@ test('unreadableLimitError says the limit cannot be read and that TradingView it
       /cannot be read on this TradingView build.*TradingView itself/,
     ) as string,
     details: { feature: 'SAVED_PINE_SCRIPTS' },
+  });
+});
+
+describe('inPlanLimitedTurn', () => {
+  test('runs one action at a time, in the order they came, each to its end', async () => {
+    const steps: string[] = [];
+    const action = (name: string, ms: number) => async () => {
+      steps.push(`${name} starts`);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      steps.push(`${name} ends`);
+      return name;
+    };
+
+    const results = await Promise.all([
+      inPlanLimitedTurn(action('first', 30)),
+      inPlanLimitedTurn(action('second', 1)),
+      inPlanLimitedTurn(action('third', 1)),
+    ]);
+
+    expect(results).toEqual(['first', 'second', 'third']);
+    expect(steps).toEqual([
+      'first starts',
+      'first ends',
+      'second starts',
+      'second ends',
+      'third starts',
+      'third ends',
+    ]);
+  });
+
+  test('passes on the failure of an action, and the next action still gets its turn', async () => {
+    const failure = new Error('the add failed');
+
+    const failed = inPlanLimitedTurn(() => Promise.reject(failure));
+    const next = inPlanLimitedTurn(() => Promise.resolve('next'));
+
+    await expect(failed).rejects.toBe(failure);
+    await expect(next).resolves.toBe('next');
   });
 });

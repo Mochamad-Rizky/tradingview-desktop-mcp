@@ -3,6 +3,7 @@ import type { PageHandle } from '../../core/connection.js';
 import { PlanLimitError, TvMcpError } from '../../core/errors.js';
 import {
   getPlanLimits,
+  inPlanLimitedTurn,
   requireBelowLimit,
   unreadableLimitError,
 } from '../../core/tv/plan-limits.js';
@@ -452,142 +453,153 @@ export const pineSave = defineTool({
     idempotentHint: false,
     openWorldHint: false,
   },
-  async handler({ name, confirm }, ctx) {
-    const page = await ctx.connection.chartPage();
-    const warnings: string[] = [];
-    const state = await readEditorState(page, warnings);
-    if (!state.open) {
-      throw notOpenError();
-    }
-    const wantedName = name?.trim();
-    // A server draft (a version whose major part is 0, which TradingView saves on its own, for
-    // example when a new script is added to the chart) is not a saved script of the user: it is
-    // saved as a new script, and the draft stays as it is.
-    const draftOf =
-      state.script !== null &&
-      state.script.version !== null &&
-      Number.parseInt(state.script.version, 10) === 0
-        ? state.script.id
-        : null;
+  // From the first check of the limit to the end of the save, the other actions on plan limits
+  // wait.
+  handler({ name, confirm }, ctx) {
+    return inPlanLimitedTurn(() => saveEditorScript(name, confirm, ctx));
+  },
+});
 
-    if (state.script === null || draftOf !== null) {
-      if (wantedName === undefined || wantedName === '') {
-        throw new TvMcpError('INVALID_INPUT', 'A new Pine script needs a name to be saved', {
-          hint:
-            'Pass name: TradingView would otherwise ask for one in a dialog. A draft TradingView ' +
-            'saved on its own is saved as a new script too.',
-        });
-      }
-      const saved = await loadSavedScripts(page);
-      requireSignedIn(saved.authenticated);
-      const taken = findSavedScripts(saved.scripts, { name: wantedName })[0];
-      if (taken !== undefined) {
-        throw new TvMcpError(
-          'INVALID_INPUT',
-          `A saved Pine script is already named ${wantedName}`,
-          {
-            hint: 'Choose another name. This server never overwrites a saved script.',
-            details: { id: taken.scriptIdPart },
-          },
-        );
-      }
-      // The check isSaveBlockedByPaywall of the app, which would open the paywall.
-      const limit = saveLimit(saved.limit);
-      if (limit !== null) {
-        requireBelowLimit(
-          'SAVED_PINE_SCRIPTS',
-          countedScripts(saved.scripts).length,
-          limit,
-          LIMIT_HINT,
-        );
-      }
-      const outcome = await page.bridge.evaluateWithLib(savePineScript, [
-        { kind: 'new', name: wantedName, draftOf },
-      ]);
-      if (outcome.script !== null) {
-        ctx.session.createdScriptIds.add(outcome.script.id);
-      }
-      if (outcome.script === null || outcome.errors.length > 0) {
-        throw saveFailure(outcome.errors, outcome.script);
-      }
-      if (outcome.tracked !== true) {
-        warnings.push(
-          `The script was saved as ${outcome.script.id}, but the Pine Editor could not be ` +
-            'switched to it and may show a new script: open the saved one with pine_open.',
-        );
-      }
-      return { data: { script: outcome.script, created: true }, via: 'internal', warnings };
-    }
+// What pine_save returns: the script, saved or with nothing to save, and whether it is new.
+type SaveOutput = ToolOutput<{ script: NonNullable<PineEditorState['script']>; created: boolean }>;
 
-    const { id, version } = state.script;
-    if (!state.modified && wantedName === undefined) {
-      return nothingToSave(state.script, warnings);
-    }
-    if (state.modified && confirm !== true && !ctx.session.createdScriptIds.has(id)) {
-      throw new TvMcpError(
-        'CONFIRMATION_REQUIRED',
-        `Saving a new version of ${id} needs confirmation: this session did not create the script`,
-        {
-          hint:
-            "The script is the user's. Make sure the user wants a new version saved, then call " +
-            'pine_save again with confirm: true.',
-          details: { id },
-        },
-      );
+// What pine_save does, run in a turn of the plan-limited actions (inPlanLimitedTurn), so that no
+// other call takes the slot it checked.
+async function saveEditorScript(
+  name: string | undefined,
+  confirm: boolean | undefined,
+  ctx: ToolContext,
+): Promise<SaveOutput> {
+  const page = await ctx.connection.chartPage();
+  const warnings: string[] = [];
+  const state = await readEditorState(page, warnings);
+  if (!state.open) {
+    throw notOpenError();
+  }
+  const wantedName = name?.trim();
+  // A server draft (a version whose major part is 0, which TradingView saves on its own, for
+  // example when a new script is added to the chart) is not a saved script of the user: it is
+  // saved as a new script, and the draft stays as it is.
+  const draftOf =
+    state.script !== null &&
+    state.script.version !== null &&
+    Number.parseInt(state.script.version, 10) === 0
+      ? state.script.id
+      : null;
+
+  if (state.script === null || draftOf !== null) {
+    if (wantedName === undefined || wantedName === '') {
+      throw new TvMcpError('INVALID_INPUT', 'A new Pine script needs a name to be saved', {
+        hint:
+          'Pass name: TradingView would otherwise ask for one in a dialog. A draft TradingView ' +
+          'saved on its own is saved as a new script too.',
+      });
     }
     const saved = await loadSavedScripts(page);
     requireSignedIn(saved.authenticated);
-    const current = saved.scripts.find(({ scriptIdPart }) => scriptIdPart === id);
-    if (wantedName !== undefined && current?.scriptName?.trim() !== wantedName) {
-      throw new TvMcpError(
-        'INVALID_INPUT',
-        current?.scriptName === null || current === undefined
-          ? `The name of ${id} is not known, so name cannot be checked against it`
-          : `The script is named ${current.scriptName}; pine_save never renames a script`,
-        {
-          hint: 'Leave name out to save a new version under the current name.',
-          details: { id },
-        },
-      );
+    const taken = findSavedScripts(saved.scripts, { name: wantedName })[0];
+    if (taken !== undefined) {
+      throw new TvMcpError('INVALID_INPUT', `A saved Pine script is already named ${wantedName}`, {
+        hint: 'Choose another name. This server never overwrites a saved script.',
+        details: { id: taken.scriptIdPart },
+      });
     }
-    if (!state.modified) {
-      return nothingToSave(state.script, warnings);
-    }
-    if (version === null || state.draft) {
-      throw new TvMcpError(
-        'NOT_AVAILABLE',
-        version === null
-          ? `TradingView did not report the version of ${id}, so it cannot be saved safely`
-          : `TradingView reports ${id} (version ${version}) as a draft, which it saves only ` +
-              'through its naming dialog',
-        {
-          hint:
-            'Save it in the Pine Editor of TradingView itself, or start a new script with ' +
-            'pine_new, set its source and save that with a name.',
-          details: { id, version },
-        },
-      );
-    }
-    // The check isScriptUpdateBlockedByPaywall of the app, which would open the paywall.
+    // The check isSaveBlockedByPaywall of the app, which would open the paywall.
     const limit = saveLimit(saved.limit);
-    if (limit !== null && isOpenLimited(saved.scripts, id, limit)) {
-      throw new PlanLimitError(
+    if (limit !== null) {
+      requireBelowLimit(
         'SAVED_PINE_SCRIPTS',
+        countedScripts(saved.scripts).length,
         limit,
-        `The plan lets TradingView update only the ${String(limit)} most recently ` +
-          `changed saved Pine scripts, and ${id} is not one of them`,
         LIMIT_HINT,
       );
     }
     const outcome = await page.bridge.evaluateWithLib(savePineScript, [
-      { kind: 'version', scriptIdPart: id },
+      { kind: 'new', name: wantedName, draftOf },
     ]);
+    if (outcome.script !== null) {
+      ctx.session.createdScriptIds.add(outcome.script.id);
+    }
     if (outcome.script === null || outcome.errors.length > 0) {
       throw saveFailure(outcome.errors, outcome.script);
     }
-    return { data: { script: outcome.script, created: false }, via: 'internal', warnings };
-  },
-});
+    if (outcome.tracked !== true) {
+      warnings.push(
+        `The script was saved as ${outcome.script.id}, but the Pine Editor could not be ` +
+          'switched to it and may show a new script: open the saved one with pine_open.',
+      );
+    }
+    return { data: { script: outcome.script, created: true }, via: 'internal', warnings };
+  }
+
+  const { id, version } = state.script;
+  if (!state.modified && wantedName === undefined) {
+    return nothingToSave(state.script, warnings);
+  }
+  if (state.modified && confirm !== true && !ctx.session.createdScriptIds.has(id)) {
+    throw new TvMcpError(
+      'CONFIRMATION_REQUIRED',
+      `Saving a new version of ${id} needs confirmation: this session did not create the script`,
+      {
+        hint:
+          "The script is the user's. Make sure the user wants a new version saved, then call " +
+          'pine_save again with confirm: true.',
+        details: { id },
+      },
+    );
+  }
+  const saved = await loadSavedScripts(page);
+  requireSignedIn(saved.authenticated);
+  const current = saved.scripts.find(({ scriptIdPart }) => scriptIdPart === id);
+  if (wantedName !== undefined && current?.scriptName?.trim() !== wantedName) {
+    throw new TvMcpError(
+      'INVALID_INPUT',
+      current?.scriptName === null || current === undefined
+        ? `The name of ${id} is not known, so name cannot be checked against it`
+        : `The script is named ${current.scriptName}; pine_save never renames a script`,
+      {
+        hint: 'Leave name out to save a new version under the current name.',
+        details: { id },
+      },
+    );
+  }
+  if (!state.modified) {
+    return nothingToSave(state.script, warnings);
+  }
+  if (version === null || state.draft) {
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      version === null
+        ? `TradingView did not report the version of ${id}, so it cannot be saved safely`
+        : `TradingView reports ${id} (version ${version}) as a draft, which it saves only ` +
+            'through its naming dialog',
+      {
+        hint:
+          'Save it in the Pine Editor of TradingView itself, or start a new script with ' +
+          'pine_new, set its source and save that with a name.',
+        details: { id, version },
+      },
+    );
+  }
+  // The check isScriptUpdateBlockedByPaywall of the app, which would open the paywall.
+  const limit = saveLimit(saved.limit);
+  if (limit !== null && isOpenLimited(saved.scripts, id, limit)) {
+    throw new PlanLimitError(
+      'SAVED_PINE_SCRIPTS',
+      limit,
+      `The plan lets TradingView update only the ${String(limit)} most recently ` +
+        `changed saved Pine scripts, and ${id} is not one of them`,
+      LIMIT_HINT,
+    );
+  }
+  const outcome = await page.bridge.evaluateWithLib(savePineScript, [
+    { kind: 'version', scriptIdPart: id },
+  ]);
+  if (outcome.script === null || outcome.errors.length > 0) {
+    throw saveFailure(outcome.errors, outcome.script);
+  }
+  return { data: { script: outcome.script, created: false }, via: 'internal', warnings };
+}
 
 // The saved-script limit a save is checked against, null when the app applies none. A limit the
 // app applies but whose value cannot be read fails NOT_AVAILABLE: the app checks it itself before
@@ -616,7 +628,7 @@ function requireSignedIn(authenticated: boolean): void {
 function nothingToSave(
   script: NonNullable<PineEditorState['script']>,
   warnings: string[],
-): ToolOutput<{ script: NonNullable<PineEditorState['script']>; created: boolean }> {
+): SaveOutput {
   warnings.push('The script has no unsaved changes, so there was nothing to save.');
   return { data: { script, created: false }, via: 'internal', warnings };
 }

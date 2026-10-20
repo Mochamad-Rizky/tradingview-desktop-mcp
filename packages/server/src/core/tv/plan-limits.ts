@@ -79,6 +79,23 @@ export async function getPlanLimits(
   return page.bridge.evaluateWithLib(readPlanLimits, [[...features]]);
 }
 
+// The actions that use up a plan limit (adding a study, adding a script to the chart, saving a
+// script) take turns within the process, each from its check of the limit to its end: tool calls
+// run concurrently (several calls of one client, several HTTP sessions), and two that checked the
+// same free slot would both act, the second one into the check of the app and its paywall. The
+// turn after a failed action still comes. A turn is not re-entrant: an action that started another
+// one would wait for itself, so none does.
+let planLimitedTurns: Promise<void> = Promise.resolve();
+
+export function inPlanLimitedTurn<T>(action: () => Promise<T>): Promise<T> {
+  const turn = planLimitedTurns.then(action);
+  planLimitedTurns = turn.then(
+    () => undefined,
+    () => undefined,
+  );
+  return turn;
+}
+
 // The error of a tool that cannot tell whether a plan limit leaves room for what it would do. It
 // does not act then: TradingView would check the limit itself, and its check opens a paywall or a
 // limit dialog when the limit is reached.

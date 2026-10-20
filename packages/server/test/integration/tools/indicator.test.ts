@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createMcpServer } from '../../../src/server.js';
@@ -701,6 +702,44 @@ describe('indicator_add', () => {
     });
     expect(inspectFakeWindow(full).callsTo('chart.createStudy')).toEqual([]);
     expect(dataOf(added)).toMatchObject({ id: 'NEW001' });
+  });
+
+  test('indicator_add calls in parallel take turns, so that only one takes the last free slot', async () => {
+    const win = createFakeTvWindow(roomy(3));
+    const chart = chartOf(win);
+    const model = chart._chartWidget.model();
+    // A call that adds waits in createStudy until the other call has checked the chart as well, or
+    // for a while when the other call waits for its turn instead.
+    const check = model.canCreateStudy;
+    let checks = 0;
+    let checkedTwice = (): void => undefined;
+    const secondCheck = new Promise<void>((resolve) => {
+      checkedTwice = resolve;
+    });
+    model.canCreateStudy = (spec) => {
+      checks += 1;
+      if (checks === 2) {
+        checkedTwice();
+      }
+      return check?.(spec) ?? { success: true };
+    };
+    const createStudy = chart.createStudy;
+    chart.createStudy = async (...args: Parameters<typeof createStudy>) => {
+      await Promise.race([secondCheck, delay(500)]);
+      return createStudy(...args);
+    };
+    const { client } = await startHarness(fixture, {}, win);
+
+    const results = await Promise.all([
+      callTool(client, 'indicator_add', { name: 'RSI' }),
+      callTool(client, 'indicator_add', { name: 'RSI' }),
+    ]);
+
+    expect(results.filter(({ isError }) => isError !== true)).toHaveLength(1);
+    expect(results.map((result) => errorOf(result)?.code).filter(Boolean)).toEqual(['PLAN_LIMIT']);
+    expect(inspectFakeWindow(win).callsTo('chart.createStudy')).toHaveLength(1);
+    expect(dialogsOf(win)).toEqual([]);
+    expect(chart.getAllStudies()).toHaveLength(3);
   });
 
   test('indicator_add refuses, and adds nothing, when nothing says whether the chart has room', async () => {

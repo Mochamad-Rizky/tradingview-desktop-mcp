@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import type { PageHandle } from '../../core/connection.js';
 import { isTvMcpError, PlanLimitError, TvMcpError } from '../../core/errors.js';
-import { getPlanLimits, requireBelowLimit } from '../../core/tv/plan-limits.js';
+import { getPlanLimits, inPlanLimitedTurn, requireBelowLimit } from '../../core/tv/plan-limits.js';
 import { parseTimeInput, toIso } from '../../utils/time.js';
 import { READ_ONLY } from '../annotations.js';
 import { chartIndexInput, TIME_INPUT, timeInput } from '../chart/index.js';
 import { pageWaitMs, resolveChartTarget } from '../chart/strategies.js';
-import { defineTool, type AnyToolDefinition } from '../types.js';
+import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.js';
 import {
   plotKeys,
   resolveIndicator,
@@ -15,6 +15,8 @@ import {
   toValueRows,
   validateInputs,
   type IndicatorCatalog,
+  type InputValue,
+  type ResolvedIndicator,
 } from './mappers.js';
 import {
   editStudyInputs,
@@ -211,6 +213,99 @@ export async function requireStudyRoom(
   );
 }
 
+// What indicator_add does once it knows the indicator: it checks the room on the chart and whether
+// the indicator needs a dialog, adds the study and sets its inputs, taking the study off again when
+// they fail. Answers the id of the study and the chart it went to. Runs in a turn of the
+// plan-limited actions (inPlanLimitedTurn), so that no other call takes the slot it checked.
+async function addStudy(
+  page: PageHandle,
+  ctx: ToolContext,
+  chartIndex: number | null,
+  indicator: ResolvedIndicator,
+  {
+    inputs,
+    overlay,
+  }: { inputs: Record<string, InputValue> | undefined; overlay: boolean | undefined },
+  warnings: string[],
+): Promise<{ id: string; chartIndex: number | null }> {
+  const context = await page.bridge.evaluateWithLib(readStudyInsertContext, [
+    chartIndex,
+    indicator.kind === 'builtin' ? indicator.id : '',
+  ]);
+  const { builtin } = context;
+  if (builtin?.confirm === true) {
+    throw new TvMcpError('NOT_AVAILABLE', `${indicator.name} cannot be added by this tool`, {
+      hint: DIALOG_HINT,
+      details: { id: indicator.id },
+    });
+  }
+  // Without its metadata, whether a built-in needs the input dialog cannot be told, so it is
+  // refused rather than added on a guess.
+  if (indicator.kind === 'builtin' && builtin === null) {
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      `The metadata of ${indicator.name} cannot be read on this TradingView build, so whether ` +
+        'TradingView would ask for its inputs in a dialog cannot be checked',
+      {
+        hint: 'Add this indicator in TradingView itself.',
+        details: { id: indicator.id },
+      },
+    );
+  }
+  await requireStudyRoom(page, context.check, context.count);
+  const wanted = inputs ?? {};
+  const hasInputs = Object.keys(wanted).length > 0;
+  // A built-in's inputs are known before it is added; a Pine script's only afterwards.
+  const checked = hasInputs && builtin !== null ? validateInputs(builtin.inputs, wanted) : null;
+
+  const how =
+    indicator.kind === 'pine'
+      ? ({ kind: 'pine', pineId: indicator.id, pineVersion: indicator.version } as const)
+      : builtin?.firstMatch === true
+        ? ({ kind: 'description', description: builtin.description } as const)
+        : ({ kind: 'java', studyId: indicator.id } as const);
+  if (overlay === true && how.kind !== 'description') {
+    warnings.push(
+      'overlay was not applied: TradingView takes it only for a built-in study it adds by ' +
+        'name, so the indicator is where TradingView puts it.',
+    );
+  }
+  const { id } = await page.bridge.evaluate(insertStudy, [
+    chartIndex,
+    how,
+    overlay === true,
+    pageWaitMs(ctx.config.callTimeoutMs),
+  ]);
+  ctx.session.createdStudyIds.add(id);
+
+  if (hasInputs) {
+    try {
+      const values =
+        checked ??
+        validateInputs(
+          (await page.bridge.evaluate(editStudyInputs, [chartIndex, id, null])).inputs,
+          wanted,
+        );
+      await page.bridge.evaluate(editStudyInputs, [chartIndex, id, values]);
+    } catch (error) {
+      // The study was added for nothing: take it off again, so the chart is as it was. Should
+      // that fail too, the error of the inputs still is the one to report, and the study stays
+      // one this session added.
+      try {
+        await page.bridge.evaluate(removeStudy, [chartIndex, id, true]);
+        ctx.session.createdStudyIds.delete(id);
+      } catch (cause) {
+        ctx.logger.warn(
+          { id, code: isTvMcpError(cause) ? cause.code : 'INTERNAL' },
+          'indicator_add could not remove the study whose inputs failed',
+        );
+      }
+      throw error;
+    }
+  }
+  return { id, chartIndex: context.chartIndex };
+}
+
 export const indicatorAdd = defineTool({
   name: 'indicator_add',
   domain: 'indicator',
@@ -270,83 +365,12 @@ export const indicatorAdd = defineTool({
         details: { id: indicator.id },
       });
     }
-    const context = await page.bridge.evaluateWithLib(readStudyInsertContext, [
-      target.index,
-      indicator.kind === 'builtin' ? indicator.id : '',
-    ]);
-    const { builtin } = context;
-    if (builtin?.confirm === true) {
-      throw new TvMcpError('NOT_AVAILABLE', `${indicator.name} cannot be added by this tool`, {
-        hint: DIALOG_HINT,
-        details: { id: indicator.id },
-      });
-    }
-    // Without its metadata, whether a built-in needs the input dialog cannot be told, so it is
-    // refused rather than added on a guess.
-    if (indicator.kind === 'builtin' && builtin === null) {
-      throw new TvMcpError(
-        'NOT_AVAILABLE',
-        `The metadata of ${indicator.name} cannot be read on this TradingView build, so whether ` +
-          'TradingView would ask for its inputs in a dialog cannot be checked',
-        {
-          hint: 'Add this indicator in TradingView itself.',
-          details: { id: indicator.id },
-        },
-      );
-    }
-    await requireStudyRoom(page, context.check, context.count);
-    const wanted = inputs ?? {};
-    const hasInputs = Object.keys(wanted).length > 0;
-    // A built-in's inputs are known before it is added; a Pine script's only afterwards.
-    const checked = hasInputs && builtin !== null ? validateInputs(builtin.inputs, wanted) : null;
-
-    const how =
-      indicator.kind === 'pine'
-        ? ({ kind: 'pine', pineId: indicator.id, pineVersion: indicator.version } as const)
-        : builtin?.firstMatch === true
-          ? ({ kind: 'description', description: builtin.description } as const)
-          : ({ kind: 'java', studyId: indicator.id } as const);
-    if (overlay === true && how.kind !== 'description') {
-      warnings.push(
-        'overlay was not applied: TradingView takes it only for a built-in study it adds by ' +
-          'name, so the indicator is where TradingView puts it.',
-      );
-    }
-    const { id } = await page.bridge.evaluate(insertStudy, [
-      target.index,
-      how,
-      overlay === true,
-      pageWaitMs(ctx.config.callTimeoutMs),
-    ]);
-    ctx.session.createdStudyIds.add(id);
-
-    if (hasInputs) {
-      try {
-        const values =
-          checked ??
-          validateInputs(
-            (await page.bridge.evaluate(editStudyInputs, [target.index, id, null])).inputs,
-            wanted,
-          );
-        await page.bridge.evaluate(editStudyInputs, [target.index, id, values]);
-      } catch (error) {
-        // The study was added for nothing: take it off again, so the chart is as it was. Should
-        // that fail too, the error of the inputs still is the one to report, and the study stays
-        // one this session added.
-        try {
-          await page.bridge.evaluate(removeStudy, [target.index, id, true]);
-          ctx.session.createdStudyIds.delete(id);
-        } catch (cause) {
-          ctx.logger.warn(
-            { id, code: isTvMcpError(cause) ? cause.code : 'INTERNAL' },
-            'indicator_add could not remove the study whose inputs failed',
-          );
-        }
-        throw error;
-      }
-    }
+    // From the check of the room to the end of the add, the other actions on plan limits wait.
+    const added = await inPlanLimitedTurn(() =>
+      addStudy(page, ctx, target.index, indicator, { inputs, overlay }, warnings),
+    );
     return {
-      data: { id, name: indicator.name, chartIndex: context.chartIndex },
+      data: { id: added.id, name: indicator.name, chartIndex: added.chartIndex },
       via: 'internal',
       warnings,
     };

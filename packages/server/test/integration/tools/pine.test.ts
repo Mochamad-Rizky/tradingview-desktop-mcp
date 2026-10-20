@@ -869,6 +869,28 @@ describe('pine_save', () => {
     expect(editorOf(win).savedScripts[0]?.version).toBe(SCRIPT.version);
   });
 
+  test('pine_save waits for an indicator_add in progress before it checks the limit and saves', async () => {
+    const { client, win } = await startHarness(
+      withStudyRoom(5, withLimit(5, withEditor({ script: null, source: NEW_SOURCE }))),
+    );
+    const held = holdCreateStudy(win);
+
+    const adding = callTool(client, 'indicator_add', { name: 'RSI' });
+    await held.called;
+    const saving = callTool(client, 'pine_save', { name: 'Breakout' });
+    await delay(200);
+    held.release();
+    const [added, saved] = await Promise.all([adding, saving]);
+
+    expect(dataOf(added)).toMatchObject({ id: 'NEW001' });
+    expect(dataOf(saved)).toMatchObject({ created: true });
+    expect(
+      inspectFakeWindow(win)
+        .calls.map(({ name }) => name)
+        .filter((name) => name === 'chart.createStudy' || name === 'pineEditorApi.saveNewScript'),
+    ).toEqual(['chart.createStudy', 'pineEditorApi.saveNewScript']);
+  });
+
   test('pine_save saves when the limit toggle is off, whose limit the app then does not apply', async () => {
     const { client, win } = await startHarness({
       ...withoutScriptLimit(withEditor({ script: null, source: NEW_SOURCE })),
@@ -978,6 +1000,30 @@ const studyIdsOf = (win: FakeTvWindow) =>
   win.TradingViewApi?.activeChart()
     .getAllStudies()
     .map(({ id }) => id);
+
+// Holds the next createStudy of the chart until release() is called. called settles once it was
+// called, so that a test can start another call while an indicator_add is halfway.
+function holdCreateStudy(win: FakeTvWindow): { called: Promise<void>; release: () => void } {
+  const chart = win.TradingViewApi?.activeChart();
+  if (chart === undefined) {
+    throw new Error('The fake window has no chart');
+  }
+  const createStudy = chart.createStudy;
+  let enter = (): void => undefined;
+  const called = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  let release = (): void => undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  chart.createStudy = async (...args: Parameters<typeof createStudy>) => {
+    enter();
+    await released;
+    return createStudy(...args);
+  };
+  return { called, release };
+}
 
 describe('pine_compile', () => {
   test('pine_compile compiles the editor source without touching the chart', async () => {
@@ -1107,6 +1153,27 @@ describe('pine_compile', () => {
       [],
     );
     expect(studyIdsOf(win)).toEqual(studies);
+  });
+
+  test('pine_compile with addToChart waits for an indicator_add in progress, and then finds the chart full', async () => {
+    const { client, win } = await startHarness(withStudyRoom(3, withEditor()));
+    const held = holdCreateStudy(win);
+
+    const adding = callTool(client, 'indicator_add', { name: 'RSI' });
+    await held.called;
+    const compiling = callTool(client, 'pine_compile', { addToChart: true });
+    await delay(200);
+    held.release();
+    const [added, compiled] = await Promise.all([adding, compiling]);
+
+    expect(dataOf(added)).toMatchObject({ id: 'NEW001' });
+    expect(errorOf(compiled)).toMatchObject({
+      code: 'PLAN_LIMIT',
+      details: { feature: 'INDICATORS_ON_CHART', limit: 3 },
+    });
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(callsOf(win, 'dialog.paywall')).toEqual([]);
+    expect(studyIdsOf(win)).toEqual(['STUDY01', 'STUDY02', 'NEW001']);
   });
 
   test('pine_compile with addToChart adds the script when a slot is free', async () => {

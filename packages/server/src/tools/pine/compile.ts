@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PageHandle } from '../../core/connection.js';
 import { TvMcpError } from '../../core/errors.js';
+import { inPlanLimitedTurn } from '../../core/tv/plan-limits.js';
 import { pollUntil } from '../../utils/poll.js';
 import { READ_ONLY } from '../annotations.js';
 import { pageWaitMs } from '../chart/strategies.js';
@@ -86,7 +87,8 @@ async function editorSource(page: PageHandle): Promise<string> {
 // before anything is added: the indicator limit of the plan, an open editor, and a script the app
 // adds without a dialog (a draft, or a saved script without unsaved changes; the page re-checks this
 // and sign-in right before it acts). The new study is found by the ids on the chart before and
-// after, with a plain poll, and its compile errors are read from the console of the editor.
+// after, with a plain poll, and its compile errors are read from the console of the editor. The
+// caller runs it in a turn of the plan-limited actions (inPlanLimitedTurn).
 async function addEditorScript(
   page: PageHandle,
   ctx: ToolContext,
@@ -220,7 +222,8 @@ export const pineCompile = defineTool({
     const warnings: string[] = [];
     let result: PineCompileResult;
     if (addToChart === true) {
-      result = await addEditorScript(page, ctx, warnings);
+      // From the check of the room to the end of the add, the other actions on plan limits wait.
+      result = await inPlanLimitedTurn(() => addEditorScript(page, ctx, warnings));
     } else {
       const text = source ?? (await editorSource(page));
       result = await compileSource(page, text, pageWaitMs(ctx.config.callTimeoutMs));
