@@ -87,5 +87,9 @@ test('the descriptions state the limits a model must know', () => {
   expect(toolNamed('data_get_ohlcv').description).toMatch(/HISTORICAL_BARS/);
   expect(toolNamed('data_get_quote').description).toMatch(/NOT_AVAILABLE/);
   expect(toolNamed('data_get_symbol_info').description).toMatch(/source/);
+  // The items of the symbol search of the app have no full name (seen on the app).
+  expect(toolNamed('data_get_symbol_info').description).toMatch(
+    /gives only symbol, exchange, description, type, typespecs and currency; the rest, fullName included, is null/,
+  );
   expect(toolNamed('data_get_market_depth').description).toMatch(/top of the book/i);
 });

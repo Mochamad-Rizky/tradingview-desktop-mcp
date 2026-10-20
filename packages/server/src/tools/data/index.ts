@@ -449,8 +449,9 @@ export const dataGetSymbolInfo = defineTool({
     'currency, pricescale and minmov (the tick is minmov / pricescale), pointvalue, session, ' +
     'timezone, hasIntraday, hasExtendedHours and isReplayable. For the chart symbol every field ' +
     'comes from the chart (source: chart). Another symbol is looked up with the symbol search ' +
-    '(source: search), which gives only symbol, fullName, exchange, description, type, ' +
-    'typespecs and currency; the rest is null. Switch the chart to the symbol for the full info. ' +
+    '(source: search), which gives only symbol, exchange, description, type, typespecs and ' +
+    'currency; the rest, fullName included, is null. Switch the chart to the symbol for the full ' +
+    'info. ' +
     'NOT_AVAILABLE when the search finds no such symbol.',
   inputSchema: { symbol: symbolInput('Symbol to describe') },
   annotations: READ_ONLY,
