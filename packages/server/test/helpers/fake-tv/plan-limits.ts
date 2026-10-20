@@ -45,3 +45,19 @@ export function createPlanLimitModules(
     },
   };
 }
+
+// The module of the feature toggles of the app (reverse-engineering notes of Plan 2, section Q1):
+// isFeatureEnabled(name) answers whether a toggle is on, and onFeaturesStateChanged hands out the
+// delegate that fires when one changes. The app also puts isFeatureEnabled on window.TradingView.
+// A toggle the fixture does not list is off.
+export function createFeatureToggleModules(
+  toggles: Readonly<Record<string, boolean>>,
+): Record<string, Record<string, unknown>> {
+  return {
+    // Module IDs are arbitrary numbers, as in a production build.
+    '60412': {
+      isFeatureEnabled: (name: unknown) => typeof name === 'string' && toggles[name] === true,
+      onFeaturesStateChanged: () => ({ subscribe: () => undefined }),
+    },
+  };
+}

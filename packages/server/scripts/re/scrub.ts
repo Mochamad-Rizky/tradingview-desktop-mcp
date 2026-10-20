@@ -399,12 +399,14 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
   }
   // A recording holds no older history, quote caches, search results, indicator catalog or Pine
   // Editor, so the fixture gets none: the history ends at the recorded bars, the caches, the search
-  // and the catalog are empty, and the editor is closed with empty texts. A recorded editor would
-  // carry Pine sources and the name of the account in its templates.
+  // and the catalog are empty, no feature toggle is on, and the editor is closed with empty texts
+  // and no saved scripts. A recorded editor would carry Pine sources, script names and the name of
+  // the account in its templates.
   return parseTvStateFixture({
     ...scrubbed,
     knownSymbols: KNOWN_SYMBOLS,
     planLimits: {},
+    featureToggles: {},
     bars: spec,
     history: { totalBars: rows.length, endOfDataType: 'end' },
     quoteCache: { fields: {}, full: {}, watchlist: {} },
@@ -417,6 +419,7 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
       savedSource: '',
       source: '',
       templates: { indicator: '', strategy: '', library: '' },
+      savedScripts: [],
     },
   });
 }

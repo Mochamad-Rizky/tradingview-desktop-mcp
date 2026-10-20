@@ -7,7 +7,7 @@ import {
   type FakePineEditorApi,
   type FakePineEditorState,
 } from './pine-editor.js';
-import { createPlanLimitModules } from './plan-limits.js';
+import { createFeatureToggleModules, createPlanLimitModules } from './plan-limits.js';
 import { createQuoteModules } from './quotes.js';
 import { createFakeSearch, type FakeSearchOptions, type FakeSearchResponse } from './search.js';
 import {
@@ -49,7 +49,10 @@ import { createFakeWebpack } from './webpack.js';
 // The Pine Editor comes from the pineEditor of the fixture (pine-editor.ts): its registry, the
 // service locator with the page layout service and the descriptor of that service are in the
 // default webpack cache, TradingViewApi.pineEditorApi() opens it, and TradingView.bottomWidgetBar
-// closes it at the bottom placement. Its live state is state.pineEditor.
+// closes it at the bottom placement. Its live state is state.pineEditor, which also holds the saved
+// scripts of the account, listed by the export requestUserScripts of the cache, and whether the
+// account is signed in, which window.is_authenticated reports. The module of the feature toggles
+// (isFeatureEnabled) is in the default cache too, driven by the featureToggles of the fixture.
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -200,6 +203,8 @@ export interface FakeLocation {
 
 export interface FakeTvWindow {
   TradingViewApi?: FakeTradingViewApi;
+  // Whether an account is signed in (state.pineEditor.signedIn).
+  readonly is_authenticated: boolean;
   // The global of the app that holds its widgets; left out with TradingViewApi.
   TradingView?: { bottomWidgetBar?: FakeBottomWidgetBar };
   TVD: { reloadTab(): void };
@@ -219,7 +224,8 @@ export interface FakeTvWindow {
 // (each with the study id first), and the dialogs the app would open on the way, as dialog.paywall,
 // dialog.tooManyStudies and dialog.studyInputs (studies.ts). So are the calls of the Pine Editor
 // that change it, send a request or open or close a panel: pineEditorApi.*, pineFacade.*,
-// pageLayout.* and bottomWidgetBar.close (pine-editor.ts). A call is
+// pageLayout.*, bottomWidgetBar.close, requestUserScripts and the dialogs dialog.paywall,
+// dialog.signIn and dialog.renameScript the app would open (pine-editor.ts). A call is
 // recorded before it is validated, so refused and throwing calls show up too. Reads are not
 // recorded.
 export interface FakeCall {
@@ -301,6 +307,8 @@ export function createFakeTvWindow(
     readyMs: overrides.pineEditorReadyMs ?? 20,
     openError: overrides.pineEditorOpenError,
     withoutPageLayoutService: overrides.withoutPageLayoutService,
+    savedScriptsLimit: fixture.planLimits.SAVED_PINE_SCRIPTS,
+    isFeatureEnabled: (name) => fixture.featureToggles[name] === true,
     record,
   });
   const state: FakeTvState = {
@@ -578,6 +586,9 @@ export function createFakeTvWindow(
   };
 
   const win: FakeTvWindow = {
+    get is_authenticated() {
+      return pine.state.signedIn;
+    },
     TVD: {
       reloadTab() {
         record('TVD.reloadTab', []);
@@ -590,6 +601,7 @@ export function createFakeTvWindow(
         : createFakeWebpack(
             overrides.webpackModules ?? {
               ...createPlanLimitModules(fixture.planLimits),
+              ...createFeatureToggleModules(fixture.featureToggles),
               ...createQuoteModules(fixture.quoteCache, record),
               ...createStudyCatalogModules(fixture.studyCatalog, {
                 repositoryReady: overrides.studyRepositoryReady ?? true,

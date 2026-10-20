@@ -23,6 +23,9 @@ export interface TvStateFixture {
   // through the two webpack modules that hold the plan features (plan-limits.ts). A feature not
   // listed has no limit entry: getConfig throws for it, as for an unknown value.
   planLimits: Record<string, number>;
+  // The feature toggles of the app by name, which the export isFeatureEnabled answers
+  // (plan-limits.ts). A toggle not listed is off.
+  featureToggles: Record<string, boolean>;
   // Not stored as bars: syntheticBars() expands this spec, so fixtures hold no price data.
   bars: { count: number; startTime: number; stepSeconds: number; seed: number };
   // How far back the history of the symbol reaches: totalBars counts the loaded bars together with
@@ -68,8 +71,10 @@ export interface TvStateFixture {
   // it ("dialog" stands for the side panel of the current layout). script is the saved script the
   // editor holds (null for a new script without an id), savedSource its text as opened or saved and
   // source the text in the editor, which differs from savedSource for unsaved changes. templates
-  // are the texts of new scripts by type. Sources are synthetic, and the templates name an
-  // invented author.
+  // are the texts of new scripts by type. savedScripts are the scripts of the account, which the
+  // export requestUserScripts lists (without source, the text openScript loads), newest first or
+  // not: modified orders them, in seconds. A version whose major part is 0 is a server draft.
+  // Sources are synthetic, and the templates name an invented author.
   pineEditor: {
     open: 'dialog' | 'bottom' | null;
     opensAt: 'dialog' | 'bottom';
@@ -77,6 +82,16 @@ export interface TvStateFixture {
     savedSource: string;
     source: string;
     templates: { indicator: string; strategy: string; library: string };
+    savedScripts: {
+      scriptIdPart: string;
+      scriptName: string;
+      scriptTitle: string;
+      version: string;
+      modified: number;
+      // Left out of an item as the app may leave it out.
+      kind?: 'study' | 'strategy' | 'library' | undefined;
+      source: string;
+    }[];
   };
 }
 
@@ -184,6 +199,7 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
   symbolInfo: z.record(z.string(), z.json()),
   quote: z.record(z.string(), z.json()),
   planLimits: z.record(z.string(), z.number()),
+  featureToggles: z.record(z.string(), z.boolean()),
   bars: z.strictObject({
     count: z.number(),
     startTime: z.number(),
@@ -228,6 +244,17 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
     savedSource: z.string(),
     source: z.string(),
     templates: z.strictObject({ indicator: z.string(), strategy: z.string(), library: z.string() }),
+    savedScripts: z.array(
+      z.strictObject({
+        scriptIdPart: z.string(),
+        scriptName: z.string(),
+        scriptTitle: z.string(),
+        version: z.string(),
+        modified: z.number(),
+        kind: z.enum(['study', 'strategy', 'library']).optional(),
+        source: z.string(),
+      }),
+    ),
   }),
 });
 

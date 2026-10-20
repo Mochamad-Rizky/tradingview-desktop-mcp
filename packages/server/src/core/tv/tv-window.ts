@@ -498,7 +498,7 @@ export interface PineEditorFacadeLike {
   // draft).
   isDraft(): boolean;
   // The id and version of the script, or null without an id. The version can be missing.
-  getScriptIdVersion(): { scriptIdPart: string; version?: string } | null;
+  getScriptIdVersion(): { scriptIdPart: string; version?: string | undefined } | null;
   // The text in the editor. Rejects while the code editor is not mounted.
   getSource(): Promise<string>;
 }

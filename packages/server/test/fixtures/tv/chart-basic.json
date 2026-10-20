@@ -140,6 +140,7 @@
     "currency_code": "USD"
   },
   "planLimits": { "INDICATORS_ON_CHART": 2, "SAVED_PINE_SCRIPTS": 1, "WATCHLIST_SYMBOLS": 30 },
+  "featureToggles": { "pine_free_saved_scripts_limit": true },
   "bars": { "count": 300, "startTime": 1704153600, "stepSeconds": 86400, "seed": 42 },
   "history": { "totalBars": 300, "endOfDataType": "end" },
   "quoteCache": {
@@ -391,6 +392,34 @@
       "indicator": "// © fixture_author\n\n//@version=6\nindicator(\"My script\")\nplot(close)\n",
       "strategy": "// © fixture_author\n\n//@version=6\nstrategy(\"My strategy\", overlay=true)\n",
       "library": "// © fixture_author\n\n//@version=6\n// @description A library\nlibrary(\"MyLibrary\")\n"
-    }
+    },
+    "savedScripts": [
+      {
+        "scriptIdPart": "USER;0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        "scriptName": "Fixture Script",
+        "scriptTitle": "Fixture Script",
+        "version": "2.0",
+        "modified": 1729987200,
+        "kind": "study",
+        "source": "//@version=6\nindicator(\"Fixture Script\")\nplot(close)\n"
+      },
+      {
+        "scriptIdPart": "USER;1a2b3c4d5e6f708192a3b4c5d6e7f809",
+        "scriptName": "Fixture Strategy",
+        "scriptTitle": "Fixture Strat",
+        "version": "3.0",
+        "modified": 1729900800,
+        "kind": "strategy",
+        "source": "//@version=6\nstrategy(\"Fixture Strategy\")\n"
+      },
+      {
+        "scriptIdPart": "USER;9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+        "scriptName": "Fixture Draft",
+        "scriptTitle": "Fixture Draft",
+        "version": "0.1",
+        "modified": 1729814400,
+        "source": "//@version=6\nindicator(\"Fixture Draft\")\nplot(open)\n"
+      }
+    ]
   }
 }
