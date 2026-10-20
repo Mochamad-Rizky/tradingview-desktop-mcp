@@ -1,11 +1,19 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ErrorCode, McpError, type ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
-import { isTvMcpError, toErrorPayload } from '../core/errors.js';
+import type { McpError, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
+import { isTvMcpError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
+import { toMcpError } from '../core/mcp-error.js';
 import { readChartStateData } from '../tools/chart/index.js';
+import { readOhlcvData } from '../tools/data/index.js';
+import { readPineErrorsData } from '../tools/pine/compile.js';
+import { readPineSourceData } from '../tools/pine/index.js';
+import { readStrategyResultsData } from '../tools/strategy/index.js';
 import type { ToolContext } from '../tools/types.js';
 
 const JSON_MIME_TYPE = 'application/json';
+
+// How many bars the chart resource holds, which is the default count of data_get_ohlcv.
+const OHLCV_BARS = 100;
 
 // A resource whose content is a JSON document read on every request: nothing is cached, because
 // the app changes under it.
@@ -21,12 +29,10 @@ interface JsonResource {
 // 5.2, so a client sees the same codes and hints as from a tool. An unexpected error reaches the
 // client as INTERNAL only; the log keeps the whole of it.
 function readFailed(error: unknown, uri: string, logger: Logger): McpError {
-  const payload = toErrorPayload(error);
   if (!isTvMcpError(error)) {
     logger.error({ err: error, uri }, 'Reading a resource failed with an unexpected error');
   }
-  const code = payload.code === 'INVALID_INPUT' ? ErrorCode.InvalidParams : ErrorCode.InternalError;
-  return new McpError(code, payload.message, payload);
+  return toMcpError(error);
 }
 
 function registerJsonResource(server: McpServer, logger: Logger, resource: JsonResource): void {
@@ -49,7 +55,8 @@ function registerJsonResource(server: McpServer, logger: Logger, resource: JsonR
 }
 
 // The resources of design spec 7 that exist so far. Each one reads through the same connection
-// manager as the tools of the server.
+// manager and the same reader as the tool it shares its data with, and so fails with the same
+// errors.
 export function registerResources(server: McpServer, ctx: ToolContext): void {
   registerJsonResource(server, ctx.logger, {
     name: 'app_health',
@@ -69,5 +76,51 @@ export function registerResources(server: McpServer, ctx: ToolContext): void {
       'type, the visible range, the studies, the number of drawings and the layout. Reading it ' +
       'changes nothing.',
     read: async () => (await readChartStateData(ctx)).data,
+  });
+  registerJsonResource(server, ctx.logger, {
+    name: 'chart_ohlcv',
+    uri: 'tradingview://chart/ohlcv',
+    title: 'TradingView chart bars',
+    description:
+      'What data_get_ohlcv reports for the active chart with its default count: the last ' +
+      `${String(OHLCV_BARS)} bars (open, high, low, close, volume), oldest first, with the ` +
+      'symbol and the resolution they belong to, and complete, which is false when fewer bars ' +
+      'exist or could be loaded. Reading it changes nothing on the chart; when fewer bars are ' +
+      'loaded, older ones are loaded the way a scroll to the left loads them.',
+    read: async () => (await readOhlcvData(ctx, { count: OHLCV_BARS })).data,
+  });
+  registerJsonResource(server, ctx.logger, {
+    name: 'pine_source',
+    uri: 'tradingview://pine/source',
+    title: 'Pine Editor source',
+    description:
+      'What pine_get_source reports: the text of the Pine Editor, the script it holds (id and ' +
+      'version, null for a new script) and whether the text has unsaved changes. It never opens ' +
+      'the editor: while the editor is closed, reading it fails with NOT_AVAILABLE. Reading it ' +
+      'changes nothing.',
+    read: async () => (await readPineSourceData(ctx)).data,
+  });
+  registerJsonResource(server, ctx.logger, {
+    name: 'pine_errors',
+    uri: 'tradingview://pine/errors',
+    title: 'Last Pine compile result',
+    description:
+      'What pine_get_errors reports: the result of the last Pine compilation of this session ' +
+      '(success, errors, warnings, addedToChart, studyId and the time of the compilation), or an ' +
+      'empty result, with success true, while there has been none. It asks TradingView nothing, ' +
+      'so it can be read while TradingView is down. Reading it changes nothing.',
+    read: () => Promise.resolve(readPineErrorsData(ctx)),
+  });
+  registerJsonResource(server, ctx.logger, {
+    name: 'strategy_report',
+    uri: 'tradingview://strategy/report',
+    title: 'Strategy Tester results',
+    description:
+      'What strategy_get_results reports for the active strategy of the chart, or its only ' +
+      'strategy: the strategy (id and name), the currency, the initial capital and the ' +
+      'performance figures for all, long and short trades. Reading it fails with NOT_AVAILABLE ' +
+      'while the chart has no strategy or its report is not ready, and with INVALID_INPUT when ' +
+      'several strategies are on the chart and none is active. Reading it changes nothing.',
+    read: async () => (await readStrategyResultsData(ctx)).data,
   });
 }

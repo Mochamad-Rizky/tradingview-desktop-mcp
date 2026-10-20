@@ -8,6 +8,7 @@ import { createNodeInstallDeps } from './core/launcher/install.js';
 import { createLauncher, type Launcher } from './core/launcher/launch.js';
 import { createDetachedSpawn } from './core/launcher/process.js';
 import { createLogger, type Logger } from './core/logger.js';
+import { registerPrompts } from './prompts/index.js';
 import { registerResources } from './resources/index.js';
 import { allTools } from './tools/index.js';
 import { createToolRegistry, registerToolsWithServer, selectTools } from './tools/registry.js';
@@ -64,9 +65,10 @@ export function createServerDeps(
 }
 
 // A server for one client, with the tools that the profile and the tool filter select, and the
-// resources. A dependency that is not given is created, which suits a process with one client
-// (stdio); a process with several (HTTP) passes the same set to every server. Creating a server
-// starts nothing: no connection is opened before the first call that needs one.
+// resources and prompts, which they do not narrow. A dependency that is not given is created,
+// which suits a process with one client (stdio); a process with several (HTTP) passes the same set
+// to every server. Creating a server starts nothing: no connection is opened before the first call
+// that needs one.
 export function createMcpServer(
   config: Readonly<Config>,
   deps: Partial<ServerDeps> = {},
@@ -95,5 +97,6 @@ export function createMcpServer(
   const server = new McpServer({ name: SERVER_NAME, version: VERSION });
   registerToolsWithServer(server, registry);
   registerResources(server, ctx);
+  registerPrompts(server);
   return { server, registry, ctx };
 }

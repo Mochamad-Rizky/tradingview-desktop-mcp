@@ -228,6 +228,22 @@ export const pineCompile = defineTool({
   },
 });
 
+// What pine_get_errors and the resource tradingview://pine/errors report: the result of the last
+// compilation of this session, or an empty one while there has been none.
+export function readPineErrorsData(ctx: ToolContext): PineCompileResult {
+  return (
+    ctx.session.lastPineCompile ?? {
+      success: true,
+      errors: [],
+      warnings: [],
+      addedToChart: false,
+      studyId: null,
+      compiledAt: null,
+      compiledAtIso: null,
+    }
+  );
+}
+
 export const pineGetErrors = defineTool({
   name: 'pine_get_errors',
   domain: 'pine',
@@ -242,16 +258,7 @@ export const pineGetErrors = defineTool({
   annotations: READ_ONLY,
   core: true,
   handler(_input, ctx) {
-    const data: PineCompileResult = ctx.session.lastPineCompile ?? {
-      success: true,
-      errors: [],
-      warnings: [],
-      addedToChart: false,
-      studyId: null,
-      compiledAt: null,
-      compiledAtIso: null,
-    };
-    return Promise.resolve({ data, via: 'internal' as const });
+    return Promise.resolve({ data: readPineErrorsData(ctx), via: 'internal' as const });
   },
 });
 

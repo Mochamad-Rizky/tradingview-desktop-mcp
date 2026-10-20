@@ -43,8 +43,9 @@ import { smartCompile } from './smart-compile.js';
 // confirm: true; nothing deletes or renames a script; the saved-script limit of the plan is checked
 // with read-only replicas of the checks of the app before anything could open its paywall; and
 // nothing calls what would open a dialog of TradingView (the naming dialog of a new script, the
-// sign-in dialog). The text of the editor is returned by pine_get_source only and never logged, and
-// the template of a new script, which names the account, is never returned.
+// sign-in dialog). The text of the editor is returned by pine_get_source and the resource
+// tradingview://pine/source only, and never logged, and the template of a new script, which names
+// the account, is never returned.
 
 // The tools that can replace the text of the editor, which with confirm: true can be unsaved text.
 const REPLACES_TEXT = {
