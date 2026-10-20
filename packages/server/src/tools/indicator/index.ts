@@ -289,8 +289,8 @@ async function addStudy(
       await page.bridge.evaluate(editStudyInputs, [chartIndex, id, values]);
     } catch (error) {
       // The study was added for nothing: take it off again, so the chart is as it was. Should
-      // that fail too, the error of the inputs still is the one to report, and the study stays
-      // one this session added.
+      // that fail too, the error of the inputs still is the one to report, with the study it left
+      // on the chart, which stays one this session added.
       try {
         await page.bridge.evaluate(removeStudy, [chartIndex, id, true]);
         ctx.session.createdStudyIds.delete(id);
@@ -299,11 +299,29 @@ async function addStudy(
           { id, code: isTvMcpError(cause) ? cause.code : 'INTERNAL' },
           'indicator_add could not remove the study whose inputs failed',
         );
+        throw leftOnChart(error, id);
       }
       throw error;
     }
   }
   return { id, chartIndex: context.chartIndex };
+}
+
+// The error of inputs that failed after the study `id` was added, when it could not be taken off
+// again: its code and message, with the study in details.leftOnChart and a hint that says it is on
+// the chart, in place of one that would say nothing was changed. An error that is not one of ours
+// is passed on as it is.
+function leftOnChart(error: unknown, id: string): unknown {
+  if (!isTvMcpError(error)) {
+    return error;
+  }
+  return new TvMcpError(error.code, error.message, {
+    hint:
+      `The indicator was added as ${id} and could not be taken off again, so ${id} is still on ` +
+      'the chart: remove it with indicator_remove, which needs no confirm for it, then add the ' +
+      'indicator again with inputs it takes.',
+    details: { ...error.details, leftOnChart: id },
+  });
 }
 
 export const indicatorAdd = defineTool({
@@ -318,7 +336,8 @@ export const indicatorAdd = defineTool({
     '(error.details.feature INDICATORS_ON_CHART and limit) and nothing is added, and so does a ' +
     'limit that cannot be read on this TradingView build, with NOT_AVAILABLE. inputs are ' +
     'checked like indicator_set_inputs and set after the indicator is added; invalid inputs fail ' +
-    'with INVALID_INPUT and leave the chart as it was. overlay: true puts a built-in study on ' +
+    'with INVALID_INPUT and leave the chart as it was, unless the indicator cannot be taken off ' +
+    'again, which error.details.leftOnChart then names. overlay: true puts a built-in study on ' +
     'the price pane where TradingView allows it; for other indicators it is not applied and a ' +
     'warning says so. Indicators that need the input dialog of TradingView, and built-in studies ' +
     'whose metadata cannot be read, fail with NOT_AVAILABLE. indicator_remove removes what this ' +

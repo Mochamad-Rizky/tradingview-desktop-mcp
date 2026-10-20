@@ -905,7 +905,7 @@ describe('indicator_add', () => {
     expect(chart.getAllStudies()).toHaveLength(2);
   });
 
-  test('indicator_add reports the input error even when the study cannot be taken off again', async () => {
+  test('indicator_add reports the input error and the study it left when it cannot take it off again', async () => {
     const win = createFakeTvWindow(roomy());
     const chart = chartOf(win);
     const removeEntity = chart.removeEntity;
@@ -925,7 +925,11 @@ describe('indicator_add', () => {
     expect(errorOf(result)).toMatchObject({
       code: 'INVALID_INPUT',
       message: expect.stringMatching(/from 1 to 50/) as string,
+      details: { leftOnChart: 'NEW001', problems: [expect.stringMatching(/Fast Length/)] },
     });
+    // The hint says what is true: the study is on the chart, and how to take it off.
+    expect(errorOf(result)?.hint).not.toMatch(/Nothing was changed/);
+    expect(errorOf(result)?.hint).toMatch(/NEW001 .*still on the chart.*indicator_remove/);
     expect(dataOf(removed)).toEqual({ removed: 'NEW001' });
   });
 
