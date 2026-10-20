@@ -176,6 +176,30 @@ describe('analyzePine', () => {
     expect(places[0]).toBe(1001);
   });
 
+  test('the namespace rules offer no fix for a script below v5', () => {
+    const source = '//@version=4\nstudy("T")\nx = rsi(close, 14)\n';
+    const entries = analyzePine(source).filter(
+      ({ ruleId }) => ruleId.endsWith('-declaration') || ruleId === 'ta-namespace',
+    );
+    expect(entries.map(({ ruleId, fix }) => [ruleId, fix])).toEqual([
+      ['study-declaration', null],
+      ['ta-namespace', null],
+    ]);
+    expect(entries[0]?.message).toContain('upgraded');
+    expect(ids(source)).toContain('old-version');
+    expect(fixed(source)).toBe(source);
+  });
+
+  test('the namespace rules offer fixes when the version is missing or 5 and later', () => {
+    for (const head of ['', '//@version=5\n', '//@version=6\n']) {
+      const result = analyzePine(`${head}study("T")\nx = rsi(close, 14)\n`);
+      const named = result.filter(
+        ({ ruleId }) => ruleId === 'study-declaration' || ruleId === 'ta-namespace',
+      );
+      expect(named.map(({ fix }) => fix !== null)).toEqual([true, true]);
+    }
+  });
+
   test('fixing a v4 script leaves nothing to report but the version note', () => {
     const source =
       '//@version=5\nstudy("T")\nx = security(syminfo.tickerid, "D", sma(close, 3))\nplot(tostring(x))\n';

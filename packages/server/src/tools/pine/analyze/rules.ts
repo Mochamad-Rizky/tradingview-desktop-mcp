@@ -116,16 +116,23 @@ function renameRule(
   reason: string,
 ): Rule {
   const set = new Set(names);
-  return (ctx) =>
-    bareCalls(ctx, set).map((token) =>
+  return (ctx) => {
+    // A script below v5 would break with v5 calls under its v4 header, and these rules do not
+    // rewrite the header, so they offer no fix for it.
+    const upgradeFirst = ctx.version !== null && ctx.version < 5;
+    return bareCalls(ctx, set).map((token) =>
       diagnostic(
         ruleId,
         'warning',
         token,
-        `${token.text}( ${reason}; use ${target(token.text)}(`,
-        renameFix(token, target(token.text)),
+        `${token.text}( ${reason}; use ${target(token.text)}(` +
+          (upgradeFirst
+            ? `, which needs the script upgraded from v${String(ctx.version)} to v5 or later first`
+            : ''),
+        upgradeFirst ? null : renameFix(token, target(token.text)),
       ),
     );
+  };
 }
 
 const missingDeclaration = (ctx: RuleContext) =>
