@@ -5,6 +5,7 @@ import type { ToolContext } from '../../../src/tools/types.js';
 import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
 import { loadTvFixture, type TvStateFixture } from '../../helpers/fake-tv/fixture.js';
+import type { FakeWebpackRequire } from '../../helpers/fake-tv/webpack.js';
 import {
   createFakeTvWindow,
   inspectFakeWindow,
@@ -1341,6 +1342,33 @@ describe('pine_analyze', () => {
   });
 });
 
+// Runs `hook` as each compilation of the fake app starts, with the number of the compilation
+// counted from 1, before the compiler answers: to change the app while a call is compiling, or to
+// hold a compilation back.
+function onCompile(win: FakeTvWindow, hook: (call: number) => Promise<void> | void): void {
+  let handed: FakeWebpackRequire | undefined;
+  (win.webpackChunktradingview as { push(chunk: unknown): unknown }).push([
+    ['probe'],
+    {},
+    (given: FakeWebpackRequire) => (handed = given),
+  ]);
+  const client = Object.values(handed?.c ?? {}).find(
+    (record) =>
+      typeof (record.exports as Record<string, unknown>).translateScriptAsync === 'function',
+  );
+  if (client === undefined) {
+    throw new Error('The fake app must have a Pine compiler');
+  }
+  const exports = client.exports as Record<string, unknown>;
+  const compile = exports.translateScriptAsync as (source: string, id: string) => Promise<unknown>;
+  let calls = 0;
+  exports.translateScriptAsync = async (source: string, id: string) => {
+    calls += 1;
+    await hook(calls);
+    return compile(source, id);
+  };
+}
+
 describe('pine_smart_compile', () => {
   // A script written for Pine v4 under a v6 header, which the compiler rejects, and its fixed form.
   const V4_IN_V6 = '//@version=6\nstudy("x")\nplot(rsi(close,14))\n';
@@ -1710,6 +1738,129 @@ describe('pine_smart_compile', () => {
     expect(editorOf(win).source).toBe(EDITED);
     // The compilation happened, and pine_get_errors keeps its result.
     expect(ctx.session.lastPineCompile).toMatchObject({ success: true });
+  });
+
+  // What the user does to the editor while a call compiles: opens the saved strategy, with the
+  // text it was saved with or, when `unsaved`, with a line added.
+  const opensStrategy = (win: FakeTvWindow, unsaved = false): void => {
+    const editor = editorOf(win);
+    const text = STRATEGY.source;
+    editor.script = { scriptIdPart: STRATEGY.scriptIdPart, version: STRATEGY.version };
+    editor.savedSource = text;
+    editor.source = unsaved ? `${text}plot(close)\n` : text;
+  };
+
+  test('smart compile writeBack writes nothing when the editor opens another script during the compilation', async () => {
+    const { client, win } = await startHarness(saved(V4_IN_V6));
+    onCompile(win, (call) => {
+      if (call === 2) {
+        opensStrategy(win);
+      }
+    });
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true });
+
+    // The result is for the script the call started with, and it is returned all the same.
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: false });
+    expect(warningsOf(result).join(' ')).toContain('changed while the script was compiled');
+    expect(warningsOf(result).join(' ')).toContain('another script');
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(editorOf(win)).toMatchObject({
+      script: { scriptIdPart: STRATEGY.scriptIdPart },
+      source: STRATEGY.source,
+      savedSource: STRATEGY.source,
+    });
+  });
+
+  test('smart compile writeBack with confirm keeps the unsaved edits of the script the editor switched to', async () => {
+    const { client, win } = await startHarness(saved(V4_IN_V6));
+    onCompile(win, (call) => {
+      if (call === 2) {
+        opensStrategy(win, true);
+      }
+    });
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      writeBack: true,
+      confirm: true,
+    });
+
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: false });
+    expect(warningsOf(result).join(' ')).toContain('another script');
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(editorOf(win).source).toBe(`${STRATEGY.source}plot(close)\n`);
+  });
+
+  test('smart compile writeBack writes nothing when text is typed into the editor during the compilation', async () => {
+    const { client, win } = await startHarness(saved(V4_IN_V6));
+    const typed = `${V4_IN_V6}// typed meanwhile\n`;
+    onCompile(win, (call) => {
+      if (call === 2) {
+        editorOf(win).source = typed;
+      }
+    });
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true });
+
+    // Not refused as unsaved text: the editor changed, and the call says so and returns its result.
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: false });
+    expect(warningsOf(result).join(' ')).toContain('changed while the script was compiled');
+    expect(warningsOf(result).join(' ')).toContain('its text changed');
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(editorOf(win).source).toBe(typed);
+  });
+
+  test('smart compile writeBack with confirm keeps the text typed into the editor during the compilation', async () => {
+    // The unsaved text the call started with was confirmed to go, not what is typed after it.
+    const { client, win } = await startHarness(withEditor({ source: V4_IN_V6 }));
+    const typed = `${V4_IN_V6}// typed meanwhile\n`;
+    onCompile(win, (call) => {
+      if (call === 2) {
+        editorOf(win).source = typed;
+      }
+    });
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      writeBack: true,
+      confirm: true,
+    });
+
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: false });
+    expect(warningsOf(result).join(' ')).toContain('its text changed');
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(editorOf(win).source).toBe(typed);
+  });
+
+  test('smart compile writeBack writes into a new script that is still the one it started with', async () => {
+    const { client, win } = await startHarness(
+      withEditor({ script: null, source: V4_IN_V6, savedSource: V4_IN_V6 }),
+    );
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true });
+
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: true });
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([[FIXED]]);
+    expect(editorOf(win)).toMatchObject({ script: null, source: FIXED });
+  });
+
+  test('smart compile writeBack of a given text does not depend on what the editor holds', async () => {
+    // The target of a given text is the editor as it is when the write comes, under the usual guard.
+    const { client, win } = await startHarness(saved(V4_IN_V6));
+    onCompile(win, (call) => {
+      if (call === 2) {
+        opensStrategy(win);
+      }
+    });
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      source: V4_IN_V6,
+      writeBack: true,
+    });
+
+    expect(dataOf(result)).toMatchObject({ success: true, source: FIXED, writtenBack: true });
+    expect(warningsOf(result)).toEqual([]);
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([[FIXED]]);
+    expect(editorOf(win).source).toBe(FIXED);
   });
 
   test('smart compile writeBack writes nothing when the fixes changed nothing', async () => {

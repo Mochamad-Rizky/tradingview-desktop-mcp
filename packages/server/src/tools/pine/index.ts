@@ -82,7 +82,11 @@ function editorData(state: PineEditorState) {
 }
 
 // Makes the change with the guard on unsaved text checked twice: here on the state the editor was
-// opened with, and in the page right before the facade acts. Answers the state afterwards.
+// opened with, and in the page right before the facade acts. A text change that says what the
+// editor must hold (expect) is guarded in the page only, where that is looked at first, so that an
+// editor that has changed is told from unsaved text this call may not replace. Answers the state
+// afterwards and, when nothing was changed because the editor did not hold what was expected,
+// which part it did not hold (null when the change was made).
 async function changeEditor(
   page: PageHandle,
   ctx: ToolContext,
@@ -90,11 +94,17 @@ async function changeEditor(
   confirm: boolean | undefined,
   change: (allowModified: boolean) => PineEditorChange,
   warnings: string[],
-): Promise<PineEditorState> {
-  const state = await ensureEditorOpen(page, pageWaitMs(ctx.config.callTimeoutMs), warnings);
-  requireUnmodifiedOrConfirmed(state, confirm, action);
-  await page.bridge.evaluateWithLib(changePineEditor, [change(confirm === true)]);
-  return readEditorState(page, warnings);
+): Promise<{ state: PineEditorState; differs: 'script' | 'text' | null }> {
+  const opened = await ensureEditorOpen(page, pageWaitMs(ctx.config.callTimeoutMs), warnings);
+  const wanted = change(confirm === true);
+  if (wanted.kind !== 'source' || wanted.expect === undefined) {
+    requireUnmodifiedOrConfirmed(opened, confirm, action);
+  }
+  const outcome = await page.bridge.evaluateWithLib(changePineEditor, [wanted]);
+  return {
+    state: await readEditorState(page, warnings),
+    differs: outcome.changed ? null : outcome.differs,
+  };
 }
 
 // The saved scripts of the account and the saved-script limit the app applies to them, null when
@@ -163,7 +173,7 @@ export const pineNew = defineTool({
     const kind = type ?? 'indicator';
     const page = await ctx.connection.chartPage();
     const warnings: string[] = [];
-    const state = await changeEditor(
+    const { state } = await changeEditor(
       page,
       ctx,
       'pine_new',
@@ -250,7 +260,7 @@ export const pineOpen = defineTool({
       );
     }
     const warnings: string[] = [];
-    const state = await changeEditor(
+    const { state } = await changeEditor(
       page,
       ctx,
       'pine_open',
@@ -322,7 +332,7 @@ export const pineSetSource = defineTool({
   async handler({ source, confirm }, ctx) {
     const page = await ctx.connection.chartPage();
     const warnings: string[] = [];
-    const state = await changeEditor(
+    const { state } = await changeEditor(
       page,
       ctx,
       'pine_set_source',
@@ -620,6 +630,25 @@ export const pineAnalyze = defineTool({
 // How the guard on unsaved text names pine_smart_compile when it writes back.
 const WRITE_BACK = 'pine_smart_compile with writeBack';
 
+// The text pine_smart_compile starts from, and what the editor must still hold for the result to be
+// written back to it. A given source is written wherever the editor is when the write comes, under
+// the usual guard, so it expects nothing. The text of the editor is written back only to the
+// editor that held it: the same script (its id, null for a new script) with that same text, which
+// is checked when the text is written, long after it was read.
+async function startOf(
+  ctx: ToolContext,
+  source: string | undefined,
+  warnings: string[],
+): Promise<{ text: string; held: { scriptId: string | null; source: string } | null }> {
+  if (source !== undefined) {
+    return { text: source, held: null };
+  }
+  const read = await readPineSourceData(ctx);
+  warnings.push(...read.warnings);
+  const text = read.data.source;
+  return { text, held: { scriptId: read.data.script?.id ?? null, source: text } };
+}
+
 // How many compilations pine_smart_compile makes at most when it is not told.
 const DEFAULT_ATTEMPTS = 3;
 
@@ -649,7 +678,11 @@ export const pineSmartCompile = defineTool({
     'the editor unless writeBack: true, which writes the final text into it, as pine_set_source ' +
     'does, when it differs from the text the call started with. That needs confirm: true while ' +
     'the editor holds unsaved changes, else the call fails with CONFIRMATION_REQUIRED before ' +
-    'anything is compiled and nothing is written. Nothing is saved or added to the chart. ' +
+    'anything is compiled and nothing is written. When the text came from the editor, it is ' +
+    'written back only if the editor still holds the same script and text when the write comes ' +
+    '(checked in the page, right before it acts, whatever confirm says); else nothing is ' +
+    'written, writtenBack is false, a warning says that the editor changed and the result is ' +
+    'still returned. Nothing is saved or added to the chart. ' +
     'pine_get_errors returns the full result of the last compilation, warnings included.',
   inputSchema: {
     source: sourceInput()
@@ -698,12 +731,7 @@ export const pineSmartCompile = defineTool({
     if (writeBack === true && fix !== false && attempts > 1) {
       requireUnmodifiedOrConfirmed(await readEditorState(page), confirm, WRITE_BACK);
     }
-    let start = source;
-    if (start === undefined) {
-      const read = await readPineSourceData(ctx);
-      warnings.push(...read.warnings);
-      start = read.data.source;
-    }
+    const { text: start, held } = await startOf(ctx, source, warnings);
     const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
     const run = await smartCompile((text) => compileSource(page, text, waitMs), start, {
       maxAttempts: attempts,
@@ -718,15 +746,28 @@ export const pineSmartCompile = defineTool({
           'it is.',
       );
     } else if (writeBack === true) {
-      await changeEditor(
+      const { differs } = await changeEditor(
         page,
         ctx,
         WRITE_BACK,
         confirm,
-        (allowModified) => ({ kind: 'source', source: run.source, allowModified }),
+        (allowModified) => ({
+          kind: 'source',
+          source: run.source,
+          allowModified,
+          ...(held === null ? {} : { expect: held }),
+        }),
         warnings,
       );
-      writtenBack = true;
+      writtenBack = differs === null;
+      if (differs !== null) {
+        warnings.push(
+          'The Pine Editor changed while the script was compiled (' +
+            (differs === 'script' ? 'it holds another script now' : 'its text changed') +
+            '), so nothing was written back. The result is for what it held when the call ' +
+            'started; call pine_smart_compile again to work on what it holds now.',
+        );
+      }
     }
     return {
       data: {

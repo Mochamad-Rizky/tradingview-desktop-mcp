@@ -714,7 +714,11 @@ export function readPineSource(
 // CONFIRMATION_REQUIRED when it does; the tools pass true only with confirm: true.
 // - new: opens a new script of the type, the template of the app, and with a source puts that in
 //   place of the template.
-// - source: replaces the text, keeping the script.
+// - source: replaces the text, keeping the script. With expect, only if the editor holds that script
+//   (its id, null for a script that has none) and that text right before it acts: else it changes
+//   nothing and answers which of the two differs. That check comes before the one for unsaved
+//   changes, so an editor that has changed is told from one whose unsaved text is not to be
+//   replaced.
 // - open: opens a saved script, with its own text loaded by the app, or with source as its text.
 export type PineEditorChange =
   | {
@@ -723,7 +727,12 @@ export type PineEditorChange =
       source: string | null;
       allowModified: boolean;
     }
-  | { kind: 'source'; source: string; allowModified: boolean }
+  | {
+      kind: 'source';
+      source: string;
+      allowModified: boolean;
+      expect?: { scriptId: string | null; source: string };
+    }
   | {
       kind: 'open';
       scriptIdPart: string;
@@ -733,17 +742,23 @@ export type PineEditorChange =
     };
 
 // Changes the text of the open editor as `change` says, through the facade of the editor, and
-// answers { changed: true } once the facade has done it. It never saves. The caller reads the
-// state of the editor afterwards: openScript of the app opens a new script whenever opening the
-// saved one fails, which the state shows. Failures: CAPABILITY_UNAVAILABLE without the registry
-// or the member of the facade the change needs, NOT_AVAILABLE when no editor is open or the facade
-// fails (with the reason), CONFIRMATION_REQUIRED as described above, all before the facade acts
-// except a failing facade.
+// answers { changed: true } once the facade has done it, or { changed: false, differs } when an
+// expectation of a source change was not met, with nothing changed (differs is "script" when the
+// editor holds another script, which is also so when its id cannot be read, as the state of the
+// editor reads it, and "text" when it holds other text or its text cannot be read). It never
+// saves. The caller reads the state of the editor afterwards: openScript of the app opens a new
+// script whenever opening the saved one fails, which the state shows. Failures:
+// CAPABILITY_UNAVAILABLE without the registry or the member of the facade the change needs (and
+// getSource when it has an expectation), NOT_AVAILABLE when no editor is open or the facade fails
+// (with the reason), CONFIRMATION_REQUIRED as described above, all before the facade acts except a
+// failing facade.
 export function changePineEditor(
   _win: TvWindow,
   lib: PageLib,
   change: PineEditorChange,
-): Promise<{ changed: true } | PageErrorSentinel> | PageErrorSentinel {
+):
+  | Promise<{ changed: true } | { changed: false; differs: 'script' | 'text' } | PageErrorSentinel>
+  | PageErrorSentinel {
   const getOpenPineEditor = lib.findExport('getOpenPineEditor');
   if (typeof getOpenPineEditor !== 'function') {
     return {
@@ -782,10 +797,10 @@ export function changePineEditor(
   } catch {
     found = null;
   }
-  const unavailable = (member: string): PageErrorSentinel => ({
+  const unavailable = (member: string, purpose = 'change its text'): PageErrorSentinel => ({
     __tvmcpError: {
       code: 'CAPABILITY_UNAVAILABLE',
-      message: `The Pine Editor of this build has no ${member} to change its text with`,
+      message: `The Pine Editor of this build has no ${member} to ${purpose} with`,
       hint: 'Change the script in the Pine Editor of TradingView itself.',
       details: { member },
     },
@@ -820,62 +835,98 @@ export function changePineEditor(
   if (missing !== undefined) {
     return unavailable(missing);
   }
-  if (!change.allowModified) {
-    let modified: unknown;
-    try {
-      modified = facade.isModified?.();
-    } catch {
-      modified = undefined;
-    }
-    // An answer that is not false counts as unsaved changes.
-    if (modified !== false) {
-      return {
-        __tvmcpError: {
-          code: 'CONFIRMATION_REQUIRED',
-          message: 'The change would replace the unsaved text in the Pine Editor',
-          hint: 'Pass confirm: true to replace it, or save it first with pine_save.',
-        },
-      };
-    }
+  const expected = change.kind === 'source' ? (change.expect ?? null) : null;
+  if (expected !== null && typeof facade.getSource !== 'function') {
+    return unavailable('getSource', 'check its text');
   }
   const editor = facade as Required<PineEditorFacadeLike>;
-  const apply = async (): Promise<void> => {
-    if (change.kind === 'new') {
-      await editor.openNewScript(change.type);
-      if (change.source !== null) {
-        await editor.setScript(change.source);
-      }
-    } else if (change.kind === 'source') {
-      await editor.setScript(change.source);
-    } else {
-      const info: { scriptIdPart: string; version?: string; scriptSource?: string } = {
-        scriptIdPart: change.scriptIdPart,
-      };
-      if (change.version !== null) {
-        info.version = change.version;
-      }
-      if (change.source !== null) {
-        info.scriptSource = change.source;
-      }
-      await editor.openScript(info);
+  // Which part of what the caller expects the editor to hold it does not hold, null when it holds
+  // all of it. An id that cannot be read counts as no id, and a text that cannot be read as other
+  // text, so that nothing is changed on a guess.
+  const differsFrom = async (wanted: {
+    scriptId: string | null;
+    source: string;
+  }): Promise<'script' | 'text' | null> => {
+    let part: unknown;
+    try {
+      part = (facade.getScriptIdVersion?.() as { scriptIdPart?: unknown } | null | undefined)
+        ?.scriptIdPart;
+    } catch {
+      part = undefined;
     }
+    if ((typeof part === 'string' && part !== '' ? part : null) !== wanted.scriptId) {
+      return 'script';
+    }
+    let text: unknown;
+    try {
+      text = await editor.getSource();
+    } catch {
+      text = undefined;
+    }
+    return text === wanted.source ? null : 'text';
   };
-  return apply().then(
-    () => ({ changed: true }) as const,
-    (error: unknown) => {
-      const message: unknown = (error as { message?: unknown } | null | undefined)?.message;
-      const reason =
-        typeof error === 'string' ? error : typeof message === 'string' ? message : String(error);
-      return {
-        __tvmcpError: {
-          code: 'NOT_AVAILABLE',
-          message: `The Pine Editor did not take the change: ${reason}`,
-          hint: 'Check the Pine Editor in TradingView: it may hold another text now.',
-          details: { reason },
-        },
-      };
-    },
-  );
+  const act = (): Promise<{ changed: true } | PageErrorSentinel> | PageErrorSentinel => {
+    if (!change.allowModified) {
+      let modified: unknown;
+      try {
+        modified = facade.isModified?.();
+      } catch {
+        modified = undefined;
+      }
+      // An answer that is not false counts as unsaved changes.
+      if (modified !== false) {
+        return {
+          __tvmcpError: {
+            code: 'CONFIRMATION_REQUIRED',
+            message: 'The change would replace the unsaved text in the Pine Editor',
+            hint: 'Pass confirm: true to replace it, or save it first with pine_save.',
+          },
+        };
+      }
+    }
+    const apply = async (): Promise<void> => {
+      if (change.kind === 'new') {
+        await editor.openNewScript(change.type);
+        if (change.source !== null) {
+          await editor.setScript(change.source);
+        }
+      } else if (change.kind === 'source') {
+        await editor.setScript(change.source);
+      } else {
+        const info: { scriptIdPart: string; version?: string; scriptSource?: string } = {
+          scriptIdPart: change.scriptIdPart,
+        };
+        if (change.version !== null) {
+          info.version = change.version;
+        }
+        if (change.source !== null) {
+          info.scriptSource = change.source;
+        }
+        await editor.openScript(info);
+      }
+    };
+    return apply().then(
+      () => ({ changed: true }) as const,
+      (error: unknown) => {
+        const message: unknown = (error as { message?: unknown } | null | undefined)?.message;
+        const reason =
+          typeof error === 'string' ? error : typeof message === 'string' ? message : String(error);
+        return {
+          __tvmcpError: {
+            code: 'NOT_AVAILABLE',
+            message: `The Pine Editor did not take the change: ${reason}`,
+            hint: 'Check the Pine Editor in TradingView: it may hold another text now.',
+            details: { reason },
+          },
+        };
+      },
+    );
+  };
+  return expected === null
+    ? act()
+    : differsFrom(expected).then<
+        { changed: true } | { changed: false; differs: 'script' | 'text' } | PageErrorSentinel
+      >((differs) => (differs === null ? act() : { changed: false, differs }));
 }
 
 // How savePineScript saves the text of the open editor.

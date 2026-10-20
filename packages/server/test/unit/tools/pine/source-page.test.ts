@@ -469,6 +469,206 @@ describe('changePineEditor', () => {
     expect(noSetScript.error.details).toEqual({ member: 'setScript' });
   });
 
+  describe('with an expectation of what the editor holds', () => {
+    const HELD = fixture.pineEditor.source;
+    // A replacement of the text that is made only if the editor holds `held`.
+    const replacing = (
+      held: { scriptId: string | null; source: string },
+      allowModified = true,
+    ): [PineEditorChange] =>
+      change({ kind: 'source', source: SOURCE, allowModified, expect: held });
+    // A facade that can set the text, holds `text` under the script `ids` answers, and has what
+    // `extra` adds.
+    const holding = (text: unknown, ids: unknown, extra: Record<string, unknown> = {}) =>
+      withFacade(() => ({
+        isModified: () => false,
+        getScriptIdVersion: () => ids,
+        getSource: () => Promise.resolve(text),
+        setScript: () => Promise.resolve(),
+        ...extra,
+      }));
+
+    test('replaces the text when the editor holds the script and the text that are expected', async () => {
+      const saved = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: SCRIPT_ID, source: HELD }, false),
+        chart(withEditor()),
+      );
+      const fresh = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: null, source: 'new text' }, false),
+        chart(withEditor({ script: null, source: 'new text', savedSource: 'new text' })),
+      );
+
+      expect(saved.result).toStrictEqual({ changed: true });
+      expect(inspectFakeWindow(saved.win).state.pineEditor.source).toBe(SOURCE);
+      expect(fresh.result).toStrictEqual({ changed: true });
+      expect(inspectFakeWindow(fresh.win).state.pineEditor.source).toBe(SOURCE);
+    });
+
+    test('changes nothing when the editor holds another script, and says so', async () => {
+      const other = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: STRATEGY?.scriptIdPart ?? '', source: HELD }),
+        chart(withEditor()),
+      );
+      // A script with an id where a new script was expected, and the other way round.
+      const saved = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: null, source: HELD }),
+        chart(withEditor()),
+      );
+      const fresh = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: SCRIPT_ID, source: 'new text' }),
+        chart(withEditor({ script: null, source: 'new text', savedSource: 'new text' })),
+      );
+
+      for (const outcome of [other, saved, fresh]) {
+        expect(outcome.result).toStrictEqual({ changed: false, differs: 'script' });
+        expect(callNames(outcome.win)).toEqual([]);
+      }
+      expect(inspectFakeWindow(other.win).state.pineEditor.source).toBe(HELD);
+    });
+
+    test('changes nothing when the text is not the expected one, and says so', async () => {
+      const typed = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: SCRIPT_ID, source: `${HELD}// older\n` }),
+        chart(withEditor()),
+      );
+      const shorter = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: SCRIPT_ID, source: HELD.slice(0, -1) }),
+        chart(withEditor()),
+      );
+
+      expect(typed.result).toStrictEqual({ changed: false, differs: 'text' });
+      expect(shorter.result).toStrictEqual({ changed: false, differs: 'text' });
+      expect(callNames(typed.win)).toEqual([]);
+      expect(inspectFakeWindow(typed.win).state.pineEditor.source).toBe(HELD);
+    });
+
+    test('reads the script id as the state of the editor does: no member, a failure or no id is no script', async () => {
+      const none: [string, () => unknown][] = [
+        ['null', () => null],
+        ['an empty id', () => ({ scriptIdPart: '' })],
+        ['no object', () => 5],
+        [
+          'a failure',
+          () => {
+            throw new Error('no script');
+          },
+        ],
+      ];
+      for (const [what, ids] of none) {
+        const matching = await libResultOf(
+          changePineEditor,
+          replacing({ scriptId: null, source: HELD }),
+          holding(HELD, undefined, { getScriptIdVersion: ids }),
+        );
+        const other = await libResultOf(
+          changePineEditor,
+          replacing({ scriptId: SCRIPT_ID, source: HELD }),
+          holding(HELD, undefined, { getScriptIdVersion: ids }),
+        );
+        expect(matching.result, what).toStrictEqual({ changed: true });
+        expect(other.result, what).toStrictEqual({ changed: false, differs: 'script' });
+      }
+      const missing = withFacade(() => ({
+        isModified: () => false,
+        getSource: () => Promise.resolve(HELD),
+        setScript: () => Promise.resolve(),
+      }));
+      const { result } = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: null, source: HELD }),
+        missing,
+      );
+      expect(result).toStrictEqual({ changed: true });
+    });
+
+    test('counts a text it cannot read as another text', async () => {
+      const ids = { scriptIdPart: SCRIPT_ID };
+      const unreadable: [string, unknown][] = [
+        ['a rejection', () => Promise.reject(new Error('Value is null'))],
+        ['no text', () => Promise.resolve(5)],
+        [
+          'a failure',
+          () => {
+            throw new Error('no editor');
+          },
+        ],
+      ];
+      for (const [what, getSource] of unreadable) {
+        const { result } = await libResultOf(
+          changePineEditor,
+          replacing({ scriptId: SCRIPT_ID, source: HELD }),
+          holding(HELD, ids, { getSource }),
+        );
+        expect(result, what).toStrictEqual({ changed: false, differs: 'text' });
+      }
+    });
+
+    test('looks at what the editor holds before it looks at unsaved changes', async () => {
+      const ids = { scriptIdPart: SCRIPT_ID };
+      const setScript = vi.fn(() => Promise.resolve());
+      const modified = (text: string) => holding(text, ids, { isModified: () => true, setScript });
+
+      // Changed and unsaved: told apart as changed, not refused as unsaved.
+      const changed = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: SCRIPT_ID, source: HELD }, false),
+        modified('typed meanwhile'),
+      );
+      // Not changed and unsaved: refused as unsaved, as without an expectation.
+      const refused = await libFailureOfBoth(
+        changePineEditor,
+        replacing({ scriptId: SCRIPT_ID, source: 'typed' }, false),
+        modified('typed'),
+      );
+      // Not changed and unsaved, with the unsaved text allowed to go: replaced.
+      const allowed = await libResultOf(
+        changePineEditor,
+        replacing({ scriptId: SCRIPT_ID, source: 'typed' }, true),
+        modified('typed'),
+      );
+
+      expect(changed.result).toStrictEqual({ changed: false, differs: 'text' });
+      expect(refused.error).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+      expect(allowed.result).toStrictEqual({ changed: true });
+      // Once per window the change was allowed on: the page of the bridge and the direct call.
+      expect(setScript).toHaveBeenCalledTimes(2);
+    });
+
+    test('fails CAPABILITY_UNAVAILABLE before acting when the facade cannot tell its text', async () => {
+      const setScript = vi.fn(() => Promise.resolve());
+      const { error } = await libFailureOfBoth(
+        changePineEditor,
+        replacing({ scriptId: null, source: HELD }),
+        withFacade(() => ({ isModified: () => false, setScript })),
+      );
+
+      expect(error).toMatchObject({
+        code: 'CAPABILITY_UNAVAILABLE',
+        details: { member: 'getSource' },
+      });
+      expect(error.message).toContain('check');
+      expect(setScript).not.toHaveBeenCalled();
+    });
+
+    test('asks nothing of the editor for a change that has no expectation', async () => {
+      // A facade with neither getSource nor getScriptIdVersion is changed as before.
+      const { result } = await libResultOf(
+        changePineEditor,
+        change({ kind: 'source', source: SOURCE, allowModified: true }),
+        withFacade(() => ({ setScript: () => Promise.resolve() })),
+      );
+
+      expect(result).toStrictEqual({ changed: true });
+    });
+  });
+
   test('fails INVALID_INPUT for a change it does not know', async () => {
     const { error } = await libFailureOfBoth(
       changePineEditor,
