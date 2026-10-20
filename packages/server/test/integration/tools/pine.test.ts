@@ -1397,7 +1397,17 @@ describe('pine_smart_compile', () => {
     message: `Undeclared identifier "${name}"`,
     severity: 'error',
   });
-  const V4_ERRORS = [undeclared('study', 2, 1), undeclared('rsi', 3, 6)];
+  // What the compiler says for a call of a v4 name in a script of version 6, as the compiler of
+  // TradingView words it; it reports nothing after it, so of study and rsi only study.
+  const notFound = (name: string, line: number, column: number) => ({
+    line,
+    column,
+    endLine: line,
+    endColumn: column + name.length - 1,
+    message: `Could not find function or function reference '${name}'`,
+    severity: 'error',
+  });
+  const V4_ERRORS = [notFound('study', 2, 1)];
   // The editor holding `source` as its saved text, so that it has no unsaved changes.
   const saved = (source: string) => withEditor({ source, savedSource: source });
 
@@ -1479,9 +1489,9 @@ describe('pine_smart_compile', () => {
     expect(dataOf(result)).toStrictEqual({
       success: false,
       attempts: [
-        { errors: [undeclared('rsi', 3, 7)], applied: [FIX_RSI] },
-        { errors: [undeclared('sma', 4, 7)], applied: [FIX_SMA] },
-        { errors: [undeclared('ema', 5, 7)], applied: [] },
+        { errors: [notFound('rsi', 3, 7)], applied: [FIX_RSI] },
+        { errors: [notFound('sma', 4, 7)], applied: [FIX_SMA] },
+        { errors: [notFound('ema', 5, 7)], applied: [] },
       ],
       // The text of the last attempt, which the errors belong to.
       source: twoFixed,
@@ -1502,7 +1512,7 @@ describe('pine_smart_compile', () => {
     expect(callsOf(win, 'translateScriptAsync')).toHaveLength(3);
     expect(ctx.session.lastPineCompile).toMatchObject({
       success: false,
-      errors: [undeclared('ema', 5, 7)],
+      errors: [notFound('ema', 5, 7)],
     });
   });
 
@@ -1518,15 +1528,15 @@ describe('pine_smart_compile', () => {
     expect(dataOf(result)).toMatchObject({
       success: false,
       attempts: [
-        { errors: [undeclared('rsi', 3, 7)], applied: [FIX_RSI] },
-        { errors: [undeclared('sma', 4, 7)], applied: [] },
+        { errors: [notFound('rsi', 3, 7)], applied: [FIX_RSI] },
+        { errors: [notFound('sma', 4, 7)], applied: [] },
       ],
       source: SEVERAL.replace('rsi = rsi(', 'rsi = ta.rsi('),
     });
     expect(callsOf(win, 'translateScriptAsync')).toHaveLength(2);
     expect(ctx.session.lastPineCompile).toMatchObject({
       success: false,
-      errors: [undeclared('sma', 4, 7)],
+      errors: [notFound('sma', 4, 7)],
     });
   });
 
@@ -1565,10 +1575,8 @@ describe('pine_smart_compile', () => {
     expect(dataOf(result)).toMatchObject({
       success: false,
       attempts: [
-        {
-          errors: [undeclared('study', 2, 1), undeclared('undeclared_a', 3, 6)],
-          applied: [FIX_STUDY],
-        },
+        // The compiler stops at study, so undeclared_a comes up only in the next round.
+        { errors: [notFound('study', 2, 1)], applied: [FIX_STUDY] },
         { errors: [undeclared('undeclared_a', 3, 6)], applied: [] },
       ],
       source: fixed,
@@ -1990,7 +1998,7 @@ describe('pine_smart_compile', () => {
 
     await callTool(client, 'pine_smart_compile', { source: V4_IN_V6 });
 
-    expect(seen).toEqual([null, 2]);
+    expect(seen).toEqual([null, V4_ERRORS.length]);
     expect(ctx.session.lastPineCompile).toMatchObject({ success: true, errors: [] });
   });
 

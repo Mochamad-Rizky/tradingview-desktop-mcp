@@ -100,8 +100,8 @@ export interface FakeConsoleEntry {
 }
 
 // The v4 names that a script of version 5 or later no longer has: study, security and tostring,
-// and the functions that moved to the ta namespace. The compiler finds each undeclared where it is
-// called without a namespace.
+// and the functions that moved to the ta namespace. Where one is called without a namespace, the
+// compiler cannot find the function.
 const V4_ONLY_NAMES = [
   'study',
   'security',
@@ -140,13 +140,18 @@ function codeOf(line: string): string {
 const definesFunction = (source: string, name: string): boolean =>
   new RegExp(`^(?:export[ \\t]+)?${name}[ \\t]*\\([^)]*\\)[ \\t]*=>`, 'm').test(source);
 
-// What the fake compiler finds in a text (lines split at CRLF, LF or CR, counted from 1): an error
-// "Undeclared identifier" for every word starting with undeclared_, and in a script of version 5 or
-// later for every call of a v4 name without its namespace (a version below 5, or none, compiles as
-// an old version, which still has them; names in comments and strings and names the script defines
-// as functions are not found), a warning for every word starting with deprecated_, all with the
-// 1-based columns of the word (end inclusive), and an error without a column (column 0, as the
-// legacy messages of the app have) for every word legacy_error.
+// What the fake compiler finds in a text (lines split at CRLF, LF or CR, counted from 1), in the
+// order of the text, as the compiler of TradingView reports them (seen on the app):
+// - an error "Undeclared identifier" (code CE10272) for every word starting with undeclared_;
+// - in a script of version 5 or later, an error "Could not find function or function reference"
+//   (code CE10271) for a call of a v4 name without its namespace, after which the compiler stops
+//   and reports nothing more (a version below 5, or none, compiles as an old version, which still
+//   has the names; names in comments and strings and names the script defines as functions are
+//   not found);
+// - a warning for every word starting with deprecated_;
+// - an error without a column (column 0, as the legacy messages of the app have) for every word
+//   legacy_error.
+// All but the last carry the 1-based columns of the word, the end included.
 export function compileFakePine(source: string): {
   errors: FakePineDiagnostic[];
   warnings: FakePineDiagnostic[];
@@ -155,41 +160,75 @@ export function compileFakePine(source: string): {
   const warnings: FakePineDiagnostic[] = [];
   const modern = (declaredVersion(source) ?? 1) >= 5;
   const defined = new Set(V4_ONLY_NAMES.filter((name) => definesFunction(source, name)));
-  source.split(/\r\n|\n|\r/).forEach((text, index) => {
+  const lines = source.split(/\r\n|\n|\r/);
+  for (const [index, text] of lines.entries()) {
     const line = index + 1;
     const at = (match: RegExpMatchArray) => ({
       start: { line, column: (match.index ?? 0) + 1 },
       end: { line, column: (match.index ?? 0) + match[0].length },
     });
+    // What the line holds, in the order of its columns.
+    const found: {
+      column: number;
+      list: FakePineDiagnostic[];
+      item: FakePineDiagnostic;
+      stops: boolean;
+    }[] = [];
     for (const match of text.matchAll(/\bundeclared_\w*/g)) {
-      errors.push({
-        message: 'Undeclared identifier "{identifier}"',
-        ctx: { identifier: match[0] },
-        code: 'CE10275',
-        ...at(match),
+      found.push({
+        column: match.index,
+        list: errors,
+        stops: false,
+        item: {
+          message: 'Undeclared identifier "{identifier}"',
+          ctx: { identifier: match[0] },
+          code: 'CE10272',
+          ...at(match),
+        },
       });
     }
     for (const match of modern ? codeOf(text).matchAll(V4_CALL) : []) {
       if (!defined.has(match[0])) {
-        errors.push({
-          message: 'Undeclared identifier "{identifier}"',
-          ctx: { identifier: match[0] },
-          code: 'CE10275',
-          ...at(match),
+        found.push({
+          column: match.index,
+          list: errors,
+          stops: true,
+          item: {
+            message: "Could not find {kind} '{fullName}'",
+            ctx: { fullName: match[0], kind: 'function or function reference' },
+            code: 'CE10271',
+            ...at(match),
+          },
         });
       }
     }
     for (const match of text.matchAll(/\bdeprecated_\w*/g)) {
-      warnings.push({
-        message: 'The function {name} is deprecated',
-        ctx: { name: match[0] },
-        ...at(match),
+      found.push({
+        column: match.index,
+        list: warnings,
+        stops: false,
+        item: {
+          message: 'The function {name} is deprecated',
+          ctx: { name: match[0] },
+          ...at(match),
+        },
       });
     }
     for (const match of text.matchAll(/\blegacy_error\b/g)) {
-      errors.push({ message: `Syntax error at input "${match[0]}"`, start: { line, column: 0 } });
+      found.push({
+        column: match.index,
+        list: errors,
+        stops: false,
+        item: { message: `Syntax error at input "${match[0]}"`, start: { line, column: 0 } },
+      });
     }
-  });
+    for (const { list, item, stops } of found.sort((a, b) => a.column - b.column)) {
+      list.push(item);
+      if (stops) {
+        return { errors, warnings };
+      }
+    }
+  }
   return { errors, warnings };
 }
 

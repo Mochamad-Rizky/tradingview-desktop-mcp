@@ -387,15 +387,7 @@ plot(slow, "Slow")
             "column": 1,
             "endLine": 2,
             "endColumn": 5,
-            "message": "Undeclared identifier \"study\"",
-            "severity": "error"
-          },
-          {
-            "line": 3,
-            "column": 6,
-            "endLine": 3,
-            "endColumn": 8,
-            "message": "Undeclared identifier \"rsi\"",
+            "message": "Could not find function or function reference 'study'",
             "severity": "error"
           }
         ],
@@ -432,7 +424,7 @@ plot(ta.rsi(close, 14))
 
 **The assistant answers**
 
-> The first attempt failed with two errors: study (line 2, column 1) and rsi (line 3, column 6) are undeclared, because the script says //@version=6 but uses names of Pine v4. Two fixes were applied, study( became indicator( and rsi( became ta.rsi(, and the second attempt compiled (success is true). The diff shows what changed. The Pine Editor still holds your original text (writtenBack is false), and the assistant can write the fixed text into it if you want it there.
+> The first attempt failed at line 2, column 1: the compiler could not find the function study, a name of Pine v4 in a script that says //@version=6, and stopped there. The rules know every such name, so two fixes were applied, study( became indicator( and rsi( became ta.rsi(, and the second attempt compiled (success is true). The diff shows what changed. The Pine Editor still holds your original text (writtenBack is false), and the assistant can write the fixed text into it if you want it there.
 
 ## 8. Read backtest results
 

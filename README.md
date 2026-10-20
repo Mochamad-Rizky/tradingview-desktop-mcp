@@ -139,7 +139,7 @@ and compiles again, without changing the editor
 ([details](docs/examples.md#7-fix-a-pine-script-with-smart-compile)):
 
 ```json
-"message": "Undeclared identifier \"study\"",
+"message": "Could not find function or function reference 'study'",
 "applied": ["Replace study( with indicator(", "Replace rsi( with ta.rsi("]
 "writtenBack": false
 ```

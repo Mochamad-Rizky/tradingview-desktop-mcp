@@ -318,7 +318,7 @@ test('the fake compiler finds undeclared and deprecated words and legacy errors,
       {
         message: 'Undeclared identifier "{identifier}"',
         ctx: { identifier: 'undeclared_x' },
-        code: 'CE10275',
+        code: 'CE10272',
         start: { line: 3, column: 6 },
         end: { line: 3, column: 17 },
       },
@@ -353,58 +353,47 @@ const V4_NAMES = [
   'change',
 ];
 
-// Where and what the fake compiler finds undeclared in a text.
-const undeclaredIn = (source: string) =>
+// Where and which names the fake compiler reports as unknown in a text: undeclared, or a function
+// it cannot find.
+const unknownIn = (source: string) =>
   compileFakePine(source).errors.map(({ ctx, start }) => [
-    ctx?.identifier,
+    ctx?.fullName ?? ctx?.identifier,
     start?.line,
     start?.column,
   ]);
 
-test('the fake compiler finds a v4 name undeclared in a script of version 5 or later, as the app does', () => {
+test('the fake compiler cannot find a v4 function in a script of version 5 or later, and stops there, as the app does', () => {
+  // study is the first error, and the compiler reports none after it: not rsi either.
   expect(compileFakePine('//@version=6\nstudy("x")\nplot(rsi(close,14))\n')).toEqual({
     errors: [
       {
-        message: 'Undeclared identifier "{identifier}"',
-        ctx: { identifier: 'study' },
-        code: 'CE10275',
+        message: "Could not find {kind} '{fullName}'",
+        ctx: { fullName: 'study', kind: 'function or function reference' },
+        code: 'CE10271',
         start: { line: 2, column: 1 },
         end: { line: 2, column: 5 },
-      },
-      {
-        message: 'Undeclared identifier "{identifier}"',
-        ctx: { identifier: 'rsi' },
-        code: 'CE10275',
-        start: { line: 3, column: 6 },
-        end: { line: 3, column: 8 },
       },
     ],
     warnings: [],
   });
   for (const name of V4_NAMES) {
-    expect(undeclaredIn(`//@version=5\nx = ${name}(close)\n`), name).toEqual([[name, 2, 5]]);
+    expect(unknownIn(`//@version=5\nx = ${name}(close)\n`), name).toEqual([[name, 2, 5]]);
   }
-  // Several on one line come in the order of their columns.
-  expect(undeclaredIn('//@version=6\nplot(sma(rsi(close,14),5))\n')).toEqual([
-    ['sma', 2, 6],
-    ['rsi', 2, 10],
-  ]);
+  // Of several on one line, the first column comes first, and ends the report.
+  expect(unknownIn('//@version=6\nplot(sma(rsi(close,14),5))\n')).toEqual([['sma', 2, 6]]);
 });
 
 test('the fake compiler compiles a script below version 5, or without a version, as an old one', () => {
   const body = 'study("x")\nplot(rsi(close,14))\n';
 
-  expect(undeclaredIn(body)).toEqual([]);
-  expect(undeclaredIn(`//@version=4\n${body}`)).toEqual([]);
-  expect(undeclaredIn(`//@version=1\n${body}`)).toEqual([]);
+  expect(unknownIn(body)).toEqual([]);
+  expect(unknownIn(`//@version=4\n${body}`)).toEqual([]);
+  expect(unknownIn(`//@version=1\n${body}`)).toEqual([]);
   // The annotation may have spaces and may follow other comments.
-  expect(undeclaredIn(`// An old script\n// @version = 5\n${body}`)).toEqual([
-    ['study', 3, 1],
-    ['rsi', 4, 6],
-  ]);
+  expect(unknownIn(`// An old script\n// @version = 5\n${body}`)).toEqual([['study', 3, 1]]);
 });
 
-test('the fake compiler does not find names undeclared that are namespaced, quoted, commented or declared', () => {
+test('the fake compiler does not find names unknown that are namespaced, quoted, commented or declared', () => {
   const clean = [
     '//@version=6',
     'indicator("study(x)") // rsi(close) and sma(close)',
@@ -418,22 +407,34 @@ test('the fake compiler does not find names undeclared that are namespaced, quot
     '',
   ].join('\n');
 
-  expect(undeclaredIn(clean)).toEqual([]);
+  expect(unknownIn(clean)).toEqual([]);
   // A variable named like the built-in does not declare the call on its right.
-  expect(undeclaredIn('//@version=6\nrsi = rsi(close, 14)\nplot(rsi)\n')).toEqual([['rsi', 2, 7]]);
+  expect(unknownIn('//@version=6\nrsi = rsi(close, 14)\nplot(rsi)\n')).toEqual([['rsi', 2, 7]]);
 });
 
-test('the fake compiler reports v4 names among its other findings', () => {
+test('the fake compiler reports what comes before a function it cannot find, and nothing after it', () => {
   const found = compileFakePine(
-    '//@version=6\nstudy(close)\nplot(undeclared_a)\nlegacy_error\nx = deprecated_f()\n',
+    [
+      '//@version=6',
+      'plot(undeclared_a)',
+      'x = deprecated_f()',
+      'study(close)',
+      'legacy_error',
+      'plot(undeclared_b)',
+      '',
+    ].join('\n'),
   );
 
-  expect(found.errors.map(({ ctx, message }) => ctx?.identifier ?? message)).toEqual([
-    'study',
-    'undeclared_a',
-    'Syntax error at input "legacy_error"',
+  expect(
+    found.errors.map(({ ctx, message }) => ctx?.fullName ?? ctx?.identifier ?? message),
+  ).toEqual(['undeclared_a', 'study']);
+  expect(found.warnings.map(({ ctx }) => ctx?.name)).toEqual(['deprecated_f']);
+  // On one line, by column: an undeclared word before the call is reported, one after it not.
+  expect(unknownIn('//@version=6\nx = undeclared_a + rsi(close)\n')).toEqual([
+    ['undeclared_a', 2, 5],
+    ['rsi', 2, 20],
   ]);
-  expect(found.warnings).toHaveLength(1);
+  expect(unknownIn('//@version=6\nx = rsi(close) + undeclared_a\n')).toEqual([['rsi', 2, 5]]);
 });
 
 test('translateScriptAsync resolves a clean text, rejects compile errors and HTTP failures', async () => {
