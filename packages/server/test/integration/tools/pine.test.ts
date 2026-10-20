@@ -522,21 +522,24 @@ describe('pine_list_scripts', () => {
             name: SCRIPT.scriptName,
             version: SCRIPT.version,
             type: 'indicator',
-            modified: isoOf(SCRIPT.modified),
+            modified: SCRIPT.modified,
+            modifiedIso: isoOf(SCRIPT.modified),
           },
           {
             id: STRATEGY.scriptIdPart,
             name: STRATEGY.scriptName,
             version: STRATEGY.version,
             type: 'strategy',
-            modified: isoOf(STRATEGY.modified),
+            modified: STRATEGY.modified,
+            modifiedIso: isoOf(STRATEGY.modified),
           },
           {
             id: DRAFT.scriptIdPart,
             name: DRAFT.scriptName,
             version: DRAFT.version,
             type: 'indicator',
-            modified: isoOf(DRAFT.modified),
+            modified: DRAFT.modified,
+            modifiedIso: isoOf(DRAFT.modified),
           },
         ],
       },
@@ -562,7 +565,9 @@ describe('pine_list_scripts', () => {
 
     const result = await callTool(client, 'pine_list_scripts');
     expect(dataOf(result)).toEqual({
-      scripts: [expect.objectContaining({ modified: isoOf(SCRIPT.modified) })],
+      scripts: [
+        expect.objectContaining({ modified: SCRIPT.modified, modifiedIso: isoOf(SCRIPT.modified) }),
+      ],
     });
 
     editorOf(win).signedIn = false;

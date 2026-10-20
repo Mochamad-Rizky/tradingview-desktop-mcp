@@ -2,7 +2,7 @@ import {
   countedScripts,
   findSavedScripts,
   isOpenLimited,
-  modifiedToIso,
+  modifiedToSeconds,
   savedScriptLimit,
   scriptTypeOf,
   toSavedScript,
@@ -25,21 +25,21 @@ function row(overrides: Partial<SavedScriptRow> = {}): SavedScriptRow {
   };
 }
 
-describe('modifiedToIso', () => {
-  test('reads numbers above 1e11 as milliseconds and the rest as seconds', () => {
-    expect(modifiedToIso(1_729_987_200)).toBe('2024-10-27T00:00:00Z');
-    expect(modifiedToIso(1_729_987_200_000)).toBe('2024-10-27T00:00:00Z');
-    expect(modifiedToIso(1_729_987_200_500)).toBe('2024-10-27T00:00:00Z');
+describe('modifiedToSeconds', () => {
+  test('reads numbers above 1e11 as milliseconds and the rest as seconds, in whole seconds', () => {
+    expect(modifiedToSeconds(1_729_987_200)).toBe(1_729_987_200);
+    expect(modifiedToSeconds(1_729_987_200_000)).toBe(1_729_987_200);
+    expect(modifiedToSeconds(1_729_987_200_500)).toBe(1_729_987_200);
   });
 
   test('reads a date string, and answers null for what is no time', () => {
-    expect(modifiedToIso('2024-10-27T00:00:00.000Z')).toBe('2024-10-27T00:00:00Z');
-    expect(modifiedToIso('yesterday')).toBeNull();
-    expect(modifiedToIso(null)).toBeNull();
-    expect(modifiedToIso(Number.NaN)).toBeNull();
-    expect(modifiedToIso(0)).toBeNull();
-    expect(modifiedToIso(-5)).toBeNull();
-    expect(modifiedToIso(1e20)).toBeNull();
+    expect(modifiedToSeconds('2024-10-27T00:00:00.000Z')).toBe(1_729_987_200);
+    expect(modifiedToSeconds('yesterday')).toBeNull();
+    expect(modifiedToSeconds(null)).toBeNull();
+    expect(modifiedToSeconds(Number.NaN)).toBeNull();
+    expect(modifiedToSeconds(0)).toBeNull();
+    expect(modifiedToSeconds(-5)).toBeNull();
+    expect(modifiedToSeconds(1e20)).toBeNull();
   });
 });
 
@@ -57,7 +57,8 @@ test('toSavedScript keeps the id, the name, the version, the type and the modifi
     name: 'Alpha',
     version: '1.0',
     type: 'strategy',
-    modified: '2024-10-27T00:00:00Z',
+    modified: 1_729_987_200,
+    modifiedIso: '2024-10-27T00:00:00Z',
   });
   expect(toSavedScript(row({ scriptName: null, version: null, modified: null }))).toEqual({
     id: 'USER;a',
@@ -65,6 +66,7 @@ test('toSavedScript keeps the id, the name, the version, the type and the modifi
     version: null,
     type: 'indicator',
     modified: null,
+    modifiedIso: null,
   });
   expect(toSavedScript(row({ scriptName: null, scriptTitle: null })).name).toBe('USER;a');
 });

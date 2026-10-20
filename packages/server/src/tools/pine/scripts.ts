@@ -32,9 +32,9 @@ const MILLISECONDS_ABOVE = 1e11;
 // The last second Date can print with a four-digit year, 9999-12-31T23:59:59Z.
 const MAX_SECONDS = 253_402_300_799;
 
-// The modified time of a saved script as an ISO string, or null for what is no time. The unit of a
-// number is not known, so it follows the rule of the time inputs.
-export function modifiedToIso(value: number | string | null): string | null {
+// The modified time of a saved script in whole Unix seconds, or null for what is no time. The unit
+// of a number is not known, so it follows the rule of the time inputs.
+export function modifiedToSeconds(value: number | string | null): number | null {
   let seconds: number;
   if (typeof value === 'number') {
     seconds = value > MILLISECONDS_ABOVE ? value / 1000 : value;
@@ -43,7 +43,9 @@ export function modifiedToIso(value: number | string | null): string | null {
   } else {
     return null;
   }
-  return Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_SECONDS ? toIso(seconds) : null;
+  return Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_SECONDS
+    ? Math.floor(seconds)
+    : null;
 }
 
 // The script type of a kind of the app: "study" is an indicator, and so is a script without a kind
@@ -52,15 +54,18 @@ export function scriptTypeOf(kind: string | null): PineScriptType {
   return kind === 'strategy' || kind === 'library' ? kind : 'indicator';
 }
 
-// A saved script as pine_list_scripts returns it. modified in the row is as the list gives it, a
-// number in an unknown unit or a date string, or null.
+// A saved script as pine_list_scripts returns it, with its modified time in Unix seconds and as
+// ISO, as the tools give times. modified in the row is as the list gives it, a number in an unknown
+// unit or a date string, or null.
 export function toSavedScript(row: SavedScriptRow) {
+  const modified = modifiedToSeconds(row.modified);
   return {
     id: row.scriptIdPart,
     name: row.scriptName ?? row.scriptTitle ?? row.scriptIdPart,
     version: row.version,
     type: scriptTypeOf(row.kind),
-    modified: modifiedToIso(row.modified),
+    modified,
+    modifiedIso: modified === null ? null : toIso(modified),
   };
 }
 

@@ -5,6 +5,7 @@ import type {
   TvWindow,
 } from '../../src/core/tv/tv-window.js';
 import { pollUntil } from '../../src/utils/poll.js';
+import { toIso } from '../../src/utils/time.js';
 import { callTool } from '../helpers/mcp-client.js';
 import {
   addThenCleanUp,
@@ -448,7 +449,8 @@ describe.skipIf(!e2eEnabled())(
           name: string;
           version: string | null;
           type: string;
-          modified: string | null;
+          modified: number | null;
+          modifiedIso: string | null;
         }[];
       }>(client, 'pine_list_scripts');
 
@@ -464,9 +466,13 @@ describe.skipIf(!e2eEnabled())(
           ['indicator', 'strategy', 'library'].includes(script.type)
             ? null
             : `${at} has an odd type`,
-          script.modified === null || !Number.isNaN(Date.parse(script.modified))
-            ? null
-            : `${at} has an odd modified time`,
+          script.modified === null
+            ? script.modifiedIso === null
+              ? null
+              : `${at} has an ISO modified time without one in seconds`
+            : Number.isInteger(script.modified) && script.modifiedIso === toIso(script.modified)
+              ? null
+              : `${at} has an odd modified time`,
         ].filter((problem): problem is string => problem !== null);
       });
       expect(problems).toEqual([]);

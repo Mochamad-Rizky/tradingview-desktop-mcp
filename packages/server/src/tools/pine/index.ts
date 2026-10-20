@@ -374,7 +374,8 @@ export const pineListScripts = defineTool({
   description:
     'Lists the saved Pine scripts of the account and changes nothing. Returns scripts, each with ' +
     'id (what pine_open takes), name, version (a version whose major part is 0 is a draft saved ' +
-    'by TradingView), type (indicator, strategy or library) and modified (ISO 8601, or null). ' +
+    'by TradingView), type (indicator, strategy or library), and modified (Unix seconds) with ' +
+    'modifiedIso, both null when TradingView gives no time. ' +
     'TradingView asks its server for the list the way its own editor does, and lists none while ' +
     'no account is signed in.',
   inputSchema: {},
