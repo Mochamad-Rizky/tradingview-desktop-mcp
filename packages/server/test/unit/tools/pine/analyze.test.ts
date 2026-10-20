@@ -103,6 +103,12 @@ describe('analyzePine', () => {
     expect(ids(source)).not.toContain('ta-namespace');
   });
 
+  test('a closing parenthesis without an opening one closes nothing', () => {
+    const source = `${HEAD})\nsma(x) => x\ny = sma(close)\n`;
+
+    expect(ids(source)).not.toContain('ta-namespace');
+  });
+
   test('a long text full of calls that never close is analyzed in one pass', () => {
     // 200 KB of calls without a closing parenthesis, each of which used to be searched to the end
     // of the text for one: minutes for the largest source the tools take.

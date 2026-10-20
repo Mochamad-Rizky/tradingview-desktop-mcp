@@ -719,11 +719,17 @@ describe('tableCellWarnings', () => {
       }),
       study('S2', { cells: [{ tableId: '7', row: 0, column: 0, text: 'of a table of S1' }] }),
       study('S3', { tables: [table()], cells: [{ tableId: '7', row: 0, column: 0, text: 'ok' }] }),
+      // A table without an id has no cells: none can name it.
+      study('S4', {
+        tables: [table({ id: null })],
+        cells: [{ tableId: null, row: 0, column: 0, text: 'of the table without an id' }],
+      }),
     ]);
 
     expect(warnings).toEqual([
       expect.stringMatching(/^The study S1 holds 2 table cells that belong to no table it has/),
       expect.stringMatching(/^The study S2 holds 1 table cell that belongs to no table it has/),
+      expect.stringMatching(/^The study S4 holds 1 table cell /),
     ]);
   });
 

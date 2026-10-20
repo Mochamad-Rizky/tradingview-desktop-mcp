@@ -422,6 +422,21 @@ describe('pine_open', () => {
     expect(callsOf(win, 'dialog.paywall')).toEqual([]);
   });
 
+  test('pine_open opens a saved script when the saved-script limit cannot be read', async () => {
+    // Opening runs no paywall check in the app: without a limit to check, the open goes ahead.
+    const { client, win } = await startHarness({
+      ...fixture,
+      planLimits: Object.fromEntries(
+        Object.entries(fixture.planLimits).filter(([feature]) => feature !== 'SAVED_PINE_SCRIPTS'),
+      ),
+    });
+
+    const result = await callTool(client, 'pine_open', { scriptId: STRATEGY.scriptIdPart });
+
+    expect(dataOf(result)).toMatchObject({ script: { id: STRATEGY.scriptIdPart } });
+    expect(callsOf(win, 'dialog.paywall')).toEqual([]);
+  });
+
   test('pine_open fails NOT_AVAILABLE when TradingView falls back to a new script', async () => {
     const from = withLimit(5);
     const { client, win } = await startHarness(from);
