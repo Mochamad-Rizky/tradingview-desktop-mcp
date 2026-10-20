@@ -3,14 +3,19 @@ import type { PageErrorSentinel } from '../../core/tv/page-bridge.js';
 import type { PageLib } from '../../core/tv/page-lib.js';
 import type {
   BottomWidgetBarLike,
+  ChartWidgetApiLike,
   OpenPineEditorLike,
   PageLayoutServiceLike,
   PineCompileErrorsLike,
+  PineConsoleEntryLike,
   PineEditorApiLike,
   PineEditorFacadeLike,
   PineSaveResultLike,
   SavedPineScriptLike,
   ServiceLocatorLike,
+  StudyCoreLike,
+  StudyMetaInfoLike,
+  TradingViewApiLike,
   TvWindow,
 } from '../../core/tv/tv-window.js';
 
@@ -1184,3 +1189,608 @@ export type SavedScriptRow = Extract<
   Awaited<ReturnType<typeof readSavedPineScripts>>,
   { scripts: unknown }
 >['scripts'][number];
+
+// The page functions of the compile tools (notes of Plan 2, sections Q1, Q3 and Q4). A diagnostic
+// they answer (PineRawDiagnostic) keeps what JSON carries of one of the app: message (null when it
+// is no text), ctx (the values that fill the {name} placeholders of message, text, finite numbers
+// and booleans) and start and end (null when missing, with a line or column that is no number as
+// null). The Node side (mappers.ts) turns these into what the tools return.
+
+// Compiles `source` and changes nothing: no editor, chart or saved script is touched. It calls the
+// export translateScriptAsync(source, pineId) of the pine facade client, which posts the text to
+// translate_source/<pineId> (one request) and resolves { success, metaInfo, compileErrors }, or
+// rejects with an Error whose reason holds the compile errors (handleTranslateResult of the app).
+// pineId is only the id the compiled metadata is stamped with; the caller passes one that names no
+// script. Answers the errors and the warnings, both empty for a text that compiles. Failures, all
+// without a compile result: a rejection with a plain string, the way the app reports an HTTP failure
+// (413 for a text too large, 5xx, ...), is NOT_AVAILABLE with that text as the message; any other
+// rejection is NOT_AVAILABLE with the reason; no answer within waitMs is TIMEOUT; and a page without
+// the export is CAPABILITY_UNAVAILABLE.
+export function compilePineSource(
+  _win: TvWindow,
+  lib: PageLib,
+  source: string,
+  pineId: string,
+  waitMs: number,
+):
+  | Promise<
+      | Record<
+          'errors' | 'warnings',
+          {
+            message: string | null;
+            ctx: Record<string, string | number | boolean>;
+            start: { line: number | null; column: number | null } | null;
+            end: { line: number | null; column: number | null } | null;
+          }[]
+        >
+      | PageErrorSentinel
+    >
+  | PageErrorSentinel {
+  const translateScriptAsync = lib.findExport('translateScriptAsync');
+  if (typeof translateScriptAsync !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no Pine compiler to compile with',
+        hint: 'Check app_health: the app may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
+  const place = (value: unknown): { line: number | null; column: number | null } | null => {
+    if (typeof value !== 'object' || value === null) {
+      return null;
+    }
+    const { line, column } = value as { line?: unknown; column?: unknown };
+    const number = (part: unknown): number | null =>
+      typeof part === 'number' && Number.isFinite(part) ? part : null;
+    return { line: number(line), column: number(column) };
+  };
+  const diagnosticsOf = (list: unknown): PineRawDiagnostic[] =>
+    (Array.isArray(list) ? (list as unknown[]) : []).map((raw) => {
+      const item = (typeof raw === 'object' && raw !== null ? raw : {}) as {
+        message?: unknown;
+        ctx?: unknown;
+        start?: unknown;
+        end?: unknown;
+      };
+      const ctx: Record<string, string | number | boolean> = {};
+      if (typeof item.ctx === 'object' && item.ctx !== null) {
+        for (const [key, value] of Object.entries(item.ctx as Record<string, unknown>)) {
+          if (
+            typeof value === 'string' ||
+            typeof value === 'boolean' ||
+            (typeof value === 'number' && Number.isFinite(value))
+          ) {
+            ctx[key] = value;
+          }
+        }
+      }
+      return {
+        message: typeof item.message === 'string' ? item.message : null,
+        ctx,
+        start: place(item.start),
+        end: place(item.end),
+      };
+    });
+  const failed = (message: string, reason: string): PageErrorSentinel => ({
+    __tvmcpError: {
+      code: 'NOT_AVAILABLE',
+      message,
+      hint: 'Try again in a moment, or compile the script in the Pine Editor of TradingView.',
+      details: { reason },
+    },
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<{ late: true }>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ late: true });
+    }, waitMs);
+  });
+  const compiled = Promise.resolve()
+    .then(() => (translateScriptAsync as (text: string, id: string) => unknown)(source, pineId))
+    .then(
+      (value: unknown) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+  return Promise.race([compiled, late]).then((outcome) => {
+    clearTimeout(timer);
+    if ('late' in outcome) {
+      return {
+        __tvmcpError: {
+          code: 'TIMEOUT',
+          message: `TradingView did not compile the script within ${String(waitMs)} ms`,
+          hint: 'Try again in a moment: the Pine compiler of TradingView may be busy.',
+          details: { waitMs },
+        },
+      };
+    }
+    if ('error' in outcome) {
+      const { error } = outcome;
+      if (typeof error === 'string') {
+        // An HTTP failure: the app rejects with the text it shows.
+        return failed(error, error);
+      }
+      const rejected = (typeof error === 'object' && error !== null ? error : {}) as {
+        reason?: { errors?: unknown; warnings?: unknown } | null;
+        message?: unknown;
+      };
+      const errors = diagnosticsOf(rejected.reason?.errors);
+      if (errors.length > 0) {
+        return { errors, warnings: diagnosticsOf(rejected.reason?.warnings) };
+      }
+      const reason = typeof rejected.message === 'string' ? rejected.message : String(error);
+      return failed(`TradingView did not compile the script: ${reason}`, reason);
+    }
+    const result = (
+      typeof outcome.value === 'object' && outcome.value !== null ? outcome.value : {}
+    ) as { compileErrors?: { errors?: unknown; warnings?: unknown } | null };
+    return {
+      errors: diagnosticsOf(result.compileErrors?.errors),
+      warnings: diagnosticsOf(result.compileErrors?.warnings),
+    };
+  });
+}
+
+export type PineRawDiagnostic = Exclude<
+  Awaited<ReturnType<typeof compilePineSource>>,
+  PageErrorSentinel
+>['errors'][number];
+
+// Adds the script the open editor holds to the active chart through addToChart of the facade, the
+// way the Add to chart button of the editor does, and answers the ids of the studies on the chart
+// right before (for the caller to find the one that was added) and how many entries the console
+// of the editor held then (consoleFrom; null when the console cannot be read), for the caller to
+// read the diagnostics written since. The app saves a draft (a new script or a server draft) as a
+// server draft first and compiles; it resolves even when compilation fails. Waits at most waitMs for
+// addToChart (TIMEOUT). The checks that keep the app from opening a dialog run right before it acts
+// and refuse before anything is added: AUTH_REQUIRED while signed out (the app would ask the user
+// to sign in), NOT_AVAILABLE for a saved script with unsaved changes or whose state cannot be read
+// (the app would ask in a modal dialog whether to save a new version). The indicator limit of the
+// plan is the caller's to check first, as the app opens its paywall on a full chart. Other failures:
+// CAPABILITY_UNAVAILABLE without the registry, a facade with addToChart or the chart API,
+// NOT_AVAILABLE when no editor is open or addToChart rejects (with the reason).
+export function addPineScriptToChart(
+  win: TvWindow,
+  lib: PageLib,
+  waitMs: number,
+):
+  | Promise<{ before: string[]; consoleFrom: number | null } | PageErrorSentinel>
+  | PageErrorSentinel {
+  const getOpenPineEditor = lib.findExport('getOpenPineEditor');
+  if (typeof getOpenPineEditor !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no registry of open Pine editors',
+        hint: 'Check app_health: the app may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
+  let entry: Partial<OpenPineEditorLike> | null = null;
+  for (const candidate of ['dialog', 'bottom'] as const) {
+    let found: unknown;
+    try {
+      found = (getOpenPineEditor as (at: string) => unknown)(candidate);
+    } catch {
+      found = null;
+    }
+    if (found !== null && found !== undefined) {
+      entry = found;
+      break;
+    }
+  }
+  if (entry === null) {
+    return {
+      __tvmcpError: {
+        code: 'NOT_AVAILABLE',
+        message: 'The Pine Editor is not open',
+        hint: 'Open a script with pine_open, or start one with pine_new.',
+      },
+    };
+  }
+  let found: unknown;
+  try {
+    found = entry.getFacade?.();
+  } catch {
+    found = null;
+  }
+  const facade = (
+    typeof found === 'object' && found !== null ? found : {}
+  ) as Partial<PineEditorFacadeLike>;
+  if (typeof facade.addToChart !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'The Pine Editor of this build has no addToChart to add the script with',
+        hint: 'Add the script in the Pine Editor of TradingView itself.',
+      },
+    };
+  }
+  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  let chart: { getAllStudies?: unknown } | null | undefined;
+  try {
+    chart = api?.activeChart?.();
+  } catch {
+    chart = undefined;
+  }
+  const studiesOf = chart?.getAllStudies;
+  if (typeof studiesOf !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no chart API to add the script to',
+        hint: 'Check app_health: the chart may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
+  if (win.is_authenticated !== true) {
+    return {
+      __tvmcpError: {
+        code: 'AUTH_REQUIRED',
+        message: 'Adding a Pine script to the chart needs a signed-in TradingView account',
+        hint: 'Sign in to TradingView, then try again.',
+      },
+    };
+  }
+  const ask = (name: 'isDraft' | 'isModified'): unknown => {
+    try {
+      const member = facade[name];
+      return typeof member === 'function' ? (member as () => unknown).call(facade) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  // Only a draft, or a saved script without unsaved changes, is added without a dialog; an answer
+  // that cannot be read counts as the case with the dialog.
+  if (ask('isDraft') !== true && ask('isModified') !== false) {
+    return {
+      __tvmcpError: {
+        code: 'NOT_AVAILABLE',
+        message:
+          'The Pine Editor holds a saved script with unsaved changes, which TradingView adds only ' +
+          'after asking in a dialog whether to save a new version',
+        hint:
+          'Save the changes first with pine_save, or start a new script with pine_new and the ' +
+          'source, then add that.',
+      },
+    };
+  }
+  const idsNow = (): string[] => {
+    let listed: unknown;
+    try {
+      listed = (studiesOf as () => unknown).call(chart);
+    } catch {
+      listed = [];
+    }
+    return (Array.isArray(listed) ? (listed as unknown[]) : []).flatMap((item) => {
+      const id: unknown = (item as { id?: unknown } | null | undefined)?.id;
+      return typeof id === 'string' ? [id] : typeof id === 'number' ? [String(id)] : [];
+    });
+  };
+  let consoleFrom: number | null = null;
+  try {
+    const messages = facade._editorStore?.getStore().getState().console?.messages;
+    consoleFrom = Array.isArray(messages) ? messages.length : null;
+  } catch {
+    consoleFrom = null;
+  }
+  const before = idsNow();
+  const editor = facade as Required<Pick<PineEditorFacadeLike, 'addToChart'>>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<{ late: true }>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ late: true });
+    }, waitMs);
+  });
+  const added = Promise.resolve()
+    .then(() => editor.addToChart())
+    .then(
+      () => ({ done: true }) as const,
+      (error: unknown) => ({ error }),
+    );
+  return Promise.race([added, late]).then((outcome) => {
+    clearTimeout(timer);
+    if ('late' in outcome) {
+      return {
+        __tvmcpError: {
+          code: 'TIMEOUT',
+          message: `TradingView did not add the script within ${String(waitMs)} ms`,
+          hint:
+            'It may still appear on the chart: check indicator_list. If TradingView shows a ' +
+            'dialog, answer or close it there.',
+          details: { waitMs },
+        },
+      };
+    }
+    if ('error' in outcome) {
+      const { error } = outcome;
+      const message: unknown = (error as { message?: unknown } | null | undefined)?.message;
+      const reason =
+        typeof error === 'string' ? error : typeof message === 'string' ? message : String(error);
+      return {
+        __tvmcpError: {
+          code: 'NOT_AVAILABLE',
+          message: `TradingView did not add the script: ${reason}`,
+          hint: 'Check the console of the Pine Editor and indicator_list.',
+          details: { reason },
+        },
+      };
+    }
+    return { before, consoleFrom };
+  });
+}
+
+// The study on the active chart whose id is not in `before`, which the editor added: the last such
+// Pine study, else the last new study, else null. compileError is what hasCompileError of its study
+// core answers, null when it cannot be read. Changes nothing, and needs no page library, so the
+// caller may poll it.
+export function readAddedPineStudy(
+  win: TvWindow,
+  before: string[],
+): { studyId: string | null; compileError: boolean | null } {
+  const attempt = (read: () => unknown): unknown => {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  };
+  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  const chart = attempt(() => api?.activeChart?.()) as
+    Partial<ChartWidgetApiLike> | null | undefined;
+  const listed = attempt(() => chart?.getAllStudies?.());
+  const known = new Set(before);
+  const fresh = (Array.isArray(listed) ? (listed as unknown[]) : []).flatMap((item) => {
+    const id: unknown = (item as { id?: unknown } | null | undefined)?.id;
+    const text = typeof id === 'string' ? id : typeof id === 'number' ? String(id) : null;
+    return text === null || known.has(text) ? [] : [text];
+  });
+  const coreOf = (id: string) =>
+    attempt(() => chart?.getStudyById?.(id).study()) as Partial<StudyCoreLike> | null | undefined;
+  const isPine = (id: string): boolean => {
+    const meta = attempt(() => coreOf(id)?.metaInfo?.()) as StudyMetaInfoLike | null | undefined;
+    const pine: unknown = meta?.pine;
+    return typeof pine === 'object' && pine !== null;
+  };
+  const studyId = fresh.findLast(isPine) ?? fresh.at(-1) ?? null;
+  if (studyId === null) {
+    return { studyId: null, compileError: null };
+  }
+  const failed = attempt(() => coreOf(studyId)?.hasCompileError?.());
+  return { studyId, compileError: typeof failed === 'boolean' ? failed : null };
+}
+
+// The diagnostics the console of the open editor holds from entry `from` on (the length it had
+// before the caller acted; all entries when it has fewer now, as when it was cleared, and none for
+// null). An entry with a start is a diagnostic, an error or a warning by its level; its end column,
+// which the console keeps one past the last column, is made inclusive again, and an end on line 0
+// counts as none. When no entry has a start, the error entries without one are the errors. Without
+// an editor or a readable console the answer is empty. Changes nothing.
+export function readPineConsoleDiagnostics(
+  _win: TvWindow,
+  lib: PageLib,
+  from: number | null,
+): { errors: PineRawDiagnostic[]; warnings: PineRawDiagnostic[] } {
+  const none = { errors: [], warnings: [] };
+  const getOpenPineEditor = lib.findExport('getOpenPineEditor');
+  if (typeof getOpenPineEditor !== 'function' || from === null) {
+    return none;
+  }
+  let messages: unknown;
+  for (const candidate of ['dialog', 'bottom'] as const) {
+    try {
+      const entry = (getOpenPineEditor as (at: string) => unknown)(candidate) as
+        Partial<OpenPineEditorLike> | null | undefined;
+      if (entry !== null && entry !== undefined) {
+        messages = entry.getFacade?.()?._editorStore?.getStore().getState().console?.messages;
+        break;
+      }
+    } catch {
+      messages = undefined;
+    }
+  }
+  if (!Array.isArray(messages)) {
+    return none;
+  }
+  const all = messages as unknown[];
+  const fresh = (all.length < from ? all : all.slice(from)).map(
+    (raw) => (typeof raw === 'object' && raw !== null ? raw : {}) as PineConsoleEntryLike,
+  );
+  const number = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const toDiagnostic = (entry: PineConsoleEntryLike): PineRawDiagnostic => {
+    const endLine = number(entry.end?.line);
+    const endColumn = number(entry.end?.column);
+    return {
+      message: typeof entry.text === 'string' ? entry.text : null,
+      ctx: {},
+      start:
+        typeof entry.start === 'object' && entry.start !== null
+          ? { line: number(entry.start.line), column: number(entry.start.column) }
+          : null,
+      end:
+        endLine === null || endLine <= 0
+          ? null
+          : { line: endLine, column: endColumn === null ? null : endColumn - 1 },
+    };
+  };
+  const placed = fresh.filter((entry) => typeof entry.start === 'object' && entry.start !== null);
+  if (placed.length === 0) {
+    return {
+      errors: fresh.filter((entry) => entry.level === 'error').map(toDiagnostic),
+      warnings: [],
+    };
+  }
+  return {
+    errors: placed.filter((entry) => entry.level === 'error').map(toDiagnostic),
+    warnings: placed.filter((entry) => entry.level === 'warning').map(toDiagnostic),
+  };
+}
+
+// What the console of the open editor and the Pine logs of the studies on the active chart hold,
+// read without changing anything (enableLogs, whose effect is not known, is never called).
+// - editor: the entries of the live console of the editor (the private store of the facade; the
+//   copy the app persists is keyed by the account and never read), oldest first, each with its
+//   level, text and clock (the local clock time the app keeps, without a date), and order, a sort
+//   key in milliseconds: the clock read as a time of today in the time zone of the page, or of
+//   yesterday when that lies in the future, and never later than the key of the entry after it, so
+//   the order of the console stays (a clock that cannot be read takes the key of the entry after
+//   it). null when no editor is open (editorOpen false) or its console cannot be read.
+// - scripts: the log items of each study whose core has logs(), in the order of the chart and of
+//   the set, with the time and the bar time as the app gives them (null when no number) and the
+//   level as text (info when it is none).
+// - silentStudies: the studies whose logs() is a set without items: their script writes logs, but
+//   the app holds none, as when the logs are not enabled.
+export function readPineConsole(
+  win: TvWindow,
+  lib: PageLib,
+): {
+  editorOpen: boolean;
+  editor: { level: string; text: string; clock: string | null; order: number | null }[] | null;
+  scripts: {
+    studyId: string;
+    level: string;
+    text: string;
+    time: number | null;
+    barTime: number | null;
+  }[];
+  silentStudies: string[];
+} {
+  const attempt = (read: () => unknown): unknown => {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  };
+  const number = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+  let editorOpen = false;
+  let messages: unknown;
+  const getOpenPineEditor = lib.findExport('getOpenPineEditor');
+  if (typeof getOpenPineEditor === 'function') {
+    for (const candidate of ['dialog', 'bottom'] as const) {
+      const entry = attempt(() => (getOpenPineEditor as (at: string) => unknown)(candidate)) as
+        Partial<OpenPineEditorLike> | null | undefined;
+      if (entry !== null && entry !== undefined) {
+        editorOpen = true;
+        messages = attempt(
+          () => entry.getFacade?.()?._editorStore?.getStore().getState().console?.messages,
+        );
+        break;
+      }
+    }
+  }
+  // A clock such as 14:03:07 or 2:03:07 PM as a time in milliseconds, or null.
+  const now = Date.now();
+  const clockTime = (clock: string): number | null => {
+    const match = /(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AaPp])\.?[Mm]\.?)?/.exec(clock);
+    if (match === null) {
+      return null;
+    }
+    let hours = Number(match[1]);
+    const half = match[4]?.toLowerCase();
+    if (half !== undefined) {
+      hours = (hours % 12) + (half === 'p' ? 12 : 0);
+    }
+    const at = new Date(now);
+    at.setHours(hours, Number(match[2]), Number(match[3] ?? 0), 0);
+    const time = at.getTime();
+    return time > now ? time - 86_400_000 : time;
+  };
+  let editor: { level: string; text: string; clock: string | null; order: number | null }[] | null =
+    null;
+  if (editorOpen && Array.isArray(messages)) {
+    const entries = (messages as unknown[]).map((raw) => {
+      const item = (typeof raw === 'object' && raw !== null ? raw : {}) as PineConsoleEntryLike;
+      return {
+        level: typeof item.level === 'string' ? item.level : 'info',
+        text: typeof item.text === 'string' ? item.text : '',
+        clock: typeof item.time === 'string' ? item.time : null,
+        order: null as number | null,
+      };
+    });
+    let next = Number.POSITIVE_INFINITY;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const item = entries[index];
+      if (item !== undefined) {
+        const parsed = item.clock === null ? null : clockTime(item.clock);
+        const order = Math.min(parsed ?? (Number.isFinite(next) ? next : now), next);
+        item.order = order;
+        next = order;
+      }
+    }
+    editor = entries;
+  }
+
+  const scripts: {
+    studyId: string;
+    level: string;
+    text: string;
+    time: number | null;
+    barTime: number | null;
+  }[] = [];
+  const silentStudies: string[] = [];
+  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  const chart = attempt(() => api?.activeChart?.()) as
+    Partial<ChartWidgetApiLike> | null | undefined;
+  const listed = attempt(() => chart?.getAllStudies?.());
+  for (const item of Array.isArray(listed) ? (listed as unknown[]) : []) {
+    const rawId: unknown = (item as { id?: unknown } | null | undefined)?.id;
+    const studyId =
+      typeof rawId === 'string' ? rawId : typeof rawId === 'number' ? String(rawId) : null;
+    if (studyId === null) {
+      continue;
+    }
+    const core = attempt(() => chart?.getStudyById?.(studyId).study()) as
+      Partial<StudyCoreLike> | null | undefined;
+    const set = attempt(() => core?.logs?.()) as
+      | {
+          forEach?: unknown;
+          values?: unknown;
+          [Symbol.iterator]?: unknown;
+        }
+      | null
+      | undefined;
+    if (typeof set !== 'object' || set === null) {
+      continue;
+    }
+    const items: unknown[] = [];
+    attempt(() => {
+      if (typeof set.forEach === 'function') {
+        (set.forEach as (callback: (value: unknown) => void) => void).call(set, (value) => {
+          items.push(value);
+        });
+      } else {
+        const iterate =
+          typeof set.values === 'function'
+            ? (set.values as () => Iterable<unknown>).call(set)
+            : typeof set[Symbol.iterator] === 'function'
+              ? (set as Iterable<unknown>)
+              : [];
+        for (const value of iterate) {
+          items.push(value);
+        }
+      }
+    });
+    const before = scripts.length;
+    for (const raw of items) {
+      if (typeof raw !== 'object' || raw === null) {
+        continue;
+      }
+      const log = raw as { barTime?: unknown; time?: unknown; level?: unknown; message?: unknown };
+      scripts.push({
+        studyId,
+        level: typeof log.level === 'string' ? log.level : 'info',
+        text: typeof log.message === 'string' ? log.message : '',
+        time: number(log.time),
+        barTime: number(log.barTime),
+      });
+    }
+    if (scripts.length === before && items.length === 0) {
+      silentStudies.push(studyId);
+    }
+  }
+  return { editorOpen, editor, scripts, silentStudies };
+}

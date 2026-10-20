@@ -770,5 +770,446 @@ test('the Pine source tools say which of them read and which can replace text', 
     pine_set_source: [false, true],
     pine_list_scripts: [true, false],
     pine_save: [false, false],
+    pine_compile: [false, false],
+    pine_get_errors: [true, false],
+    pine_get_console: [true, false],
+  });
+});
+
+// The id every text is compiled as: it names no script.
+const COMPILE_ID = 'USER;00000000000000000000000000000000';
+const ISO = expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/) as string;
+const BROKEN =
+  '//@version=6\r\nindicator("Broken")\r\nplot(undeclared_x)\r\nx = deprecated_f()\r\nlegacy_error\r\n';
+const BROKEN_ERRORS = [
+  {
+    line: 3,
+    column: 6,
+    endLine: 3,
+    endColumn: 17,
+    message: 'Undeclared identifier "undeclared_x"',
+    severity: 'error',
+  },
+  {
+    line: 5,
+    column: 1,
+    endLine: null,
+    endColumn: null,
+    message: 'Syntax error at input "legacy_error"',
+    severity: 'error',
+  },
+];
+const BROKEN_WARNINGS = [
+  {
+    line: 4,
+    column: 5,
+    endLine: 4,
+    endColumn: 16,
+    message: 'The function deprecated_f is deprecated',
+    severity: 'warning',
+  },
+];
+
+// The fixture with room for `limit` studies on the chart.
+function withStudyRoom(limit: number, from: TvStateFixture): TvStateFixture {
+  return { ...from, planLimits: { ...from.planLimits, INDICATORS_ON_CHART: limit } };
+}
+
+const studyIdsOf = (win: FakeTvWindow) =>
+  win.TradingViewApi?.activeChart()
+    .getAllStudies()
+    .map(({ id }) => id);
+
+describe('pine_compile', () => {
+  test('pine_compile compiles the editor source without touching the chart', async () => {
+    const { client, win, ctx } = await startHarness(withEditor());
+    const studies = studyIdsOf(win);
+
+    const result = await callTool(client, 'pine_compile', {});
+
+    expect(envelopeOf(result)).toStrictEqual({
+      ok: true,
+      data: {
+        success: true,
+        errors: [],
+        warnings: [],
+        addedToChart: false,
+        studyId: null,
+        compiledAt: ISO,
+      },
+      meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
+    });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([[fixture.pineEditor.source, COMPILE_ID]]);
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(callsOf(win, 'chart.createStudy')).toEqual([]);
+    expect(studyIdsOf(win)).toEqual(studies);
+    expect(ctx.session.lastPineCompile).toEqual(dataOf(result));
+  });
+
+  test('pine_compile with source compiles that text instead', async () => {
+    const { client, win } = await startHarness();
+
+    const result = await callTool(client, 'pine_compile', { source: NEW_SOURCE });
+
+    expect(dataOf(result)).toMatchObject({ success: true, addedToChart: false, studyId: null });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([[NEW_SOURCE, COMPILE_ID]]);
+    // The editor is neither opened nor read.
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+  });
+
+  test('pine_compile rejects source together with addToChart', async () => {
+    const { client, win } = await startHarness(withEditor());
+
+    const result = await callTool(client, 'pine_compile', { source: NEW_SOURCE, addToChart: true });
+
+    expect(errorOf(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(errorOf(result)?.hint).toContain('pine_set_source');
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([]);
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+  });
+
+  test('pine_compile reports errors with positions', async () => {
+    const { client, ctx } = await startHarness();
+
+    const result = await callTool(client, 'pine_compile', { source: BROKEN });
+
+    expect(result.isError).toBeFalsy();
+    expect(dataOf(result)).toStrictEqual({
+      success: false,
+      errors: BROKEN_ERRORS,
+      warnings: BROKEN_WARNINGS,
+      addedToChart: false,
+      studyId: null,
+      compiledAt: ISO,
+    });
+    expect(ctx.session.lastPineCompile).toEqual(dataOf(result));
+  });
+
+  test('pine_compile fails NOT_AVAILABLE without source while the editor is closed', async () => {
+    const { client, win } = await startHarness();
+
+    const result = await callTool(client, 'pine_compile', {});
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    expect(errorOf(result)?.hint).toMatch(/pine_open.*pine_new|pine_new.*pine_open/);
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([]);
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+  });
+
+  test('pine_compile reports an HTTP failure as a typed error, not as compile errors', async () => {
+    const { client, win, ctx } = await startHarness();
+    editorOf(win).compileHttpError = 'The size of the script compilation request is too large.';
+
+    const result = await callTool(client, 'pine_compile', { source: NEW_SOURCE });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: 'The size of the script compilation request is too large.',
+    });
+    expect(ctx.session.lastPineCompile).toBeNull();
+  });
+
+  test('pine_compile with addToChart returns PLAN_LIMIT on a full chart', async () => {
+    const { client, win } = await startHarness(withEditor());
+    const studies = studyIdsOf(win);
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PLAN_LIMIT',
+      details: { feature: 'INDICATORS_ON_CHART', limit: 2 },
+    });
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(callsOf(win, 'dialog.paywall')).toEqual([]);
+    expect(studyIdsOf(win)).toEqual(studies);
+  });
+
+  test('pine_compile with addToChart adds the script when a slot is free', async () => {
+    const { client, win, ctx } = await startHarness(withStudyRoom(3, withEditor()));
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(envelopeOf(result)).toStrictEqual({
+      ok: true,
+      data: {
+        success: true,
+        errors: [],
+        warnings: [],
+        addedToChart: true,
+        studyId: 'NEW001',
+        compiledAt: ISO,
+      },
+      meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
+    });
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([[]]);
+    expect(studyIdsOf(win)).toContain('NEW001');
+    expect(ctx.session.createdStudyIds).toEqual(new Set(['NEW001']));
+    expect(ctx.session.lastPineCompile).toEqual(dataOf(result));
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([]);
+    expect(inspectFakeWindow(win).calls.filter(({ name }) => name.startsWith('dialog.'))).toEqual(
+      [],
+    );
+  });
+
+  test('pine_compile with addToChart reports the compile errors of a new script it added', async () => {
+    const { client, win, ctx } = await startHarness(
+      withStudyRoom(3, withEditor({ script: null, source: BROKEN, savedSource: BROKEN })),
+    );
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(dataOf(result)).toStrictEqual({
+      success: false,
+      errors: BROKEN_ERRORS,
+      warnings: BROKEN_WARNINGS,
+      addedToChart: true,
+      studyId: 'NEW001',
+      compiledAt: ISO,
+    });
+    expect(warningsOf(result).join(' ')).toContain('draft');
+    expect(ctx.session.createdStudyIds).toEqual(new Set(['NEW001']));
+    expect(win.TradingViewApi?.activeChart().getStudyById('NEW001').study().hasCompileError()).toBe(
+      true,
+    );
+  });
+
+  test('pine_compile with addToChart refuses a saved script with unsaved changes before acting', async () => {
+    const { client, win } = await startHarness(withStudyRoom(3, modified()));
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    expect(errorOf(result)?.hint).toContain('pine_save');
+    expect(errorOf(result)?.hint).toContain('pine_new');
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(callsOf(win, 'dialog.confirmSaveChanges')).toEqual([]);
+    expect(editorOf(win).source).toBe(EDITED);
+  });
+
+  test('pine_compile with addToChart fails AUTH_REQUIRED while signed out', async () => {
+    const { client, win } = await startHarness(withStudyRoom(3, withEditor()));
+    editorOf(win).signedIn = false;
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(errorOf(result)).toMatchObject({ code: 'AUTH_REQUIRED' });
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(callsOf(win, 'dialog.signIn')).toEqual([]);
+  });
+
+  test('pine_compile refuses an empty text before compiling', async () => {
+    const { client, win } = await startHarness();
+
+    const result = await callTool(client, 'pine_compile', { source: ' \n ' });
+
+    expect(errorOf(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(callsOf(win, 'translateScriptAsync')).toEqual([]);
+  });
+
+  test('pine_compile with addToChart says so when TradingView adds no study', async () => {
+    const { client, win, ctx } = await startHarness(withStudyRoom(3, withEditor()));
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    if (facade === null || facade === undefined) {
+      throw new Error('The editor must be open');
+    }
+    facade.addToChart = () => Promise.resolve();
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(dataOf(result)).toMatchObject({
+      success: false,
+      errors: [],
+      addedToChart: false,
+      studyId: null,
+    });
+    expect(warningsOf(result).join(' ')).toContain('No new study appeared');
+    expect(ctx.session.createdStudyIds).toEqual(new Set());
+  });
+
+  test('pine_compile with addToChart warns about a compile error the console gives no details of', async () => {
+    const { client, win } = await startHarness(
+      withStudyRoom(3, withEditor({ script: null, source: BROKEN, savedSource: BROKEN })),
+    );
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    if (facade === null || facade === undefined) {
+      throw new Error('The editor must be open');
+    }
+    const add = facade.addToChart.bind(facade);
+    facade.addToChart = async () => {
+      await add();
+      editorOf(win).consoleMessages.length = 0;
+    };
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(dataOf(result)).toMatchObject({
+      success: false,
+      errors: [],
+      addedToChart: true,
+      studyId: 'NEW001',
+    });
+    expect(warningsOf(result).join(' ')).toContain('gave no details');
+  });
+
+  test('pine_compile with addToChart fails NOT_AVAILABLE while the editor is closed', async () => {
+    const { client, win } = await startHarness(withStudyRoom(3, fixture));
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+  });
+});
+
+describe('pine_get_errors', () => {
+  test('pine_get_errors returns the last compile result of the session', async () => {
+    const { client } = await startHarness();
+
+    const before = await callTool(client, 'pine_get_errors', {});
+    expect(dataOf(before)).toStrictEqual({
+      success: true,
+      errors: [],
+      warnings: [],
+      addedToChart: false,
+      studyId: null,
+      compiledAt: null,
+    });
+
+    const compiled = await callTool(client, 'pine_compile', { source: BROKEN });
+    const after = await callTool(client, 'pine_get_errors', {});
+
+    expect(dataOf(after)).toStrictEqual(dataOf(compiled));
+    expect(dataOf(after)).toMatchObject({ success: false, errors: BROKEN_ERRORS });
+  });
+});
+
+// A local clock time `minutesAgo` minutes ago, as the console of the editor keeps it.
+function clockAgo(minutesAgo: number): string {
+  const date = new Date(Date.now() - minutesAgo * 60_000);
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join(':');
+}
+
+// The fixture whose first study writes `logs`.
+function withLogs(logs: NonNullable<TvStateFixture['studies'][number]['logs']>, from = fixture) {
+  const [first, ...rest] = from.studies;
+  if (first === undefined) {
+    throw new Error('The fixture must hold a study');
+  }
+  return { ...from, studies: [{ ...first, logs }, ...rest] };
+}
+
+describe('pine_get_console', () => {
+  test('pine_get_console merges editor and script messages newest first', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { client, win } = await startHarness(
+      withLogs(
+        [
+          // Milliseconds and seconds: numbers above 1e11 are taken as milliseconds.
+          { barTime: now - 1200, time: (now - 1200) * 1000, level: 'info', message: 'older log' },
+          { barTime: now - 300, time: now - 300, level: 'error', message: 'newer log' },
+        ],
+        withEditor(),
+      ),
+    );
+    const older = clockAgo(30);
+    const newer = clockAgo(10);
+    editorOf(win).consoleMessages.push(
+      { level: 'info', text: 'Compiling...', time: older },
+      { level: 'error', text: 'Compilation error', time: newer },
+    );
+
+    const result = await callTool(client, 'pine_get_console', {});
+
+    expect(envelopeOf(result)).toStrictEqual({
+      ok: true,
+      data: {
+        messages: [
+          {
+            time: now - 300,
+            timeIso: isoOf(now - 300),
+            level: 'error',
+            text: 'newer log',
+            source: 'script',
+            studyId: 'STUDY01',
+          },
+          {
+            time: null,
+            timeIso: null,
+            level: 'error',
+            text: 'Compilation error',
+            source: 'editor',
+            clock: newer,
+          },
+          {
+            time: now - 1200,
+            timeIso: isoOf(now - 1200),
+            level: 'info',
+            text: 'older log',
+            source: 'script',
+            studyId: 'STUDY01',
+          },
+          {
+            time: null,
+            timeIso: null,
+            level: 'info',
+            text: 'Compiling...',
+            source: 'editor',
+            clock: older,
+          },
+        ],
+      },
+      meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
+    });
+  });
+
+  test('pine_get_console keeps the newest limit messages', async () => {
+    const { client, win } = await startHarness(withEditor());
+    editorOf(win).consoleMessages.push(
+      { level: 'info', text: 'one', time: clockAgo(3) },
+      { level: 'info', text: 'two', time: clockAgo(2) },
+      { level: 'warning', text: 'three', time: clockAgo(1) },
+    );
+
+    const result = await callTool(client, 'pine_get_console', { limit: 2 });
+
+    expect((dataOf(result).messages as { text: string }[]).map(({ text }) => text)).toEqual([
+      'three',
+      'two',
+    ]);
+  });
+
+  test('pine_get_console warns when the Pine logs of a study are not enabled, and enables none', async () => {
+    const { client, win } = await startHarness(withLogs([]));
+
+    const result = await callTool(client, 'pine_get_console', {});
+
+    expect(dataOf(result)).toEqual({ messages: [] });
+    expect(warningsOf(result).join(' ')).toMatch(/STUDY01.*not enabled|not enabled.*STUDY01/);
+    expect(inspectFakeWindow(win).calls.map(({ name }) => name)).toEqual([]);
+  });
+
+  test('pine_get_console warns when the console of the editor cannot be read', async () => {
+    const { client, win } = await startHarness(withEditor());
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    Object.defineProperty(facade, '_editorStore', { value: undefined });
+
+    const result = await callTool(client, 'pine_get_console', {});
+
+    expect(dataOf(result)).toEqual({ messages: [] });
+    expect(warningsOf(result).join(' ')).toContain('could not be read');
+  });
+
+  test('pine_get_console reads no editor messages while the editor is closed', async () => {
+    const { client, win } = await startHarness();
+    editorOf(win).consoleMessages.push({ level: 'info', text: 'hidden', time: clockAgo(1) });
+
+    const result = await callTool(client, 'pine_get_console', {});
+
+    expect(dataOf(result)).toEqual({ messages: [] });
+    expect(warningsOf(result).join(' ')).toContain('not open');
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
   });
 });

@@ -379,6 +379,15 @@ export interface StudyCoreLike {
   // The rows of the study.
   data(): PlotListLike;
   readonly isStudyStrategy?: boolean;
+  // Whether the script of a Pine study failed to compile (set by setErrorCompilation of the app, as
+  // after the Pine Editor added a script that does not compile). Pure.
+  hasCompileError?(): boolean;
+  // What the Pine log.* calls of the script wrote (notes of Plan 2, section Q4): null for a study
+  // whose metadata has no logs graphics, else a PrimitiveSet of the app (forEach, values(), the
+  // iterator, size; entries() and keys() throw) of items { barTime, time, level, source, message },
+  // with times in a unit not known. It may stay empty until the logs are enabled, which only the
+  // Pine Logs panel of the app does; typed loosely because the items were never observed.
+  logs?(): unknown;
 }
 
 // The metadata of a study, a class instance on the app. A Pine study has pine (its script version
@@ -559,6 +568,32 @@ export interface PineEditorFacadeLike {
     compileErrors?: PineCompileErrorsLike | null | undefined;
     script?: unknown;
   }>;
+  // Adds the script to the chart, compiling it first. A draft (a new script, or a server draft) is
+  // saved as a server draft first, without a dialog; a saved script with unsaved changes makes the
+  // app ask in the modal dialog confirmSaveChanges whether to save a new version; signed out it asks
+  // the user to sign in. It resolves even when the compilation fails: the errors go to the console
+  // of the editor, and a study that was added reports hasCompileError().
+  addToChart?(): Promise<void>;
+  // The redux store of the editor, a private member. Its state holds the live console of the editor
+  // (state.console.messages), which nothing else exposes.
+  readonly _editorStore?: PineEditorStoreLike;
+}
+
+// facade._editorStore (notes of Plan 2, section Q4).
+export interface PineEditorStoreLike {
+  getStore(): { getState(): { console?: { messages?: unknown } } };
+}
+
+// An entry of the console of the editor: level info, warning, error or debug, the text as shown,
+// and time, a local clock time without a date (new Date().toLocaleTimeString() of the app). A
+// diagnostic carries start and end as well, 1-based, with end.column one past the last column.
+// Typed loosely: page code checks each field.
+export interface PineConsoleEntryLike {
+  level?: unknown;
+  text?: unknown;
+  time?: unknown;
+  start?: { line?: unknown; column?: unknown } | null;
+  end?: { line?: unknown; column?: unknown } | null;
 }
 
 // window.TradingView, as far as page code uses it.

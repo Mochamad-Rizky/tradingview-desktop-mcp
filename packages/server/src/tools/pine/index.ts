@@ -4,8 +4,10 @@ import { PlanLimitError, TvMcpError } from '../../core/errors.js';
 import { getPlanLimits, requireBelowLimit } from '../../core/tv/plan-limits.js';
 import { pageWaitMs } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
+import { pineCompileTools } from './compile.js';
 import {
   ensureEditorOpen,
+  notOpenError,
   readEditorState,
   requireUnmodifiedOrConfirmed,
   type PineEditorState,
@@ -27,8 +29,9 @@ import {
 } from './scripts.js';
 
 // The Pine tools (design spec 7, domain Pine). These start a new script, open a saved one, read
-// and replace the text of the Pine Editor, list the saved scripts and save. Later tools of the
-// domain (compile, analysis, outputs) are added to pineTools.
+// and replace the text of the Pine Editor, list the saved scripts and save; the compile tools
+// (compile.ts) join them in pineTools. Later tools of the domain (analysis, outputs) are added to
+// pineTools too.
 //
 // They touch the user's saved scripts and the unsaved text of the editor, so they keep to these
 // rules (design spec 5.3): no text in the editor is replaced while it has unsaved changes unless
@@ -56,8 +59,6 @@ const REPLACES_TEXT = {
 
 const MAX_SOURCE = 500_000;
 
-const NOT_OPEN_HINT = 'Open a saved script with pine_open, or start a new one with pine_new.';
-
 const LIMIT_HINT =
   'The plan of the account limits saved Pine scripts. Free a slot in TradingView or upgrade the ' +
   'plan; this server deletes no script.';
@@ -72,10 +73,6 @@ const confirmInput = (what: string) =>
 
 const sourceInput = () =>
   z.string().max(MAX_SOURCE).describe('The Pine Script source, the whole text of the script.');
-
-function notOpen(): TvMcpError {
-  return new TvMcpError('NOT_AVAILABLE', 'The Pine Editor is not open', { hint: NOT_OPEN_HINT });
-}
 
 // What a tool that changed the editor returns about it.
 function editorData(state: PineEditorState) {
@@ -128,11 +125,11 @@ export async function readPineSourceData(ctx: ToolContext): Promise<{
   const warnings: string[] = [];
   const state = await readEditorState(page, warnings);
   if (!state.open) {
-    throw notOpen();
+    throw notOpenError();
   }
   const { source } = await page.bridge.evaluateWithLib(readPineSource, []);
   if (source === null) {
-    throw notOpen();
+    throw notOpenError();
   }
   return { data: { source, script: state.script, modified: state.modified }, warnings };
 }
@@ -432,7 +429,7 @@ export const pineSave = defineTool({
     const warnings: string[] = [];
     const state = await readEditorState(page, warnings);
     if (!state.open) {
-      throw notOpen();
+      throw notOpenError();
     }
     const wantedName = name?.trim();
     // A server draft (a version whose major part is 0, which TradingView saves on its own, for
@@ -589,4 +586,5 @@ export const pineTools: AnyToolDefinition[] = [
   pineSetSource,
   pineListScripts,
   pineSave,
+  ...pineCompileTools,
 ];

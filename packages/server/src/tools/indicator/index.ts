@@ -172,8 +172,10 @@ export const indicatorSearch = defineTool({
 
 // Fails unless the chart has room for one more study, before anything is added. The check of the
 // chart model answers for the study itself (the app does not count some built-ins, such as
-// Volume); without it the studies on the chart are counted against the plan.
-async function requireStudyRoom(
+// Volume); without it the studies on the chart are counted against the plan. check and count are
+// what readStudyInsertContext reads (with an empty id for a Pine script). pine_compile with
+// addToChart shares it.
+export async function requireStudyRoom(
   page: PageHandle,
   check: { success: boolean; reason: string | null; limitValue: number | null } | null,
   count: number | null,

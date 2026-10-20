@@ -581,6 +581,7 @@ test('createMcpServer creates the dependencies it is not given', () => {
     createdAlertIds: new Set(),
     createdStudyIds: new Set(),
     createdScriptIds: new Set(),
+    lastPineCompile: null,
   });
   expect(registry.list().map(({ name }) => name)).toEqual([
     ...APP_TOOL_NAMES,

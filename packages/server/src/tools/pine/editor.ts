@@ -63,6 +63,13 @@ export async function ensureEditorOpen(
   return state;
 }
 
+// The error of a tool that needs an open editor and found it closed.
+export function notOpenError(): TvMcpError {
+  return new TvMcpError('NOT_AVAILABLE', 'The Pine Editor is not open', {
+    hint: 'Open a saved script with pine_open, or start a new one with pine_new.',
+  });
+}
+
 // Fails CONFIRMATION_REQUIRED when the editor holds unsaved changes and the caller did not pass
 // confirm: true, before `action` replaces the text of the editor.
 export function requireUnmodifiedOrConfirmed(

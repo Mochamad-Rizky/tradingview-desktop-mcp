@@ -30,9 +30,14 @@ import {
   setStudyVisibility,
 } from '../../tools/indicator/page.js';
 import {
+  addPineScriptToChart,
   changePineEditor,
   closePineEditor,
+  compilePineSource,
   openPineEditor,
+  readAddedPineStudy,
+  readPineConsole,
+  readPineConsoleDiagnostics,
   readPineEditorState,
   readPineSource,
   readSavedPineScripts,
@@ -60,6 +65,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   insertStudy,
   probeCapabilities,
   readAppInfo,
+  readAddedPineStudy,
   readAppState,
   readBarRows,
   readChartLayout,
@@ -91,10 +97,14 @@ export const pageLibFunctions: Record<
   string,
   (win: TvWindow, lib: PageLib, ...args: never[]) => unknown
 > = {
+  addPineScriptToChart,
   changePineEditor,
   closePineEditor,
+  compilePineSource,
   openPineEditor,
   readCachedQuote,
+  readPineConsole,
+  readPineConsoleDiagnostics,
   readPineEditorState,
   readPineSource,
   readPlanLimits,

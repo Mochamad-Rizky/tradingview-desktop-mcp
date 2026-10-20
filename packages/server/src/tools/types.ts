@@ -11,6 +11,7 @@ import type { Launcher } from '../core/launcher/launch.js';
 import type { Logger } from '../core/logger.js';
 import type { Tier } from '../core/result.js';
 import type { JsonValue } from '../utils/json.js';
+import type { PineCompileResult } from './pine/mappers.js';
 
 // The tool name prefixes of design spec 5.1, without the underscore.
 export type Domain =
@@ -42,6 +43,8 @@ export interface SessionState {
   // The ids of the Pine scripts pine_save saved as new scripts. Saving a new version of one needs
   // no confirmation.
   createdScriptIds: Set<string>;
+  // The result of the last pine_compile, which pine_get_errors returns; null before the first.
+  lastPineCompile: PineCompileResult | null;
 }
 
 // What a handler works with. Over HTTP the connection, the launcher, the logger and the event bus
