@@ -728,7 +728,9 @@ export const pineSmartCompile = defineTool({
     'warning. Compile errors are a result; a failure of TradingView to compile at all is ' +
     'NOT_AVAILABLE or TIMEOUT. Nothing is written to the editor unless writeBack: true, which ' +
     'writes the final text into it, as pine_set_source does, when it differs from the text the ' +
-    `call started with. An editor with unsaved changes needs confirm: true. ${KEPT_FLAG} An open one is ` +
+    'call started with and the last attempt compiled or has fewer errors than the first (else ' +
+    'writtenBack is false and a warning says why). An editor with unsaved changes needs ' +
+    `confirm: true. ${KEPT_FLAG} An open one is ` +
     'refused with CONFIRMATION_REQUIRED before anything is compiled, and a closed one that the ' +
     'write opens, and that restores unsaved text when it opens, is refused then, after the ' +
     'compilations; either way nothing is written. When the text came from the editor, it is ' +
@@ -810,10 +812,21 @@ export const pineSmartCompile = defineTool({
     }
 
     let writtenBack = false;
+    // The fixed text goes into the editor only when it compiles, or with fewer errors than the
+    // text the call started with, so that fixes that made things worse are not written.
+    const before = run.attempts[0]?.errors.length ?? 0;
+    const after = run.attempts.at(-1)?.errors.length ?? 0;
     if (writeBack === true && run.source === start) {
       warnings.push(
         'writeBack was asked for, but no fix changed the text, so the Pine Editor was left as ' +
           'it is.',
+      );
+    } else if (writeBack === true && !run.success && after >= before) {
+      warnings.push(
+        `writeBack was asked for, but the fixed text compiles with ${String(after)} ` +
+          `error${after === 1 ? '' : 's'}, not fewer than the ${String(before)} of the text the ` +
+          'call started with, so nothing was written to the Pine Editor. source holds the fixed ' +
+          'text; the errors of each attempt say where it stands.',
       );
     } else if (writeBack === true) {
       const { differs } = await changeEditor(

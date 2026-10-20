@@ -2161,6 +2161,52 @@ describe('pine_smart_compile', () => {
     expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
   });
 
+  test('smart compile writeBack writes nothing when the fixed text compiles worse than the text it started with', async () => {
+    // A script without //@version compiles as Pine v1, where rsi( is still a function; the version
+    // the fixes add makes it v6, where it is not, while the script names a variable rsi, which
+    // keeps the rename from the fixes of the first attempt.
+    const headerless = 'study("x")\nrsi = 3\nplot(undeclared_a)\nplot(rsi(close, 14))\n';
+    const { client, win } = await startHarness(saved(headerless));
+
+    const result = await callTool(client, 'pine_smart_compile', {
+      writeBack: true,
+      maxAttempts: 2,
+    });
+
+    const data = dataOf(result) as { attempts: { errors: unknown[] }[] };
+    expect(data.attempts.map(({ errors }) => errors.length)).toEqual([1, 2]);
+    expect(dataOf(result)).toMatchObject({ success: false, writtenBack: false });
+    expect(warningsOf(result).join(' ')).toMatch(
+      /writeBack was asked for, but the fixed text compiles with 2 errors, not fewer than the 1/,
+    );
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+    expect(editorOf(win).source).toBe(headerless);
+  });
+
+  test('smart compile writeBack writes nothing when the fixed text has as many errors as at first', async () => {
+    const headerless = 'study("x")\nrsi = 3\nplot(undeclared_a)\nplot(rsi(close, 14))\n';
+    const { client, win } = await startHarness(saved(headerless));
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true });
+
+    const data = dataOf(result) as { attempts: { errors: unknown[] }[] };
+    expect(data.attempts.map(({ errors }) => errors.length)).toEqual([1, 2, 1]);
+    expect(dataOf(result)).toMatchObject({ success: false, writtenBack: false });
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+  });
+
+  test('smart compile writeBack writes a fixed text with fewer errors than at first, though it still fails', async () => {
+    const source = '//@version=6\nindicator("x")\nplot(undeclared_a)\nplot(rsi(close, 14))\n';
+    const { client, win } = await startHarness(saved(source));
+
+    const result = await callTool(client, 'pine_smart_compile', { writeBack: true });
+
+    const data = dataOf(result) as { attempts: { errors: unknown[] }[]; source: string };
+    expect(data.attempts.map(({ errors }) => errors.length)).toEqual([2, 1]);
+    expect(dataOf(result)).toMatchObject({ success: false, writtenBack: true });
+    expect(callsOf(win, 'pineFacade.setScript')).toEqual([[data.source]]);
+  });
+
   test('smart compile writeBack with applyFixes false writes nothing and asks for no confirm', async () => {
     const { client, win } = await startHarness(withEditor({ source: V4_IN_V6 }));
 
