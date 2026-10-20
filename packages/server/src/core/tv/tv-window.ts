@@ -20,6 +20,9 @@ export interface TvWindow {
   TVD?: TvdLike;
   // When the web app was built, such as "2026-10-16T17:55:37".
   BUILD_TIME?: string;
+  // Whether an account is signed in. The app sends no request about saved Pine scripts and saves
+  // none while it is false, and the facade of the Pine Editor asks the user to sign in instead.
+  is_authenticated?: boolean;
   // The webpack chunk list, the way into the module registry (notes, section 4.7). Only the page
   // library (page-lib.ts) pushes to it.
   webpackChunktradingview?: WebpackChunkListLike;
@@ -463,7 +466,8 @@ export interface TvdLike {
 
 // TradingViewApi.pineEditorApi() (notes of Plan 2, section Q1). Only the members page code uses
 // are described. It has no close(), isOpen() or isVisible(). deleteScript and renameScript are
-// left out on purpose: the server never deletes or renames a script.
+// left out on purpose: the server never deletes or renames a script, and so is saveExistingScript,
+// which the server does not use.
 export interface PineEditorApiLike {
   // Loads the chunk of the editor and opens it, as the side panel on the current layout. The Pine
   // button of the toolbar passes { scriptInfo: { script: null }, openSourceId: "main_button",
@@ -473,6 +477,41 @@ export interface PineEditorApiLike {
   // The facade of the editor at a placement, or null when none is open there.
   getDialogFacade?(): PineEditorFacadeLike | null;
   getBottomFacade?(): PineEditorFacadeLike | null;
+  // The same request as the export requestUserScripts: the saved scripts of the account.
+  listSavedScripts?(): Promise<unknown>;
+  // Saves a new script under name, with no dialog. It first runs the saved-script limit check of
+  // the app, which opens the paywall when the limit is reached and then throws, so callers check
+  // the limit themselves first. Rejects with a string, an Error or the compile errors when the pine
+  // facade refuses the script.
+  saveNewScript?(script: { source: string; name: string }): Promise<PineSaveResultLike>;
+}
+
+// What saveNewScript resolves with (handleSaveResult of the app).
+export interface PineSaveResultLike {
+  success?: boolean;
+  metaInfo?: { scriptIdPart?: unknown; pine?: { version?: unknown } | null } | null;
+  compileErrors?: PineCompileErrorsLike | null;
+}
+
+// The errors and warnings of a compilation. A diagnostic has a message and, when it has a place,
+// a 1-based start line and column (0 for none).
+export interface PineCompileErrorsLike {
+  errors?: unknown;
+  warnings?: unknown;
+}
+
+// An item of the saved scripts the export requestUserScripts resolves with (a request to the pine
+// facade, list?filter=saved, memoised by the app; [] while signed out). A version whose major part
+// is 0 is a server draft. modified orders the items; its unit is not known. kind was inferred from
+// the type guards of the app ("study", "strategy" or "library") and may be missing. Typed loosely
+// because the list was never observed.
+export interface SavedPineScriptLike {
+  scriptIdPart?: unknown;
+  scriptName?: unknown;
+  scriptTitle?: unknown;
+  version?: unknown;
+  modified?: unknown;
+  kind?: unknown;
 }
 
 export interface PineEditorOpenOptions {
@@ -489,8 +528,8 @@ export interface OpenPineEditorLike {
   getFacade(): PineEditorFacadeLike | null;
 }
 
-// The facade of an open editor. Only the readers page code uses are described; the members that
-// replace the text or reset the script (releaseScript, destroy) are left out on purpose.
+// The facade of an open editor. Only the members page code uses are described; the members that
+// reset the script (releaseScript, destroy) and renameScript are left out on purpose.
 export interface PineEditorFacadeLike {
   // Whether the text in the editor differs from the text of the script as it was opened or saved.
   isModified(): boolean;
@@ -501,11 +540,33 @@ export interface PineEditorFacadeLike {
   getScriptIdVersion(): { scriptIdPart: string; version?: string | undefined } | null;
   // The text in the editor. Rejects while the code editor is not mounted.
   getSource(): Promise<string>;
+  // Replaces the text with the template of a new script of the type, which names the account in a
+  // comment. Any other type gives the indicator template.
+  openNewScript?(type?: string): Promise<void>;
+  // Replaces the text, keeping the script.
+  setScript?(source: string): Promise<void>;
+  // Opens a saved script, loading its text with a request, or with scriptSource as its text when
+  // given. On any failure it opens a new script instead, which replaces the text too.
+  openScript?(info: {
+    scriptIdPart: string;
+    version?: string;
+    scriptSource?: string;
+  }): Promise<void>;
+  // Saves a new version of a saved script under its own name, with no dialog. For a draft it asks
+  // the user for a name in a dialog, and signed out it asks the user to sign in. Rejects with
+  // undefined when there is nothing to save, the save fails or the dialog is cancelled.
+  saveScript?(): Promise<{
+    compileErrors?: PineCompileErrorsLike | null | undefined;
+    script?: unknown;
+  }>;
 }
 
 // window.TradingView, as far as page code uses it.
 export interface TradingViewGlobalLike {
   bottomWidgetBar?: BottomWidgetBarLike;
+  // The same function as the export isFeatureEnabled of the feature toggles: whether a toggle of
+  // the app is on.
+  isFeatureEnabled?(name: string): unknown;
 }
 
 // The bar of widgets at the bottom of the chart page. close() minimizes it, which hides the widget

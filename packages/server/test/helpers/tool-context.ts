@@ -83,6 +83,7 @@ export function createTestContext(
       createdDrawingIds: new Set(),
       createdAlertIds: new Set(),
       createdStudyIds: new Set(),
+      createdScriptIds: new Set(),
     },
     ...overrides,
   };

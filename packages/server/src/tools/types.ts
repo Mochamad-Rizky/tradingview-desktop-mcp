@@ -39,6 +39,9 @@ export interface SessionState {
   createdAlertIds: Set<string>;
   // The ids of the studies indicator_add put on a chart, until indicator_remove removes them.
   createdStudyIds: Set<string>;
+  // The ids of the Pine scripts pine_save saved as new scripts. Saving a new version of one needs
+  // no confirmation.
+  createdScriptIds: Set<string>;
 }
 
 // What a handler works with. Over HTTP the connection, the launcher, the logger and the event bus

@@ -76,6 +76,7 @@ export function createMcpServer(
     createdDrawingIds: new Set(),
     createdAlertIds: new Set(),
     createdStudyIds: new Set(),
+    createdScriptIds: new Set(),
   };
   const base = { config, logger, connection, launcher, events, session };
 

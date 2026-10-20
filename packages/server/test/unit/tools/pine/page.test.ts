@@ -207,7 +207,7 @@ describe('readPineEditorState', () => {
     });
   });
 
-  test('reports a script id whose version is not text as no script, and a draft', async () => {
+  test('reports a script id whose version is not text with a null version, and a draft', async () => {
     const facade = {
       isModified: () => false,
       isDraft: () => {
@@ -222,7 +222,13 @@ describe('readPineEditorState', () => {
     );
 
     expect(result).toStrictEqual({
-      state: { open: true, placement: 'dialog', modified: false, draft: true, script: null },
+      state: {
+        open: true,
+        placement: 'dialog',
+        modified: false,
+        draft: true,
+        script: { id: 'USER;v', version: null },
+      },
       unreadable: ['isDraft'],
     });
   });
@@ -278,6 +284,31 @@ describe('readPineEditorState', () => {
 });
 
 describe('openPineEditor', () => {
+  test('answers an open editor whose script has an id but no version with a null version', async () => {
+    const facade = {
+      isModified: () => false,
+      isDraft: () => true,
+      getScriptIdVersion: () => ({ scriptIdPart: 'USER;v' }),
+      getSource: () => Promise.resolve(''),
+    };
+    const { result } = await libResultOf(
+      openPineEditor,
+      [100],
+      withModules(registry({ dialog: { getFacade: () => facade } })),
+    );
+
+    expect(result).toStrictEqual({
+      state: {
+        open: true,
+        placement: 'dialog',
+        modified: false,
+        draft: true,
+        script: { id: 'USER;v', version: null },
+      },
+      unreadable: [],
+    });
+  });
+
   test('opens a closed editor the way the toolbar does and waits until it is ready', async () => {
     const make = chart(fixture, { pineEditorReadyMs: 120 });
     const win = make();

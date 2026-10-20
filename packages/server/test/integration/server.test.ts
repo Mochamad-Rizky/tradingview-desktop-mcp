@@ -12,6 +12,7 @@ import { batchTools } from '../../src/tools/batch/index.js';
 import { chartTools } from '../../src/tools/chart/index.js';
 import { dataTools } from '../../src/tools/data/index.js';
 import { indicatorTools } from '../../src/tools/indicator/index.js';
+import { pineTools } from '../../src/tools/pine/index.js';
 import { createToolRegistry, registerToolsWithServer } from '../../src/tools/registry.js';
 import { defineTool, type ToolRegistry } from '../../src/tools/types.js';
 import { startFakeCdpServer } from '../helpers/fake-cdp/server.js';
@@ -31,14 +32,18 @@ import {
 
 const HEALTH_URI = 'tradingview://app/health';
 // What a server offers when nothing narrows its tools: the tools of the app, of the chart, of
-// market data and of indicators, then the batch. Market depth is the one data tool outside the
-// core profile.
+// market data, of indicators and of Pine, then the batch. Market depth is the one data tool outside
+// the core profile.
 const APP_TOOL_NAMES = appTools.map(({ name }) => name);
 const CHART_TOOL_NAMES = chartTools.map(({ name }) => name);
 const DATA_TOOL_NAMES = dataTools.map(({ name }) => name);
 const CORE_DATA_TOOL_NAMES = DATA_TOOL_NAMES.filter((name) => name !== 'data_get_market_depth');
 const INDICATOR_TOOL_NAMES = indicatorTools.map(({ name }) => name);
 const READ_INDICATOR_TOOL_NAMES = indicatorTools
+  .filter(({ annotations }) => annotations.readOnlyHint === true)
+  .map(({ name }) => name);
+const PINE_TOOL_NAMES = pineTools.map(({ name }) => name);
+const READ_PINE_TOOL_NAMES = pineTools
   .filter(({ annotations }) => annotations.readOnlyHint === true)
   .map(({ name }) => name);
 
@@ -135,6 +140,7 @@ test('lists registered tools with descriptions and input schemas', async () => {
     ...CHART_TOOL_NAMES,
     ...DATA_TOOL_NAMES,
     ...INDICATOR_TOOL_NAMES,
+    ...PINE_TOOL_NAMES,
     'batch_run',
   ]);
   expect(tools.find(({ name }) => name === 'batch_run')).toMatchObject({
@@ -574,12 +580,14 @@ test('createMcpServer creates the dependencies it is not given', () => {
     createdDrawingIds: new Set(),
     createdAlertIds: new Set(),
     createdStudyIds: new Set(),
+    createdScriptIds: new Set(),
   });
   expect(registry.list().map(({ name }) => name)).toEqual([
     ...APP_TOOL_NAMES,
     ...CHART_TOOL_NAMES,
     ...DATA_TOOL_NAMES,
     ...INDICATOR_TOOL_NAMES,
+    ...PINE_TOOL_NAMES,
     'batch_run',
   ]);
 });
@@ -597,6 +605,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     ...CHART_TOOL_NAMES,
     ...CORE_DATA_TOOL_NAMES,
     ...INDICATOR_TOOL_NAMES,
+    ...PINE_TOOL_NAMES,
     'batch_run',
   ]);
   expect(toolsOf({ profile: 'full', toolPatterns: ['batch_*'] })).toEqual(['batch_run']);
@@ -615,6 +624,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     'chart_get_visible_range',
     ...DATA_TOOL_NAMES,
     ...READ_INDICATOR_TOOL_NAMES,
+    ...READ_PINE_TOOL_NAMES,
   ]);
   expect(lines).toEqual([]);
 

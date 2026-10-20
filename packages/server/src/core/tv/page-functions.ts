@@ -29,7 +29,15 @@ import {
   removeStudy,
   setStudyVisibility,
 } from '../../tools/indicator/page.js';
-import { closePineEditor, openPineEditor, readPineEditorState } from '../../tools/pine/page.js';
+import {
+  changePineEditor,
+  closePineEditor,
+  openPineEditor,
+  readPineEditorState,
+  readPineSource,
+  readSavedPineScripts,
+  savePineScript,
+} from '../../tools/pine/page.js';
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
@@ -83,11 +91,15 @@ export const pageLibFunctions: Record<
   string,
   (win: TvWindow, lib: PageLib, ...args: never[]) => unknown
 > = {
+  changePineEditor,
   closePineEditor,
   openPineEditor,
   readCachedQuote,
   readPineEditorState,
+  readPineSource,
   readPlanLimits,
+  readSavedPineScripts,
   readStudyCatalog,
   readStudyInsertContext,
+  savePineScript,
 };

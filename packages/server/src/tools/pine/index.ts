@@ -1,0 +1,580 @@
+import { z } from 'zod';
+import type { PageHandle } from '../../core/connection.js';
+import { PlanLimitError, TvMcpError } from '../../core/errors.js';
+import { getPlanLimits, requireBelowLimit } from '../../core/tv/plan-limits.js';
+import { pageWaitMs } from '../chart/strategies.js';
+import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
+import {
+  ensureEditorOpen,
+  readEditorState,
+  requireUnmodifiedOrConfirmed,
+  type PineEditorState,
+} from './editor.js';
+import {
+  changePineEditor,
+  readPineSource,
+  readSavedPineScripts,
+  savePineScript,
+  type PineEditorChange,
+} from './page.js';
+import {
+  countedScripts,
+  findSavedScripts,
+  isOpenLimited,
+  savedScriptLimit,
+  toSavedScript,
+  type SavedScriptRow,
+} from './scripts.js';
+
+// The Pine tools (design spec 7, domain Pine). These start a new script, open a saved one, read
+// and replace the text of the Pine Editor, list the saved scripts and save. Later tools of the
+// domain (compile, analysis, outputs) are added to pineTools.
+//
+// They touch the user's saved scripts and the unsaved text of the editor, so they keep to these
+// rules (design spec 5.3): no text in the editor is replaced while it has unsaved changes unless
+// the call passes confirm: true; a new version of a saved script this session did not create needs
+// confirm: true; nothing deletes or renames a script; the saved-script limit of the plan is checked
+// with read-only replicas of the checks of the app before anything could open its paywall; and
+// nothing calls what would open a dialog of TradingView (the naming dialog of a new script, the
+// sign-in dialog). The text of the editor is returned by pine_get_source only and never logged, and
+// the template of a new script, which names the account, is never returned.
+
+const READ_ONLY = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
+
+// The tools that can replace the text of the editor, which with confirm: true can be unsaved text.
+const REPLACES_TEXT = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
+const MAX_SOURCE = 500_000;
+
+const NOT_OPEN_HINT = 'Open a saved script with pine_open, or start a new one with pine_new.';
+
+const LIMIT_HINT =
+  'The plan of the account limits saved Pine scripts. Free a slot in TradingView or upgrade the ' +
+  'plan; this server deletes no script.';
+
+const confirmInput = (what: string) =>
+  z
+    .boolean()
+    .optional()
+    .describe(
+      `Must be true to ${what} while the Pine Editor holds unsaved changes, which are then lost.`,
+    );
+
+const sourceInput = () =>
+  z.string().max(MAX_SOURCE).describe('The Pine Script source, the whole text of the script.');
+
+function notOpen(): TvMcpError {
+  return new TvMcpError('NOT_AVAILABLE', 'The Pine Editor is not open', { hint: NOT_OPEN_HINT });
+}
+
+// What a tool that changed the editor returns about it.
+function editorData(state: PineEditorState) {
+  return { script: state.script, modified: state.modified, draft: state.draft };
+}
+
+// Makes the change with the guard on unsaved text checked twice: here on the state the editor was
+// opened with, and in the page right before the facade acts. Answers the state afterwards.
+async function changeEditor(
+  page: PageHandle,
+  ctx: ToolContext,
+  action: string,
+  confirm: boolean | undefined,
+  change: (allowModified: boolean) => PineEditorChange,
+  warnings: string[],
+): Promise<PineEditorState> {
+  const state = await ensureEditorOpen(page, pageWaitMs(ctx.config.callTimeoutMs), warnings);
+  requireUnmodifiedOrConfirmed(state, confirm, action);
+  await page.bridge.evaluateWithLib(changePineEditor, [change(confirm === true)]);
+  return readEditorState(page, warnings);
+}
+
+// The saved scripts of the account and the saved-script limit the app applies to them, null when
+// it applies none.
+async function loadSavedScripts(page: PageHandle): Promise<{
+  authenticated: boolean;
+  scripts: SavedScriptRow[];
+  limit: number | null;
+}> {
+  const listing = await page.bridge.evaluateWithLib(readSavedPineScripts, []);
+  const limits = await getPlanLimits(page, ['SAVED_PINE_SCRIPTS']);
+  return {
+    authenticated: listing.authenticated,
+    scripts: listing.scripts,
+    limit: savedScriptLimit(listing, limits.SAVED_PINE_SCRIPTS),
+  };
+}
+
+// The body of pine_get_source, which the pine/source resource shares: the text of the open editor,
+// its script and whether it has unsaved changes. It never opens the editor.
+export async function readPineSourceData(ctx: ToolContext): Promise<{
+  data: {
+    source: string;
+    script: PineEditorState['script'];
+    modified: boolean;
+  };
+  warnings: string[];
+}> {
+  const page = await ctx.connection.chartPage();
+  const warnings: string[] = [];
+  const state = await readEditorState(page, warnings);
+  if (!state.open) {
+    throw notOpen();
+  }
+  const { source } = await page.bridge.evaluateWithLib(readPineSource, []);
+  if (source === null) {
+    throw notOpen();
+  }
+  return { data: { source, script: state.script, modified: state.modified }, warnings };
+}
+
+export const pineNew = defineTool({
+  name: 'pine_new',
+  domain: 'pine',
+  title: 'Start a new Pine script',
+  description:
+    'Starts a new script in the Pine Editor of TradingView, opening the editor if needed: the ' +
+    'template of the type (indicator by default, strategy or library), or the given source in ' +
+    'its place. Nothing is saved; pine_save saves it under a name. Returns type, script (null ' +
+    'for a new script), modified and draft; the template text is not returned (pine_get_source ' +
+    'reads the text). When the editor holds unsaved changes the call fails with ' +
+    'CONFIRMATION_REQUIRED and changes nothing, unless confirm: true, which discards them.',
+  inputSchema: {
+    type: z
+      .enum(['indicator', 'strategy', 'library'])
+      .optional()
+      .describe('What kind of script to start. Default: indicator.'),
+    source: sourceInput()
+      .optional()
+      .describe('The source of the new script, in place of the template. Default: the template.'),
+    confirm: confirmInput('start a new script'),
+  },
+  annotations: REPLACES_TEXT,
+  core: true,
+  async handler({ type, source, confirm }, ctx) {
+    const kind = type ?? 'indicator';
+    const page = await ctx.connection.chartPage();
+    const warnings: string[] = [];
+    const state = await changeEditor(
+      page,
+      ctx,
+      'pine_new',
+      confirm,
+      (allowModified) => ({ kind: 'new', type: kind, source: source ?? null, allowModified }),
+      warnings,
+    );
+    return { data: { type: kind, ...editorData(state) }, via: 'internal', warnings };
+  },
+});
+
+export const pineOpen = defineTool({
+  name: 'pine_open',
+  domain: 'pine',
+  title: 'Open a saved Pine script',
+  description:
+    'Opens a saved script of the account in the Pine Editor of TradingView, opening the editor ' +
+    'if needed. Give exactly one of scriptId (from pine_list_scripts) and name (the name or the ' +
+    'title of the script, case aside). Returns script (id and version), name, modified and ' +
+    'draft. An unknown or ambiguous name fails with INVALID_INPUT (the candidates are in ' +
+    'error.details.candidates). A script the plan of the account does not let TradingView open ' +
+    '(only the newest saved scripts within the limit can be) fails with PLAN_LIMIT. When the ' +
+    'editor holds unsaved changes the call fails with CONFIRMATION_REQUIRED and changes nothing, ' +
+    'unless confirm: true, which discards them.',
+  inputSchema: {
+    scriptId: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe('The id of the saved script, as pine_list_scripts reports it.'),
+    name: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe('The name or the title of the saved script, case aside.'),
+    confirm: confirmInput('open the script'),
+  },
+  annotations: REPLACES_TEXT,
+  core: true,
+  async handler({ scriptId, name, confirm }, ctx) {
+    let wanted: { scriptId: string } | { name: string };
+    if (scriptId !== undefined && name === undefined) {
+      wanted = { scriptId };
+    } else if (name !== undefined && scriptId === undefined) {
+      wanted = { name };
+    } else {
+      throw new TvMcpError('INVALID_INPUT', 'Give exactly one of scriptId and name', {
+        hint: 'Pass the id from pine_list_scripts as scriptId, or the name of the script as name.',
+      });
+    }
+    const page = await ctx.connection.chartPage();
+    const saved = await loadSavedScripts(page);
+    const matches = findSavedScripts(saved.scripts, wanted);
+    const label = 'scriptId' in wanted ? `with the id ${wanted.scriptId}` : `named ${wanted.name}`;
+    const [match] = matches;
+    if (match === undefined) {
+      throw new TvMcpError('INVALID_INPUT', `No saved Pine script ${label}`, {
+        hint:
+          'Call pine_list_scripts for the saved scripts and their ids.' +
+          (saved.authenticated ? '' : ' TradingView lists none while no account is signed in.'),
+        details: { ...wanted },
+      });
+    }
+    if (matches.length > 1) {
+      throw new TvMcpError(
+        'INVALID_INPUT',
+        `${String(matches.length)} saved Pine scripts are ${label}`,
+        {
+          hint: 'Pass the id of the one to open as scriptId.',
+          details: { candidates: matches.map(({ scriptIdPart }) => scriptIdPart) },
+        },
+      );
+    }
+    const title = match.scriptName ?? match.scriptTitle ?? match.scriptIdPart;
+    if (saved.limit !== null && isOpenLimited(saved.scripts, match.scriptIdPart, saved.limit)) {
+      throw new PlanLimitError(
+        'SAVED_PINE_SCRIPTS',
+        saved.limit,
+        `The plan lets TradingView open only the ${String(saved.limit)} most recently changed ` +
+          `saved Pine scripts, and ${title} is not one of them`,
+        LIMIT_HINT,
+      );
+    }
+    const warnings: string[] = [];
+    const state = await changeEditor(
+      page,
+      ctx,
+      'pine_open',
+      confirm,
+      (allowModified) => ({
+        kind: 'open',
+        scriptIdPart: match.scriptIdPart,
+        version: match.version,
+        source: null,
+        allowModified,
+      }),
+      warnings,
+    );
+    // TradingView opens a new script whenever opening the saved one fails.
+    if (state.script?.id !== match.scriptIdPart) {
+      throw new TvMcpError(
+        'NOT_AVAILABLE',
+        `The saved Pine script ${title} could not be opened: TradingView opened a new script instead`,
+        {
+          hint:
+            'No unsaved text was lost. Try again in a moment, or open the script in TradingView ' +
+            'itself.',
+          details: { id: match.scriptIdPart },
+        },
+      );
+    }
+    return {
+      data: { ...editorData(state), name: title },
+      via: 'internal',
+      warnings,
+    };
+  },
+});
+
+export const pineGetSource = defineTool({
+  name: 'pine_get_source',
+  domain: 'pine',
+  title: 'Read the Pine source',
+  description:
+    'Reads the text of the Pine Editor of TradingView and changes nothing. Returns source, ' +
+    'script (its id and version; null for a new script, and a version of null when TradingView ' +
+    'reports none) and modified (whether the text has unsaved changes). It does not open the ' +
+    'editor: when it is closed the call fails with NOT_AVAILABLE; pine_open or pine_new opens it.',
+  inputSchema: {},
+  annotations: READ_ONLY,
+  core: true,
+  async handler(_input, ctx) {
+    const { data, warnings } = await readPineSourceData(ctx);
+    return { data, via: 'internal', warnings };
+  },
+});
+
+export const pineSetSource = defineTool({
+  name: 'pine_set_source',
+  domain: 'pine',
+  title: 'Replace the Pine source',
+  description:
+    'Replaces the text of the Pine Editor of TradingView with source, keeping the script it ' +
+    'holds, and opens the editor first if needed (which restores the script it last held). ' +
+    'Nothing is saved; pine_save does that. Returns script, modified and draft. When the editor ' +
+    'holds unsaved changes the call fails with CONFIRMATION_REQUIRED and changes nothing, unless ' +
+    'confirm: true, which discards them.',
+  inputSchema: {
+    source: sourceInput(),
+    confirm: confirmInput('replace the text'),
+  },
+  annotations: REPLACES_TEXT,
+  core: true,
+  async handler({ source, confirm }, ctx) {
+    const page = await ctx.connection.chartPage();
+    const warnings: string[] = [];
+    const state = await changeEditor(
+      page,
+      ctx,
+      'pine_set_source',
+      confirm,
+      (allowModified) => ({ kind: 'source', source, allowModified }),
+      warnings,
+    );
+    return { data: editorData(state), via: 'internal', warnings };
+  },
+});
+
+export const pineListScripts = defineTool({
+  name: 'pine_list_scripts',
+  domain: 'pine',
+  title: 'List saved Pine scripts',
+  description:
+    'Lists the saved Pine scripts of the account and changes nothing. Returns scripts, each with ' +
+    'id (what pine_open takes), name, version (a version whose major part is 0 is a draft saved ' +
+    'by TradingView), type (indicator, strategy or library) and modified (ISO 8601, or null). ' +
+    'TradingView asks its server for the list the way its own editor does, and lists none while ' +
+    'no account is signed in.',
+  inputSchema: {},
+  annotations: READ_ONLY,
+  core: true,
+  async handler(_input, ctx) {
+    const page = await ctx.connection.chartPage();
+    const listing = await page.bridge.evaluateWithLib(readSavedPineScripts, []);
+    const warnings = listing.authenticated
+      ? []
+      : ['No TradingView account is signed in, so TradingView lists no saved scripts.'];
+    return { data: { scripts: listing.scripts.map(toSavedScript) }, via: 'internal', warnings };
+  },
+});
+
+// The error for a save that TradingView refused or that has compile errors. A script that was
+// saved nonetheless is named in the details.
+function saveFailure(
+  errors: { message: string; line: number | null; column: number | null }[],
+  script: { id: string; version: string | null } | null,
+): TvMcpError {
+  if (errors.length === 0) {
+    return new TvMcpError(
+      'NOT_AVAILABLE',
+      'TradingView did not save the script and gave no reason',
+      {
+        hint: 'Check the console of the Pine Editor in TradingView.',
+      },
+    );
+  }
+  const count = `${String(errors.length)} compile error${errors.length === 1 ? '' : 's'}`;
+  return new TvMcpError(
+    'INVALID_INPUT',
+    script === null
+      ? `TradingView did not save the script: it has ${count}`
+      : `TradingView saved the script as ${script.id}, but it has ${count}`,
+    {
+      hint: 'Fix the errors (error.details.errors gives line, column and message), then save again.',
+      details: { errors, script, saved: script !== null },
+    },
+  );
+}
+
+export const pineSave = defineTool({
+  name: 'pine_save',
+  domain: 'pine',
+  title: 'Save the Pine script',
+  description:
+    'Saves the script in the Pine Editor of TradingView. A new script is saved under name, which ' +
+    'it needs (TradingView would ask for it in a dialog) and which no saved script may have; the ' +
+    'saved-script limit of the plan is checked first and fails with PLAN_LIMIT (error.details ' +
+    'feature SAVED_PINE_SCRIPTS and limit). A saved script gets a new version under its own ' +
+    'name: one this session did not create needs confirm: true, else the call fails with ' +
+    'CONFIRMATION_REQUIRED and saves nothing. Scripts are never renamed: a name other than the ' +
+    'current one fails with INVALID_INPUT. Returns script (id and version) and created. Compile ' +
+    'errors fail with INVALID_INPUT and the errors in error.details.errors. Needs a signed-in ' +
+    'account (AUTH_REQUIRED) and an open editor (NOT_AVAILABLE).',
+  inputSchema: {
+    name: z
+      .string()
+      .min(1)
+      .max(128)
+      .optional()
+      .describe(
+        'The name of a new script, needed for one. For a saved script it may only repeat its ' +
+          'current name.',
+      ),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe(
+        'Must be true to save a new version of a saved script this session did not create, ' +
+          "which was the user's. Not needed for a new script or one pine_save created.",
+      ),
+  },
+  // It adds a script or a version; it replaces nothing.
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  core: true,
+  async handler({ name, confirm }, ctx) {
+    const page = await ctx.connection.chartPage();
+    const warnings: string[] = [];
+    const state = await readEditorState(page, warnings);
+    if (!state.open) {
+      throw notOpen();
+    }
+    const wantedName = name?.trim();
+
+    if (state.script === null) {
+      if (wantedName === undefined || wantedName === '') {
+        throw new TvMcpError('INVALID_INPUT', 'A new Pine script needs a name to be saved', {
+          hint: 'Pass name: TradingView would otherwise ask for one in a dialog.',
+        });
+      }
+      const saved = await loadSavedScripts(page);
+      requireSignedIn(saved.authenticated);
+      const taken = findSavedScripts(saved.scripts, { name: wantedName })[0];
+      if (taken !== undefined) {
+        throw new TvMcpError(
+          'INVALID_INPUT',
+          `A saved Pine script is already named ${wantedName}`,
+          {
+            hint: 'Choose another name. This server never overwrites a saved script.',
+            details: { id: taken.scriptIdPart },
+          },
+        );
+      }
+      // The check isSaveBlockedByPaywall of the app, which would open the paywall.
+      requireBelowLimit(
+        'SAVED_PINE_SCRIPTS',
+        countedScripts(saved.scripts).length,
+        saved.limit,
+        LIMIT_HINT,
+      );
+      const outcome = await page.bridge.evaluateWithLib(savePineScript, [
+        { kind: 'new', name: wantedName },
+      ]);
+      if (outcome.script !== null) {
+        ctx.session.createdScriptIds.add(outcome.script.id);
+      }
+      if (outcome.script === null || outcome.errors.length > 0) {
+        throw saveFailure(outcome.errors, outcome.script);
+      }
+      if (outcome.tracked !== true) {
+        warnings.push(
+          `The script was saved as ${outcome.script.id}, but the Pine Editor could not be ` +
+            'switched to it and may show a new script: open the saved one with pine_open.',
+        );
+      }
+      return { data: { script: outcome.script, created: true }, via: 'internal', warnings };
+    }
+
+    const { id, version } = state.script;
+    if (!state.modified && wantedName === undefined) {
+      return nothingToSave(state.script, warnings);
+    }
+    if (state.modified && confirm !== true && !ctx.session.createdScriptIds.has(id)) {
+      throw new TvMcpError(
+        'CONFIRMATION_REQUIRED',
+        `Saving a new version of ${id} needs confirmation: this session did not create the script`,
+        {
+          hint:
+            "The script is the user's. Make sure the user wants a new version saved, then call " +
+            'pine_save again with confirm: true.',
+          details: { id },
+        },
+      );
+    }
+    const saved = await loadSavedScripts(page);
+    requireSignedIn(saved.authenticated);
+    const current = saved.scripts.find(({ scriptIdPart }) => scriptIdPart === id);
+    if (wantedName !== undefined && current?.scriptName?.trim() !== wantedName) {
+      throw new TvMcpError(
+        'INVALID_INPUT',
+        current?.scriptName === null || current === undefined
+          ? `The name of ${id} is not known, so name cannot be checked against it`
+          : `The script is named ${current.scriptName}; pine_save never renames a script`,
+        {
+          hint: 'Leave name out to save a new version under the current name.',
+          details: { id },
+        },
+      );
+    }
+    if (!state.modified) {
+      return nothingToSave(state.script, warnings);
+    }
+    if (version === null || state.draft) {
+      throw new TvMcpError(
+        'NOT_AVAILABLE',
+        version === null
+          ? `TradingView did not report the version of ${id}, so it cannot be saved safely`
+          : `${id} is a draft (version ${version}), which TradingView saves only through its ` +
+              'naming dialog',
+        {
+          hint:
+            'Save it in the Pine Editor of TradingView itself, or start a new script with ' +
+            'pine_new, set its source and save that with a name.',
+          details: { id, version },
+        },
+      );
+    }
+    // The check isScriptUpdateBlockedByPaywall of the app, which would open the paywall.
+    if (saved.limit !== null && isOpenLimited(saved.scripts, id, saved.limit)) {
+      throw new PlanLimitError(
+        'SAVED_PINE_SCRIPTS',
+        saved.limit,
+        `The plan lets TradingView update only the ${String(saved.limit)} most recently ` +
+          `changed saved Pine scripts, and ${id} is not one of them`,
+        LIMIT_HINT,
+      );
+    }
+    const outcome = await page.bridge.evaluateWithLib(savePineScript, [
+      { kind: 'version', scriptIdPart: id },
+    ]);
+    if (outcome.script === null || outcome.errors.length > 0) {
+      throw saveFailure(outcome.errors, outcome.script);
+    }
+    return { data: { script: outcome.script, created: false }, via: 'internal', warnings };
+  },
+});
+
+// Fails AUTH_REQUIRED while no account is signed in: the app would ask the user to sign in.
+function requireSignedIn(authenticated: boolean): void {
+  if (!authenticated) {
+    throw new TvMcpError(
+      'AUTH_REQUIRED',
+      'Saving a Pine script needs a signed-in TradingView account',
+      {
+        hint: 'Sign in to TradingView, then save again.',
+      },
+    );
+  }
+}
+
+// The answer of pine_save for a saved script without unsaved changes, which saves nothing.
+function nothingToSave(
+  script: NonNullable<PineEditorState['script']>,
+  warnings: string[],
+): ToolOutput<{ script: NonNullable<PineEditorState['script']>; created: boolean }> {
+  warnings.push('The script has no unsaved changes, so there was nothing to save.');
+  return { data: { script, created: false }, via: 'internal', warnings };
+}
+
+export const pineTools: AnyToolDefinition[] = [
+  pineNew,
+  pineOpen,
+  pineGetSource,
+  pineSetSource,
+  pineListScripts,
+  pineSave,
+];
