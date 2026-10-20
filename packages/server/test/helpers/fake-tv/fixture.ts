@@ -155,7 +155,7 @@ export interface FixtureGraphics {
   tableCells?: FixtureTableCell[] | undefined;
 }
 
-interface FixtureDrawing {
+export interface FixtureDrawing {
   styleId: string;
   forceOverlay?: boolean | undefined;
 }

@@ -180,6 +180,10 @@ export interface CanCreateStudyLike {
 
 export interface CoreModelLike {
   timeScale(): TimeScaleLike;
+  // The study core of a study on the chart, by an id getAllStudies reports: the same object the
+  // study API gives with study(). null for an id that is not a study. Only the core model has it,
+  // not the chart model (notes of Plan 2, section Q5). A build may not have it.
+  getStudyById?(id: string): StudyCoreLike | null;
 }
 
 // The main series of a chart.
@@ -246,6 +250,12 @@ export interface TimeScaleLike {
   // bar rows: the last point for a time after every point, and null without points (seen on the
   // app). A time between two bars gives the later one.
   timePointToIndex(time: number): number | null;
+  // The time of the time point at an index, the inverse of timePointToIndex, and so taken to be in
+  // the time base of the bar rows (not compared on the app). It answers for the points after the
+  // last bar too. The callers in the web build test its answer against null for an index without a
+  // point, and a study turns it into milliseconds with a factor of 1000, so it is seconds. Page code
+  // takes anything but a finite number for no time.
+  indexToTimePoint?(index: number): number | null;
   // The indices of the time points: the bars, then the points the time scale keeps after the last
   // bar for the empty space a chart shows there (dozens were seen). Internal, like the time
   // scale.
@@ -388,6 +398,42 @@ export interface StudyCoreLike {
   // with times in a unit not known. It may stay empty until the logs are enabled, which only the
   // Pine Logs panel of the app does; typed loosely because the items were never observed.
   logs?(): unknown;
+  // What the script drew (notes of Plan 2, section Q5): the graphics object of the study, which
+  // every study core has.
+  graphics?(): StudyGraphicsLike | null;
+  // The property tree of the study. Of it only the palette is read, by the path that
+  // StudyGraphicsLike describes.
+  properties?(): PropertyNodeLike;
+}
+
+// graphics() of a study core, as far as page code reads it (notes of Plan 2, section Q5). The
+// grouped accessors answer a Map from the style id to a Map from forceOverlay (a boolean, whether
+// the drawing is forced onto the price pane) to a PrimitiveSet of the app (values(), the iterator,
+// forEach, size; entries() and keys() throw) of the materialized items. dwgtablecells answers a Map
+// from the style id to a PrimitiveSet. Typed loosely because no study with drawings was seen on the
+// app: the items are known from its materializers, not observed. Their fields are, for a line
+// { id, x1, y1, x2, y2, style, extend, width, colorIndex }, for a label { x, y, yloc, text, style,
+// colorIndex, textColorIndex }, for a box { left, right, top, bottom, extend, text, borderColorIndex,
+// backgroundColorIndex }, for a table { id, position, rows, columns } and for a cell { tableId, row,
+// column, text }, with other fields next to them. An x is a time-point index of the time scale, or
+// null for a point the app has no index for.
+//
+// The colors of the items are packed integers when the metadata says isRGB, and else indices into
+// the palette of the study, the child color of the child k of
+// properties().childs().palettes.childs().palette_common.childs().colors.childs(). palette_common is
+// missing when the study has no palette.
+export interface StudyGraphicsLike {
+  dwglines?(): unknown;
+  dwglabels?(): unknown;
+  dwgboxes?(): unknown;
+  dwgtables?(): unknown;
+  dwgtablecells?(): unknown;
+}
+
+// A node of a property tree of the app: a group has childs(), a leaf has value().
+export interface PropertyNodeLike {
+  childs?(): Record<string, PropertyNodeLike | undefined>;
+  value?(): unknown;
 }
 
 // The metadata of a study, a class instance on the app. A Pine study has pine (its script version
@@ -409,6 +455,10 @@ export interface StudyMetaInfoLike {
   is_hidden_study?: boolean;
   extra?: { kind?: string };
   isTVScriptStrategy?: boolean;
+  // Whether the colors of the drawings of the study are packed integers, r + 256 g + 65536 b +
+  // 16777216 a with a from 0 to 255, and not indices into its palette. Undefined on the two Pine
+  // studies that were seen.
+  isRGB?: boolean;
 }
 
 // A plot of a study. type is line, shapes, chars, arrows, data, dataoffset, alertcondition, one of

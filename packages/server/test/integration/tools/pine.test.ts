@@ -753,7 +753,7 @@ describe('pine_save', () => {
   });
 });
 
-test('the Pine source tools say which of them read and which can replace text', async () => {
+test('the Pine tools say which of them read and which can replace text', async () => {
   const { client } = await startHarness();
 
   const { tools } = await client.listTools();
@@ -778,6 +778,10 @@ test('the Pine source tools say which of them read and which can replace text', 
     pine_get_errors: [true, false],
     pine_get_console: [true, false],
     pine_smart_compile: [false, true],
+    pine_get_lines: [true, false],
+    pine_get_labels: [true, false],
+    pine_get_boxes: [true, false],
+    pine_get_tables: [true, false],
   });
 });
 

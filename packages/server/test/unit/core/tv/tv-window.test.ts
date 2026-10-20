@@ -59,6 +59,21 @@ describe('the TvWindow contract', () => {
     expect(series?.quotes()).toEqual(fixture.quote);
     expect(series?.isSymbolInvalid()).toBe(false);
     expect(timeScale?.timePointToIndex(fixture.visibleRange.to)).toBe(bars.length - 1);
+    expect(timeScale?.indexToTimePoint?.(0)).toBe(bars[0]?.[0]);
+    expect(timeScale?.indexToTimePoint?.(bars.length)).toBeNull();
+    // The core model answers the same core as the study API, and its graphics are the maps the
+    // renderers of the app read.
+    const drawn = model?.model().getStudyById?.('STUDY01');
+    expect(drawn).toBe(chart?.getStudyById('STUDY01').study());
+    expect(model?.model().getStudyById?.('NOPE')).toBeNull();
+    const graphics = drawn?.graphics?.();
+    expect(typeof graphics?.dwglines).toBe('function');
+    expect(typeof graphics?.dwglabels).toBe('function');
+    expect(typeof graphics?.dwgboxes).toBe('function');
+    expect(typeof graphics?.dwgtables).toBe('function');
+    expect(typeof graphics?.dwgtablecells).toBe('function');
+    expect(typeof drawn?.properties?.().childs).toBe('function');
+    expect(drawn?.metaInfo().isRGB).toBeUndefined();
     const logical = timeScale?.logicalRange();
     expect([logical?.left(), logical?.right()]).toEqual([200, 299]);
     expect(win.BUILD_TIME).toBe(fixture.buildTime);

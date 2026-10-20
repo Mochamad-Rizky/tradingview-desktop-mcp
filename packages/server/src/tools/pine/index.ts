@@ -13,6 +13,7 @@ import {
   requireUnmodifiedOrConfirmed,
   type PineEditorState,
 } from './editor.js';
+import { pineOutputTools } from './outputs.js';
 import {
   changePineEditor,
   readPineSource,
@@ -32,8 +33,8 @@ import { smartCompile } from './smart-compile.js';
 
 // The Pine tools (design spec 7, domain Pine). These start a new script, open a saved one, read
 // and replace the text of the Pine Editor, list the saved scripts, save, analyze a text and compile
-// it with fixes; the compile tools (compile.ts) join them in pineTools. Later tools of the domain
-// (outputs) are added to pineTools too.
+// it with fixes; the compile tools (compile.ts) and the output tools (outputs.ts, what the scripts
+// on the chart drew) join them in pineTools.
 //
 // They touch the user's saved scripts and the unsaved text of the editor, so they keep to these
 // rules (design spec 5.3): no text in the editor is replaced while it has unsaved changes unless
@@ -813,4 +814,5 @@ export const pineTools: AnyToolDefinition[] = [
   pineAnalyze,
   ...pineCompileTools,
   pineSmartCompile,
+  ...pineOutputTools,
 ];

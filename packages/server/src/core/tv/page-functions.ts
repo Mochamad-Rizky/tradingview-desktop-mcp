@@ -29,6 +29,7 @@ import {
   removeStudy,
   setStudyVisibility,
 } from '../../tools/indicator/page.js';
+import { readPineGraphics } from '../../tools/pine/outputs-page.js';
 import {
   addPineScriptToChart,
   changePineEditor,
@@ -74,6 +75,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readChartState,
   readChartSymbolInfo,
   readHistory,
+  readPineGraphics,
   readStudies,
   readStudyValues,
   readUiState,

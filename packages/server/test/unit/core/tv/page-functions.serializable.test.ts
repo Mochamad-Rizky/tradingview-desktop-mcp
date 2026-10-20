@@ -206,6 +206,7 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   expect(Object.keys(pageLibFunctions)).toContain('readCachedQuote');
   expect(Object.keys(pageFunctions)).toContain('readStudies');
   expect(Object.keys(pageFunctions)).toContain('readStudyValues');
+  expect(Object.keys(pageFunctions)).toContain('readPineGraphics');
   expect(Object.keys(pageLibFunctions)).toContain('readStudyCatalog');
   for (const name of [
     'readPineEditorState',
