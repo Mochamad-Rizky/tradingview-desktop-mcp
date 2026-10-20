@@ -49,7 +49,7 @@ describe.skipIf(!e2eEnabled())('the app tools against TradingView Desktop', () =
       webpackRegistry: true,
       tvd: true,
     });
-    expect(warnings).toEqual([]);
+    expect(warnings.length === 0, 'app_health gives no warning').toBe(true);
   });
 
   test('app_discover finds the chart target', async () => {
@@ -61,6 +61,10 @@ describe.skipIf(!e2eEnabled())('the app tools against TradingView Desktop', () =
     expect(kinds).toContain('chart');
     expect(kinds).toContain('window-chrome');
     const chart = data.targets.find((target) => target.kind === 'chart');
-    expect(chart?.url).toMatch(/^https:\/\/([a-z0-9-]+\.)?tradingview\.com\/chart\//);
+    // The address holds the id of the layout, which is the user's.
+    expect(
+      /^https:\/\/([a-z0-9-]+\.)?tradingview\.com\/chart\//.test(chart?.url ?? ''),
+      'the chart target shows a chart of tradingview.com',
+    ).toBe(true);
   });
 });

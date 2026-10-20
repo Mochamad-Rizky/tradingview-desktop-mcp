@@ -236,11 +236,11 @@ describe.skipIf(!e2eEnabled())('the market data tools against TradingView Deskto
 
     expect(data.symbol === state.symbol, 'the bars are those of the chart symbol').toBe(true);
     expect(data.resolution === state.resolution, 'the bars are of the chart timeframe').toBe(true);
-    expect(data.bars).toHaveLength(count);
+    expect(data.bars.length === count, 'every bar asked for').toBe(true);
     expect(data.complete).toBe(true);
     expect(barProblems(data.bars)).toEqual([]);
     expect(via).toBe('internal');
-    expect(warnings).toEqual([]);
+    expect(warnings.length === 0, 'data_get_ohlcv gives no warning').toBe(true);
   });
 
   test('quote of the chart symbol has a last price', async () => {
@@ -297,7 +297,7 @@ describe.skipIf(!e2eEnabled())('the market data tools against TradingView Deskto
     expect(typeof data.pricescale === 'number' && data.pricescale > 0).toBe(true);
     expect(typeof data.minmov === 'number' && data.minmov > 0).toBe(true);
     expect(typeof data.hasIntraday).toBe('boolean');
-    expect(warnings).toEqual([]);
+    expect(warnings.length === 0, 'data_get_symbol_info gives no warning').toBe(true);
   });
 
   test('symbol info of another symbol comes from the symbol search', async () => {
@@ -309,13 +309,13 @@ describe.skipIf(!e2eEnabled())('the market data tools against TradingView Deskto
 
     // A chart that shows Apple answers from the chart instead.
     if (data.source === 'chart') {
-      expect(data.symbol).toMatch(/:AAPL$/);
+      expect(data.symbol.endsWith(':AAPL'), 'the info is of AAPL').toBe(true);
       return;
     }
-    expect(data.symbol).toBe('NASDAQ:AAPL');
+    expect(data.symbol === 'NASDAQ:AAPL', 'the info is of NASDAQ:AAPL').toBe(true);
     expect(data.description).toMatch(/apple/i);
     expect(data.pricescale).toBeNull();
-    expect(warnings).toHaveLength(1);
+    expect(warnings.length === 1, 'a warning says that only some fields are filled').toBe(true);
   });
 
   test('search finds AAPL', async () => {
@@ -329,7 +329,9 @@ describe.skipIf(!e2eEnabled())('the market data tools against TradingView Deskto
 
     expect(via).toBe('api');
     const apple = data.results.find((result) => result.ticker === 'AAPL');
-    expect(apple?.symbol).toMatch(/^[A-Z][A-Z0-9_]*:AAPL$/);
+    expect(/^[A-Z][A-Z0-9_]*:AAPL$/.test(apple?.symbol ?? ''), 'AAPL comes as EXCHANGE:AAPL').toBe(
+      true,
+    );
     expect(apple?.description).toMatch(/apple/i);
     const texts = data.results.map(
       ({ symbol, ticker, description }) => symbol + ticker + description,
@@ -364,7 +366,8 @@ describe.skipIf(!e2eEnabled())('the market data tools against TradingView Deskto
       };
       meta: { warnings?: string[] };
     };
-    expect(data).toMatchObject({ levels: 1, fullDepth: false });
+    // The book holds the prices of the moment, so only its shape is compared.
+    expect(data.levels === 1 && !data.fullDepth, 'one level, not the full depth').toBe(true);
     expect(data.bids.length + data.asks.length).toBeGreaterThan(0);
     expect(data.bids.length <= 1 && data.asks.length <= 1).toBe(true);
     expect(meta.warnings?.some((warning) => warning.includes('one level'))).toBe(true);
@@ -422,20 +425,26 @@ describe.skipIf(!e2eEnabled())('the market data tools against TradingView Deskto
       if (loaded.size > first.size) {
         // Older bars came: the tool loads the rest it asks for, or says why it could not.
         if (data.complete) {
-          expect(data.bars).toHaveLength(count);
+          expect(data.bars.length === count, 'every bar asked for').toBe(true);
         } else {
           expect(warnings.length).toBeGreaterThan(0);
         }
       } else if (loaded.endOfData) {
         expect(data.complete).toBe(false);
-        expect(warnings).toEqual([expect.stringMatching(/first bar|history limit/)]);
+        expect(
+          warnings.length === 1 && /first bar|history limit/.test(warnings[0] ?? ''),
+          'one warning says where history ends',
+        ).toBe(true);
       } else {
         // TradingView answered with no bar and no end of its data, and takes no further request
         // for now: the tool returns the loaded bars at once and says so.
         expect(loaded.available).toBe(false);
         expect(data.complete).toBe(false);
-        expect(data.bars).toHaveLength(loaded.size);
-        expect(warnings).toEqual([expect.stringMatching(/sends no more older history/)]);
+        expect(data.bars.length === loaded.size, 'the bars that are loaded').toBe(true);
+        expect(
+          warnings.length === 1 && (warnings[0] ?? '').includes('sends no more older history'),
+          'one warning says that TradingView sends no more older history',
+        ).toBe(true);
         expect(toolMs).toBeLessThan(5000);
       }
     });

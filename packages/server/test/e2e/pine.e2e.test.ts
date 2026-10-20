@@ -24,6 +24,7 @@ import {
   prepareChartChange,
   readChartState,
   restoreEditor,
+  sameJson,
   snapshotEditor,
   startE2eServer,
   type ChartChangePlan,
@@ -386,7 +387,7 @@ describe.skipIf(!e2eEnabled())(
       });
 
       expect(data).toMatchObject({ success: true, errors: [] });
-      expect(data.warnings).toHaveLength(1);
+      expect(data.warnings.length === 1, 'one compile warning').toBe(true);
       expect(data.warnings[0]).toMatchObject({
         line: 1,
         column: 1,
@@ -683,7 +684,13 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
           }
         }),
     );
-    expect((await listStudies()).map(({ id }) => id)).toEqual(before);
+    expect(
+      sameJson(
+        (await listStudies()).map(({ id }) => id),
+        before,
+      ),
+      'the studies are those of before',
+    ).toBe(true);
     await expectChartRestored(server, plan.snapshot);
   }
 
@@ -735,25 +742,29 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
 
     await editThenRestore(async () => {
       const created = await callOk<EditorChange>(server.client, 'pine_new', {});
-      expect(created.data).toMatchObject({
-        type: 'indicator',
-        script: null,
-        modified: false,
-        draft: true,
-      });
+      expect(
+        created.data.type === 'indicator' &&
+          created.data.script === null &&
+          !created.data.modified &&
+          created.data.draft,
+        'pine_new starts a new indicator, a draft without changes',
+      ).toBe(true);
 
       written.add(EDITOR_SOURCE);
       const set = await callOk<EditorChange>(server.client, 'pine_set_source', {
         source: EDITOR_SOURCE,
       });
-      expect(set.data).toMatchObject({ script: null, modified: true });
+      expect(
+        set.data.script === null && set.data.modified,
+        'the new script holds the text, unsaved',
+      ).toBe(true);
 
       const read = await callOk<{ source: string; script: unknown; modified: boolean }>(
         server.client,
         'pine_get_source',
       );
       expect(read.data.source === EDITOR_SOURCE, 'the editor holds the text set').toBe(true);
-      expect(read.data.script).toBeNull();
+      expect(read.data.script === null, 'the editor holds a new script').toBe(true);
       expect(read.data.modified).toBe(true);
 
       // Compiling the text of the editor, twice, to see whether its console grows.
@@ -827,10 +838,13 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
       expect(hidden.state.open).toBe(false);
       expect(hidden.visible).not.toBe(true);
       expect(kept?.unsaved).toBe(false);
-      expect(reopened.state).toMatchObject({ open: true, modified: false });
+      expect(
+        reopened.state.open && !reopened.state.modified,
+        'the editor is open again, without changes',
+      ).toBe(true);
       // Seen on the app: once the editor was open in a session, an open after a close shows a new
       // script, not the one it held, unless unsaved changes were kept.
-      expect(reopened.state.script).toBeNull();
+      expect(reopened.state.script === null, 'the editor shows a new script').toBe(true);
     });
   });
 
@@ -883,7 +897,10 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
       expect(closed.closed).toBe(true);
       expect(hidden.visible).not.toBe(true);
       expect(reopened.source === EDITOR_SOURCE, 'the unsaved text is back').toBe(true);
-      expect(reopened.state).toMatchObject({ open: true, modified: true, script: null });
+      expect(
+        reopened.state.open && reopened.state.modified && reopened.state.script === null,
+        'the editor is open again on the unsaved new script',
+      ).toBe(true);
     });
   });
 
@@ -1024,7 +1041,13 @@ describe.skipIf(!e2eEnabled())('the Pine scripts on the chart against TradingVie
 
     observe('drawings of the Pine scripts on the chart', { pineScripts: pine.length, totals });
     const after = (await callOk<{ studies: Study[] }>(client, 'indicator_list')).data.studies;
-    expect(after.map(({ id }) => id)).toEqual(studies.map(({ id }) => id));
+    expect(
+      sameJson(
+        after.map(({ id }) => id),
+        studies.map(({ id }) => id),
+      ),
+      'the studies are those of before',
+    ).toBe(true);
   });
 
   test('the strategy tools say the chart has no strategy, when it has none', async (context) => {
@@ -1037,7 +1060,10 @@ describe.skipIf(!e2eEnabled())('the Pine scripts on the chart against TradingVie
     for (const tool of ['strategy_get_results', 'strategy_get_trades', 'strategy_get_equity']) {
       const error = await callFailure(client, tool);
       expect(error.code).toBe('NOT_AVAILABLE');
-      expect(error.message).toMatch(/no strategy/);
+      expect(
+        error.message.includes('no strategy'),
+        'the error says the chart has no strategy',
+      ).toBe(true);
     }
   });
 });

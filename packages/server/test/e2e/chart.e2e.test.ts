@@ -9,6 +9,7 @@ import {
   prepareChartChange,
   readChartState,
   restoreChartAndView,
+  sameJson,
   startE2eServer,
   type ChartChangePlan,
   type ChartSnapshot,
@@ -89,27 +90,33 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
         symbol: TARGET_SYMBOL,
       });
       // TradingView may show the symbol through the exchange of its data feed, such as BATS:AAPL.
-      expect(switched.data.symbol).toMatch(/:AAPL$/);
+      expect((switched.data.symbol ?? '').endsWith(':AAPL'), 'the chart shows AAPL').toBe(true);
       expect(switched.via).toBe('api');
-      expect(switched.warnings).toEqual([]);
+      expect(switched.warnings.length === 0, 'chart_set_symbol gives no warning').toBe(true);
 
       // The chart shows the symbol now, so asking again changes nothing.
       const again = await callOk<SymbolResult>(server.client, 'chart_set_symbol', {
         symbol: TARGET_SYMBOL,
       });
-      expect(again.data).toMatchObject({ symbol: switched.data.symbol, changed: false });
+      expect(
+        again.data.symbol === switched.data.symbol && again.data.changed === false,
+        'asking again changes nothing',
+      ).toBe(true);
 
       const changed = await callOk<{ resolution: string; changed: boolean }>(
         server.client,
         'chart_set_timeframe',
         { timeframe },
       );
-      expect(changed.data).toMatchObject({ resolution: timeframe, changed: true });
-      expect(changed.warnings).toEqual([]);
+      expect(
+        changed.data.resolution === timeframe && changed.data.changed,
+        'the timeframe changed',
+      ).toBe(true);
+      expect(changed.warnings.length === 0, 'chart_set_timeframe gives no warning').toBe(true);
 
       const state = await readChartState(server.client);
       expect(sameSymbol('AAPL', state.symbol)).toBe(true);
-      expect(state.resolution).toBe(timeframe);
+      expect(state.resolution === timeframe, 'the chart shows the timeframe').toBe(true);
       expect(state.visibleRange).not.toBeNull();
     });
     await expectChartRestored(server, before);
@@ -128,9 +135,13 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
           'chart_set_type',
           { type },
         );
-        expect(result.data).toMatchObject({ chartType: id, chartTypeName: type });
-        expect(result.warnings).toEqual([]);
-        expect((await readChartState(server.client)).chartType).toBe(id);
+        expect(
+          result.data.chartType === id && result.data.chartTypeName === type,
+          'chart_set_type reports the type',
+        ).toBe(true);
+        expect(result.warnings.length === 0, 'chart_set_type gives no warning').toBe(true);
+        const shown = (await readChartState(server.client)).chartType;
+        expect(shown === id, 'the chart shows the type').toBe(true);
       }
     });
     await expectChartRestored(server, before);
@@ -148,13 +159,12 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
       };
       const set = await callOk<Range>(server.client, 'chart_set_visible_range', inner);
       expect(set.via).toBe('internal');
-      expect(set.warnings).toEqual([]);
+      expect(set.warnings.length === 0, 'chart_set_visible_range gives no warning').toBe(true);
       const reached = await barDistance(server.ctx, set.data, inner);
       expect(reached.from).toBeLessThanOrEqual(1);
       expect(reached.to).toBeLessThanOrEqual(1);
-      expect((await callOk<Range>(server.client, 'chart_get_visible_range')).data).toEqual(
-        set.data,
-      );
+      const read = (await callOk<Range>(server.client, 'chart_get_visible_range')).data;
+      expect(sameJson(read, set.data), 'chart_get_visible_range reads the range set').toBe(true);
 
       // The range read at the start goes back in as it came out, empty space after the last bar
       // included.
@@ -162,7 +172,7 @@ describe.skipIf(!e2eEnabled())('the chart tools against TradingView Desktop', ()
         from: shown.from,
         to: shown.to,
       });
-      expect(restored.warnings).toEqual([]);
+      expect(restored.warnings.length === 0, 'the restore gives no warning').toBe(true);
       const distance = await barDistance(server.ctx, restored.data, shown);
       expect(distance.from).toBeLessThanOrEqual(1);
       expect(distance.to).toBeLessThanOrEqual(1);

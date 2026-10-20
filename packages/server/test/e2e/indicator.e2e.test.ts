@@ -10,6 +10,7 @@ import {
   observe,
   planLimitSkipReason,
   prepareChartChange,
+  sameJson,
   startE2eServer,
   type E2eServer,
   type ToolFailure,
@@ -166,7 +167,13 @@ describe.skipIf(!e2eEnabled())('the indicator tools against TradingView Desktop'
       client,
       'chart_get_state',
     );
-    expect(data.studies.map(({ id }) => id)).toEqual(state.studies?.map(({ id }) => id));
+    expect(
+      sameJson(
+        data.studies.map(({ id }) => id),
+        state.studies?.map(({ id }) => id),
+      ),
+      'indicator_list lists the studies chart_get_state reports',
+    ).toBe(true);
     for (const study of data.studies) {
       expect(typeof study.name === 'string' && typeof study.title === 'string').toBe(true);
       expect(typeof study.visible).toBe('boolean');
@@ -183,7 +190,7 @@ describe.skipIf(!e2eEnabled())('the indicator tools against TradingView Desktop'
         false,
       );
     }
-    expect(warnings).toEqual([]);
+    expect(warnings.length === 0, 'indicator_list gives no warning').toBe(true);
     observe('indicators on the chart', {
       studies: data.studies.length,
       pine: data.studies.filter(({ isPine }) => isPine).length,
@@ -205,12 +212,15 @@ describe.skipIf(!e2eEnabled())('the indicator tools against TradingView Desktop'
       id: first.id,
     });
 
-    expect(data.id).toBe(first.id);
+    expect(data.id === first.id, 'the values are those of the study asked for').toBe(true);
     expect(data.plots.length).toBeGreaterThan(0);
-    expect(data.rows).toHaveLength(1);
-    expect(warnings).toEqual([]);
+    expect(data.rows.length === 1, 'one row').toBe(true);
+    expect(warnings.length === 0, 'indicator_get_values gives no warning').toBe(true);
     const [row] = data.rows;
-    expect(Object.keys(row?.values ?? {})).toEqual(data.plots);
+    expect(
+      sameJson(Object.keys(row?.values ?? {}), data.plots),
+      'the row has a value for each plot',
+    ).toBe(true);
     expect(
       Object.values(row?.values ?? {}).every((value) => value === null || Number.isFinite(value)),
     ).toBe(true);
@@ -230,7 +240,7 @@ describe.skipIf(!e2eEnabled())('the indicator tools against TradingView Desktop'
       { query: 'rsi', limit: 50 },
     );
 
-    expect(warnings).toEqual([]);
+    expect(warnings.length === 0, 'indicator_search gives no warning').toBe(true);
     const pine = data.results.filter(({ kind }) => kind === 'pine');
     expect(pine.some(({ name, shortName }) => /\bRSI\b/i.test(`${name} ${shortName}`))).toBe(true);
     // Relative Strength Index, found by its short name, which the list of the app gives in extra.
@@ -292,13 +302,19 @@ describe.skipIf(!e2eEnabled())('the indicator tools against TradingView Desktop'
     }
     const { error } = result.structuredContent as { error: ToolFailure };
     expect(error.code).toBe('PLAN_LIMIT');
-    expect(error.details).toMatchObject({
-      feature: 'INDICATORS_ON_CHART',
-      limit: check.limitValue,
-    });
-    expect((await listStudies()).map(({ id }) => id)).toEqual(before.map(({ id }) => id));
+    expect(
+      error.details?.feature === 'INDICATORS_ON_CHART' && error.details.limit === check.limitValue,
+      'the error names the feature and the limit of the check',
+    ).toBe(true);
+    expect(
+      sameJson(
+        (await listStudies()).map(({ id }) => id),
+        before.map(({ id }) => id),
+      ),
+      'the studies are those of before',
+    ).toBe(true);
     const uiAfter = await callOk<{ dialogs: string[] }>(client, 'app_get_ui_state');
-    expect(uiAfter.data.dialogs).toEqual(uiBefore.data.dialogs);
+    expect(sameJson(uiAfter.data.dialogs, uiBefore.data.dialogs), 'no dialog opened').toBe(true);
     observe('indicator_add on a full chart', {
       code: error.code,
       feature: typeof error.details?.feature === 'string' ? error.details.feature : null,
@@ -370,7 +386,13 @@ describe.skipIf(!e2eEnabled())('the indicator tools against TradingView Desktop'
       });
       expect(removed.data.removed).toBe(data.id);
     });
-    expect((await listStudies()).map(({ id }) => id)).toEqual(before.map(({ id }) => id));
+    expect(
+      sameJson(
+        (await listStudies()).map(({ id }) => id),
+        before.map(({ id }) => id),
+      ),
+      'the studies are those of before',
+    ).toBe(true);
     await expectChartRestored(e2eServer, snapshot);
   });
 });

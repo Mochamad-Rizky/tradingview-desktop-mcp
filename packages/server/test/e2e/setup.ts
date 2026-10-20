@@ -235,6 +235,12 @@ export async function callFailure(
   return envelope.error;
 }
 
+// Whether two values are the same, compared as JSON, for an assertion that must not print them,
+// because they are the user's: expect(sameJson(a, b), 'what is compared').toBe(true).
+export function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 // Prints what a suite saw of the app, to compare with the reverse-engineering notes after a
 // TradingView update: key names, types, counts and booleans only, never a value of the user's (no
 // symbol, price, name, id or text).
