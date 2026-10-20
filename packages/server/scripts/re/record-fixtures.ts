@@ -5,23 +5,32 @@ import { readChartState } from '../../src/tools/chart/page.js';
 import { CHART_TYPE_NAMES_BY_ID } from '../../src/tools/chart/mappers.js';
 import type { TvWindow } from '../../src/core/tv/tv-window.js';
 import type { JsonObject, JsonValue } from '../../src/utils/json.js';
-import { findLeaks, scrubFixture, scrubTargets, toStateFixture } from './scrub.js';
+import {
+  findLeaks,
+  scrubFixture,
+  scrubStudyShapes,
+  scrubTargets,
+  toStateFixture,
+} from './scrub.js';
 import { connectToApp, readOptions, runScript } from './session.js';
+import { readStudyShapes } from './shapes.js';
 
 // Records the state of the running TradingView Desktop as fixtures for the fake app (design spec
 // 10): the chart state through the chart tools' own page function, the bars, symbol info, studies
-// and drawings through the read-only function below, and the target list of the debug port. Both
-// are scrubbed before anything is written (see scrub.ts): no personal data, the identity of
-// NASDAQ:AAPL, and synthetic prices. A last check refuses to write a file in which any of the
-// recorded identifying texts survived.
+// and drawings through the read-only function below, and the target list of the debug port. Next
+// to the fixture it writes the shapes of the studies (shapes.ts): the key names and value types of
+// their plots, styles, inputs, API members and, for a strategy, report, to check the fake against.
+// All of it is scrubbed before anything is written (see scrub.ts): no personal data, the identity
+// of NASDAQ:AAPL, synthetic prices, and of the shapes types only. A last check refuses to write a
+// file in which any of the recorded identifying texts survived.
 //
-// It only reads, like the probe: the same getters, plus getStudyById and metaInfo of a study to
-// learn the ids of its plots.
+// It only reads, like the probe: the same getters, plus getStudyById, metaInfo, getInputsInfo and
+// reportData of a study.
 
 const USAGE = `Usage: pnpm re:record [--out DIR] [--name NAME] [--force] [--host 127.0.0.1] [--port 9222]
 
-  --out DIR    where to write: DIR/tv/NAME.json and DIR/cdp/targets.<platform>-<version>.json
-               (default: the package's test/fixtures)
+  --out DIR    where to write: DIR/tv/NAME.json, DIR/tv/NAME.shapes.json and
+               DIR/cdp/targets.<platform>-<version>.json (default: the package's test/fixtures)
   --name NAME  name of the chart fixture (default: chart-recorded)
   --force      replace files that exist already
 `;
@@ -134,6 +143,10 @@ function text(value: JsonValue | undefined): string {
   return typeof value === 'string' ? value : '';
 }
 
+function list(value: JsonValue | undefined): JsonValue[] {
+  return Array.isArray(value) ? value : [];
+}
+
 // The texts of a recording that identify the user or the recorded symbol, the layout ids in the
 // addresses of chart tabs among them. None of them may be in a file that is written.
 function identifyingTexts(chart: JsonObject, info: JsonValue, urls: readonly string[]): string[] {
@@ -215,6 +228,7 @@ async function main(): Promise<void> {
     const page = await app.connection.chartPage();
     const chart = await page.bridge.evaluate(readChartState, [null, { ...CHART_TYPE_NAMES_BY_ID }]);
     const extra = await page.bridge.evaluate(readRecording, []);
+    const shapes = scrubStudyShapes(await page.bridge.evaluate(readStudyShapes, []));
     const targets = await app.connection.targets();
 
     const raw: JsonObject = {
@@ -244,9 +258,15 @@ async function main(): Promise<void> {
       extra.symbolInfo,
       targets.map((target) => target.url),
     );
+    // The names the scrubber replaced (the titles of Pine scripts) must not be in the shapes either.
+    const kept = new Set(fixture.studies.map(({ name: study }) => study));
+    const studyNames = extra.studies
+      .map(({ name: study }) => study)
+      .filter((study) => !kept.has(study));
     const leaks = [
       ...findLeaks(fixture as unknown as JsonValue, needles),
       ...findLeaks(scrubbedTargets, needles),
+      ...findLeaks(shapes, [...needles, ...studyNames]),
     ];
     if (leaks.length > 0) {
       // The texts themselves are not printed: they are what must not leak.
@@ -257,12 +277,15 @@ async function main(): Promise<void> {
     }
 
     const chartPath = join(out, 'tv', `${name}.json`);
+    const shapesPath = join(out, 'tv', `${name}.shapes.json`);
     const targetsPath = join(out, 'cdp', targetsFileName(version.userAgent));
     writeJson(chartPath, fixture, force);
+    writeJson(shapesPath, shapes, force);
     writeJson(targetsPath, scrubbedTargets, force);
     process.stdout.write(
       `Wrote ${chartPath} (${String(fixture.bars.count)} synthetic bars, ${String(fixture.studies.length)} studies, ` +
         `${String(fixture.shapes.length)} drawings, ${String(Object.keys(fixture.symbolInfo).length)} symbol info fields)\n` +
+        `Wrote ${shapesPath} (the shapes of ${String(list(shapes.studies).length)} studies)\n` +
         `Wrote ${targetsPath} (${String(scrubbedTargets.length)} targets)\n`,
     );
   } finally {

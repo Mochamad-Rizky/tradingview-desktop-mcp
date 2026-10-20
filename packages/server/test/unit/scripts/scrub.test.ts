@@ -7,7 +7,9 @@ import {
   FIXTURE_WINDOW_TITLE,
   findLeaks,
   scrubFixture,
+  scrubStudyShapes,
   scrubTargets,
+  scrubValueShape,
   toStateFixture,
 } from '../../../scripts/re/scrub.js';
 import type { JsonObject, JsonValue } from '../../../src/utils/json.js';
@@ -466,5 +468,98 @@ describe('findLeaks', () => {
 
   it('does not take a short ticker inside a longer word for a leak', () => {
     expect(findLeaks({ a: 'generic GEO 1F' }, ['GE', 'F', ' '])).toEqual([]);
+  });
+});
+
+// The shapes the recorder writes next to a fixture (readStudyShapes): key names and value types,
+// which the scrubber reduces to type names and member names whatever the recording holds.
+describe('the shapes of the studies', () => {
+  test('scrubValueShape keeps type names, unions of them and member names', () => {
+    const shape: JsonValue = {
+      plots: [{ id: 'string', type: 'string', target: 'string|undefined' }],
+      styles: { '<id>': { title: 'string', visible: 'boolean' } },
+      report: { performance: { all: { netProfit: 'number' } }, trades: [], position: null },
+      deep: 'mixed',
+    };
+
+    expect(scrubValueShape(shape)).toEqual(shape);
+  });
+
+  test('scrubValueShape writes the type of a value in place of the value', () => {
+    expect(
+      scrubValueShape({
+        symbol: 'NASDAQ:ZZTEST',
+        title: 'My Secret Edge v2',
+        price: 705.25,
+        visible: true,
+        both: 'number|My Secret Edge',
+        items: [42, 'stop 690', false],
+      }),
+    ).toEqual({
+      symbol: 'string',
+      title: 'string',
+      price: 'number',
+      visible: 'boolean',
+      both: 'string',
+      items: ['number', 'string', 'boolean'],
+    });
+  });
+
+  test('scrubValueShape replaces keys that are no member names, and cuts deep shapes', () => {
+    expect(
+      scrubValueShape({ 'My Secret Edge': 'number', 'entry 705': 'string', ok_key: 'number' }),
+    ).toEqual({ '<key 1>': 'number', '<key 2>': 'string', ok_key: 'number' });
+    const deep: JsonValue = { a: { b: { c: { d: { e: { f: { g: { h: { i: 'number' } } } } } } } } };
+    expect(JSON.stringify(scrubValueShape(deep))).toContain('"h":"object"');
+    expect(scrubValueShape([[[[[[[[['number']]]]]]]]])).toEqual([[[[[[[['array']]]]]]]]);
+  });
+
+  test('scrubStudyShapes keeps the flags and the shapes of each study, and nothing else', () => {
+    const raw: JsonValue = {
+      layout: { name: 'My Layout', id: 'abc123' },
+      studies: [
+        {
+          id: 'q1W2e3',
+          name: 'My Secret Edge v2',
+          pine: true,
+          strategy: 'yes',
+          plots: [{ id: 'string', title: 'Fast line' }],
+          styles: { '<id>': { title: 'string' } },
+          inputs: [{ id: 'string', defval: 14 }],
+          api: { title: 'function' },
+          report: null,
+        },
+        'junk',
+      ],
+    };
+
+    const scrubbed = scrubStudyShapes(raw);
+
+    expect(scrubbed).toEqual({
+      studies: [
+        {
+          pine: true,
+          strategy: false,
+          plots: [{ id: 'string', title: 'string' }],
+          styles: { '<id>': { title: 'string' } },
+          inputs: [{ id: 'string', defval: 'number' }],
+          api: { title: 'function' },
+          report: null,
+        },
+        {
+          pine: false,
+          strategy: false,
+          plots: null,
+          styles: null,
+          inputs: null,
+          api: null,
+          report: null,
+        },
+      ],
+    });
+    expect(
+      findLeaks(scrubbed, ['My Layout', 'abc123', 'q1W2e3', 'My Secret Edge v2', 'Fast line']),
+    ).toEqual([]);
+    expect(scrubStudyShapes(null)).toEqual({ studies: [] });
   });
 });

@@ -548,3 +548,69 @@ export function findLeaks(value: JsonValue, needles: readonly string[]): string[
   }
   return [...found];
 }
+
+// The type names a shape of readStudyShapes (shapes.ts) holds as a leaf, alone or several joined by
+// "|" (the items of an array whose types differ), and "mixed".
+const TYPE_NAMES = new Set([
+  'string',
+  'number',
+  'boolean',
+  'null',
+  'undefined',
+  'object',
+  'array',
+  'function',
+  'bigint',
+  'symbol',
+  'mixed',
+]);
+
+// A key of a shape: the name of a member as the app writes it, or "<id>", which stands for the keys
+// of a map by id. Any other key could be a text of the user.
+const SHAPE_KEY = /^(?:[A-Za-z_$][\w$-]{0,63}|<id>)$/;
+
+// A shape of values (readStudyShapes) made safe to commit. Every leaf is a type name: a text that is not one (a value that got
+// into the shape) becomes "string", and a number or a boolean the name of its type, so no value is
+// ever written. A key that is not a member name becomes "<key N>". Arrays and objects deeper than
+// `depth` levels become "array" and "object". null, which says that there is nothing, stays.
+export function scrubValueShape(shape: JsonValue, depth = 8): JsonValue {
+  if (Array.isArray(shape)) {
+    return depth <= 0 ? 'array' : shape.map((item) => scrubValueShape(item, depth - 1));
+  }
+  if (isObject(shape)) {
+    if (depth <= 0) {
+      return 'object';
+    }
+    const scrubbed: JsonObject = {};
+    let odd = 0;
+    for (const [key, value] of Object.entries(shape)) {
+      const name = SHAPE_KEY.test(key) ? key : `<key ${String((odd += 1))}>`;
+      scrubbed[name] = scrubValueShape(value, depth - 1);
+    }
+    return scrubbed;
+  }
+  if (typeof shape === 'string') {
+    return shape.split('|').every((part) => TYPE_NAMES.has(part)) ? shape : 'string';
+  }
+  return shape === null ? null : typeof shape;
+}
+
+// What readStudyShapes read, made safe to commit and rebuilt from an allowlist: for each study, in
+// the order of the chart, whether it is a Pine script and whether it is a strategy, and the shapes
+// of its plots, styles, inputs, API members and report, each through scrubValueShape. Anything else a
+// recording holds (a name or an id of a study, say) is dropped.
+export function scrubStudyShapes(raw: JsonValue): JsonObject {
+  const studies = list(isObject(raw) ? raw.studies : undefined).map((study): JsonObject => {
+    const fields = isObject(study) ? study : {};
+    return {
+      pine: fields.pine === true,
+      strategy: fields.strategy === true,
+      plots: scrubValueShape(fields.plots ?? null),
+      styles: scrubValueShape(fields.styles ?? null),
+      inputs: scrubValueShape(fields.inputs ?? null),
+      api: scrubValueShape(fields.api ?? null),
+      report: scrubValueShape(fields.report ?? null),
+    };
+  });
+  return { studies };
+}

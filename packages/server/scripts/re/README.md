@@ -13,6 +13,7 @@ Start TradingView with `--remote-debugging-port=9222` first: `pnpm build`, then
 | -------------------- | ---------------- | --------------------------------------------------------------- |
 | `probe.ts`           | `pnpm re:probe`  | Prints what the app offers, read-only                           |
 | `record-fixtures.ts` | `pnpm re:record` | Writes scrubbed fixtures for the fake app, read-only in the app |
+| `shapes.ts`          | (library)        | Reads the shapes of the studies, read-only, for the recorder    |
 | `scrub.ts`           | (library)        | Makes a recording safe to commit                                |
 | `session.ts`         | (library)        | Command line and connection shared by the scripts               |
 
@@ -37,6 +38,11 @@ Records the chart state, the bars, the symbol info, the studies, the drawings (t
 and the target list, scrubs them, and writes:
 
 - `<out>/tv/<name>.json`, a fixture for `createFakeTvWindow` (default name `chart-recorded`)
+- `<out>/tv/<name>.shapes.json`, the shapes of the studies on the chart, to check the fake app
+  against: for each study whether it is a Pine script and a strategy, and the key names and value
+  types of its `metaInfo()` plots and styles, of `getInputsInfo()`, of the members of
+  `getStudyById(id)` and, for a strategy, of `reportData()`. Never a value: no input value, price,
+  name, title or id
 - `<out>/cdp/targets.<platform>-<version>.json`, a target list for the fake debug port
 
 `<out>` defaults to `test/fixtures`. An existing file is never replaced without `--force`, so a
@@ -64,9 +70,14 @@ What the scrubber does (`scrub.ts`, tested in `test/unit/scripts/scrub.test.ts`)
   profile among them; an address of another scheme keeps only the scheme. Paths, queries and
   fragments of web addresses are always dropped, and so are the debugger addresses.
 
-Before writing, the recorder searches both files for the recorded layout name, layout ids and symbol
-names, plainly, percent-decoded and with HTML entities undone, a text shorter than three characters
-(a ticker such as `GE`) as a whole word, and refuses to write if any of them survived.
+- The shapes keep type names only (`number`, `string`, `number|null`, ...): a value that got into
+  a shape is replaced by the name of its type, and a key that is not a member name by `<key N>`.
+  A map keyed by ids (the styles by plot id) is written with the one key `<id>`.
+
+Before writing, the recorder searches the three files for the recorded layout name, layout ids and
+symbol names, and the shapes also for the names of the studies the scrubber replaced, plainly,
+percent-decoded and with HTML entities undone, a text shorter than three characters (a ticker such
+as `GE`) as a whole word, and refuses to write if any of them survived.
 
 ## Why the scripts wrap page functions
 
