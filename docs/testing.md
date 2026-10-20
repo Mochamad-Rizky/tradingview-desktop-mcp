@@ -42,6 +42,12 @@ The fake window models what the real app was seen to do, among others:
   while flagged, the series has no bars and no symbol info, and `getVisibleRange` answers zeros.
 - `logicalRange()` answers an object with `left()` and `right()`, and `zoomToBarsRange` ignores a
   range whose ends are the wrong way round.
+- The Pine Editor is the side panel, registered as `dialog`. Closing it unregisters it and keeps
+  unsaved text with the flag of unsaved changes, which the next open shows again as the text of the
+  script; without unsaved changes, an open after the first one shows a new script.
+- The compiler reports, in the order of the text and with the messages and codes of the real one,
+  every undeclared name and, in a script of version 5 or later, a call of a Pine v4 name without
+  its namespace, after which it stops.
 - Options model the rest of the real behavior where a test needs it: `sessionOffsetSeconds` (the
   chart reports a daily bar as its day at 00:00 UTC while its row holds the session start),
   `futurePoints` (the time points the time scale keeps after the last bar), and `feeds` (the chart
@@ -96,45 +102,137 @@ time, because they share one window.
   goes through candles, line and Heikin Ashi and back; the visible range is set and set back, the
   empty space after the last bar included; an unknown symbol is reported and the chart switched
   back.
+- `data.e2e.test.ts`: OHLCV of bars the chart has loaded, oldest first; the quote and the top of the
+  book of the chart symbol; the symbol info of the chart symbol, and of `NASDAQ:AAPL` through the
+  symbol search; the search for `AAPL`; and one test that asks `data_get_ohlcv` for a few dozen bars
+  more than are loaded, which loads older history the way a scroll to the left does.
+- `indicator.e2e.test.ts`: the chart's indicators, the last value of the first one, the search for
+  RSI, `indicator_add` on a full chart, and, on a chart with a free slot, RSI added, its inputs and
+  visibility changed and changed back, and removed.
+- `pine.e2e.test.ts`: `pine_analyze` offline; compile-only of synthetic scripts (an error and its
+  position, a valid script and `pine_get_errors`, positions after a tab, `é` and an emoji, a script
+  without `//@version`); `pine_smart_compile` with the real compiler; the shape of
+  `pine_list_scripts`; the editor: a new script whose text is set, read and compiled, and the editor
+  closed and opened again with unsaved text of the test's own; on a chart with a free slot, a script
+  that draws and a strategy added and removed; and, read only, the drawings of the Pine scripts on
+  the chart and the strategy tools on a chart without a strategy.
+
+The assertions compare what is the user's (the symbol, prices, names, texts) without printing it.
+What a suite sees of the app is printed as `observed <what>: <JSON>` lines of key names, types,
+counts and booleans, to compare with [reverse-engineering.md](reverse-engineering.md) after a
+TradingView update.
+
+A Mac whose lid is closed sleeps, and the app's timers and connections with it: a run then times
+out or fails at random. Keep the lid open and run the suites under `caffeinate -i`.
 
 ### Safety rules
 
 The end-to-end suites work on the user's own, logged-in app, so they follow these rules:
 
 - **What they may change:** the symbol, the timeframe, the chart type and the visible range of the
-  active chart. Nothing else.
-- **What they check first:** before its first change, the chart suite checks by reading only that
-  the chart API has every member the chart tools use (`symbol`, `resolution`, `chartType`,
-  `getVisibleRange` and the three setters of the active chart, `zoomToBarsRange` of the time scale,
-  and the bar container), and that the chart can be put back as it is: the symbol and the timeframe
-  pass the input checks of `chart_set_symbol` and `chart_set_timeframe`, the chart type has a name
-  `chart_set_type` takes (id 11 and ids the tools do not know have none), and the visible range is
-  two times `chart_set_visible_range` takes, the earlier first. If either check fails, every test is
-  skipped with the reason and nothing is changed.
+  active chart; the history loaded into the chart, which the data suite extends by a few dozen
+  older bars (TradingView keeps them until the chart loads again); the Pine Editor, under the guard
+  below; and studies a test added itself, within the plan limits, which that test removes again.
+  Compiling a synthetic script without the editor changes nothing in the app. Nothing else.
+- **What they check first:** before its first change, a suite that changes the chart checks by
+  reading only that the chart API has every member the chart tools use (`symbol`, `resolution`,
+  `chartType`, `getVisibleRange` and the three setters of the active chart, `zoomToBarsRange` of the
+  time scale, and the bar container), and that the chart can be put back as it is: the symbol and
+  the timeframe pass the input checks of `chart_set_symbol` and `chart_set_timeframe`, the chart
+  type has a name `chart_set_type` takes (id 11 and ids the tools do not know have none), and the
+  visible range is two times `chart_set_visible_range` takes, the earlier first. If either check
+  fails, every test that changes the chart is skipped with the reason and nothing is changed. The
+  editor and the plan limits are checked as described below.
 - **How they restore it:** a suite takes a snapshot of those four (through `chart_get_state`) and of
   the view of the time scale (the bars it spans from edge to edge) before its first test. It puts
   the symbol back by the listing the series has resolved (`pro_name`), because the chart can show a
   symbol through the exchange of its data feed (`BATS:AAPL` for `NASDAQ:AAPL`), and setting that
-  name would switch to another listing. Every test that changes the chart restores it first thing
-  after it ends, and asserts that the symbol, timeframe and chart type are back and that the visible
-  range is within one bar of where it was; a restore that fails after a failed test is logged next
-  to the test's own failure, which stays the one reported. After the last test the suite restores
-  again through the tools, then puts the view back exactly: the same bars from edge to edge, with
-  the bar spacing worked out for the width the pane has then, because TradingView can resize the
-  price axis while a suite runs. Each of the two steps is tried whatever the other did. Restoring
-  runs whether the tests passed or failed.
-- **What they never touch:** drawings (no `drawing_clear_all`), indicators, alerts, layouts and
-  layout switching, the Pine Editor, replay, watchlists, and anything that trades. They never click
-  or press keys: the check above makes the chart tools take the chart API, so none of them falls
-  back to the interface (whose strategies the integration tests cover). They never reload the tab,
-  and never quit, launch or restart TradingView.
+  name would switch to another listing. A range can be set only on bars, so the restore waits for
+  the chart's bars after a change of symbol, timeframe or chart type before it sets the range. Every
+  test that changes the chart restores it first thing after it ends, and asserts that the symbol,
+  timeframe and chart type are back and that the visible range is within one bar of where it was; a
+  restore that fails after a failed test is logged next to the test's own failure, which stays the
+  one reported. After the last test the suite restores again through the tools, then puts the view
+  back exactly: the same bars from edge to edge, with the bar spacing worked out for the width the
+  pane has then, because TradingView can resize the price axis while a suite runs. Each of the two
+  steps is tried whatever the other did. Restoring runs whether the tests passed or failed.
+- **What they never touch:** drawings (no `drawing_clear_all`); the user's indicators (no
+  `indicator_remove`, `indicator_set_inputs` or `indicator_set_visibility` on a study a test did not
+  add); saved scripts (no `pine_save`, no `pine_smart_compile` with `writeBack`, no `pine_open` but
+  of the script the editor showed); alerts, layouts and layout switching, replay, watchlists, and
+  anything that trades. They never click or press keys: the check above makes the chart tools take
+  the chart API, so none of them falls back to the interface (whose strategies the integration tests
+  cover). They never reload the tab, and never quit, launch or restart TradingView.
 - **The layout autosave** of TradingView saves the changed chart while a suite runs; the restore
   saves it back as it was.
-- **Plan limits:** a test that would exceed a limit of the user's plan is to be skipped with the
-  name of the feature rather than free capacity by touching user data. That check arrives with the
-  plan limits module; the current suites only use what every plan offers.
 - **An interrupted run** (Ctrl+C inside a test) can stop before the restore. Note the symbol,
-  timeframe, chart type and range before a run, and put them back by hand if a run is cut short.
+  timeframe, chart type and range, and what the Pine Editor shows, before a run, and put them back
+  by hand if a run is cut short.
+
+### Plan-aware skips
+
+A test that adds something a plan limit counts asks `planLimitSkipReason(client, feature, used,
+needed)` (`test/e2e/setup.ts`) first. It reads the limit with `app_get_plan_limits`, and when `used`
+plus `needed` would go over it, the test is skipped before anything is changed, with a reason that
+names the feature and the limit, such as `The plan allows 2 of INDICATORS_ON_CHART (limit of 2), 2
+in use and the test needs 1 more`. A limit the app does not report counts as room: the tool under
+test then meets the app's own check. No test makes room by touching what the user has.
+
+On a chart without a free indicator slot (2 of 2 on a Basic plan):
+
+- `adds and removes RSI`, `adds a script that draws, …` and `adds a strategy, …` are skipped with
+  that reason.
+- `adding an indicator on a full chart returns PLAN_LIMIT and changes nothing` runs, and only there:
+  the plan and the app's own check (`canCreateStudy`, reason `general`) must both call the chart
+  full, so the call cannot add a study. It asserts the `PLAN_LIMIT` error with the feature and the
+  limit, the same studies afterwards and no new dialog (`app_get_ui_state`). Should TradingView add
+  the study all the same, the test removes it and fails.
+
+With a free slot the adding tests run, each on its own study only. A script added from the editor
+(`pine_compile` with `addToChart`) is saved by TradingView as a server draft of the account
+(version 0.x), as its own Add to chart button does: the test removes its study, and the draft stays
+among the scripts of the account.
+
+### The Pine Editor guard
+
+The text in the Pine Editor can be work the user has not saved, so the editor tests change it only
+under these rules (`snapshotEditor`, `restoreEditor` and the steps around them in `setup.ts`):
+
+- **Before the first test** the suite reads what the editor shows, changing nothing. When it is
+  open: the script (id and version, or a new script), whether its text differs from the script's
+  (`isModified()`), and the text itself, which stays in memory to compare and is never printed.
+  When it is closed: the script the app keeps for its next open and whether unsaved changes are
+  kept with it (`last_edited_script` and `has_unsaved_modifications` in local storage, ids and flags
+  only). Every editor test is skipped, and nothing is changed, when the editor holds or keeps
+  unsaved changes, when any of this cannot be read, or when the script could not be shown again
+  (`pine_open` must find it at that version, and the plan must let TradingView open it).
+- A closed editor is opened once, the way the Pine button opens it. TradingView shows the script it
+  keeps only on the first open of a session; later opens show a new script, unless unsaved changes
+  are kept. So the suite puts back the script the app kept, not what the editor showed once open.
+- **After every test** that script is put back through the tools: `pine_open` by its id (`pine_new`
+  of the same type for a new script), with `confirm: true` only while the editor holds text the test
+  wrote itself. Unsaved text of anyone else is never discarded: the restore stops and says so. The
+  suite then reads the editor until it shows the script without changes.
+- **After the last test** a closed editor is closed again, and the suite checks that the app keeps
+  the same script for it as before.
+
+The flag of unsaved changes is written when the editor closes and lags while it is open, so the
+guard asks the editor itself (`isModified()`). Opening and closing the editor rewrites what the app
+keeps of it in local storage: `pine_new` clears the editor console (`console_messages_key`), which
+the tests' compile messages then fill; the view state kept for the last script
+(`last_edited_script_view_state`) changes; and the copy of that script (`last_edited_script`) is
+written again when the editor closes, seen with other line breaks and the text otherwise the same.
+None of it is a saved script, and nothing is saved.
+
+### Before and after a run
+
+Note before a run, by reading only, the studies on the chart, what the Pine Editor shows (open or
+closed, and the script id and version), and the symbol, timeframe, chart type and visible range,
+and compare them after it. They should be the same, apart from the history the data suite loaded
+and the editor's local storage described above. A visible range whose left edge moved while its
+right edge, the bar spacing and the right offset stayed was not changed by a suite: TradingView
+keeps the bar spacing and the right offset, which is what a layout stores of the view, when its
+window gets narrower or wider, such as when it moves to a display of another width.
 
 ## Reverse-engineering probes and fixtures
 
@@ -147,7 +245,11 @@ README describes them in detail.
   [reverse-engineering.md](reverse-engineering.md).
 - `pnpm re:record` records the chart state, the bars, the symbol info, the studies, the drawings
   (types only) and the target list, scrubs them, and writes `test/fixtures/tv/chart-recorded.json`
-  and `test/fixtures/cdp/targets.<platform>-<version>.json`. It never replaces a file without
+  and `test/fixtures/cdp/targets.<platform>-<version>.json`. Next to the fixture it writes
+  `chart-recorded.shapes.json`, the shapes of the studies on the chart: whether each is a Pine
+  script and a strategy, and the key names and value types of its `metaInfo()` plots and styles, of
+  `getInputsInfo()`, of the members of `getStudyById(id)` and, for a strategy, of `reportData()`,
+  to check the fake app against after a TradingView update. It never replaces a file without
   `--force`; `--out <dir>` writes elsewhere. Commit a recording only when it shows that the fake is
   wrong, and read the diff first.
 
@@ -180,7 +282,11 @@ commit:
   host, with the path `/`, a frame of another site (ad and anti-abuse frames) and a TradingView
   profile among them; an address of another scheme keeps only the scheme. Paths, queries and
   fragments of web addresses are always dropped, and so are the debugger addresses.
+- The shapes keep type names only (`number`, `string`, `number|null`, ...): a value that got into a
+  shape is replaced by the name of its type, and a key that is not a member name by `<key N>`. A map
+  keyed by ids (the styles by plot id) is written with the one key `<id>`.
 
-Before it writes, the recorder searches both files for the recorded layout name, layout ids and
-symbol names, plainly, percent-decoded and with HTML entities undone, a text shorter than three
-characters (a ticker such as `GE`) as a whole word, and refuses to write if any of them survived.
+Before it writes, the recorder searches the three files for the recorded layout name, layout ids
+and symbol names, and the shapes also for the names of the studies the scrubber replaced, plainly,
+percent-decoded and with HTML entities undone, a text shorter than three characters (a ticker such
+as `GE`) as a whole word, and refuses to write if any of them survived.
