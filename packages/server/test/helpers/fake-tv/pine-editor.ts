@@ -44,7 +44,8 @@ import type { TvStateFixture } from './fixture.js';
 //   fake compiler (compileFakePine) and sends nothing else: it resolves { success: true, metaInfo,
 //   compileErrors } for a text without errors and rejects with an Error whose reason holds the
 //   compile errors otherwise, as handleTranslateResult of the app does; with state.compileHttpError
-//   set it rejects with that plain string, as the app does for an HTTP failure.
+//   set it rejects with that plain string, as the app does for an HTTP failure, and with
+//   state.compileFirstErrorOnly set the compiler stops at its first error and reports only that.
 // - The service locator module exports hasService, service, serviceOrNull, registerService,
 //   unregisterService and waitServiceRegistered, keyed by service descriptors. The page layout
 //   service, whose descriptor is the export PAGE_LAYOUT_SERVICE of another module, has
@@ -98,17 +99,62 @@ export interface FakeConsoleEntry {
   end?: { line: number; column: number };
 }
 
+// The v4 names that a script of version 5 or later no longer has: study, security and tostring,
+// and the functions that moved to the ta namespace. The compiler finds each undeclared where it is
+// called without a namespace.
+const V4_ONLY_NAMES = [
+  'study',
+  'security',
+  'tostring',
+  'sma',
+  'ema',
+  'rsi',
+  'macd',
+  'stoch',
+  'atr',
+  'crossover',
+  'crossunder',
+  'highest',
+  'lowest',
+  'change',
+];
+const V4_CALL = new RegExp(`(?<![\\w.])(?:${V4_ONLY_NAMES.join('|')})(?=\\s*\\()`, 'g');
+
+// The version a text declares with a //@version=N comment line, null for none, which the compiler
+// reads as the first and oldest version of the language.
+function declaredVersion(source: string): number | null {
+  const match = /^[ \t]*\/\/[ \t]*@version[ \t]*=[ \t]*(\d+)/m.exec(source);
+  return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+// A line with its comment and the insides of its strings blanked out, so that the columns stay and
+// only code is left to look at.
+function codeOf(line: string): string {
+  return line.replace(/\/\/.*$|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, (found) =>
+    ' '.repeat(found.length),
+  );
+}
+
+// Whether the text defines a function of that name (`name(...) =>` at the start of a line), whose
+// calls are then declared.
+const definesFunction = (source: string, name: string): boolean =>
+  new RegExp(`^(?:export[ \\t]+)?${name}[ \\t]*\\([^)]*\\)[ \\t]*=>`, 'm').test(source);
+
 // What the fake compiler finds in a text (lines split at CRLF, LF or CR, counted from 1): an error
-// "Undeclared identifier" for every word starting with undeclared_, a warning for every word
-// starting with deprecated_, both with the 1-based columns of the word (end inclusive), and an
-// error without a column (column 0, as the legacy messages of the app have) for every word
-// legacy_error.
+// "Undeclared identifier" for every word starting with undeclared_, and in a script of version 5 or
+// later for every call of a v4 name without its namespace (a version below 5, or none, compiles as
+// an old version, which still has them; names in comments and strings and names the script defines
+// as functions are not found), a warning for every word starting with deprecated_, all with the
+// 1-based columns of the word (end inclusive), and an error without a column (column 0, as the
+// legacy messages of the app have) for every word legacy_error.
 export function compileFakePine(source: string): {
   errors: FakePineDiagnostic[];
   warnings: FakePineDiagnostic[];
 } {
   const errors: FakePineDiagnostic[] = [];
   const warnings: FakePineDiagnostic[] = [];
+  const modern = (declaredVersion(source) ?? 1) >= 5;
+  const defined = new Set(V4_ONLY_NAMES.filter((name) => definesFunction(source, name)));
   source.split(/\r\n|\n|\r/).forEach((text, index) => {
     const line = index + 1;
     const at = (match: RegExpMatchArray) => ({
@@ -122,6 +168,16 @@ export function compileFakePine(source: string): {
         code: 'CE10275',
         ...at(match),
       });
+    }
+    for (const match of modern ? codeOf(text).matchAll(V4_CALL) : []) {
+      if (!defined.has(match[0])) {
+        errors.push({
+          message: 'Undeclared identifier "{identifier}"',
+          ctx: { identifier: match[0] },
+          code: 'CE10275',
+          ...at(match),
+        });
+      }
     }
     for (const match of text.matchAll(/\bdeprecated_\w*/g)) {
       warnings.push({
@@ -187,6 +243,9 @@ export interface FakePineEditorState {
   consoleMessages: FakeConsoleEntry[];
   // The plain string translateScriptAsync rejects with, as for an HTTP failure. Default null.
   compileHttpError: string | null;
+  // Whether the compiler stops at its first error and reports only that one, as one can when the
+  // later errors depend on the first. The warnings are all reported. Default false.
+  compileFirstErrorOnly: boolean;
 }
 
 export interface FakePineEditorOptions {
@@ -323,11 +382,18 @@ export function createFakePineEditor(
     saveErrors: null,
     consoleMessages: [],
     compileHttpError: null,
+    compileFirstErrorOnly: false,
   };
   // How many scripts saveNewScript has created, for their ids.
   let created = 0;
   // How many server drafts addToChart has saved, for their ids.
   let drafts = 0;
+
+  // The fake compiler, which reports only its first error while state.compileFirstErrorOnly is set.
+  const compile = (source: string): ReturnType<typeof compileFakePine> => {
+    const found = compileFakePine(source);
+    return state.compileFirstErrorOnly ? { ...found, errors: found.errors.slice(0, 1) } : found;
+  };
 
   // What requestUserScripts resolves with: the saved scripts without their sources.
   const listScripts = (): Promise<unknown[]> =>
@@ -447,7 +513,7 @@ export function createFakePineEditor(
         };
       }
       state.savedSource = state.source;
-      const { errors, warnings } = compileFakePine(state.source);
+      const { errors, warnings } = compile(state.source);
       const title = /(?:indicator|strategy|library)\(\s*"([^"]*)"/.exec(state.source)?.[1];
       options.addStudy({
         name: title ?? 'Untitled script',
@@ -690,7 +756,7 @@ export function createFakePineEditor(
             // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
             return Promise.reject(state.compileHttpError);
           }
-          const compileErrors = compileFakePine(source);
+          const compileErrors = compile(source);
           const metaInfo = { scriptIdPart: pineId, pine: { version: '1.0' } };
           if (compileErrors.errors.length > 0) {
             return Promise.reject(new FakePineCompileFailError(compileErrors, metaInfo));

@@ -61,6 +61,7 @@ test('the editor starts closed, holding the script of the fixture', () => {
     saveErrors: null,
     consoleMessages: [],
     compileHttpError: null,
+    compileFirstErrorOnly: false,
   });
 });
 
@@ -334,6 +335,107 @@ test('the fake compiler finds undeclared and deprecated words and legacy errors,
   });
 });
 
+// The v4 names the analyzer renames, which a script of version 5 or later no longer has.
+const V4_NAMES = [
+  'study',
+  'security',
+  'tostring',
+  'sma',
+  'ema',
+  'rsi',
+  'macd',
+  'stoch',
+  'atr',
+  'crossover',
+  'crossunder',
+  'highest',
+  'lowest',
+  'change',
+];
+
+// Where and what the fake compiler finds undeclared in a text.
+const undeclaredIn = (source: string) =>
+  compileFakePine(source).errors.map(({ ctx, start }) => [
+    ctx?.identifier,
+    start?.line,
+    start?.column,
+  ]);
+
+test('the fake compiler finds a v4 name undeclared in a script of version 5 or later, as the app does', () => {
+  expect(compileFakePine('//@version=6\nstudy("x")\nplot(rsi(close,14))\n')).toEqual({
+    errors: [
+      {
+        message: 'Undeclared identifier "{identifier}"',
+        ctx: { identifier: 'study' },
+        code: 'CE10275',
+        start: { line: 2, column: 1 },
+        end: { line: 2, column: 5 },
+      },
+      {
+        message: 'Undeclared identifier "{identifier}"',
+        ctx: { identifier: 'rsi' },
+        code: 'CE10275',
+        start: { line: 3, column: 6 },
+        end: { line: 3, column: 8 },
+      },
+    ],
+    warnings: [],
+  });
+  for (const name of V4_NAMES) {
+    expect(undeclaredIn(`//@version=5\nx = ${name}(close)\n`), name).toEqual([[name, 2, 5]]);
+  }
+  // Several on one line come in the order of their columns.
+  expect(undeclaredIn('//@version=6\nplot(sma(rsi(close,14),5))\n')).toEqual([
+    ['sma', 2, 6],
+    ['rsi', 2, 10],
+  ]);
+});
+
+test('the fake compiler compiles a script below version 5, or without a version, as an old one', () => {
+  const body = 'study("x")\nplot(rsi(close,14))\n';
+
+  expect(undeclaredIn(body)).toEqual([]);
+  expect(undeclaredIn(`//@version=4\n${body}`)).toEqual([]);
+  expect(undeclaredIn(`//@version=1\n${body}`)).toEqual([]);
+  // The annotation may have spaces and may follow other comments.
+  expect(undeclaredIn(`// An old script\n// @version = 5\n${body}`)).toEqual([
+    ['study', 3, 1],
+    ['rsi', 4, 6],
+  ]);
+});
+
+test('the fake compiler does not find names undeclared that are namespaced, quoted, commented or declared', () => {
+  const clean = [
+    '//@version=6',
+    'indicator("study(x)") // rsi(close) and sma(close)',
+    "label = 'ema(close)'",
+    'plot(ta.rsi(close, 14))',
+    'x = request.security("A", "D", close)',
+    'y = str.tostring(1) + my_sma(close)',
+    'highest(src) =>',
+    '    src',
+    'plot(highest(close))',
+    '',
+  ].join('\n');
+
+  expect(undeclaredIn(clean)).toEqual([]);
+  // A variable named like the built-in does not declare the call on its right.
+  expect(undeclaredIn('//@version=6\nrsi = rsi(close, 14)\nplot(rsi)\n')).toEqual([['rsi', 2, 7]]);
+});
+
+test('the fake compiler reports v4 names among its other findings', () => {
+  const found = compileFakePine(
+    '//@version=6\nstudy(close)\nplot(undeclared_a)\nlegacy_error\nx = deprecated_f()\n',
+  );
+
+  expect(found.errors.map(({ ctx, message }) => ctx?.identifier ?? message)).toEqual([
+    'study',
+    'undeclared_a',
+    'Syntax error at input "legacy_error"',
+  ]);
+  expect(found.warnings).toHaveLength(1);
+});
+
 test('translateScriptAsync resolves a clean text, rejects compile errors and HTTP failures', async () => {
   const { exports, inspector } = editorOf();
   const translate = exports.translateScriptAsync as (
@@ -362,6 +464,37 @@ test('translateScriptAsync resolves a clean text, rejects compile errors and HTT
     'Server error, try again or contact support.',
   );
   expect(inspector.callsTo('translateScriptAsync')).toHaveLength(3);
+});
+
+test('a compiler that stops at its first error reports one error at a time, and every warning', async () => {
+  const room = {
+    ...withEditor('dialog'),
+    planLimits: { ...fixture.planLimits, INDICATORS_ON_CHART: 5 },
+  };
+  const { exports, getOpen, inspector } = editorOf(room);
+  const editor = inspector.state.pineEditor;
+  const translate = exports.translateScriptAsync as (
+    source: string,
+    id: string,
+  ) => Promise<unknown>;
+  const source = 'plot(undeclared_a)\nplot(undeclared_b)\nx = deprecated_f()\n';
+  editor.compileFirstErrorOnly = true;
+
+  const failure: unknown = await translate(source, 'USER;x').catch((error: unknown) => error);
+  expect(failure).toMatchObject({
+    reason: {
+      errors: [expect.objectContaining({ ctx: { identifier: 'undeclared_a' } })],
+      warnings: [expect.objectContaining({ ctx: { name: 'deprecated_f' } })],
+    },
+  });
+
+  // The editor compiles the same way when it adds the script.
+  const facade = getOpen('dialog')?.getFacade();
+  await facade?.openNewScript();
+  await facade?.setScript(source);
+  await facade?.addToChart();
+  expect(editor.consoleMessages.filter(({ level }) => level === 'error')).toHaveLength(1);
+  expect(editor.consoleMessages.filter(({ level }) => level === 'warning')).toHaveLength(1);
 });
 
 test('addToChart saves a new script as a draft, adds its study and writes the console', async () => {
