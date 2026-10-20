@@ -71,12 +71,12 @@ export function readPineEditorState(
       },
     };
   }
-  // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, under that bare
-  // key for every placement, read with the helper of the app, which keeps it per account), or null
-  // when that cannot be read. The app writes it when the editor closes and shows the unsaved text
-  // again when the editor opens, and isModified() then reads false (seen on the app), so its own
-  // guard asks this flag as well. While the editor is open the flag can lag: it stays set after the
-  // text was replaced until the editor closes, which only makes the guard ask for confirm.
+  // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, under that
+  // bare key for every placement, read with the helper of the app, which keeps it per account), or
+  // null when that cannot be read. The app writes it when the editor closes and shows the unsaved
+  // text again when the editor opens, and isModified() then reads false (seen on the app), so its
+  // own guard asks this flag as well. While the editor is open the flag can lag: it stays set after
+  // the text was replaced until the editor closes, which only makes the guard ask for confirm.
   const keptUnsaved = (): boolean | null => {
     try {
       const read = lib.findExport('getPersistedValue');
@@ -186,15 +186,15 @@ export type PineEditorState = PineEditorReading['state'];
 export type PineEditorPlacement = NonNullable<PineEditorState['placement']>;
 
 // Opens the editor the way the Pine button of the toolbar of the app does, which discards nothing,
-// and waits at most waitMs until the editor is registered and mounted, then answers its state.
-// Seen on the app: the first open of a session shows the script or draft the editor last held; an
-// open after the side panel closed shows a new script; and either shows again the unsaved text the
-// app kept, which then counts as unsaved changes through the flag the app keeps for it. Mounted is inferred: getSource of the
-// facade answers instead of rejecting (the text it answers is dropped). An editor that is already
-// open is answered at once, without opening it again. The whole wait runs in this one call, so the
-// page library pushes one chunk at most. A wait that is not a positive number waits no time.
-// Failures: TIMEOUT when the editor is not ready in time, and NOT_AVAILABLE with the reason when
-// TradingView fails to open it.
+// and waits at most waitMs until the editor is registered and mounted, then answers its state. Seen
+// on the app: the first open of a session shows the script or draft the editor last held; an open
+// after the side panel closed shows a new script; and either shows again the unsaved text the app
+// kept, which then counts as unsaved changes through the flag the app keeps for it. Mounted is
+// inferred: getSource of the facade answers instead of rejecting (the text it answers is dropped).
+// An editor that is already open is answered at once, without opening it again. The whole wait runs
+// in this one call, so the page library pushes one chunk at most. A wait that is not a positive
+// number waits no time. Failures: TIMEOUT when the editor is not ready in time, and NOT_AVAILABLE
+// with the reason when TradingView fails to open it.
 export function openPineEditor(
   win: TvWindow,
   lib: PageLib,
@@ -236,12 +236,12 @@ export function openPineEditor(
       return null;
     }
   };
-  // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, under that bare
-  // key for every placement, read with the helper of the app, which keeps it per account), or null
-  // when that cannot be read. The app writes it when the editor closes and shows the unsaved text
-  // again when the editor opens, and isModified() then reads false (seen on the app), so its own
-  // guard asks this flag as well. While the editor is open the flag can lag: it stays set after the
-  // text was replaced until the editor closes, which only makes the guard ask for confirm.
+  // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, under that
+  // bare key for every placement, read with the helper of the app, which keeps it per account), or
+  // null when that cannot be read. The app writes it when the editor closes and shows the unsaved
+  // text again when the editor opens, and isModified() then reads false (seen on the app), so its
+  // own guard asks this flag as well. While the editor is open the flag can lag: it stays set after
+  // the text was replaced until the editor closes, which only makes the guard ask for confirm.
   const keptUnsaved = (): boolean | null => {
     try {
       const read = lib.findExport('getPersistedValue');
@@ -438,12 +438,12 @@ export function openPineEditor(
 // as the exports of the service locator and PAGE_LAYOUT_SERVICE as the export of its own module.
 // The bottom placement closes through TradingView.bottomWidgetBar.close(), which only minimizes the
 // bar and keeps the editor with its text. Nothing here calls releaseScript, destroy or the
-// closeScript of the widget controller, which reset the script and so discard the text. Seen on
-// the app: the side panel goes and the editor leaves the registry, and the app keeps the script it
-// held and a flag for unsaved changes, whose text it shows again on the next open (see
-// openPineEditor). An editor that is not open is left alone. Without its close path, or with a dialog that is not the "pine" side panel,
-// the answer is CAPABILITY_UNAVAILABLE, before anything is called; a close path that throws is
-// NOT_AVAILABLE with the reason.
+// closeScript of the widget controller, which reset the script and so discard the text. Seen on the
+// app: the side panel goes and the editor leaves the registry, and the app keeps the script it held
+// and a flag for unsaved changes, whose text it shows again on the next open (see openPineEditor).
+// An editor that is not open is left alone. Without its close path, or with a dialog that is not
+// the "pine" side panel, the answer is CAPABILITY_UNAVAILABLE, before anything is called; a close
+// path that throws is NOT_AVAILABLE with the reason.
 export function closePineEditor(
   win: TvWindow,
   lib: PageLib,

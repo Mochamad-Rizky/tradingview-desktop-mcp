@@ -122,10 +122,8 @@ function registry(
   return {
     getOpenPineEditor: (placement: 'dialog' | 'bottom') => entries[placement] ?? null,
     hasScriptModificationsKey: 'has_unsaved_modifications',
-    getPersistenceKey: (key: string, placement: string) =>
-      `${placement === 'bottom' ? 'bottom_' : ''}${key}`,
     getPersistedValue: (key: string, perUser: boolean) =>
-      perUser && key.endsWith('has_unsaved_modifications') ? kept : null,
+      perUser && key === 'has_unsaved_modifications' ? kept : null,
   };
 }
 

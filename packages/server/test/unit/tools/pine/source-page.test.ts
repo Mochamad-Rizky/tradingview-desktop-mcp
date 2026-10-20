@@ -126,7 +126,6 @@ function withFacade(
           ...('kept' in options
             ? {
                 hasScriptModificationsKey: 'has_unsaved_modifications',
-                getPersistenceKey: (key: string) => key,
                 // A function stands for a helper that answers what it returns, or throws.
                 getPersistedValue: (_key: string, perUser: boolean): unknown =>
                   perUser

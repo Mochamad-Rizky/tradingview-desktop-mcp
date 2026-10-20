@@ -5,15 +5,15 @@ import type { JsonValue } from '../../src/utils/json.js';
 // a fixture, so that the fake app can be checked against them after a TradingView update: for each
 // study, whether it is a Pine script and whether it is a strategy, and the key names and the types
 // of the values of its metaInfo() plots and styles, of getInputsInfo(), of the members of
-// getStudyById(id) and, for a strategy, of its report. Never a value: no input value, price,
-// name, title, text or id of the user. A page function, so that it runs in the page (see page-bridge.ts),
+// getStudyById(id) and, for a strategy, of its report. Never a value: no input value, price, name,
+// title, text or id of the user. A page function, so that it runs in the page (see page-bridge.ts),
 // and in a module of its own, because record-fixtures.ts runs when it is imported.
 //
 // A shape is a type name for a value ("number", "string", ...; several joined by "|" for the items
-// of an array that differ), an object of the shapes of its members, by name, or an array holding the
-// shape all its items share (the members of each object item merged), empty for an empty array. A
-// map whose keys are ids (the styles by plot id) is written with the one key "<id>". Objects deeper
-// than six levels are written "object". An accessor among the members of the API is written
+// of an array that differ), an object of the shapes of its members, by name, or an array holding
+// the shape all its items share (the members of each object item merged), empty for an empty array.
+// A map whose keys are ids (the styles by plot id) is written with the one key "<id>". Objects
+// deeper than six levels are written "object". An accessor among the members of the API is written
 // "getter", without calling it. scrubStudyShapes (scrub.ts) checks every shape before it is
 // written.
 export function readStudyShapes(win: TvWindow): {
