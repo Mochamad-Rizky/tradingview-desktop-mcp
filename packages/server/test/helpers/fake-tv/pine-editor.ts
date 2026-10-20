@@ -38,8 +38,8 @@ import type { TvStateFixture } from './fixture.js';
 //   saveNewScript, which checks the saved-script limit the way the app does, opening its paywall
 //   (dialog.paywall) and throwing when the limit is reached, and else saves a new script; and
 //   saveExistingScript, a stub that records its call.
-// - The export requestUserScripts lists the saved scripts of the account, without their sources,
-//   and resolves [] while signed out (signedIn false), as the app does.
+// - The export requestUserScripts lists the saved scripts of the account as the app does: each
+//   with its text (scriptSource) and its kind in extra, and none while signed out (signedIn false).
 // - The export translateScriptAsync(source, pineId) of the same module compiles a text with the
 //   fake compiler (compileFakePine) and sends nothing else: it resolves { success: true, metaInfo,
 //   compileErrors } for a text without errors and rejects with an Error whose reason holds the
@@ -434,15 +434,23 @@ export function createFakePineEditor(
     return state.compileFirstErrorOnly ? { ...found, errors: found.errors.slice(0, 1) } : found;
   };
 
-  // What requestUserScripts resolves with: the saved scripts without their sources.
+  // What requestUserScripts resolves with: the saved scripts in the shape the app lists them, with
+  // their texts and their kinds in extra (seen on the app).
   const listScripts = (): Promise<unknown[]> =>
     Promise.resolve(
       state.signedIn
-        ? state.savedScripts.map((script) => {
-            const listed: Partial<FakeSavedScript> = { ...script };
-            delete listed.source;
-            return listed;
-          })
+        ? state.savedScripts.map(
+            ({ scriptIdPart, scriptName, scriptTitle, version, modified, kind, source }) => ({
+              scriptIdPart,
+              scriptName,
+              scriptTitle,
+              version,
+              modified,
+              isTVScriptBuiltIn: false,
+              ...(source === null ? {} : { scriptSource: source }),
+              extra: kind === undefined ? {} : { kind },
+            }),
+          )
         : [],
     );
   // isSaveBlockedByPaywall of the app, which opens the paywall when it answers true.

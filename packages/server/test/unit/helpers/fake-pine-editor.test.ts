@@ -174,14 +174,16 @@ test('the service locator answers the page layout service unless it is left out'
 
 const SAVED = fixture.pineEditor.savedScripts;
 
-test('requestUserScripts and listSavedScripts list the saved scripts without sources, none signed out', async () => {
+test('requestUserScripts and listSavedScripts list the saved scripts as the app does, none signed out', async () => {
   const { win, exports, api, inspector } = editorOf();
   const requestUserScripts = exports.requestUserScripts as () => Promise<unknown[]>;
-  const listed = SAVED.map((script) => {
-    const rest: Partial<typeof script> = { ...script };
-    delete rest.source;
-    return rest;
-  });
+  // With the text of each script and its kind in extra, as seen on the app.
+  const listed = SAVED.map(({ source, kind, ...rest }) => ({
+    ...rest,
+    isTVScriptBuiltIn: false,
+    scriptSource: source,
+    extra: kind === undefined ? {} : { kind },
+  }));
 
   expect(win.is_authenticated).toBe(true);
   await expect(requestUserScripts()).resolves.toEqual(listed);

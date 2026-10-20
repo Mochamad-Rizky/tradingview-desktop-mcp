@@ -496,8 +496,9 @@ export function closePineEditor(
 // limitEnabled the feature toggle pine_free_saved_scripts_limit (null when it cannot be read) and
 // unlimited the export UNLIMITED_FEATURE_LIMIT (null when it is missing). A row keeps the id, the
 // name, the title, the version, modified as the list gives it (a number or a date string) and the
-// kind; an item without an id is left out. Changes nothing. CAPABILITY_UNAVAILABLE when the page
-// has no way to list the scripts, NOT_AVAILABLE with the reason when the request fails.
+// kind (extra.kind on the app); an item without an id is left out, and so is the text of every
+// script, which the list carries too. Changes nothing. CAPABILITY_UNAVAILABLE when the page has no
+// way to list the scripts, NOT_AVAILABLE with the reason when the request fails.
 export function readSavedPineScripts(
   win: TvWindow,
   lib: PageLib,
@@ -613,7 +614,8 @@ export function readSavedPineScripts(
               scriptTitle: text(item.scriptTitle),
               version: text(item.version),
               modified,
-              kind: text(item.kind),
+              // The app lists the kind in extra, where its own getScriptKind reads it.
+              kind: text(item.kind) ?? text(item.extra?.kind),
             },
           ];
         });

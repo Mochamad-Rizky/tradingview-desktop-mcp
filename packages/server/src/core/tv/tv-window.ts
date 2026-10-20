@@ -581,9 +581,10 @@ export interface PineCompileErrorsLike {
 
 // An item of the saved scripts the export requestUserScripts resolves with (a request to the pine
 // facade, list?filter=saved, memoised by the app; [] while signed out). A version whose major part
-// is 0 is a server draft. modified orders the items; its unit is not known. kind was inferred from
-// the type guards of the app ("study", "strategy" or "library") and may be missing. Typed loosely
-// because the list was never observed.
+// is 0 is a server draft. Seen on the app: scriptIdPart, scriptName, scriptTitle, version, modified
+// (Unix seconds, which order the items), isTVScriptBuiltIn, scriptSource (the text of the script)
+// and extra, which holds the kind ("study", "strategy" or "library"); an item has no kind of its
+// own, which is read when present all the same. Typed loosely: page code checks each field.
 export interface SavedPineScriptLike {
   scriptIdPart?: unknown;
   scriptName?: unknown;
@@ -591,6 +592,7 @@ export interface SavedPineScriptLike {
   version?: unknown;
   modified?: unknown;
   kind?: unknown;
+  extra?: { kind?: unknown } | null;
 }
 
 export interface PineEditorOpenOptions {

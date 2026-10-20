@@ -427,6 +427,10 @@ describe('pine_list_scripts', () => {
     });
     // Only the request the app sends itself, and no editor.
     expect(inspectFakeWindow(win).calls.map(({ name }) => name)).toEqual(['requestUserScripts']);
+    // The list of the app carries the text of every script, which is never returned.
+    for (const { source } of fixture.pineEditor.savedScripts) {
+      expect(textOf(result)).not.toContain(source);
+    }
   });
 
   test('pine_list_scripts reads modified in milliseconds as well, and lists none signed out', async () => {

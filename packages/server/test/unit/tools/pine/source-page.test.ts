@@ -150,6 +150,37 @@ describe('readSavedPineScripts', () => {
     expect(callNames(win)).toEqual(['requestUserScripts']);
   });
 
+  test('reads the kind of a saved script from its extra data, as the app lists it, and no source', async () => {
+    // The shape of an item seen on the app: the kind in extra, and the text of the script.
+    const items = [
+      {
+        scriptIdPart: 'USER;s',
+        scriptName: 'S',
+        scriptTitle: 'S',
+        version: '2.0',
+        modified: 1_729_987_200,
+        isTVScriptBuiltIn: false,
+        scriptSource: '//@version=6\nstrategy("S")\n',
+        extra: { kind: 'strategy' },
+      },
+      { scriptIdPart: 'USER;i', scriptName: 'I', version: '1.0', modified: 1, extra: {} },
+    ];
+
+    const { result } = await libResultOf(
+      readSavedPineScripts,
+      [],
+      withModules({ requestUserScripts: () => Promise.resolve(items) }),
+    );
+
+    expect(result).toMatchObject({
+      scripts: [
+        { scriptIdPart: 'USER;s', kind: 'strategy' },
+        { scriptIdPart: 'USER;i', kind: null },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain('strategy("S")');
+  });
+
   test('falls back to listSavedScripts and to the toggle on window.TradingView', async () => {
     const items = [
       {
