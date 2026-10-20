@@ -4,6 +4,7 @@ import { PlanLimitError, TvMcpError } from '../../core/errors.js';
 import { getPlanLimits, requireBelowLimit } from '../../core/tv/plan-limits.js';
 import { pageWaitMs } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
+import { analyzePine, pineVersion } from './analyze/analyze.js';
 import { pineCompileTools } from './compile.js';
 import {
   ensureEditorOpen,
@@ -579,6 +580,42 @@ function nothingToSave(
   return { data: { script, created: false }, via: 'internal', warnings };
 }
 
+export const pineAnalyze = defineTool({
+  name: 'pine_analyze',
+  domain: 'pine',
+  title: 'Analyze Pine source offline',
+  description:
+    'Checks Pine Script source with deterministic rules, locally and without compiling: a ' +
+    'missing or old //@version, v4 names that moved to a namespace in v5 (study, security, ' +
+    'tostring, sma, ema, rsi, ...), a missing indicator()/strategy()/library() declaration, ' +
+    'strategy.* calls in an indicator, lookahead_on repainting and more than 64 plot calls. ' +
+    'Returns version (from //@version, or null) and diagnostics sorted by line and column: ' +
+    'ruleId, severity (error, warning, info), line and column (1-based, UTF-16 code units), ' +
+    'message and fix (single-line edits, or null when the rule has none). With source it works ' +
+    'while TradingView is down; without it, it analyzes the text of the Pine Editor and fails ' +
+    'NOT_AVAILABLE when the editor is closed. It changes nothing; pine_smart_compile applies ' +
+    'the fixes.',
+  inputSchema: {
+    source: sourceInput()
+      .optional()
+      .describe('The Pine source to analyze. Default: the text of the Pine Editor.'),
+  },
+  annotations: READ_ONLY,
+  core: true,
+  async handler({ source }, ctx) {
+    const local = source !== undefined;
+    const read = local ? { data: { source }, warnings: [] } : await readPineSourceData(ctx);
+    return {
+      data: {
+        version: pineVersion(read.data.source),
+        diagnostics: analyzePine(read.data.source),
+      },
+      via: local ? 'local' : 'internal',
+      warnings: read.warnings,
+    };
+  },
+});
+
 export const pineTools: AnyToolDefinition[] = [
   pineNew,
   pineOpen,
@@ -586,5 +623,6 @@ export const pineTools: AnyToolDefinition[] = [
   pineSetSource,
   pineListScripts,
   pineSave,
+  pineAnalyze,
   ...pineCompileTools,
 ];

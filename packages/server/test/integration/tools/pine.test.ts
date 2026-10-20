@@ -771,6 +771,7 @@ test('the Pine source tools say which of them read and which can replace text', 
     pine_set_source: [false, true],
     pine_list_scripts: [true, false],
     pine_save: [false, false],
+    pine_analyze: [true, false],
     pine_compile: [false, false],
     pine_get_errors: [true, false],
     pine_get_console: [true, false],
@@ -1282,6 +1283,59 @@ describe('pine_get_console', () => {
 
     expect(dataOf(result)).toEqual({ messages: [] });
     expect(warningsOf(result).join(' ')).toContain('not open');
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+  });
+});
+
+describe('pine_analyze', () => {
+  const SOURCE = '//@version=5\nstudy("T")\nx = tostring(close)\n';
+
+  test('pine_analyze with source works without TradingView', async () => {
+    // A debug port nothing listens on: a call that reached for the connection would fail.
+    const dead = await startFakeCdpServer({
+      targets: loadTargetsFixture({ chartWindow: () => createFakeTvWindow(fixture) }),
+    });
+    const config = testConfig({ cdpPort: dead.port, callTimeoutMs: 500 });
+    await dead.close();
+    const { server, ctx } = createMcpServer(config, {
+      launcher: refusingLauncher(),
+      logger: quietLogger,
+    });
+    cleanups.push(() => ctx.connection.close());
+    const client = await connect(server);
+
+    const result = await callTool(client, 'pine_analyze', { source: SOURCE });
+
+    expect(result.isError).not.toBe(true);
+    expect(envelopeOf(result).meta.via).toBe('local');
+    expect(dataOf(result)).toMatchObject({ version: 5 });
+    const diagnostics = dataOf(result).diagnostics as { ruleId: string; line: number }[];
+    expect(diagnostics.map(({ ruleId, line }) => [ruleId, line])).toEqual([
+      ['study-declaration', 2],
+      ['str-namespace', 3],
+    ]);
+  });
+
+  test('pine_analyze without source analyzes the text of the open editor', async () => {
+    const { client } = await startHarness(withEditor({ source: 'plot(close)\n' }));
+
+    const result = await callTool(client, 'pine_analyze', {});
+
+    const data = dataOf(result);
+    expect(data.version).toBeNull();
+    expect((data.diagnostics as { ruleId: string }[]).map(({ ruleId }) => ruleId)).toEqual([
+      'missing-version',
+      'missing-declaration',
+    ]);
+    expect(envelopeOf(result).meta.via).toBe('internal');
+  });
+
+  test('pine_analyze without source fails NOT_AVAILABLE while the editor is closed', async () => {
+    const { client, win } = await startHarness();
+
+    const result = await callTool(client, 'pine_analyze', {});
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
     expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
   });
 });
