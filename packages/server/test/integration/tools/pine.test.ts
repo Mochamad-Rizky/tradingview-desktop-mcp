@@ -654,20 +654,60 @@ describe('pine_save', () => {
     expect(callsOf(win, 'dialog.renameScript')).toEqual([]);
   });
 
-  test('pine_save of a server draft fails NOT_AVAILABLE instead of opening the naming dialog', async () => {
-    const { client, win } = await startHarness(
-      withEditor({
-        script: { scriptIdPart: DRAFT.scriptIdPart, version: DRAFT.version },
-        savedSource: DRAFT.source,
-        source: `${DRAFT.source}plot(high)\n`,
-      }),
+  // The editor holding the server draft of the fixture, with a change.
+  const onDraft = () =>
+    withEditor({
+      script: { scriptIdPart: DRAFT.scriptIdPart, version: DRAFT.version },
+      savedSource: DRAFT.source,
+      source: `${DRAFT.source}plot(high)\n`,
+    });
+
+  test('pine_save of a server draft saves it as a new script without confirm', async () => {
+    const { client, win, ctx } = await startHarness(withLimit(5, onDraft()));
+
+    const result = await callTool(client, 'pine_save', { name: 'From Draft' });
+
+    const created = editorOf(win).savedScripts.at(-1);
+    expect(envelopeOf(result)).toStrictEqual({
+      ok: true,
+      data: { script: { id: created?.scriptIdPart, version: '1.0' }, created: true },
+      meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
+    });
+    expect(created?.scriptIdPart).not.toBe(DRAFT.scriptIdPart);
+    expect(callsOf(win, 'pineEditorApi.saveNewScript')).toEqual([
+      [{ source: `${DRAFT.source}plot(high)\n`, name: 'From Draft' }],
+    ]);
+    expect(ctx.session.createdScriptIds).toEqual(new Set([created?.scriptIdPart]));
+    // The editor holds the new script, and the draft is as it was.
+    expect(editorOf(win).script).toEqual({ scriptIdPart: created?.scriptIdPart, version: '1.0' });
+    expect(editorOf(win).savedScripts.find((s) => s.scriptIdPart === DRAFT.scriptIdPart)).toEqual(
+      DRAFT,
     );
+    expect(callsOf(win, 'pineFacade.saveScript')).toEqual([]);
+    expect(callsOf(win, 'dialog.renameScript')).toEqual([]);
+  });
+
+  test('pine_save of a server draft needs a name', async () => {
+    const { client, win } = await startHarness(withLimit(5, onDraft()));
 
     const result = await callTool(client, 'pine_save', { confirm: true });
 
-    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    expect(errorOf(result)).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(callsOf(win, 'pineEditorApi.saveNewScript')).toEqual([]);
     expect(callsOf(win, 'pineFacade.saveScript')).toEqual([]);
-    expect(callsOf(win, 'dialog.renameScript')).toEqual([]);
+  });
+
+  test('pine_save of a server draft at the saved-script limit fails PLAN_LIMIT', async () => {
+    const { client, win } = await startHarness(onDraft());
+
+    const result = await callTool(client, 'pine_save', { name: 'From Draft' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PLAN_LIMIT',
+      details: { feature: 'SAVED_PINE_SCRIPTS', limit: 1 },
+    });
+    expect(callsOf(win, 'pineEditorApi.saveNewScript')).toEqual([]);
+    expect(callsOf(win, 'dialog.paywall')).toEqual([]);
   });
 
   test('pine_save of a script the plan cannot update fails PLAN_LIMIT before saving', async () => {

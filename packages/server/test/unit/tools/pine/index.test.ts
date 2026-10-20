@@ -145,3 +145,25 @@ test('pine_save warns when the editor could not be switched to the new script it
   expect(output.warnings).toEqual([expect.stringContaining('pine_open') as string]);
   expect(ctx.session.createdScriptIds).toEqual(new Set(['USER;new']));
 });
+
+test('pine_save refuses a saved version TradingView reports as a draft', async () => {
+  const saveScript = vi.fn();
+  const facade = {
+    isModified: () => true,
+    isDraft: () => true,
+    getScriptIdVersion: () => ({ scriptIdPart: 'USER;unit', version: '1.0' }),
+    getSource: () => Promise.resolve(SOURCE),
+    saveScript,
+  };
+  const ctx = contextFor(
+    pageWith((placement) => (placement === 'dialog' ? { getFacade: () => facade } : null)),
+  );
+
+  const error = await failureOf(pineSave.handler({ confirm: true }, ctx));
+
+  expect(error).toMatchObject({
+    code: 'NOT_AVAILABLE',
+    details: { id: 'USER;unit', version: '1.0' },
+  });
+  expect(saveScript).not.toHaveBeenCalled();
+});

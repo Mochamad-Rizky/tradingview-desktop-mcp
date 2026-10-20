@@ -391,8 +391,9 @@ export const pineSave = defineTool({
   domain: 'pine',
   title: 'Save the Pine script',
   description:
-    'Saves the script in the Pine Editor of TradingView. A new script is saved under name, which ' +
-    'it needs (TradingView would ask for it in a dialog) and which no saved script may have; the ' +
+    'Saves the script in the Pine Editor of TradingView. A new script, or a draft TradingView ' +
+    'saved on its own (version 0.x, which stays as it is), is saved as a new script under name, ' +
+    'which it needs (TradingView would ask for it in a dialog) and which no saved script may have; the ' +
     'saved-script limit of the plan is checked first and fails with PLAN_LIMIT (error.details ' +
     'feature SAVED_PINE_SCRIPTS and limit). A saved script gets a new version under its own ' +
     'name: one this session did not create needs confirm: true, else the call fails with ' +
@@ -434,11 +435,22 @@ export const pineSave = defineTool({
       throw notOpen();
     }
     const wantedName = name?.trim();
+    // A server draft (a version whose major part is 0, which TradingView saves on its own, for
+    // example when a new script is added to the chart) is not a saved script of the user: it is
+    // saved as a new script, and the draft stays as it is.
+    const draftOf =
+      state.script !== null &&
+      state.script.version !== null &&
+      Number.parseInt(state.script.version, 10) === 0
+        ? state.script.id
+        : null;
 
-    if (state.script === null) {
+    if (state.script === null || draftOf !== null) {
       if (wantedName === undefined || wantedName === '') {
         throw new TvMcpError('INVALID_INPUT', 'A new Pine script needs a name to be saved', {
-          hint: 'Pass name: TradingView would otherwise ask for one in a dialog.',
+          hint:
+            'Pass name: TradingView would otherwise ask for one in a dialog. A draft TradingView ' +
+            'saved on its own is saved as a new script too.',
         });
       }
       const saved = await loadSavedScripts(page);
@@ -462,7 +474,7 @@ export const pineSave = defineTool({
         LIMIT_HINT,
       );
       const outcome = await page.bridge.evaluateWithLib(savePineScript, [
-        { kind: 'new', name: wantedName },
+        { kind: 'new', name: wantedName, draftOf },
       ]);
       if (outcome.script !== null) {
         ctx.session.createdScriptIds.add(outcome.script.id);
@@ -518,8 +530,8 @@ export const pineSave = defineTool({
         'NOT_AVAILABLE',
         version === null
           ? `TradingView did not report the version of ${id}, so it cannot be saved safely`
-          : `${id} is a draft (version ${version}), which TradingView saves only through its ` +
-              'naming dialog',
+          : `TradingView reports ${id} (version ${version}) as a draft, which it saves only ` +
+              'through its naming dialog',
         {
           hint:
             'Save it in the Pine Editor of TradingView itself, or start a new script with ' +

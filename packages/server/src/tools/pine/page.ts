@@ -875,13 +875,15 @@ export function changePineEditor(
 
 // How savePineScript saves the text of the open editor.
 // - new: as a new script named `name`, through pineEditorApi().saveNewScript, which shows no
-//   dialog. The editor must hold a new script (no id). Once it is saved, the editor is switched to
-//   the saved script with openScript and the saved text, so that it no longer shows a new script.
+//   dialog. The editor must hold a new script (no id), or the server draft draftOf (that id, with
+//   a version whose major part is 0), which stays as it is. Once it is saved, the editor is
+//   switched to the saved script with openScript and the saved text, so that it no longer shows a
+//   new script or the draft.
 // - version: as the next version of the saved script the editor holds, through saveScript of the
 //   facade, which keeps the name of the script and shows no dialog for a saved script that is not
 //   a draft. The editor must hold that script, with a version, and not as a draft.
 export type PineSaveRequest =
-  { kind: 'new'; name: string } | { kind: 'version'; scriptIdPart: string };
+  { kind: 'new'; name: string; draftOf: string | null } | { kind: 'version'; scriptIdPart: string };
 
 // Saves as `request` says and answers what came of it: the saved script (null when nothing was
 // saved), its compile errors (each with its message and, when it has a place, its 1-based line and
@@ -1010,10 +1012,14 @@ export function savePineScript(
     }
   };
   const held = idsOf();
-  if (request.kind === 'new' && held.scriptIdPart !== null) {
+  if (
+    request.kind === 'new' &&
+    (held.scriptIdPart !== request.draftOf ||
+      (held.scriptIdPart !== null && Number.parseInt(held.version ?? '', 10) !== 0))
+  ) {
     return refuse(
       'NOT_AVAILABLE',
-      'The Pine Editor no longer holds a new script',
+      'The Pine Editor no longer holds the new script or the server draft to save',
       'Check the state with pine_get_source, then save again.',
     );
   }

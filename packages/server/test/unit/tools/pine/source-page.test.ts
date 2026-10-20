@@ -508,7 +508,9 @@ describe('changePineEditor', () => {
 });
 
 describe('savePineScript', () => {
-  const asNew = (name = 'Unit'): [PineSaveRequest] => [{ kind: 'new', name }];
+  const asNew = (name = 'Unit', draftOf: string | null = null): [PineSaveRequest] => [
+    { kind: 'new', name, draftOf },
+  ];
   const asVersion = (scriptIdPart = SCRIPT_ID): [PineSaveRequest] => [
     { kind: 'version', scriptIdPart },
   ];
@@ -545,6 +547,41 @@ describe('savePineScript', () => {
     expect(result).toStrictEqual({ script: { id, version: '1.0' }, errors: [], tracked: true });
     expect(editor).toMatchObject({ script: { scriptIdPart: id, version: '1.0' }, source: SOURCE });
     expect(callNames(win)).toEqual(['pineEditorApi.saveNewScript', 'pineFacade.openScript']);
+  });
+
+  test('saves a server draft as a new script, and refuses a script that is no draft', async () => {
+    const draftAt = (version: string) =>
+      withFacade(
+        newScript(SOURCE, { getScriptIdVersion: () => ({ scriptIdPart: 'USER;draft', version }) }),
+        {
+          api: saving(() =>
+            Promise.resolve({ success: true, metaInfo: { scriptIdPart: 'USER;new' } }),
+          ),
+        },
+      );
+
+    const saved = await libResultOf(savePineScript, asNew('Unit', 'USER;draft'), draftAt('0.2'));
+    const refused = await libFailureOfBoth(
+      savePineScript,
+      asNew('Unit', 'USER;draft'),
+      draftAt('1.0'),
+    );
+    const other = await libFailureOfBoth(
+      savePineScript,
+      asNew('Unit', 'USER;other'),
+      draftAt('0.2'),
+    );
+
+    const unversioned = await libFailureOfBoth(
+      savePineScript,
+      asNew('Unit', 'USER;draft'),
+      draftAt(''),
+    );
+
+    expect(saved.result).toMatchObject({ script: { id: 'USER;new' } });
+    expect(unversioned.error.code).toBe('NOT_AVAILABLE');
+    expect(refused.error.code).toBe('NOT_AVAILABLE');
+    expect(other.error.code).toBe('NOT_AVAILABLE');
   });
 
   test('saves a new version of a saved script on the fake app', async () => {
