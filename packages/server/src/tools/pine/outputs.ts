@@ -3,7 +3,7 @@ import { READ_ONLY } from '../annotations.js';
 import { chartIndexInput } from '../chart/index.js';
 import { resolveChartTarget } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.js';
-import { toBoxes, toLabels, toLines, toTables } from './outputs-mappers.js';
+import { tableCellWarnings, toBoxes, toLabels, toLines, toTables } from './outputs-mappers.js';
 import { readPineGraphics, type PineDrawingKind } from './outputs-page.js';
 
 // The Pine output tools (design spec 7, domain Pine outputs): the lines, labels, boxes and tables
@@ -31,26 +31,30 @@ const outputInputs = () => ({
     .max(MAX_LIMIT)
     .default(DEFAULT_LIMIT)
     .describe(
-      `How many drawings at most, the newest first: 1 to ${String(MAX_LIMIT)}, ` +
+      `How many drawings at most, in the order the description gives: 1 to ${String(MAX_LIMIT)}, ` +
         `${String(DEFAULT_LIMIT)} by default.`,
     ),
   chartIndex: chartIndexInput(),
 });
 
-// The sentences the descriptions of the tools share.
+// The sentences the descriptions of the tools share. What was not seen on the app (the order of
+// drawings without ids, how the indices are counted, styles hidden in the settings) is said as such.
 const SELECTION_TEXT =
   'Without studyId it reads every Pine script on the chart; with one (from indicator_list), only ' +
   'that script, and an id that is not on the chart or is not a Pine script fails with ' +
-  'INVALID_INPUT. At most limit drawings are returned, newest first (of several scripts, one that ' +
-  'indicator_list lists later counts as newer), and total is how many the scripts hold. A script ' +
-  'that drew nothing gives an empty list, and a script whose drawings TradingView does not give ' +
-  'yet is named in a warning.';
+  'INVALID_INPUT. At most limit drawings are returned, and total is how many the scripts hold. ' +
+  'The order is meant to put the newest first: by the id TradingView gives a drawing, highest ' +
+  'first, when every drawing of a script has a whole-number id, and else in the reverse of the ' +
+  'order TradingView keeps them in, which is not known to be the order they were drawn in; the ' +
+  'drawings of a script that indicator_list lists later come first. A script that drew nothing ' +
+  'gives an empty list, and a script whose drawings TradingView does not give yet is named in a ' +
+  'warning. Drawings are read as the script holds them, so those of a style hidden in the ' +
+  'settings of the indicator may be listed as well.';
 
 const POINT_TEXT =
-  'barIndex is the position of the bar among the bars the chart holds, counted from 0 at the ' +
-  'first loaded bar and past the last bar in the empty space to its right; time is Unix seconds ' +
-  'in the bar times of data_get_ohlcv, with timeIso, and null when TradingView has no time for ' +
-  'that position.';
+  'barIndex is the time-point index TradingView gives the bar, which grows to the right and goes ' +
+  'on past the last bar into the empty space; time is Unix seconds in the bar times of ' +
+  'data_get_ohlcv, with timeIso, and null when TradingView has no time for that index.';
 
 const openEndText = (what: string) =>
   `A null barIndex means TradingView has no bar for that end, as for ${what} that runs on.`;
@@ -90,7 +94,7 @@ export const pineGetLines = defineTool({
   title: 'Read the lines drawn by Pine scripts',
   description:
     'Reads the lines that Pine scripts on a chart have drawn (line.new), and changes nothing. ' +
-    'Returns lines, each with studyId, id (the number TradingView gives the line, as text), start ' +
+    'Returns lines, each with studyId, id (the id TradingView gives the line, as text), start ' +
     'and end (each a point: barIndex, time, timeIso and price), extend (none, left, right or ' +
     'both), color (a CSS color, null for a line without one), width and style (solid, dotted, ' +
     'dashed, arrow_left, arrow_right or arrow_both), and total. ' +
@@ -147,16 +151,19 @@ export const pineGetTables = defineTool({
   title: 'Read the tables drawn by Pine scripts',
   description:
     'Reads the tables that Pine scripts on a chart have drawn (table.new), and changes nothing. ' +
-    'Returns tables, each with studyId, id (the number TradingView gives the table, as text), ' +
+    'Returns tables, each with studyId, id (the id TradingView gives the table, as text), ' +
     'position (such as top_right or bottom_left), rows and columns (the size the script gave the ' +
-    'table) and cells, and total, the number of tables. A cell is row, column (both counted from ' +
-    '0, as TradingView counts them) and text, and the cells are listed by row and then column; ' +
-    'a cell the script never set is not listed. A table sits on the chart, not on a bar, so it ' +
-    `has no bar index or time. ${SELECTION_TEXT}`,
+    'table) and cells, and total, the number of tables. A cell is row, column (as TradingView ' +
+    'holds them; Pine counts both from 0) and text, and the cells are listed by row and then ' +
+    'column; a cell the script never set is not listed. A cell is joined to its table by the id ' +
+    'of the table; one whose table the script does not have is left out, and a warning says how ' +
+    'many there were. A table sits on the chart, not on a bar, so it has no bar index or time. ' +
+    SELECTION_TEXT,
   inputSchema: outputInputs(),
   annotations: READ_ONLY,
   async handler({ studyId, limit, chartIndex }, ctx) {
     const { studies, warnings } = await readDrawings('tables', studyId, chartIndex, ctx);
+    warnings.push(...tableCellWarnings(studies));
     return { data: toTables(studies, limit), via: 'internal', warnings };
   },
 });

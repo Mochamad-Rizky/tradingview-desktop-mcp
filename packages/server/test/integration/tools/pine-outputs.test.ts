@@ -326,7 +326,7 @@ describe('pine_get_lines', () => {
 });
 
 describe('pine_get_labels', () => {
-  test('pine_get_labels returns the labels the Pine scripts drew, newest first', async () => {
+  test('pine_get_labels returns the labels the Pine scripts drew, the last the app keeps first', async () => {
     const { client, win } = await startHarness();
 
     const result = await callTool(client, 'pine_get_labels');
@@ -415,7 +415,7 @@ describe('pine_get_labels', () => {
 });
 
 describe('pine_get_boxes', () => {
-  test('pine_get_boxes returns the boxes the Pine scripts drew, newest first', async () => {
+  test('pine_get_boxes returns the boxes the Pine scripts drew, the last the app keeps first', async () => {
     const { client, win } = await startHarness();
 
     const result = await callTool(client, 'pine_get_boxes');
@@ -510,6 +510,45 @@ describe('pine_get_tables', () => {
       meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
     });
     expect(inspectFakeWindow(win).calls).toEqual([]);
+  });
+
+  test('pine_get_tables joins the cells to tables whose ids are text, and warns about cells of no table', async () => {
+    const custom = structuredClone(fixture);
+    const [first] = custom.studies;
+    if (first === undefined) {
+      throw new Error('The fixture must hold a study');
+    }
+    first.graphics = {
+      tables: [{ styleId: 'tables_a', id: 't1', position: 'top_right', rows: 1, columns: 2 }],
+      tableCells: [
+        { styleId: 'cells_a', tableId: 't1', row: 0, column: 1, text: 'Two' },
+        { styleId: 'cells_a', tableId: 't1', row: 0, column: 0, text: 'One' },
+        { styleId: 'cells_a', tableId: 'gone', row: 0, column: 0, text: 'Lost' },
+      ],
+    };
+    const { client } = await startHarness(custom);
+
+    const result = await callTool(client, 'pine_get_tables');
+
+    expect(dataOf(result)).toStrictEqual({
+      tables: [
+        {
+          studyId: 'STUDY01',
+          id: 't1',
+          position: 'top_right',
+          rows: 1,
+          columns: 2,
+          cells: [
+            { row: 0, column: 0, text: 'One' },
+            { row: 0, column: 1, text: 'Two' },
+          ],
+        },
+      ],
+      total: 1,
+    });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/STUDY01 holds 1 table cell that belongs to no table it has/),
+    ]);
   });
 
   test('pine_get_tables keeps the newest table within the limit', async () => {

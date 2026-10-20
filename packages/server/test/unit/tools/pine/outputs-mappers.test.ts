@@ -1,4 +1,5 @@
 import {
+  tableCellWarnings,
   toBoxes,
   toLabels,
   toLines,
@@ -39,7 +40,7 @@ const study = (studyId: string, drawings: Partial<Omit<Study, 'studyId'>> = {}):
 
 const line = (overrides: Partial<Line> = {}): Line => ({
   styleId: 'lines_a',
-  id: 1,
+  id: '1',
   x1: point(10),
   y1: 100.5,
   x2: point(20),
@@ -78,7 +79,7 @@ const box = (overrides: Partial<Box> = {}): Box => ({
 
 const table = (overrides: Partial<Table> = {}): Table => ({
   styleId: 'tables_a',
-  id: 7,
+  id: '7',
   position: 'top_right',
   rows: 2,
   columns: 2,
@@ -410,11 +411,11 @@ describe('toBoxes', () => {
 describe('toTables', () => {
   test('tables gather cells by row and column', () => {
     const cells = [
-      { tableId: 7, row: 1, column: 1, text: 'd' },
-      { tableId: 7, row: 0, column: 1, text: 'b' },
-      { tableId: 8, row: 0, column: 0, text: 'of another table' },
-      { tableId: 7, row: 0, column: 0, text: 'a' },
-      { tableId: 7, row: 1, column: 0, text: 'c' },
+      { tableId: '7', row: 1, column: 1, text: 'd' },
+      { tableId: '7', row: 0, column: 1, text: 'b' },
+      { tableId: '8', row: 0, column: 0, text: 'of another table' },
+      { tableId: '7', row: 0, column: 0, text: 'a' },
+      { tableId: '7', row: 1, column: 0, text: 'c' },
     ];
 
     const { tables, total } = toTables([study('S1', { tables: [table()], cells })], 100);
@@ -441,11 +442,15 @@ describe('toTables', () => {
     const { tables } = toTables(
       [
         study('S1', {
-          tables: [table({ id: 7 }), table({ id: 8, position: 'bottom_left' }), table({ id: 9 })],
+          tables: [
+            table({ id: '7' }),
+            table({ id: '8', position: 'bottom_left' }),
+            table({ id: '9' }),
+          ],
           cells: [
-            { tableId: 8, row: 0, column: 0, text: 'eight' },
-            { tableId: 7, row: 0, column: 0, text: 'seven' },
-            { tableId: 99, row: 0, column: 0, text: 'of no table' },
+            { tableId: '8', row: 0, column: 0, text: 'eight' },
+            { tableId: '7', row: 0, column: 0, text: 'seven' },
+            { tableId: '99', row: 0, column: 0, text: 'of no table' },
           ],
         }),
       ],
@@ -465,9 +470,9 @@ describe('toTables', () => {
         study('S1', {
           tables: [table()],
           cells: [
-            { tableId: 7, row: 0, column: 0, text: 'first' },
-            { tableId: 7, row: 1, column: 0, text: 'below' },
-            { tableId: 7, row: 0, column: 0, text: 'last' },
+            { tableId: '7', row: 0, column: 0, text: 'first' },
+            { tableId: '7', row: 1, column: 0, text: 'below' },
+            { tableId: '7', row: 0, column: 0, text: 'last' },
           ],
         }),
       ],
@@ -486,10 +491,10 @@ describe('toTables', () => {
         study('S1', {
           tables: [table()],
           cells: [
-            { tableId: 7, row: null, column: 0, text: 'no row' },
-            { tableId: 7, row: 0, column: null, text: 'no column' },
+            { tableId: '7', row: null, column: 0, text: 'no row' },
+            { tableId: '7', row: 0, column: null, text: 'no column' },
             { tableId: null, row: 0, column: 0, text: 'no table' },
-            { tableId: 7, row: 1, column: 1, text: null },
+            { tableId: '7', row: 1, column: 1, text: null },
           ],
         }),
       ],
@@ -510,7 +515,7 @@ describe('toTables', () => {
 
   test('counts tables, not cells', () => {
     const cells = Array.from({ length: 6 }, (_, column) => ({
-      tableId: 7,
+      tableId: '7',
       row: 0,
       column,
       text: String(column),
@@ -522,16 +527,36 @@ describe('toTables', () => {
     expect(tables[0]?.cells).toHaveLength(6);
   });
 
+  test('joins the cells to their table by an id that is no number, as text', () => {
+    const { tables } = toTables(
+      [
+        study('S1', {
+          tables: [table({ id: 't1' }), table({ id: 't2' })],
+          cells: [
+            { tableId: 't2', row: 0, column: 0, text: 'two' },
+            { tableId: 't1', row: 0, column: 0, text: 'one' },
+          ],
+        }),
+      ],
+      100,
+    );
+
+    expect(tables.map(({ id, cells }) => [id, cells.map(({ text }) => text)])).toEqual([
+      ['t2', ['two']],
+      ['t1', ['one']],
+    ]);
+  });
+
   test('the cells of the table of one study never go to a table of another', () => {
     const { tables } = toTables(
       [
         study('S1', {
-          tables: [table({ id: 7 })],
-          cells: [{ tableId: 7, row: 0, column: 0, text: 'one' }],
+          tables: [table({ id: '7' })],
+          cells: [{ tableId: '7', row: 0, column: 0, text: 'one' }],
         }),
         study('S2', {
-          tables: [table({ id: 7 })],
-          cells: [{ tableId: 7, row: 0, column: 0, text: 'two' }],
+          tables: [table({ id: '7' })],
+          cells: [{ tableId: '7', row: 0, column: 0, text: 'two' }],
         }),
       ],
       100,
@@ -547,7 +572,7 @@ describe('toTables', () => {
 describe('ids', () => {
   test('a line keeps the id of the app, written as text', () => {
     const { lines } = toLines(
-      [study('S1', { lines: [line({ id: 101 }), line({ id: 102 })] })],
+      [study('S1', { lines: [line({ id: '101' }), line({ id: '102' })] })],
       100,
     );
 
@@ -603,7 +628,7 @@ describe('the limit', () => {
   test('keeps the newest drawings by id, newest first, and counts every drawing', () => {
     // The ids do not come in order: the highest ones are the newest.
     const { lines, total } = toLines(
-      [study('S1', { lines: [30, 10, 40, 20].map((id) => line({ id })) })],
+      [study('S1', { lines: [30, 10, 40, 20].map((id) => line({ id: String(id) })) })],
       2,
     );
 
@@ -621,11 +646,26 @@ describe('the limit', () => {
     expect(boxes.map(({ text }) => text)).toEqual(['d', 'c', 'b']);
   });
 
+  test('orders by id only when every id is a whole number, else as the app keeps them', () => {
+    const numbered = toTables(
+      [study('S1', { tables: ['10', '9', '11'].map((id) => table({ id })) })],
+      100,
+    );
+    const named = toTables(
+      [study('S1', { tables: ['b', 'a', '3'].map((id) => table({ id })) })],
+      100,
+    );
+
+    // 10 is newer than 9, which text order would not say.
+    expect(numbered.tables.map(({ id }) => id)).toEqual(['11', '10', '9']);
+    expect(named.tables.map(({ id }) => id)).toEqual(['3', 'a', 'b']);
+  });
+
   test('keeps the order of the app for lines of which some have no id', () => {
     const { lines } = toLines(
       [
         study('S1', {
-          lines: [line({ id: 9 }), line({ id: null, styleId: 'x' }), line({ id: 3 })],
+          lines: [line({ id: '9' }), line({ id: null, styleId: 'x' }), line({ id: '3' })],
         }),
       ],
       100,
@@ -637,8 +677,8 @@ describe('the limit', () => {
   test('counts a later study as newer than an earlier one', () => {
     const { lines, total } = toLines(
       [
-        study('S1', { lines: [line({ id: 5 }), line({ id: 6 })] }),
-        study('S2', { lines: [line({ id: 1 }), line({ id: 2 })] }),
+        study('S1', { lines: [line({ id: '5' }), line({ id: '6' })] }),
+        study('S2', { lines: [line({ id: '1' }), line({ id: '2' })] }),
       ],
       3,
     );
@@ -663,5 +703,32 @@ describe('the limit', () => {
     expect(toLabels([study('S1')], 100)).toEqual({ labels: [], total: 0 });
     expect(toBoxes([study('S1'), study('S2')], 100)).toEqual({ boxes: [], total: 0 });
     expect(toTables([study('S1')], 100)).toEqual({ tables: [], total: 0 });
+  });
+});
+
+describe('tableCellWarnings', () => {
+  test('names, per study, the cells that belong to no table it has', () => {
+    const warnings = tableCellWarnings([
+      study('S1', {
+        tables: [table({ id: '7' })],
+        cells: [
+          { tableId: '7', row: 0, column: 0, text: 'kept' },
+          { tableId: '8', row: 0, column: 0, text: 'of no table' },
+          { tableId: null, row: 0, column: 0, text: 'without a table id' },
+        ],
+      }),
+      study('S2', { cells: [{ tableId: '7', row: 0, column: 0, text: 'of a table of S1' }] }),
+      study('S3', { tables: [table()], cells: [{ tableId: '7', row: 0, column: 0, text: 'ok' }] }),
+    ]);
+
+    expect(warnings).toEqual([
+      expect.stringMatching(/^The study S1 holds 2 table cells that belong to no table it has/),
+      expect.stringMatching(/^The study S2 holds 1 table cell that belongs to no table it has/),
+    ]);
+  });
+
+  test('says nothing when every cell has its table, or there are none', () => {
+    expect(tableCellWarnings([])).toEqual([]);
+    expect(tableCellWarnings([study('S1', { tables: [table()] })])).toEqual([]);
   });
 });

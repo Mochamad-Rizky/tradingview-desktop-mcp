@@ -13,7 +13,8 @@ import type { FixtureGraphics } from './fixture.js';
 // values() and the iterator, and its entries() and keys() throw, as on the app. An item is a plain
 // object. The materializers of the app give these fields (the ones a fixture does not stage have
 // the defaults below), and only lines and tables have an id: a label or a box has none, and a cell
-// carries the id of its table. A time point the app has no index for is null.
+// carries the id of its table, a number or a text as the fixture gives it. A time point the app
+// has no index for is null.
 //
 // properties() answers a property tree of the study, as far as the palette goes. The renderers
 // read a color by its index at properties().childs().palettes.childs().palette_common.childs()
@@ -105,7 +106,7 @@ export interface FakeDwgBox {
 }
 
 export interface FakeDwgTable {
-  id: number;
+  id: number | string;
   position: string;
   rows: number;
   columns: number;
@@ -118,7 +119,7 @@ export interface FakeDwgTable {
 }
 
 export interface FakeDwgTableCell {
-  tableId: number;
+  tableId: number | string;
   row: number;
   column: number;
   widthInPercentsOfPaneWidth: number;

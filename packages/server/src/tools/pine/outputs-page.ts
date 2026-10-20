@@ -32,7 +32,9 @@ export type PineDrawingKind = 'lines' | 'labels' | 'boxes' | 'tables';
 // by forceOverlay), in the order of the maps, and for tables also every cell of dwgtablecells, which
 // are not grouped by forceOverlay and are joined to their table by tableId. Each drawing keeps the
 // style id of the map it was in. The codes of the app (extend, style, yloc) are copied as they are.
-// A number that is not finite, or a text that is none, is null.
+// A number that is not finite, or a text that is none, is null. The id of a line or a table and
+// the tableId of a cell are kept as text, a number as its text: the ids of the raw sets were never
+// seen on the app, and its ready-made table view gives text ids.
 //
 // A point is the x of the drawing, a time-point index of the chart, as barIndex, with the time the
 // bars of the chart give it: the row of the bar at that index (mainSeries().bars().valueAt), in the
@@ -63,7 +65,7 @@ export function readPineGraphics(
         studyId: string;
         lines: {
           styleId: string;
-          id: number | null;
+          id: string | null;
           x1: { barIndex: number | null; time: number | null };
           y1: number | null;
           x2: { barIndex: number | null; time: number | null };
@@ -96,13 +98,13 @@ export function readPineGraphics(
         }[];
         tables: {
           styleId: string;
-          id: number | null;
+          id: string | null;
           position: string | null;
           rows: number | null;
           columns: number | null;
         }[];
         cells: {
-          tableId: number | null;
+          tableId: string | null;
           row: number | null;
           column: number | null;
           text: string | null;
@@ -121,6 +123,13 @@ export function readPineGraphics(
   const number = (value: unknown): number | null =>
     typeof value === 'number' && Number.isFinite(value) ? value : null;
   const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+  // An id as text: a text that is not empty, or a finite number as its text.
+  const idOf = (value: unknown): string | null =>
+    typeof value === 'string' && value !== ''
+      ? value
+      : typeof value === 'number' && Number.isFinite(value)
+        ? String(value)
+        : null;
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
   const chart = attempt(() =>
     chartIndex === null ? api?.activeChart?.() : api?.chart?.(chartIndex),
@@ -328,7 +337,7 @@ export function readPineGraphics(
       kind === 'lines'
         ? groupedItems(graphics, 'dwglines')?.map(({ styleId, item }) => ({
             styleId,
-            id: number(item.id),
+            id: idOf(item.id),
             x1: point(item.x1),
             y1: number(item.y1),
             x2: point(item.x2),
@@ -370,7 +379,7 @@ export function readPineGraphics(
       kind === 'tables'
         ? groupedItems(graphics, 'dwgtables')?.map(({ styleId, item }) => ({
             styleId,
-            id: number(item.id),
+            id: idOf(item.id),
             position: text(item.position),
             rows: number(item.rows),
             columns: number(item.columns),
@@ -379,7 +388,7 @@ export function readPineGraphics(
     const cells =
       kind === 'tables'
         ? regularItems(graphics, 'dwgtablecells')?.map((item) => ({
-            tableId: number(item.tableId),
+            tableId: idOf(item.tableId),
             row: number(item.row),
             column: number(item.column),
             text: text(item.text),

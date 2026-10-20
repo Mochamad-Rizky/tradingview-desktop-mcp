@@ -229,8 +229,10 @@ export interface FixtureBox extends FixtureDrawing {
   backgroundColorIndex: number | null;
 }
 
+// The id of a table, and the table id of a cell, can be a number or a text: the raw sets of the app
+// are not known to give numbers, and its ready-made table view gives text ids.
 export interface FixtureTable extends FixtureDrawing {
-  id: number;
+  id: number | string;
   position: string;
   rows: number;
   columns: number;
@@ -239,7 +241,7 @@ export interface FixtureTable extends FixtureDrawing {
 // A cell is kept by style only: the app does not group cells by forceOverlay.
 export interface FixtureTableCell {
   styleId: string;
-  tableId: number;
+  tableId: number | string;
   row: number;
   column: number;
   text: string;
@@ -363,7 +365,7 @@ const fixtureGraphicsSchema = z.strictObject({
     .array(
       z.strictObject({
         ...drawingShape,
-        id: z.number(),
+        id: z.union([z.number(), z.string()]),
         position: z.string(),
         rows: z.number(),
         columns: z.number(),
@@ -374,7 +376,7 @@ const fixtureGraphicsSchema = z.strictObject({
     .array(
       z.strictObject({
         styleId: z.string(),
-        tableId: z.number(),
+        tableId: z.union([z.number(), z.string()]),
         row: z.number(),
         column: z.number(),
         text: z.string(),

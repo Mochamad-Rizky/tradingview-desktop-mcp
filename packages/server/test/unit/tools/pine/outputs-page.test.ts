@@ -192,7 +192,7 @@ describe('readPineGraphics', () => {
             lines: [
               {
                 styleId: 'lines_a',
-                id: 101,
+                id: '101',
                 x1: { barIndex: 280, time: timeOf(280) },
                 y1: 108.5,
                 x2: { barIndex: 299, time: timeOf(299) },
@@ -204,7 +204,7 @@ describe('readPineGraphics', () => {
               },
               {
                 styleId: 'lines_a',
-                id: 102,
+                id: '102',
                 x1: { barIndex: 290, time: timeOf(290) },
                 y1: 106,
                 // In the empty space after the last bar, where the time scale has no point.
@@ -217,7 +217,7 @@ describe('readPineGraphics', () => {
               },
               {
                 styleId: 'lines_b',
-                id: 103,
+                id: '103',
                 x1: { barIndex: null, time: null },
                 y1: 102.5,
                 x2: { barIndex: 299, time: timeOf(299) },
@@ -409,19 +409,47 @@ describe('readPineGraphics', () => {
         {
           studyId: 'STUDY01',
           ...NO_DRAWINGS,
+          // The ids as text, which is how the cells are joined to their table.
           tables: [
-            { styleId: 'tables_a', id: 201, position: 'top_right', rows: 2, columns: 2 },
-            { styleId: 'tables_a', id: 202, position: 'bottom_left', rows: 1, columns: 1 },
+            { styleId: 'tables_a', id: '201', position: 'top_right', rows: 2, columns: 2 },
+            { styleId: 'tables_a', id: '202', position: 'bottom_left', rows: 1, columns: 1 },
           ],
           cells: [
-            { tableId: 201, row: 1, column: 1, text: 'Short' },
-            { tableId: 201, row: 0, column: 1, text: 'Bias' },
-            { tableId: 201, row: 0, column: 0, text: 'Trend' },
-            { tableId: 201, row: 1, column: 0, text: 'Up' },
-            { tableId: 202, row: 0, column: 0, text: 'Note' },
+            { tableId: '201', row: 1, column: 1, text: 'Short' },
+            { tableId: '201', row: 0, column: 1, text: 'Bias' },
+            { tableId: '201', row: 0, column: 0, text: 'Trend' },
+            { tableId: '201', row: 1, column: 0, text: 'Up' },
+            { tableId: '202', row: 0, column: 0, text: 'Note' },
           ],
         },
       ]);
+    });
+
+    test('reads the ids of tables and the table ids of cells as text, from a number or a text', async () => {
+      const { result } = await resultOf(
+        readPineGraphics,
+        [null, 'tables', 'STUDY01'],
+        chart(
+          withGraphics({
+            tables: [
+              { styleId: 'tables_a', id: 't1', position: 'top_right', rows: 1, columns: 1 },
+              { styleId: 'tables_a', id: 7, position: 'bottom_left', rows: 1, columns: 1 },
+            ],
+            tableCells: [
+              { styleId: 'cells_a', tableId: 't1', row: 0, column: 0, text: 'text id' },
+              { styleId: 'cells_a', tableId: 7, row: 0, column: 0, text: 'number id' },
+            ],
+          }),
+        ),
+      );
+
+      expect(result.studies[0]).toMatchObject({
+        tables: [{ id: 't1' }, { id: '7' }],
+        cells: [
+          { tableId: 't1', text: 'text id' },
+          { tableId: '7', text: 'number id' },
+        ],
+      });
     });
 
     test('reads no cells for another kind, and no tables for a script that has no cells', async () => {
@@ -692,7 +720,7 @@ describe('readPineGraphics', () => {
         S1: pineCore(
           linesOf([
             {
-              id: '12',
+              id: { value: 12 },
               x1: 5,
               y1: Number.NaN,
               x2: 6,
@@ -722,6 +750,21 @@ describe('readPineGraphics', () => {
           color: null,
         },
       ]);
+    });
+
+    test('reads the id of a line as text, whether the app gives a number or a text', async () => {
+      const make = withCores({
+        S1: pineCore(
+          linesOf([
+            { ...SOME_LINE, id: 12 },
+            { ...SOME_LINE, id: 'l12' },
+          ]),
+        ),
+      });
+
+      const { result } = await resultOf(readPineGraphics, [null, 'lines', null], make);
+
+      expect(result.studies[0]?.lines.map(({ id }) => id)).toEqual(['12', 'l12']);
     });
 
     test('passes over an item that is not an object, and reads an object without fields as empty', async () => {
@@ -972,8 +1015,8 @@ describe('readPineGraphics', () => {
         {
           ...NO_DRAWINGS,
           studyId: 'GOOD',
-          tables: [{ styleId: 't', id: 1, position: null, rows: null, columns: null }],
-          cells: [{ tableId: 1, row: 0, column: 0, text: 'x' }],
+          tables: [{ styleId: 't', id: '1', position: null, rows: null, columns: null }],
+          cells: [{ tableId: '1', row: 0, column: 0, text: 'x' }],
         },
       ]);
       expect(result.unreadable).toEqual([

@@ -78,13 +78,13 @@ function toPoint(point: { barIndex: number | null; time: number | null }) {
   return { barIndex: point.barIndex, time, timeIso: time === null ? null : toIso(time) };
 }
 
-// The drawings of every study as one list, newest first, cut to `limit`, and how many there were.
-// Within a study the drawings come oldest first: by id when the app gives every one of them an id,
-// the highest being the newest, else in the order the app keeps them. A study further down the chart
-// counts as newer than one above it. A drawing without an id is named by its style and its place
-// among the drawings of that style, before anything is cut, so the name does not change with the
-// limit.
-function newest<D extends { styleId: string; id?: number | null }, R>(
+// The drawings of every study as one list, cut to `limit`, and how many there were. The list is in
+// the reverse of an order that is meant to put the newest first, which was not seen on the app:
+// within a study the drawings come by id when every one of them has an id that is a whole number,
+// the highest last, else in the order the app keeps them; a study further down the chart comes
+// after one above it. A drawing without an id is named by its style and its place among the
+// drawings of that style, before anything is cut, so the name does not change with the limit.
+function newest<D extends { styleId: string; id?: string | null }, R>(
   studies: readonly StudyDrawings[],
   drawingsOf: (study: StudyDrawings) => readonly D[],
   limit: number,
@@ -99,15 +99,15 @@ function newest<D extends { styleId: string; id?: number | null }, R>(
       const own = drawing.id ?? null;
       return {
         drawing,
-        own,
-        id: own === null ? `${drawing.styleId}:${String(place)}` : String(own),
+        rank: own !== null && /^-?\d+$/.test(own) ? Number(own) : null,
+        id: own ?? `${drawing.styleId}:${String(place)}`,
       };
     });
-    const withIds = drawings.flatMap((entry) =>
-      entry.own === null ? [] : [{ ...entry, own: entry.own }],
+    const ranked = drawings.flatMap((entry) =>
+      entry.rank === null ? [] : [{ ...entry, rank: entry.rank }],
     );
     const inOrder =
-      withIds.length === drawings.length ? withIds.sort((a, b) => a.own - b.own) : drawings;
+      ranked.length === drawings.length ? ranked.sort((a, b) => a.rank - b.rank) : drawings;
     for (const { drawing, id } of inOrder) {
       ordered.push(build(study, id, drawing));
     }
@@ -177,10 +177,11 @@ export function toBoxes(studies: readonly StudyDrawings[], limit: number) {
   return { boxes: drawings, total };
 }
 
-// The cells of a table: those of its study with its id as their tableId (whatever style they are
-// in, as the renderer of the app joins them), by row and then column. A cell set twice at one place
-// is the last one, as for the renderer; a cell without a row or column has no place in the table.
-function cellsOf(study: StudyDrawings, tableId: number | null) {
+// The cells of a table: those of its study with its id as their tableId, compared as text (whatever
+// style they are in, as the renderer of the app joins them), by row and then column. A cell set
+// twice at one place is the last one, as for the renderer; a cell without a row or column has no
+// place in the table.
+function cellsOf(study: StudyDrawings, tableId: string | null) {
   const byPlace = new Map<string, { row: number; column: number; text: string | null }>();
   for (const { tableId: owner, row, column, text } of study.cells) {
     if (tableId !== null && owner === tableId && row !== null && column !== null) {
@@ -188,6 +189,23 @@ function cellsOf(study: StudyDrawings, tableId: number | null) {
     }
   }
   return [...byPlace.values()].sort((a, b) => a.row - b.row || a.column - b.column);
+}
+
+// A warning for each study that holds cells of no table it has (a tableId that is none, or that no
+// table of the study has), which the tables leave out.
+export function tableCellWarnings(studies: readonly StudyDrawings[]): string[] {
+  return studies.flatMap((study) => {
+    const ids = new Set(study.tables.flatMap(({ id }) => (id === null ? [] : [id])));
+    const count = study.cells.filter(({ tableId }) => tableId === null || !ids.has(tableId)).length;
+    if (count === 0) {
+      return [];
+    }
+    const one = count === 1;
+    return [
+      `The study ${study.studyId} holds ${String(count)} table cell${one ? '' : 's'} that ` +
+        `belong${one ? 's' : ''} to no table it has, so ${one ? 'it is' : 'they are'} not listed.`,
+    ];
+  });
 }
 
 // total counts the tables, not their cells.
