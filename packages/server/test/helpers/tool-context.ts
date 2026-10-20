@@ -79,7 +79,11 @@ export function createTestContext(
     connection: unreachableConnection(),
     launcher: refusingLauncher(),
     events: new ToolEventBus(),
-    session: { createdDrawingIds: new Set(), createdAlertIds: new Set() },
+    session: {
+      createdDrawingIds: new Set(),
+      createdAlertIds: new Set(),
+      createdStudyIds: new Set(),
+    },
     ...overrides,
   };
 }

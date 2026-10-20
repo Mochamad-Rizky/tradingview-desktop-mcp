@@ -72,7 +72,11 @@ export function createMcpServer(
   deps: Partial<ServerDeps> = {},
 ): { server: McpServer; registry: ToolRegistry; ctx: ToolContext } {
   const { logger, connection, launcher, events } = createServerDeps(config, deps);
-  const session: SessionState = { createdDrawingIds: new Set(), createdAlertIds: new Set() };
+  const session: SessionState = {
+    createdDrawingIds: new Set(),
+    createdAlertIds: new Set(),
+    createdStudyIds: new Set(),
+  };
   const base = { config, logger, connection, launcher, events, session };
 
   const tools = selectTools(allTools, { profile: config.profile, patterns: config.toolPatterns });

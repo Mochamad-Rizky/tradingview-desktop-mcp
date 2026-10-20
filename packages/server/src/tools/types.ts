@@ -37,6 +37,8 @@ export type Domain =
 export interface SessionState {
   createdDrawingIds: Set<string>;
   createdAlertIds: Set<string>;
+  // The ids of the studies indicator_add put on a chart, until indicator_remove removes them.
+  createdStudyIds: Set<string>;
 }
 
 // What a handler works with. Over HTTP the connection, the launcher, the logger and the event bus

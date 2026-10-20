@@ -1,6 +1,7 @@
 import type { PageErrorSentinel } from '../../core/tv/page-bridge.js';
 import type { PageLib } from '../../core/tv/page-lib.js';
 import type {
+  ChartModelLike,
   ChartWidgetApiLike,
   PlotItemLike,
   PlotListLike,
@@ -14,16 +15,19 @@ import type {
   TvWindow,
 } from '../../core/tv/tv-window.js';
 
-// The page functions of the indicator tools that read. The page bridge sends the source text of
-// each one into the page, so each uses nothing of this file, only its parameters and the globals of
-// the page, and whatever it shares with another is written out in both. Types are erased, so the
-// type imports above are fine.
+// The page functions of the indicator tools. The page bridge sends the source text of each one into
+// the page, so each uses nothing of this file, only its parameters and the globals of the page, and
+// whatever it shares with another is written out in both. Types are erased, so the type imports
+// above are fine.
 //
 // A chartIndex of null means the active chart; any other value has been checked against the layout
 // by the caller. Members of the app are read defensively: another web build can drop or reshape any
-// of them, and a read that throws counts as no answer. None of them changes anything. Only
-// readStudyCatalog sends requests: the list of standard Pine scripts, which the app asks for the
-// same way, and the study metadata when the repository of the app does not hold it yet.
+// of them, and a read that throws counts as no answer. The readers change nothing. Only
+// readStudyCatalog and readStudyInsertContext send requests: the list of standard Pine scripts,
+// which the app asks for the same way, and the study metadata when the repository of the app does
+// not hold it yet. The functions at the end change the chart (insertStudy, editStudyInputs with
+// values, setStudyVisibility and removeStudy with confirmed); each says CAPABILITY_UNAVAILABLE only
+// before it acts.
 
 // The studies of a chart: each with its title, visibility, kind and the inputs the user sees (the
 // hidden internals of Pine left out), the value of each joined by input id. A value that is not
@@ -422,4 +426,507 @@ export function readStudyCatalog(
     scriptsError: typeof found === 'string' ? found : null,
     builtins: studies,
   }));
+}
+
+// What the server needs to know before it adds a study, read without changing anything: the chart
+// it lands on (chartIndex, the active chart when the caller named none, null when unknown), how many
+// studies the chart holds (null when the list cannot be read), what the model's canCreateStudy says
+// for studyId (the id of the metadata of a built-in, empty for Pine, as the app asks it; null when
+// the model has no such check or it throws), and for a built-in what its metadata says: its
+// description, whether that description finds this study first among all built-ins (hidden ones
+// included), as a name passed to createStudy does, its inputs with their defaults (the hidden ones
+// left out) and whether any input asks for confirmation. builtin is null for Pine and for an id the
+// repository does not hold. The repository is read from its cache once it is ready, else through
+// findAllJavaStudies, which requests the metadata once.
+export function readStudyInsertContext(
+  win: TvWindow,
+  lib: PageLib,
+  chartIndex: number | null,
+  studyId: string,
+):
+  | Promise<{
+      chartIndex: number | null;
+      count: number | null;
+      check: { success: boolean; reason: string | null; limitValue: number | null } | null;
+      builtin: {
+        description: string;
+        firstMatch: boolean;
+        confirm: boolean;
+        inputs: {
+          id: string;
+          name: string;
+          type: string;
+          value: string | number | boolean | null;
+          options: (string | number)[] | null;
+          min: number | null;
+          max: number | null;
+        }[];
+      } | null;
+    }>
+  | PageErrorSentinel {
+  const attempt = (read: () => unknown): unknown => {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  };
+  const text = (value: unknown): string | null =>
+    typeof value === 'string' && value !== '' ? value : null;
+  const number = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  const chart = attempt(() =>
+    chartIndex === null ? api?.activeChart?.() : api?.chart?.(chartIndex),
+  ) as Partial<ChartWidgetApiLike> | null | undefined;
+  if (typeof chart?.createStudy !== 'function' || typeof chart.getAllStudies !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no chart API to add indicators with',
+        hint: 'Check app_health: the chart may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
+  const listed = attempt(() => chart.getAllStudies?.());
+  const model = attempt(() => chart._chartWidget?.model()) as
+    Partial<ChartModelLike> | null | undefined;
+  const answer = (
+    typeof model?.canCreateStudy === 'function'
+      ? attempt(() => model.canCreateStudy?.({ id: studyId }))
+      : undefined
+  ) as { success?: unknown; reason?: unknown; limitValue?: unknown } | null | undefined;
+  const found = {
+    chartIndex: chartIndex ?? number(attempt(() => api?.activeChartIndex?.())),
+    count: Array.isArray(listed) ? listed.length : null,
+    check:
+      typeof answer?.success === 'boolean'
+        ? {
+            success: answer.success,
+            reason: text(answer.reason),
+            limitValue: number(answer.limitValue),
+          }
+        : null,
+  };
+  const getRepository = studyId === '' ? null : lib.findExport('studyMetaInfoRepository');
+  return Promise.resolve()
+    .then((): unknown => {
+      if (typeof getRepository !== 'function') {
+        return null;
+      }
+      const repository = (getRepository as () => unknown)() as Partial<StudyMetaInfoRepositoryLike>;
+      return repository.isReady?.() === true &&
+        typeof repository.getInternalMetaInfoArray === 'function'
+        ? repository.getInternalMetaInfoArray()
+        : repository.findAllJavaStudies?.();
+    })
+    .then((items: unknown) => {
+      const all: unknown[] = Array.isArray(items) ? items : [];
+      const item = all.find((raw) => (raw as { id?: unknown } | null)?.id === studyId) as
+        StudyMetaInfoLike | undefined;
+      const description = text(item?.description);
+      if (item === undefined || description === null) {
+        return null;
+      }
+      const wanted = description.toLowerCase();
+      const first = all.find((raw) => {
+        const other: unknown = (raw as { description?: unknown } | null)?.description;
+        return typeof other === 'string' && other.toLowerCase() === wanted;
+      });
+      const rawInputs: unknown[] = Array.isArray(item.inputs) ? item.inputs : [];
+      const inputs = rawInputs.flatMap((raw) => {
+        const info = (raw ?? {}) as Partial<StudyInputInfoLike>;
+        if (typeof info.id !== 'string' || info.isHidden === true) {
+          return [];
+        }
+        const value: unknown = info.defval;
+        const options: unknown = info.options;
+        return [
+          {
+            id: info.id,
+            name: text(info.name) ?? text(info.localizedName) ?? info.id,
+            type: text(info.type) ?? '',
+            value:
+              typeof value === 'string' || typeof value === 'boolean' || number(value) !== null
+                ? (value as string | number | boolean)
+                : null,
+            options:
+              Array.isArray(options) &&
+              options.every((option) => typeof option === 'string' || number(option) !== null)
+                ? options.map((option: unknown) => option as string | number)
+                : null,
+            min: number(info.min),
+            max: number(info.max),
+          },
+        ];
+      });
+      return {
+        description,
+        firstMatch: first === item,
+        confirm: rawInputs.some((raw) => (raw as { confirm?: unknown } | null)?.confirm === true),
+        inputs,
+      };
+    })
+    .catch((): null => null)
+    .then((builtin) => ({ ...found, builtin }));
+}
+
+// Adds a study with createStudy and answers its id. how says which way: by the description of a
+// built-in, the one way that takes overlay and the limit check of the app (checkLimit is always
+// on), or by a descriptor of a built-in (java) or a standard Pine script (pine), which the app
+// checks with canCreateStudy itself. The caller has checked the limit and refused studies that
+// need an input dialog first, because on a failed check the app opens a dialog of its own. Waits
+// at most waitMs for the app (TIMEOUT); a null answer and a rejection are NOT_AVAILABLE with the
+// reason TradingView gave, and any other answer PAGE_EVALUATION_FAILED.
+export function insertStudy(
+  win: TvWindow,
+  chartIndex: number | null,
+  how:
+    | { kind: 'description'; description: string }
+    | { kind: 'java'; studyId: string }
+    | { kind: 'pine'; pineId: string; pineVersion: string },
+  overlay: boolean,
+  waitMs: number,
+): Promise<{ id: string } | PageErrorSentinel> | PageErrorSentinel {
+  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  let found: Partial<ChartWidgetApiLike> | null | undefined;
+  try {
+    found = chartIndex === null ? api?.activeChart?.() : api?.chart?.(chartIndex);
+  } catch {
+    found = undefined;
+  }
+  if (typeof found?.createStudy !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no chart API to add indicators with',
+        hint: 'Check app_health: the chart may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
+  // Checked above: the member called without a guard is there.
+  const chart = found as ChartWidgetApiLike;
+  // How createStudy ended, whether it threw at once or rejected later.
+  let added: Promise<{ value: unknown } | { error: unknown }>;
+  try {
+    added = Promise.resolve(
+      how.kind === 'description'
+        ? chart.createStudy(how.description, overlay, false, undefined, undefined, {
+            checkLimit: true,
+          })
+        : chart.createStudy(
+            how.kind === 'java'
+              ? { type: 'java', studyId: how.studyId }
+              : { type: 'pine', pineId: how.pineId, pineVersion: how.pineVersion },
+          ),
+    ).then(
+      (value: unknown) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+  } catch (error) {
+    added = Promise.resolve({ error });
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<{ late: true }>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ late: true });
+    }, waitMs);
+  });
+  return Promise.race([added, late]).then((outcome): { id: string } | PageErrorSentinel => {
+    clearTimeout(timer);
+    if ('late' in outcome) {
+      return {
+        __tvmcpError: {
+          code: 'TIMEOUT',
+          message: `TradingView did not add the indicator within ${String(waitMs)} ms`,
+          hint:
+            'It may still appear on the chart: check indicator_list. If TradingView shows a ' +
+            'dialog, answer or close it there.',
+          details: { waitMs },
+        },
+      };
+    }
+    if ('error' in outcome) {
+      // The app rejects with a string insertion code (cannot_compile_pub, cancelled, ...) or an
+      // Error.
+      const { error } = outcome;
+      const message: unknown = (error as { message?: unknown } | null | undefined)?.message;
+      const reason =
+        typeof error === 'string' ? error : typeof message === 'string' ? message : String(error);
+      return {
+        __tvmcpError: {
+          code: 'NOT_AVAILABLE',
+          message: `TradingView did not add the indicator: ${reason}`,
+          hint: 'Check indicator_list, and that the indicator can be added to this chart in TradingView.',
+          details: { reason },
+        },
+      };
+    }
+    const { value } = outcome;
+    if (typeof value === 'string' && value !== '') {
+      return { id: value };
+    }
+    if (value === null) {
+      return {
+        __tvmcpError: {
+          code: 'NOT_AVAILABLE',
+          message:
+            'TradingView added no indicator: createStudy answered null, as it does when the chart ' +
+            'holds as many indicators as the plan allows',
+          hint: 'Call indicator_list to see the indicators on the chart, and app_get_plan_limits.',
+          details: { reason: null },
+        },
+      };
+    }
+    return {
+      __tvmcpError: {
+        code: 'PAGE_EVALUATION_FAILED',
+        message: 'TradingView answered createStudy with something that is not a study id',
+      },
+    };
+  });
+}
+
+// The inputs of a study as the tools that change them check them: the inputs the user sees (the
+// hidden internals of Pine left out), each with its type, value, options (text or numbers, else
+// null) and the bounds of its metadata (null when it has none). With values, they are set first
+// with setInputValues and the inputs are read afterwards; without (null), nothing changes. An id that
+// is not a study of the chart is INVALID_INPUT.
+export function editStudyInputs(
+  win: TvWindow,
+  chartIndex: number | null,
+  id: string,
+  values: { id: string; value: string | number | boolean }[] | null,
+):
+  | {
+      inputs: {
+        id: string;
+        name: string;
+        type: string;
+        value: string | number | boolean | null;
+        options: (string | number)[] | null;
+        min: number | null;
+        max: number | null;
+      }[];
+    }
+  | PageErrorSentinel {
+  const attempt = (read: () => unknown): unknown => {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  };
+  const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+  const number = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  const chart = attempt(() =>
+    chartIndex === null ? api?.activeChart?.() : api?.chart?.(chartIndex),
+  ) as Partial<ChartWidgetApiLike> | null | undefined;
+  if (typeof chart?.getAllStudies !== 'function' || typeof chart.getStudyById !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no chart API to reach the studies with',
+        hint: 'Check app_health: the chart may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
+  const listed = attempt(() => chart.getAllStudies?.());
+  const known =
+    Array.isArray(listed) &&
+    (listed as unknown[]).some((entry) => (entry as { id?: unknown } | null)?.id === id);
+  const study = known
+    ? (attempt(() => chart.getStudyById?.(id)) as Partial<StudyApiLike> | null | undefined)
+    : undefined;
+  if (study === undefined || study === null) {
+    return {
+      __tvmcpError: {
+        code: 'INVALID_INPUT',
+        message: `The chart has no study with the id ${id}`,
+        hint: 'Call indicator_list for the ids of the studies on the chart.',
+        details: { id },
+      },
+    };
+  }
+  if (
+    typeof study.getInputsInfo !== 'function' ||
+    (values !== null && typeof study.setInputValues !== 'function')
+  ) {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: `The inputs of the study ${id} cannot be ${values === null ? 'read' : 'set'} on this page`,
+        hint: 'This TradingView build reaches study inputs another way. Check app_health.',
+        details: { id },
+      },
+    };
+  }
+  if (values !== null) {
+    study.setInputValues?.(values);
+  }
+  const infos = attempt(() => study.getInputsInfo?.());
+  const current = attempt(() => study.getInputValues?.());
+  const valueById = new Map<string, unknown>();
+  for (const item of Array.isArray(current) ? (current as unknown[]) : []) {
+    const { id: inputId, value } = (item ?? {}) as { id?: unknown; value?: unknown };
+    if (typeof inputId === 'string') {
+      valueById.set(inputId, value);
+    }
+  }
+  const inputs = (Array.isArray(infos) ? (infos as unknown[]) : []).flatMap((raw) => {
+    const info = (raw ?? {}) as Partial<StudyInputInfoLike>;
+    if (typeof info.id !== 'string' || info.isHidden === true) {
+      return [];
+    }
+    const value = valueById.get(info.id);
+    const options: unknown = info.options;
+    return [
+      {
+        id: info.id,
+        name: text(info.name) ?? text(info.localizedName) ?? info.id,
+        type: text(info.type) ?? '',
+        value:
+          typeof value === 'string' || typeof value === 'boolean' || number(value) !== null
+            ? (value as string | number | boolean)
+            : null,
+        options:
+          Array.isArray(options) &&
+          options.every((option) => typeof option === 'string' || number(option) !== null)
+            ? options.map((option: unknown) => option as string | number)
+            : null,
+        min: number(info.min),
+        max: number(info.max),
+      },
+    ];
+  });
+  return { inputs };
+}
+
+// Shows or hides a study with setVisible, and answers whether it was visible before and is after,
+// as isVisible reports. An id that is not a study of the chart is INVALID_INPUT.
+export function setStudyVisibility(
+  win: TvWindow,
+  chartIndex: number | null,
+  id: string,
+  visible: boolean,
+): { previous: boolean; visible: boolean } | PageErrorSentinel {
+  const attempt = (read: () => unknown): unknown => {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  };
+  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  const chart = attempt(() =>
+    chartIndex === null ? api?.activeChart?.() : api?.chart?.(chartIndex),
+  ) as Partial<ChartWidgetApiLike> | null | undefined;
+  if (typeof chart?.getAllStudies !== 'function' || typeof chart.getStudyById !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no chart API to reach the studies with',
+        hint: 'Check app_health: the chart may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
+  const listed = attempt(() => chart.getAllStudies?.());
+  const known =
+    Array.isArray(listed) &&
+    (listed as unknown[]).some((entry) => (entry as { id?: unknown } | null)?.id === id);
+  const study = known
+    ? (attempt(() => chart.getStudyById?.(id)) as Partial<StudyApiLike> | null | undefined)
+    : undefined;
+  if (study === undefined || study === null) {
+    return {
+      __tvmcpError: {
+        code: 'INVALID_INPUT',
+        message: `The chart has no study with the id ${id}`,
+        hint: 'Call indicator_list for the ids of the studies on the chart.',
+        details: { id },
+      },
+    };
+  }
+  if (typeof study.setVisible !== 'function' || typeof study.isVisible !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: `The visibility of the study ${id} cannot be set on this page`,
+        hint: 'This TradingView build shows and hides studies another way. Check app_health.',
+        details: { id },
+      },
+    };
+  }
+  const previous = attempt(() => study.isVisible?.()) === true;
+  study.setVisible(visible);
+  return { previous, visible: attempt(() => study.isVisible?.()) === true };
+}
+
+// Removes a study with removeEntity, the way the app does it on the chart: as a command the user
+// can undo. Without confirmed it only checks: it answers removed false and changes nothing, so
+// that the caller can ask for confirmation. The app only warns about an id it does not know, so the
+// list of studies is read again afterwards, and a study that is still there is NOT_AVAILABLE. An
+// id that is not a study of the chart is INVALID_INPUT, confirmed or not. name is the name the
+// study had in the list.
+export function removeStudy(
+  win: TvWindow,
+  chartIndex: number | null,
+  id: string,
+  confirmed: boolean,
+): { removed: boolean; name: string } | PageErrorSentinel {
+  const attempt = (read: () => unknown): unknown => {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  };
+  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  const chart = attempt(() =>
+    chartIndex === null ? api?.activeChart?.() : api?.chart?.(chartIndex),
+  ) as Partial<ChartWidgetApiLike> | null | undefined;
+  if (typeof chart?.getAllStudies !== 'function' || typeof chart.removeEntity !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no chart API to remove indicators with',
+        hint: 'Check app_health: the chart may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
+  const entryOf = (): { id?: unknown; name?: unknown } | undefined => {
+    const listed = attempt(() => chart.getAllStudies?.());
+    return (Array.isArray(listed) ? (listed as unknown[]) : []).find(
+      (entry) => (entry as { id?: unknown } | null)?.id === id,
+    ) as { id?: unknown; name?: unknown } | undefined;
+  };
+  const entry = entryOf();
+  if (entry === undefined) {
+    return {
+      __tvmcpError: {
+        code: 'INVALID_INPUT',
+        message: `The chart has no study with the id ${id}`,
+        hint: 'Call indicator_list for the ids of the studies on the chart.',
+        details: { id },
+      },
+    };
+  }
+  const name = typeof entry.name === 'string' ? entry.name : id;
+  if (!confirmed) {
+    return { removed: false, name };
+  }
+  chart.removeEntity(id);
+  if (entryOf() !== undefined) {
+    return {
+      __tvmcpError: {
+        code: 'NOT_AVAILABLE',
+        message: `TradingView did not remove the study ${id}`,
+        hint: 'Check indicator_list. The study may be locked, or part of another study, in TradingView.',
+        details: { id },
+      },
+    };
+  }
+  return { removed: true, name };
 }

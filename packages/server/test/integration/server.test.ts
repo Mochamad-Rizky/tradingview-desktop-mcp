@@ -38,6 +38,9 @@ const CHART_TOOL_NAMES = chartTools.map(({ name }) => name);
 const DATA_TOOL_NAMES = dataTools.map(({ name }) => name);
 const CORE_DATA_TOOL_NAMES = DATA_TOOL_NAMES.filter((name) => name !== 'data_get_market_depth');
 const INDICATOR_TOOL_NAMES = indicatorTools.map(({ name }) => name);
+const READ_INDICATOR_TOOL_NAMES = indicatorTools
+  .filter(({ annotations }) => annotations.readOnlyHint === true)
+  .map(({ name }) => name);
 
 // Everything a test starts is closed here, newest first, so a client goes before its server and a
 // connection manager before the fake app it talks to.
@@ -567,7 +570,11 @@ test('createMcpServer creates the dependencies it is not given', () => {
     launch: expect.any(Function) as unknown,
     discover: expect.any(Function) as unknown,
   });
-  expect(ctx.session).toEqual({ createdDrawingIds: new Set(), createdAlertIds: new Set() });
+  expect(ctx.session).toEqual({
+    createdDrawingIds: new Set(),
+    createdAlertIds: new Set(),
+    createdStudyIds: new Set(),
+  });
   expect(registry.list().map(({ name }) => name)).toEqual([
     ...APP_TOOL_NAMES,
     ...CHART_TOOL_NAMES,
@@ -607,7 +614,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     'chart_get_state',
     'chart_get_visible_range',
     ...DATA_TOOL_NAMES,
-    ...INDICATOR_TOOL_NAMES,
+    ...READ_INDICATOR_TOOL_NAMES,
   ]);
   expect(lines).toEqual([]);
 

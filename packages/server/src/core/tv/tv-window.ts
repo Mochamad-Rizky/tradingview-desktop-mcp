@@ -100,6 +100,24 @@ export interface ChartWidgetApiLike {
   // The API of a study on the chart; throws "There is no such study" for any other id.
   getStudyById(id: string): StudyApiLike;
   getAllShapes(): { id: string; name: string }[];
+  // Adds a study and resolves its id, or null (notes of Plan 2, section 7). A name is the
+  // description of a built-in, compared lower case, and the first match counts, hidden built-ins
+  // included; with options.checkLimit the app asks canCreateStudy and, when that fails, shows a
+  // warning dialog and resolves null. A descriptor ignores every other argument, checkLimit
+  // included: it always asks canCreateStudy and opens the paywall when that fails, it opens an
+  // input dialog of the app for some studies, and it rejects with an insertion error code (a
+  // string) when it cannot add the study.
+  createStudy(
+    nameOrDescriptor: string | StudyDescriptorLike,
+    forceOverlay?: boolean,
+    lock?: boolean,
+    inputs?: Record<string, unknown>,
+    overrides?: Record<string, unknown>,
+    options?: { checkLimit?: boolean },
+  ): Promise<string | null>;
+  // Removes a study (any source) by id. By default as a command the user can undo; an id that is
+  // not on the chart only makes the app warn.
+  removeEntity(id: string, options?: { disableUndo?: boolean }): void;
   // What these return is not recorded. A change is complete when dataReady runs.
   setSymbol(symbol: string, options?: ChartChangeOptions): unknown;
   setResolution(resolution: string, options?: ChartChangeOptions): unknown;
@@ -122,6 +140,11 @@ export interface ChartChangeOptions {
   doNotActivateChart?: boolean;
 }
 
+// What createStudy takes instead of a name: a built-in by the id of its metadata, or a Pine script
+// by its scriptIdPart and script version.
+export type StudyDescriptorLike =
+  { type: 'java'; studyId: string } | { type: 'pine'; pineId: string; pineVersion: string };
+
 // activeChart()._chartWidget, the way to the chart model that was verified on the app. The public
 // chartWidget() and chartModel() accessors probably lead to the same objects, but nobody checked.
 export interface ChartWidgetLike {
@@ -133,6 +156,20 @@ export interface ChartModelLike {
   mainSeries(): SeriesLike;
   // The core model under the chart model, which owns the time scale.
   model(): CoreModelLike;
+  // Whether a study with the id of this metadata (empty for Pine) may be added, read from the
+  // counters and entitlements of the session without changing anything (notes of Plan 2, section
+  // 7). reason general is the indicator limit of the plan, with the limit as limitValue. A build may
+  // not have it. Its neighbor checkIfFeatureAvailable opens paywall dialogs and is left out on
+  // purpose.
+  canCreateStudy?(spec: { id: string }): CanCreateStudyLike;
+}
+
+// What canCreateStudy answers: success, or the reason it fails (general, child, fundamental or
+// forecast) with limitValue for the general limit.
+export interface CanCreateStudyLike {
+  success: boolean;
+  reason?: string;
+  limitValue?: number;
 }
 
 export interface CoreModelLike {
@@ -301,22 +338,30 @@ export interface StudyApiLike {
   getInputsInfo(): StudyInputInfoLike[];
   // The value of each input, in the order of getInputsInfo, unwrapped.
   getInputValues(): { id: string; value: unknown }[];
+  // Sets the value of each input by input id.
+  setInputValues(values: { id: string; value: unknown }[]): void;
+  setVisible(visible: boolean): void;
   // The study core, which holds the metadata and the rows.
   study(): StudyCoreLike;
 }
 
 // An input as getInputsInfo reports it. type is one of integer, float, price, bool, text, symbol,
 // session, source, resolution, time, bar_time, color and text_area; options lists the choices of
-// an input that has them. The inputs of a Pine script are isFake, which is normal for Pine.
+// an input that has them, text or numbers. The inputs of a Pine script are isFake, which is normal
+// for Pine. min and max bound a number; confirm makes the app ask for the value in a dialog when the
+// study is added.
 export interface StudyInputInfoLike {
   id: string;
   name: string;
   localizedName?: string;
   type: string;
   defval?: unknown;
-  options?: string[];
+  options?: (string | number)[];
   isHidden?: boolean;
   isFake?: boolean;
+  min?: number;
+  max?: number;
+  confirm?: boolean;
 }
 
 // The study core, api.study(). A strategy carries the own flag isStudyStrategy, which indicators do

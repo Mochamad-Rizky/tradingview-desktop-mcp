@@ -9,9 +9,14 @@ import {
 import { createPageLib } from '../../../../src/core/tv/page-lib.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import {
+  editStudyInputs,
+  insertStudy,
   readStudies,
   readStudyCatalog,
+  readStudyInsertContext,
   readStudyValues,
+  removeStudy,
+  setStudyVisibility,
 } from '../../../../src/tools/indicator/page.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
@@ -809,6 +814,640 @@ describe('readStudyCatalog', () => {
 
   test('fails CAPABILITY_UNAVAILABLE on a page that has neither source', async () => {
     const error = await libFailureOfBoth(readStudyCatalog, [], withModules({}));
+
+    expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
+  });
+});
+
+// A chart with room for `limit` counted studies; the fixture holds two, which is its limit.
+const roomy = (limit = 5): TvStateFixture => ({
+  ...fixture,
+  planLimits: { ...fixture.planLimits, INDICATORS_ON_CHART: limit },
+});
+
+// A page built anew for each call, so that a change made by one run is not seen by the other.
+const fresh = (build: () => object): Make => build;
+
+// A page whose active chart is made of `members` and whose webpack registry holds `modules`.
+const withChartAndModules = (
+  members: () => object,
+  modules: Record<string, Record<string, unknown>> = {},
+): Make =>
+  fresh(() => ({
+    TradingViewApi: { activeChart: members },
+    webpackChunktradingview: createFakeWebpack(modules),
+  }));
+
+const repositoryOf = (items: unknown) => ({
+  1: {
+    studyMetaInfoRepository: () => ({ isReady: () => true, getInternalMetaInfoArray: () => items }),
+  },
+});
+
+describe('readStudyInsertContext', () => {
+  test('reads the count, the check of the model and the metadata of a built-in', async () => {
+    const { result, win } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'Volume@tv-basicstudies'],
+      chart(roomy()),
+    );
+
+    expect(result).toStrictEqual({
+      chartIndex: 0,
+      count: 2,
+      check: { success: true, reason: null, limitValue: null },
+      builtin: {
+        description: 'Volume',
+        firstMatch: true,
+        confirm: false,
+        // The hidden symbol input is left out.
+        inputs: [
+          {
+            id: 'length',
+            name: 'MA Length',
+            type: 'integer',
+            value: 20,
+            options: null,
+            min: 1,
+            max: 2000,
+          },
+          {
+            id: 'col_prev_close',
+            name: 'Color based on previous close',
+            type: 'bool',
+            value: false,
+            options: null,
+            min: null,
+            max: null,
+          },
+        ],
+      },
+    });
+    expect(inspectFakeWindow(win).calls).toEqual([]);
+  });
+
+  test('answers for Pine without the repository, with the check of a full chart', async () => {
+    const { result } = await libResultOf(readStudyInsertContext, [0, ''], chart());
+
+    expect(result).toStrictEqual({
+      chartIndex: 0,
+      count: 2,
+      check: { success: false, reason: 'general', limitValue: 2 },
+      builtin: null,
+    });
+  });
+
+  test('tells when another study comes first by description, and when an input asks for confirmation', async () => {
+    const custom = roomy();
+    custom.studyCatalog = {
+      ...custom.studyCatalog,
+      builtins: [
+        { id: 'Old@x', description: 'twin', shortDescription: 'T', hidden: true },
+        {
+          id: 'New@x',
+          description: 'Twin',
+          shortDescription: 'T',
+          inputs: [
+            { id: 'start', name: 'Start', type: 'time', value: 0, confirm: true, isHidden: true },
+          ],
+        },
+      ],
+    };
+
+    const { result } = await libResultOf(readStudyInsertContext, [null, 'New@x'], chart(custom));
+
+    expect(result.builtin).toStrictEqual({
+      description: 'Twin',
+      firstMatch: false,
+      confirm: true,
+      inputs: [],
+    });
+  });
+
+  test('asks a repository that is not ready for its metadata', async () => {
+    const { result, win } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'VbPFixed@tv-volumebyprice'],
+      chart(roomy(), { studyRepositoryReady: false }),
+    );
+
+    expect(result.builtin).toMatchObject({ description: 'Volume Profile Fixed Range' });
+    expect(inspectFakeWindow(win).callsTo('studyMetaInfoRepository.requestMetaInfo')).toEqual([[]]);
+  });
+
+  test('answers no check without canCreateStudy, when it throws or answers oddly, and no count without a list', async () => {
+    const members = (model: unknown) => () => ({
+      createStudy: () => Promise.resolve(null),
+      getAllStudies: () => 'none',
+      _chartWidget: { model: () => model },
+    });
+
+    const { result: missing } = await libResultOf(
+      readStudyInsertContext,
+      [null, ''],
+      withChartAndModules(members({})),
+    );
+    const { result: thrown } = await libResultOf(
+      readStudyInsertContext,
+      [null, ''],
+      withChartAndModules(
+        members({
+          canCreateStudy: () => {
+            throw new Error('No session');
+          },
+        }),
+      ),
+    );
+    const { result: odd } = await libResultOf(
+      readStudyInsertContext,
+      [null, ''],
+      withChartAndModules(members({ canCreateStudy: () => ({ success: 'yes' }) })),
+    );
+    const { result: noWidget } = await libResultOf(
+      readStudyInsertContext,
+      [null, ''],
+      withChartAndModules(() => ({ createStudy: () => null, getAllStudies: () => [] })),
+    );
+
+    expect(missing).toStrictEqual({ chartIndex: null, count: null, check: null, builtin: null });
+    expect(thrown.check).toBeNull();
+    expect(odd.check).toBeNull();
+    expect(noWidget).toStrictEqual({ chartIndex: null, count: 0, check: null, builtin: null });
+  });
+
+  test('answers no built-in without a repository, for an unknown id, or when the repository fails', async () => {
+    const members = () => ({ createStudy: () => null, getAllStudies: () => [] });
+
+    const { result: noRepository } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'A@x'],
+      withChartAndModules(members),
+    );
+    const { result: unknown } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'A@x'],
+      withChartAndModules(members, repositoryOf([{ id: 'B@x', description: 'B' }, null])),
+    );
+    const { result: nameless } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'A@x'],
+      withChartAndModules(members, repositoryOf([{ id: 'A@x' }])),
+    );
+    const { result: notAList } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'A@x'],
+      withChartAndModules(members, repositoryOf('none')),
+    );
+    const { result: failed } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'A@x'],
+      withChartAndModules(members, {
+        1: {
+          studyMetaInfoRepository: () => ({
+            isReady: () => false,
+            findAllJavaStudies: () => Promise.reject(new Error('offline')),
+          }),
+        },
+      }),
+    );
+
+    for (const result of [noRepository, unknown, nameless, notAList, failed]) {
+      expect(result.builtin).toBeNull();
+    }
+  });
+
+  test('reads the inputs of the metadata defensively', async () => {
+    const item = {
+      id: 'A@x',
+      description: 'Alpha',
+      inputs: [
+        {
+          id: 'a',
+          localizedName: 'Local',
+          type: 'text',
+          defval: { nested: true },
+          options: ['x', 1],
+        },
+        {
+          id: 'b',
+          defval: Number.NaN,
+          options: ['x', null],
+          min: 'low',
+          max: Number.POSITIVE_INFINITY,
+        },
+        { name: 'No id' },
+        null,
+      ],
+    };
+    const { result } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'A@x'],
+      withChartAndModules(
+        () => ({ createStudy: () => null, getAllStudies: () => [] }),
+        repositoryOf([item]),
+      ),
+    );
+    const { result: noInputs } = await libResultOf(
+      readStudyInsertContext,
+      [null, 'A@x'],
+      withChartAndModules(
+        () => ({ createStudy: () => null, getAllStudies: () => [] }),
+        repositoryOf([{ id: 'A@x', description: 'Alpha', inputs: 'none' }]),
+      ),
+    );
+
+    expect(result.builtin?.inputs).toStrictEqual([
+      {
+        id: 'a',
+        name: 'Local',
+        type: 'text',
+        value: null,
+        options: ['x', 1],
+        min: null,
+        max: null,
+      },
+      { id: 'b', name: 'b', type: '', value: null, options: null, min: null, max: null },
+    ]);
+    expect(noInputs.builtin?.inputs).toEqual([]);
+  });
+
+  test.each([
+    ...NO_CHART,
+    ['a chart without createStudy', withChart({ getAllStudies: () => [] })] as [string, Make],
+  ])('fails CAPABILITY_UNAVAILABLE on %s', async (_name, make) => {
+    const error = await libFailureOfBoth(readStudyInsertContext, [null, ''], make);
+
+    expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
+  });
+});
+
+describe('insertStudy', () => {
+  test('adds a built-in by description with the limit check of the app, and answers its id', async () => {
+    const { result, win } = await resultOf(
+      insertStudy,
+      [null, { kind: 'description', description: 'Volume' }, true, 1000],
+      chart(roomy()),
+    );
+
+    expect(result).toEqual({ id: 'NEW001' });
+    expect(inspectFakeWindow(win).callsTo('chart.createStudy')).toEqual([
+      ['Volume', true, false, undefined, undefined, { checkLimit: true }],
+    ]);
+  });
+
+  test('adds a built-in or a Pine script by descriptor, with nothing else', async () => {
+    const { result: java, win: javaWin } = await resultOf(
+      insertStudy,
+      [0, { kind: 'java', studyId: 'VbPFixed@tv-volumebyprice' }, true, 1000],
+      chart(roomy()),
+    );
+    const { result: pine, win: pineWin } = await resultOf(
+      insertStudy,
+      [null, { kind: 'pine', pineId: 'STD;MACD', pineVersion: '28.0' }, false, 1000],
+      chart(roomy()),
+    );
+
+    expect([java, pine]).toEqual([{ id: 'NEW001' }, { id: 'NEW001' }]);
+    expect(inspectFakeWindow(javaWin).callsTo('chart.createStudy')).toEqual([
+      [{ type: 'java', studyId: 'VbPFixed@tv-volumebyprice' }],
+    ]);
+    expect(inspectFakeWindow(pineWin).callsTo('chart.createStudy')).toEqual([
+      [{ type: 'pine', pineId: 'STD;MACD', pineVersion: '28.0' }],
+    ]);
+  });
+
+  const answering = (createStudy: () => unknown): Make => withChart({ createStudy });
+  const byName = { kind: 'description', description: 'Volume' } as const;
+
+  test.each([
+    ['a null answer', () => Promise.resolve(null), 'NOT_AVAILABLE', null],
+    [
+      'a rejection with an insertion code',
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+      () => Promise.reject('cannot_be_child'),
+      'NOT_AVAILABLE',
+      'cannot_be_child',
+    ],
+    [
+      'a rejection with an Error',
+      () => Promise.reject(new Error('unexpected study id:volume')),
+      'NOT_AVAILABLE',
+      'unexpected study id:volume',
+    ],
+    // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+    ['a rejection with something else', () => Promise.reject(42), 'NOT_AVAILABLE', '42'],
+    [
+      'a call that throws',
+      () => {
+        throw new Error('Unknown priceScale');
+      },
+      'NOT_AVAILABLE',
+      'Unknown priceScale',
+    ],
+    [
+      'a call that throws something else',
+      () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'broken';
+      },
+      'NOT_AVAILABLE',
+      'broken',
+    ],
+    ['an answer that is not an id', () => Promise.resolve(42), 'PAGE_EVALUATION_FAILED', undefined],
+    ['an empty id', () => '', 'PAGE_EVALUATION_FAILED', undefined],
+  ])('fails on %s', async (_name, createStudy, code, reason) => {
+    const { error } = await failureOfBoth(
+      insertStudy,
+      [null, byName, false, 1000],
+      answering(createStudy),
+    );
+
+    expect(error.code).toBe(code);
+    if (reason !== undefined) {
+      expect(error.details).toEqual({ reason });
+    }
+  });
+
+  test('stops waiting after waitMs and says the indicator may still appear', async () => {
+    const { error } = await failureOfBoth(
+      insertStudy,
+      [null, byName, false, 20],
+      answering(() => new Promise(() => undefined)),
+    );
+
+    expect(error).toMatchObject({
+      code: 'TIMEOUT',
+      details: { waitMs: 20 },
+      hint: expect.stringMatching(/indicator_list/) as string,
+    });
+  });
+
+  test.each(NO_CHART)('fails CAPABILITY_UNAVAILABLE on %s', async (_name, make) => {
+    const { error } = await failureOfBoth(insertStudy, [null, byName, false, 1000], make);
+
+    expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
+  });
+});
+
+describe('editStudyInputs', () => {
+  test('reads the inputs the user sees, with their bounds, and changes nothing', async () => {
+    const { result, win } = await resultOf(editStudyInputs, [null, 'STUDY01', null], chart());
+
+    expect(result).toStrictEqual({
+      inputs: [
+        { id: 'in_0', name: 'Length', type: 'integer', value: 9, options: null, min: 1, max: 5000 },
+        {
+          id: 'in_1',
+          name: 'Source',
+          type: 'source',
+          value: 'close',
+          options: null,
+          min: null,
+          max: null,
+        },
+        {
+          id: 'in_2',
+          name: 'Offset',
+          type: 'integer',
+          value: 0,
+          options: null,
+          min: -500,
+          max: 500,
+        },
+      ],
+    });
+    expect(inspectFakeWindow(win).calls).toEqual([]);
+  });
+
+  test('sets the values first and reads the inputs afterwards', async () => {
+    const { result, win } = await resultOf(
+      editStudyInputs,
+      [0, 'STUDY02', [{ id: 'in_2', value: 'EMA' }]],
+      chart(),
+    );
+
+    expect(result.inputs[2]).toEqual({
+      id: 'in_2',
+      name: 'Type',
+      type: 'text',
+      value: 'EMA',
+      options: ['None', 'SMA', 'EMA'],
+      min: null,
+      max: null,
+    });
+    expect(inspectFakeWindow(win).callsTo('study.setInputValues')).toEqual([
+      ['STUDY02', [{ id: 'in_2', value: 'EMA' }]],
+    ]);
+  });
+
+  test('reads the inputs defensively', async () => {
+    const api = {
+      getInputsInfo: () => [
+        { id: 'a', localizedName: 'Local', type: 'integer', options: [1, 2], min: Number.NaN },
+        { id: 'b', name: 'B', options: [{}] },
+        { id: 'c', name: 'C', isHidden: true },
+        { id: 'd' },
+        { name: 'No id' },
+        null,
+      ],
+      getInputValues: () => [{ id: 'a', value: 2 }, { id: 'b', value: [1] }, { value: 3 }, null],
+    };
+    const { result } = await resultOf(editStudyInputs, [null, 'S1', null], withStudy(api));
+    const { result: empty } = await resultOf(
+      editStudyInputs,
+      [null, 'S1', null],
+      withStudy({ getInputsInfo: () => 'none', getInputValues: () => 'none' }),
+    );
+
+    expect(result.inputs).toStrictEqual([
+      { id: 'a', name: 'Local', type: 'integer', value: 2, options: [1, 2], min: null, max: null },
+      { id: 'b', name: 'B', type: '', value: null, options: null, min: null, max: null },
+      { id: 'd', name: 'd', type: '', value: null, options: null, min: null, max: null },
+    ]);
+    expect(empty.inputs).toEqual([]);
+  });
+
+  test('fails INVALID_INPUT for an id that is not on the chart, or that the app does not know', async () => {
+    const { error } = await failureOfBoth(editStudyInputs, [null, 'NOPE01', null], chart());
+    const { error: unknown } = await failureOfBoth(
+      editStudyInputs,
+      [null, 'S1', null],
+      withChart({
+        getAllStudies: () => [{ id: 'S1', name: 'Study' }],
+        getStudyById: () => {
+          throw new Error('There is no such study');
+        },
+      }),
+    );
+
+    expect(error).toMatchObject({
+      code: 'INVALID_INPUT',
+      hint: expect.stringMatching(/indicator_list/) as string,
+    });
+    expect(unknown.code).toBe('INVALID_INPUT');
+  });
+
+  test('fails CAPABILITY_UNAVAILABLE before acting when the study cannot read or set inputs', async () => {
+    const setInputValues = vi.fn();
+    const { error: unreadable } = await failureOfBoth(
+      editStudyInputs,
+      [null, 'S1', [{ id: 'a', value: 1 }]],
+      withStudy({ setInputValues }),
+    );
+    const { error: unsettable } = await failureOfBoth(
+      editStudyInputs,
+      [null, 'S1', [{ id: 'a', value: 1 }]],
+      withStudy({ getInputsInfo: () => [] }),
+    );
+    // Reading needs no setter.
+    const { result } = await resultOf(
+      editStudyInputs,
+      [null, 'S1', null],
+      withStudy({ getInputsInfo: () => [] }),
+    );
+
+    expect(unreadable).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: expect.stringMatching(/set/) as string,
+    });
+    expect(unsettable.code).toBe('CAPABILITY_UNAVAILABLE');
+    expect(setInputValues).not.toHaveBeenCalled();
+    expect(result).toEqual({ inputs: [] });
+  });
+
+  test('reports a study without a reader as unreadable', async () => {
+    const { error } = await failureOfBoth(editStudyInputs, [null, 'S1', null], withStudy({}));
+
+    expect(error.message).toMatch(/cannot be read/);
+  });
+
+  test.each(NO_CHART)('fails CAPABILITY_UNAVAILABLE on %s', async (_name, make) => {
+    const { error } = await failureOfBoth(editStudyInputs, [null, 'S1', null], make);
+
+    expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
+  });
+});
+
+describe('setStudyVisibility', () => {
+  test('shows a hidden study and answers its visibility before and after', async () => {
+    const { result, win } = await resultOf(setStudyVisibility, [0, 'STUDY02', true], chart());
+
+    expect(result).toEqual({ previous: false, visible: true });
+    expect(inspectFakeWindow(win).callsTo('study.setVisible')).toEqual([['STUDY02', true]]);
+  });
+
+  test('takes a visibility that cannot be read as hidden', async () => {
+    const { result } = await resultOf(
+      setStudyVisibility,
+      [null, 'S1', false],
+      fresh(() => {
+        const api = {
+          isVisible: () => {
+            throw new Error('Not ready');
+          },
+          setVisible: () => undefined,
+        };
+        return {
+          TradingViewApi: {
+            activeChart: () => ({ getAllStudies: () => [{ id: 'S1' }], getStudyById: () => api }),
+          },
+        };
+      }),
+    );
+
+    expect(result).toEqual({ previous: false, visible: false });
+  });
+
+  test('fails INVALID_INPUT for an id that is not on the chart', async () => {
+    const { error } = await failureOfBoth(setStudyVisibility, [null, 'NOPE01', false], chart());
+
+    expect(error).toMatchObject({ code: 'INVALID_INPUT', details: { id: 'NOPE01' } });
+  });
+
+  test('fails CAPABILITY_UNAVAILABLE before acting for a study without setVisible', async () => {
+    const { error } = await failureOfBoth(
+      setStudyVisibility,
+      [null, 'S1', false],
+      withStudy({ isVisible: () => true }),
+    );
+    const { error: unknown } = await failureOfBoth(
+      setStudyVisibility,
+      [null, 'S1', false],
+      withChart({ getAllStudies: () => 'none', getStudyById: () => ({}) }),
+    );
+
+    expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
+    expect(unknown.code).toBe('INVALID_INPUT');
+  });
+
+  test.each(NO_CHART)('fails CAPABILITY_UNAVAILABLE on %s', async (_name, make) => {
+    const { error } = await failureOfBoth(setStudyVisibility, [null, 'S1', true], make);
+
+    expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
+  });
+});
+
+describe('removeStudy', () => {
+  test('only checks without confirmed, and changes nothing', async () => {
+    const { result, win } = await resultOf(removeStudy, [null, 'STUDY01', false], chart());
+
+    expect(result).toEqual({ removed: false, name: 'Moving Average' });
+    expect(inspectFakeWindow(win).calls).toEqual([]);
+  });
+
+  test('removes the study undoably when confirmed', async () => {
+    const { result, win } = await resultOf(removeStudy, [0, 'STUDY02', true], chart());
+
+    expect(result).toEqual({ removed: true, name: 'Relative Strength Index' });
+    expect(inspectFakeWindow(win).callsTo('chart.removeEntity')).toEqual([['STUDY02']]);
+    expect(inspectFakeWindow(win).state.removedStudies).toEqual([
+      { id: 'STUDY02', undoable: true },
+    ]);
+  });
+
+  test('names a study without a name by its id', async () => {
+    const { result } = await resultOf(
+      removeStudy,
+      [null, 'S1', false],
+      withChart({ getAllStudies: () => [null, { id: 'S1' }], removeEntity: () => undefined }),
+    );
+
+    expect(result).toEqual({ removed: false, name: 'S1' });
+  });
+
+  test('fails INVALID_INPUT for an id that is not on the chart, confirmed or not', async () => {
+    const removeEntity = vi.fn();
+    const make = withChart({ getAllStudies: () => 'none', removeEntity });
+
+    const { error } = await failureOfBoth(removeStudy, [null, 'NOPE01', true], chart());
+    const { error: unlisted } = await failureOfBoth(removeStudy, [null, 'S1', false], make);
+
+    expect(error).toMatchObject({
+      code: 'INVALID_INPUT',
+      hint: expect.stringMatching(/indicator_list/) as string,
+    });
+    expect(unlisted.code).toBe('INVALID_INPUT');
+    expect(removeEntity).not.toHaveBeenCalled();
+  });
+
+  test('fails NOT_AVAILABLE when the study is still listed afterwards', async () => {
+    const { error } = await failureOfBoth(
+      removeStudy,
+      [null, 'S1', true],
+      withChart({
+        getAllStudies: () => [{ id: 'S1', name: 'Locked' }],
+        removeEntity: () => undefined,
+      }),
+    );
+
+    expect(error).toMatchObject({ code: 'NOT_AVAILABLE', details: { id: 'S1' } });
+  });
+
+  test.each([
+    ...NO_CHART,
+    ['a chart without removeEntity', withChart({ getAllStudies: () => [] })] as [string, Make],
+  ])('fails CAPABILITY_UNAVAILABLE on %s', async (_name, make) => {
+    const { error } = await failureOfBoth(removeStudy, [null, 'S1', true], make);
 
     expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
   });

@@ -19,7 +19,16 @@ import {
   requestHistory,
   searchSymbolsViaApi,
 } from '../../tools/data/page.js';
-import { readStudies, readStudyCatalog, readStudyValues } from '../../tools/indicator/page.js';
+import {
+  editStudyInputs,
+  insertStudy,
+  readStudies,
+  readStudyCatalog,
+  readStudyInsertContext,
+  readStudyValues,
+  removeStudy,
+  setStudyVisibility,
+} from '../../tools/indicator/page.js';
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
@@ -38,6 +47,8 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   createPageLib,
   describeElement,
   describeFocusedElement,
+  editStudyInputs,
+  insertStudy,
   probeCapabilities,
   readAppInfo,
   readAppState,
@@ -54,11 +65,13 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readVisibilityState,
   readVisibleRange,
   reloadTab,
+  removeStudy,
   requestHistory,
   scrollToTime,
   searchSymbolsViaApi,
   setChartTypeViaApi,
   setResolutionViaApi,
+  setStudyVisibility,
   setSymbolViaApi,
   zoomToTimeRange,
 };
@@ -72,4 +85,5 @@ export const pageLibFunctions: Record<
   readCachedQuote,
   readPlanLimits,
   readStudyCatalog,
+  readStudyInsertContext,
 };
