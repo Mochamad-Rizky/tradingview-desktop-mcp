@@ -113,6 +113,11 @@ export interface TvStateFixture {
 // - warmup: how many of the first bars have no value yet (NaN), as a moving average has none
 //   before its length; preHistory: how many rows the study keeps before the first bar, at the
 //   indices of the app for them (-1e6 and below).
+// - compileError: the script of a Pine study failed to compile, which hasCompileError() reports.
+// - logs: what the Pine log.* calls of the script wrote, which logs() of the study core holds. Left
+//   out, the script writes no logs and logs() is null; an empty list stands for a script that writes
+//   logs while TradingView holds none of them (logs not enabled). barTime and time are given in the
+//   unit the test wants to stage, and line is where the log call is.
 export interface FixtureStudy {
   id: string;
   name: string;
@@ -126,6 +131,16 @@ export interface FixtureStudy {
   inputs?: FixtureStudyInput[] | undefined;
   warmup?: number | undefined;
   preHistory?: number | undefined;
+  compileError?: boolean | undefined;
+  logs?: FixtureStudyLog[] | undefined;
+}
+
+export interface FixtureStudyLog {
+  barTime: number;
+  time: number;
+  level: string;
+  message: string;
+  line?: number | undefined;
 }
 
 export interface FixtureStudyPlot {
@@ -185,6 +200,18 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
       inputs: z.array(fixtureStudyInputSchema).optional(),
       warmup: z.number().optional(),
       preHistory: z.number().optional(),
+      compileError: z.boolean().optional(),
+      logs: z
+        .array(
+          z.strictObject({
+            barTime: z.number(),
+            time: z.number(),
+            level: z.string(),
+            message: z.string(),
+            line: z.number().optional(),
+          }),
+        )
+        .optional(),
     }),
   ),
   shapes: z.array(z.strictObject({ id: z.string(), name: z.string() })),

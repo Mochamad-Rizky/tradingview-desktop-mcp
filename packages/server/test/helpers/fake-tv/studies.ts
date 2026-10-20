@@ -11,7 +11,11 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   getInputValues() ({ id, value } in the same order), and study() answers the study core.
 // - The study core has id(), metaInfo() (description, plots, styles, ohlcPlots, inputs, and pine
 //   with scriptIdPart for a Pine study) and data(), the plot list of its rows. A strategy carries
-//   the own flag isStudyStrategy and the members the duck test of the app looks for.
+//   the own flag isStudyStrategy and the members the duck test of the app looks for. It also has
+//   hasCompileError() (whether the script of a Pine study failed to compile) and logs(): null for a
+//   study whose script writes no Pine logs, else a set like the PrimitiveSet of the app (forEach,
+//   values(), the iterator and size; entries() and keys() throw, as on the app) of the log items
+//   { barTime, time, level, source: { start, end }, message } of the fixture.
 // - The plot list holds a row [time, ...one slot per plot] for each bar, at the index of the bar
 //   (the same indices as bars()), after the pre-history rows at -1e6 and below. It has the members
 //   of the PlotList of the app the tools read: size, firstIndex, lastIndex, firstPlottableIndex,
@@ -50,6 +54,10 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   each removal); an id that is not on the chart does nothing, as the app only warns.
 // - The study API has setInputValues([{ id, value }]), which sets the value of each input it has
 //   and passes over other ids, and setVisible(visible).
+//
+// - addUserScript({ name, scriptIdPart, version, compileError }) adds the study of a user script,
+//   the way the Pine Editor adds the script it holds (pine-editor.ts), and answers its id. It is
+//   not a member of the chart API.
 //
 // Nothing here opens a dialog: the members that would on the app record a dialog.* call instead,
 // so that a test can show that the server never got there.
@@ -107,7 +115,27 @@ export interface FakeStudyCore {
   id(): string;
   metaInfo(): FakeStudyMetaInfo;
   data(): FakePlotList;
+  hasCompileError(): boolean;
+  logs(): FakeLogSet | null;
   isStudyStrategy?: true;
+}
+
+// A Pine log item as logs() holds it.
+export interface FakePineLog {
+  barTime: number;
+  time: number;
+  level: string;
+  source: { start: { line: number; column: number }; end: { line: number; column: number } };
+  message: string;
+}
+
+// The PrimitiveSet of the app, as far as the fake models it.
+export interface FakeLogSet extends Iterable<FakePineLog> {
+  readonly size: number;
+  forEach(callback: (item: FakePineLog) => void): void;
+  values(): IterableIterator<FakePineLog>;
+  entries(): never;
+  keys(): never;
 }
 
 export interface FakeStudyApi {
@@ -142,6 +170,12 @@ export interface FakeStudies {
   ): Promise<string | null>;
   removeEntity(id: string, options?: { disableUndo?: boolean }): void;
   canCreateStudy(spec: { id: string }): FakeCanCreateStudy;
+  addUserScript(script: {
+    name: string;
+    scriptIdPart: string;
+    version: string;
+    compileError: boolean;
+  }): string;
 }
 
 // What createFakeStudies needs besides the fixture: the recorder of the window, the check
@@ -281,6 +315,35 @@ function createPlotList(items: readonly FakePlotItem[]): FakePlotList {
   };
 }
 
+// The set logs() answers, built anew on every call from the logs of the fixture.
+function createLogSet(logs: NonNullable<FixtureStudy['logs']>): FakeLogSet {
+  const items = logs.map(({ barTime, time, level, message, line = 1 }): FakePineLog => ({
+    barTime,
+    time,
+    level,
+    source: { start: { line, column: 1 }, end: { line, column: 1 } },
+    message,
+  }));
+  const values = (): IterableIterator<FakePineLog> =>
+    items.map((item) => ({ ...item }))[Symbol.iterator]();
+  return {
+    size: items.length,
+    forEach(callback) {
+      for (const item of values()) {
+        callback(item);
+      }
+    },
+    values,
+    [Symbol.iterator]: values,
+    entries() {
+      throw new Error('Method not implemented.');
+    },
+    keys() {
+      throw new Error('Method not implemented.');
+    },
+  };
+}
+
 export function createFakeStudies(
   fixture: TvStateFixture,
   bars: () => readonly SyntheticBar[],
@@ -345,6 +408,8 @@ export function createFakeStudies(
       id: () => study.id,
       metaInfo,
       data: () => createPlotList(rowsOf(study)),
+      hasCompileError: () => study.compileError === true,
+      logs: () => (study.logs === undefined ? null : createLogSet(study.logs)),
     };
     if (study.strategy === true) {
       Object.assign(core, {
@@ -433,6 +498,8 @@ export function createFakeStudies(
   };
 
   return {
+    addUserScript: ({ name, scriptIdPart, version, compileError }) =>
+      add({ id: nextId(), name, plots: [], pine: { scriptIdPart, version }, compileError }),
     getAllStudies: () => entries.map(({ study: { id, name } }) => ({ id, name })),
     getStudyById(id) {
       const entry = entries.find(({ study }) => study.id === id);

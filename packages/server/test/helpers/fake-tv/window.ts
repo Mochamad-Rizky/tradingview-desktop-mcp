@@ -225,7 +225,8 @@ export interface FakeTvWindow {
 // dialog.tooManyStudies and dialog.studyInputs (studies.ts). So are the calls of the Pine Editor
 // that change it, send a request or open or close a panel: pineEditorApi.*, pineFacade.*,
 // pageLayout.*, bottomWidgetBar.close, requestUserScripts and the dialogs dialog.paywall,
-// dialog.signIn and dialog.renameScript the app would open (pine-editor.ts). A call is
+// dialog.signIn, dialog.renameScript and dialog.confirmSaveChanges the app would open, and
+// translateScriptAsync, which sends a compile request (pine-editor.ts). A call is
 // recorded before it is validated, so refused and throwing calls show up too. Reads are not
 // recorded.
 export interface FakeCall {
@@ -310,6 +311,9 @@ export function createFakeTvWindow(
     savedScriptsLimit: fixture.planLimits.SAVED_PINE_SCRIPTS,
     isFeatureEnabled: (name) => fixture.featureToggles[name] === true,
     record,
+    // The studies are built further down; the editor reaches them only when it adds a script.
+    canAddStudy: () => chartModel.canCreateStudy?.({ id: '' }).success !== false,
+    addStudy: (script) => studies.addUserScript(script),
   });
   const state: FakeTvState = {
     symbol: feeds.get(fixture.symbol) ?? fixture.symbol,

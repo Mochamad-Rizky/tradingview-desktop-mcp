@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { loadTvFixture, type TvStateFixture } from '../../helpers/fake-tv/fixture.js';
-import type { FakeOpenPineEditor } from '../../helpers/fake-tv/pine-editor.js';
+import { compileFakePine, type FakeOpenPineEditor } from '../../helpers/fake-tv/pine-editor.js';
 import type { FakeWebpackRequire } from '../../helpers/fake-tv/webpack.js';
 import {
   createFakeTvWindow,
@@ -59,6 +59,8 @@ test('the editor starts closed, holding the script of the fixture', () => {
     signedIn: true,
     savedScripts: fixture.pineEditor.savedScripts,
     saveErrors: null,
+    consoleMessages: [],
+    compileHttpError: null,
   });
 });
 
@@ -303,4 +305,165 @@ test('saveScript saves a new version of a saved script, and refuses drafts, sign
   await expect(facade?.saveScript()).rejects.toBeUndefined();
   expect(inspector.callsTo('dialog.signIn')).toEqual([[]]);
   expect(inspector.callsTo('dialog.renameScript')).toEqual([[]]);
+});
+
+test('the fake compiler finds undeclared and deprecated words and legacy errors, CRLF or not', () => {
+  expect(
+    compileFakePine(
+      '//@version=6\r\nindicator("X")\r\nplot(undeclared_x)\nx = deprecated_f()\rlegacy_error\n',
+    ),
+  ).toEqual({
+    errors: [
+      {
+        message: 'Undeclared identifier "{identifier}"',
+        ctx: { identifier: 'undeclared_x' },
+        code: 'CE10275',
+        start: { line: 3, column: 6 },
+        end: { line: 3, column: 17 },
+      },
+      { message: 'Syntax error at input "legacy_error"', start: { line: 5, column: 0 } },
+    ],
+    warnings: [
+      {
+        message: 'The function {name} is deprecated',
+        ctx: { name: 'deprecated_f' },
+        start: { line: 4, column: 5 },
+        end: { line: 4, column: 16 },
+      },
+    ],
+  });
+});
+
+test('translateScriptAsync resolves a clean text, rejects compile errors and HTTP failures', async () => {
+  const { exports, inspector } = editorOf();
+  const translate = exports.translateScriptAsync as (
+    source: string,
+    id: string,
+  ) => Promise<unknown>;
+
+  await expect(translate('plot(close)\nx = deprecated_f()\n', 'USER;x')).resolves.toEqual({
+    success: true,
+    metaInfo: { scriptIdPart: 'USER;x', pine: { version: '1.0' } },
+    compileErrors: {
+      errors: [],
+      warnings: [expect.objectContaining({ ctx: { name: 'deprecated_f' } })],
+    },
+  });
+  const failure: unknown = await translate('plot(undeclared_y)', 'USER;x').catch(
+    (error: unknown) => error,
+  );
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure).toMatchObject({
+    message: 'Pine translation failed',
+    reason: { errors: [expect.objectContaining({ start: { line: 1, column: 6 } })], warnings: [] },
+  });
+  inspector.state.pineEditor.compileHttpError = 'Server error, try again or contact support.';
+  await expect(translate('plot(close)', 'USER;x')).rejects.toBe(
+    'Server error, try again or contact support.',
+  );
+  expect(inspector.callsTo('translateScriptAsync')).toHaveLength(3);
+});
+
+test('addToChart saves a new script as a draft, adds its study and writes the console', async () => {
+  const room = {
+    ...withEditor('dialog'),
+    planLimits: { ...fixture.planLimits, INDICATORS_ON_CHART: 5 },
+  };
+  const { win, getOpen, inspector } = editorOf(room);
+  const facade = getOpen('dialog')?.getFacade();
+  const editor = inspector.state.pineEditor;
+  const chart = win.TradingViewApi?.activeChart();
+
+  await facade?.openNewScript();
+  await facade?.setScript(
+    '//@version=6\nindicator("Added")\nplot(undeclared_z)\nplot(deprecated_q)\n',
+  );
+  await expect(facade?.addToChart()).resolves.toBeUndefined();
+
+  expect(editor.script).toEqual({
+    scriptIdPart: `USER;${(0xd4b0).toString(16).padStart(32, '0')}`,
+    version: '0.1',
+  });
+  expect(facade?.isModified()).toBe(false);
+  expect(chart?.getAllStudies().at(-1)).toEqual({ id: 'NEW001', name: 'Added' });
+  const core = chart?.getStudyById('NEW001').study();
+  expect(core?.hasCompileError()).toBe(true);
+  expect(core?.metaInfo().pine?.version).toBe('0.1');
+  expect(core?.logs()).toBeNull();
+  const messages = facade?._editorStore.getStore().getState().console.messages ?? [];
+  expect(messages.map(({ level, text, start, end }) => ({ level, text, start, end }))).toEqual([
+    { level: 'info', text: 'Compiling...', start: undefined, end: undefined },
+    {
+      level: 'error',
+      text: 'Undeclared identifier "undeclared_z"',
+      start: { line: 3, column: 6 },
+      end: { line: 3, column: 18 },
+    },
+    {
+      level: 'warning',
+      text: 'The function deprecated_q is deprecated',
+      start: { line: 4, column: 6 },
+      end: { line: 4, column: 18 },
+    },
+    { level: 'info', text: 'Compilation error', start: undefined, end: undefined },
+  ]);
+  expect(messages.every(({ time }) => /^\d\d:\d\d:\d\d$/.test(time))).toBe(true);
+
+  // A saved script without changes compiles and is added as it is.
+  await facade?.openScript({ scriptIdPart: SAVED[0]?.scriptIdPart ?? '' });
+  await facade?.addToChart();
+  expect(chart?.getAllStudies().at(-1)).toEqual({ id: 'NEW002', name: 'Fixture Script' });
+  expect(chart?.getStudyById('NEW002').study().hasCompileError()).toBe(false);
+  expect(editor.consoleMessages.at(-1)?.text).toBe('Added to chart');
+});
+
+test('addToChart opens a dialog instead for a changed saved script, signed out and on a full chart', async () => {
+  const { win, getOpen, inspector } = editorOf(withEditor('dialog'));
+  const facade = getOpen('dialog')?.getFacade();
+  const editor = inspector.state.pineEditor;
+  const count = win.TradingViewApi?.activeChart().getAllStudies().length;
+
+  await facade?.addToChart();
+  expect(inspector.callsTo('dialog.paywall')).toEqual([['studyLimit']]);
+  editor.source = '//@version=6\nindicator("Fixture Script")\nplot(open)\n';
+  await facade?.addToChart();
+  expect(inspector.callsTo('dialog.confirmSaveChanges')).toEqual([[]]);
+  editor.signedIn = false;
+  await facade?.addToChart();
+  expect(inspector.callsTo('dialog.signIn')).toEqual([[]]);
+  expect(win.TradingViewApi?.activeChart().getAllStudies()).toHaveLength(count ?? -1);
+  expect(editor.consoleMessages).toEqual([]);
+});
+
+test('the logs of a study come as a set like the PrimitiveSet of the app', () => {
+  const study = fixture.studies[0];
+  if (study === undefined) {
+    throw new Error('The fixture must hold a study');
+  }
+  const logs = [
+    { barTime: 1_700_000_000, time: 1_700_000_000_500, level: 'info', message: 'first', line: 4 },
+    { barTime: 1_700_000_060, time: 1_700_000_060_500, level: 'error', message: 'second' },
+  ];
+  const win = createFakeTvWindow({ ...fixture, studies: [{ ...study, logs }] });
+  const set = win.TradingViewApi?.activeChart().getStudyById(study.id).study().logs();
+
+  const items = [...(set ?? [])];
+  expect(set?.size).toBe(2);
+  expect(items[0]).toEqual({
+    barTime: 1_700_000_000,
+    time: 1_700_000_000_500,
+    level: 'info',
+    source: { start: { line: 4, column: 1 }, end: { line: 4, column: 1 } },
+    message: 'first',
+  });
+  const seen: string[] = [];
+  set?.forEach((item) => seen.push(item.message));
+  expect(seen).toEqual(['first', 'second']);
+  expect([...(set?.values() ?? [])].map(({ source }) => source.start.line)).toEqual([4, 1]);
+  expect(() => {
+    set?.entries();
+  }).toThrow('Method not implemented.');
+  expect(() => {
+    set?.keys();
+  }).toThrow('Method not implemented.');
 });

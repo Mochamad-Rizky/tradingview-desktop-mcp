@@ -727,7 +727,7 @@ describe('createFakeTvWindow', () => {
       );
       // In the order of the module IDs, which are integer keys.
       expect(exports).toEqual([
-        ['requestUserScripts'],
+        ['requestUserScripts', 'translateScriptAsync'],
         ['ProductFeatures', 'ProductFeaturesEnum', 'UNLIMITED_FEATURE_LIMIT'],
         ['quoteSessionAdapters'],
         ['studyMetaInfoRepository'],

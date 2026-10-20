@@ -12,13 +12,25 @@ import type { TvStateFixture } from './fixture.js';
 //   ({ scriptIdPart, version } or null; the version is undefined when the script has none),
 //   getSource (rejects while the editor is not mounted, like the ensureNotNull of the app),
 //   setScript, openNewScript(type) (the template of the type, the indicator template for any
-//   other value), openScript, addToChart, updateOnChart, saveScript, releaseScript and destroy.
+//   other value), openScript, addToChart, updateOnChart, saveScript, releaseScript and destroy,
+//   and the private _editorStore, whose getStore().getState().console.messages is the live console
+//   of the editor (state.consoleMessages), entries { level, text, time } with time a local clock
+//   time without a date, and start and end for a diagnostic (end.column one past the last column,
+//   as the console of the app keeps it).
 //   releaseScript and destroy reset the script, which discards the text, and unregister the editor,
 //   as on the app. openScript with a source opens it as that script; without one it loads the
 //   saved script of that id, and on any failure it opens a new script, as the app does.
 //   saveScript saves a new version of a saved script under its name. For a draft it would ask the
 //   user for a name in a dialog (dialog.renameScript), and signed out it would ask the user to sign
 //   in (dialog.signIn); either way it rejects, as the app does when the dialog is cancelled.
+//   addToChart adds the script the editor holds to the chart. Signed out it asks the user to sign
+//   in (dialog.signIn); for a saved script with unsaved changes it asks in the modal dialog
+//   confirmSaveChanges whether to save a new version first (dialog.confirmSaveChanges), which no
+//   one answers here, so nothing is added; on a chart without room for a study it opens the paywall
+//   (dialog.paywall). Otherwise it saves a new script as a server draft (version 0.1), compiles the
+//   text with the fake compiler, adds a study of the script (with hasCompileError() true when the
+//   text does not compile, as the app keeps a study that failed) and writes the compile messages
+//   and diagnostics to the console. It resolves either way, as the app does.
 // - TradingViewApi.pineEditorApi() answers the same object on every call: open(options), which
 //   registers the editor at the opensAt placement of the fixture on the next turn of the event loop,
 //   restoring the script the editor last held, and mounts it readyMs after the call;
@@ -28,6 +40,11 @@ import type { TvStateFixture } from './fixture.js';
 //   saveExistingScript, a stub that records its call.
 // - The export requestUserScripts lists the saved scripts of the account, without their sources,
 //   and resolves [] while signed out (signedIn false), as the app does.
+// - The export translateScriptAsync(source, pineId) of the same module compiles a text with the
+//   fake compiler (compileFakePine) and sends nothing else: it resolves { success: true, metaInfo,
+//   compileErrors } for a text without errors and rejects with an Error whose reason holds the
+//   compile errors otherwise, as handleTranslateResult of the app does; with state.compileHttpError
+//   set it rejects with that plain string, as the app does for an HTTP failure.
 // - The service locator module exports hasService, service, serviceOrNull, registerService,
 //   unregisterService and waitServiceRegistered, keyed by service descriptors. The page layout
 //   service, whose descriptor is the export PAGE_LAYOUT_SERVICE of another module, has
@@ -38,7 +55,7 @@ import type { TvStateFixture } from './fixture.js';
 //
 // Every call that changes the editor, sends a request or opens or closes a panel or a dialog
 // records itself (pineEditorApi.*, pineFacade.*, pageLayout.*, bottomWidgetBar.*, requestUserScripts,
-// dialog.*). Reads are not recorded. The sources are synthetic, and the templates name an invented
+// translateScriptAsync, dialog.*). Reads are not recorded. The sources are synthetic, and the templates name an invented
 // author.
 
 export type FakePineEditorPlacement = 'dialog' | 'bottom';
@@ -61,11 +78,88 @@ export interface FakeSavedScript {
   source: string | null;
 }
 
-// A compile error as the pine facade reports it.
+// A compile error as the pine facade reports it. message may hold {name} placeholders that ctx
+// fills.
 export interface FakePineDiagnostic {
   message: string;
+  ctx?: Record<string, string>;
+  code?: string;
   start?: { line: number; column: number };
   end?: { line: number; column: number };
+}
+
+// An entry of the console of the editor.
+export interface FakeConsoleEntry {
+  level: 'info' | 'warning' | 'error';
+  text: string;
+  // A local clock time without a date, as toLocaleTimeString gives it.
+  time: string;
+  start?: { line: number; column: number };
+  end?: { line: number; column: number };
+}
+
+// What the fake compiler finds in a text (lines split at CRLF, LF or CR, counted from 1): an error
+// "Undeclared identifier" for every word starting with undeclared_, a warning for every word
+// starting with deprecated_, both with the 1-based columns of the word (end inclusive), and an
+// error without a column (column 0, as the legacy messages of the app have) for every word
+// legacy_error.
+export function compileFakePine(source: string): {
+  errors: FakePineDiagnostic[];
+  warnings: FakePineDiagnostic[];
+} {
+  const errors: FakePineDiagnostic[] = [];
+  const warnings: FakePineDiagnostic[] = [];
+  source.split(/\r\n|\n|\r/).forEach((text, index) => {
+    const line = index + 1;
+    const at = (match: RegExpMatchArray) => ({
+      start: { line, column: (match.index ?? 0) + 1 },
+      end: { line, column: (match.index ?? 0) + match[0].length },
+    });
+    for (const match of text.matchAll(/\bundeclared_\w*/g)) {
+      errors.push({
+        message: 'Undeclared identifier "{identifier}"',
+        ctx: { identifier: match[0] },
+        code: 'CE10275',
+        ...at(match),
+      });
+    }
+    for (const match of text.matchAll(/\bdeprecated_\w*/g)) {
+      warnings.push({
+        message: 'The function {name} is deprecated',
+        ctx: { name: match[0] },
+        ...at(match),
+      });
+    }
+    for (const match of text.matchAll(/\blegacy_error\b/g)) {
+      errors.push({ message: `Syntax error at input "${match[0]}"`, start: { line, column: 0 } });
+    }
+  });
+  return { errors, warnings };
+}
+
+// What a diagnostic says once its placeholders are filled, as the console shows it.
+function resolveMessage(diagnostic: FakePineDiagnostic): string {
+  return diagnostic.message.replace(
+    /\{(\w+)\}/g,
+    (all, name: string) => diagnostic.ctx?.[name] ?? all,
+  );
+}
+
+// A local clock time like toLocaleTimeString in a 24-hour locale.
+function clockOf(date: Date): string {
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join(':');
+}
+
+// The Error the app rejects a failed compilation with (PineCompileFailErrorImpl).
+class FakePineCompileFailError extends Error {
+  constructor(
+    readonly reason: { errors: FakePineDiagnostic[]; warnings: FakePineDiagnostic[] },
+    readonly metaInfo: Record<string, unknown>,
+  ) {
+    super('Pine translation failed');
+  }
 }
 
 // The live state of the editor. Tests may assign to it to stage a situation, for example a source
@@ -89,6 +183,10 @@ export interface FakePineEditorState {
   // The compile errors the pine facade answers a save with, which then saves nothing. Default null:
   // a save compiles.
   saveErrors: FakePineDiagnostic[] | null;
+  // The live console of the editor, oldest first.
+  consoleMessages: FakeConsoleEntry[];
+  // The plain string translateScriptAsync rejects with, as for an HTTP failure. Default null.
+  compileHttpError: string | null;
 }
 
 export interface FakePineEditorOptions {
@@ -104,6 +202,15 @@ export interface FakePineEditorOptions {
   savedScriptsLimit: number | undefined;
   isFeatureEnabled: (name: string) => boolean;
   record: (name: string, args: readonly unknown[]) => void;
+  // Whether the chart has room for one more study, and how a study of a user script is added to it
+  // (studies.ts). Called lazily, so the studies may be built after the editor.
+  canAddStudy: () => boolean;
+  addStudy: (script: {
+    name: string;
+    scriptIdPart: string;
+    version: string;
+    compileError: boolean;
+  }) => string;
 }
 
 export interface FakePineEditorFacade {
@@ -128,6 +235,11 @@ export interface FakePineEditorFacade {
   }>;
   releaseScript(): void;
   destroy(): void;
+  readonly _editorStore: {
+    getStore(): {
+      getState(): { console: { messages: FakeConsoleEntry[]; isVisible: boolean } };
+    };
+  };
 }
 
 export interface FakeOpenPineEditor {
@@ -209,9 +321,13 @@ export function createFakePineEditor(
     signedIn: true,
     savedScripts: config.savedScripts.map((script) => ({ ...script })),
     saveErrors: null,
+    consoleMessages: [],
+    compileHttpError: null,
   };
   // How many scripts saveNewScript has created, for their ids.
   let created = 0;
+  // How many server drafts addToChart has saved, for their ids.
+  let drafts = 0;
 
   // What requestUserScripts resolves with: the saved scripts without their sources.
   const listScripts = (): Promise<unknown[]> =>
@@ -305,6 +421,57 @@ export function createFakePineEditor(
     },
     addToChart() {
       record('pineFacade.addToChart', []);
+      if (!state.signedIn) {
+        record('dialog.signIn', []);
+        return Promise.resolve();
+      }
+      if (state.script !== null && !facade.isDraft() && facade.isModified()) {
+        // The modal dialog waits for the user, who never answers here: nothing is added.
+        record('dialog.confirmSaveChanges', []);
+        return Promise.resolve();
+      }
+      if (!options.canAddStudy()) {
+        record('dialog.paywall', ['studyLimit']);
+        return Promise.resolve();
+      }
+      const say = (level: FakeConsoleEntry['level'], text: string): void => {
+        state.consoleMessages.push({ level, text, time: clockOf(new Date()) });
+      };
+      say('info', 'Compiling...');
+      if (state.script === null) {
+        // saveNewDraft: a new script is saved as a server draft first.
+        drafts += 1;
+        state.script = {
+          scriptIdPart: `USER;${(0xd4af + drafts).toString(16).padStart(32, '0')}`,
+          version: '0.1',
+        };
+      }
+      state.savedSource = state.source;
+      const { errors, warnings } = compileFakePine(state.source);
+      const title = /(?:indicator|strategy|library)\(\s*"([^"]*)"/.exec(state.source)?.[1];
+      options.addStudy({
+        name: title ?? 'Untitled script',
+        scriptIdPart: state.script.scriptIdPart,
+        version: state.script.version ?? '0.1',
+        compileError: errors.length > 0,
+      });
+      for (const [level, list] of [
+        ['error', errors],
+        ['warning', warnings],
+      ] as const) {
+        for (const diagnostic of list) {
+          state.consoleMessages.push({
+            level,
+            text: resolveMessage(diagnostic),
+            time: clockOf(new Date()),
+            ...(diagnostic.start === undefined ? {} : { start: { ...diagnostic.start } }),
+            ...(diagnostic.end === undefined
+              ? {}
+              : { end: { line: diagnostic.end.line, column: diagnostic.end.column + 1 } }),
+          });
+        }
+      }
+      say('info', errors.length > 0 ? 'Compilation error' : 'Added to chart');
       return Promise.resolve();
     },
     updateOnChart() {
@@ -356,6 +523,13 @@ export function createFakePineEditor(
     destroy() {
       record('pineFacade.destroy', []);
       reset();
+    },
+    _editorStore: {
+      getStore: () => ({
+        getState: () => ({
+          console: { messages: state.consoleMessages, isVisible: false },
+        }),
+      }),
     },
   };
   const entry: FakeOpenPineEditor = { getFacade: () => facade };
@@ -508,6 +682,20 @@ export function createFakePineEditor(
         requestUserScripts() {
           record('requestUserScripts', []);
           return listScripts();
+        },
+        translateScriptAsync(source: string, pineId: string) {
+          record('translateScriptAsync', [source, pineId]);
+          if (state.compileHttpError !== null) {
+            // The app rejects an HTTP failure with a plain string.
+            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+            return Promise.reject(state.compileHttpError);
+          }
+          const compileErrors = compileFakePine(source);
+          const metaInfo = { scriptIdPart: pineId, pine: { version: '1.0' } };
+          if (compileErrors.errors.length > 0) {
+            return Promise.reject(new FakePineCompileFailError(compileErrors, metaInfo));
+          }
+          return Promise.resolve({ success: true, metaInfo, compileErrors });
         },
       },
     },
