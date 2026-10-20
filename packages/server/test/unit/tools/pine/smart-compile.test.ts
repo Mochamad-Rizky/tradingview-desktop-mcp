@@ -23,6 +23,18 @@ const undeclared = (name: string, line: number, column: number): PineCompileErro
   severity: 'error',
 });
 
+// What the compiler of TradingView says, as normalizeCompileErrors words it, for a call of a name it
+// knows no function of, such as a v4 built-in in a script of version 5 or later (seen on the app,
+// message "Could not find {kind} '{fullName}'" with the kind "function or function reference").
+const notFound = (name: string, line: number, column: number): PineCompileError => ({
+  line,
+  column,
+  endLine: line,
+  endColumn: column + name.length - 1,
+  message: `Could not find function or function reference '${name}'`,
+  severity: 'error',
+});
+
 const outcome = (errors: PineCompileError[] = []): PineCompileResult => ({
   success: errors.length === 0,
   errors,
@@ -90,6 +102,27 @@ describe('fixesForCompileErrors', () => {
     expect(applyFixes(source, fixes).source).toBe(`${HEAD}rsi = ta.rsi(close, 14)\nplot(rsi)\n`);
   });
 
+  test('fixesForCompileErrors renames a call the compiler cannot find as a function', () => {
+    // The script declares rsi, so the analyzer leaves the call alone, and the compiler of
+    // TradingView says it has no function rsi.
+    const source = `${HEAD}rsi = rsi(close, 14)\nplot(rsi)\n`;
+
+    const fixes = fixesForCompileErrors(source, [notFound('rsi', 3, 7)]);
+
+    expect(applyFixes(source, fixes).source).toBe(`${HEAD}rsi = ta.rsi(close, 14)\nplot(rsi)\n`);
+  });
+
+  test.each(RENAMES)(
+    'fixesForCompileErrors maps %s to %s for a function the compiler cannot find',
+    (name, target) => {
+      const source = `${HEAD}x = ${name}(close, 5)\n`;
+
+      const fixes = fixesForCompileErrors(source, [notFound(name, 3, 5)]);
+
+      expect(applyFixes(source, fixes).source).toBe(`${HEAD}x = ${target}(close, 5)\n`);
+    },
+  );
+
   test('fixesForCompileErrors keeps the order of the errors and fixes each of them', () => {
     const source = `${HEAD}a = sma(close, 5)\nb = ema(close, 5)\n`;
 
@@ -137,6 +170,16 @@ describe('fixesForCompileErrors', () => {
       'a message that names more than an identifier',
       `${HEAD}x = sma(close)\n`,
       { ...undeclared('sma', 3, 5), message: 'Undeclared identifier "sma.x"' },
+    ],
+    [
+      'a function it cannot find that is no v4 built-in',
+      `${HEAD}x = foo(close)\n`,
+      notFound('foo', 3, 5),
+    ],
+    [
+      'something else it cannot find',
+      `${HEAD}x = sma(close)\n`,
+      { ...notFound('sma', 3, 5), message: "Could not find type 'sma'" },
     ],
   ])('fixesForCompileErrors leaves %s alone', (_what, source, error) => {
     expect(fixesForCompileErrors(source, [error])).toEqual([]);

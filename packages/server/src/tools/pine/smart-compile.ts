@@ -14,14 +14,20 @@ import type { PineCompileError, PineCompileResult } from './mappers.js';
 // finish. An attempt is not started either with less left than the slowest attempt so far took.
 const MIN_ATTEMPT_MS = 1000;
 
-// The message of the compiler for a name that is not declared, as normalizeCompileErrors words it.
-const UNDECLARED = /^Undeclared identifier "([A-Za-z_]\w*)"$/;
+// The messages of the compiler that name a v4 name it does not know, as normalizeCompileErrors
+// words them: a name that is not declared, and a function it cannot find, which is what the
+// compiler of TradingView says for a call of a v4 built-in in a script of version 5 or later (seen
+// on the app, where it also stops at that error and reports none after it).
+const UNKNOWN_NAME = [
+  /^Undeclared identifier "([A-Za-z_]\w*)"$/,
+  /^Could not find function or function reference '([A-Za-z_]\w*)'$/,
+];
 
-// The fixes that compile errors point at. An error "Undeclared identifier" at a call of a v4 name
-// that Pine v5 renamed or moved into a namespace (rsi, study, security, ...) gets the rename of
-// that call, the very fix the analyzer offers for it. The analyzer leaves a call alone when the
-// script declares the name itself, as in `rsi = rsi(close, 14)`, whose right side is not yet
-// declared; the compiler says so, and this adds the fix.
+// The fixes that compile errors point at. An error that names a call of a v4 name that Pine v5
+// renamed or moved into a namespace (rsi, study, security, ...) as unknown gets the rename of that
+// call, the very fix the analyzer offers for it. The analyzer leaves a call alone when the script
+// declares the name itself, as in `rsi = rsi(close, 14)`, where the name on the right is a
+// variable and no function; the compiler says so, and this adds the fix.
 //
 // Only an error at an identifier that is called (followed by an opening parenthesis, not by a dot
 // before it) and is the name the message gives, found by its position in the text, counts, so an
@@ -38,7 +44,7 @@ export function fixesForCompileErrors(source: string, errors: PineCompileError[]
     code.map((token, index) => [`${String(token.line)}:${String(token.column)}`, index]),
   );
   return errors.flatMap(({ message, line, column }) => {
-    const name = UNDECLARED.exec(message)?.[1] ?? '';
+    const name = UNKNOWN_NAME.map((pattern) => pattern.exec(message)?.[1]).find(Boolean) ?? '';
     const target = V4_RENAMES.get(name);
     const index = indexAt.get(`${String(line)}:${String(column)}`) ?? -1;
     const token = code[index];
