@@ -514,7 +514,8 @@ export const dataSearchSymbols = defineTool({
     'Searches symbols the way the symbol search dialog of TradingView does, and changes nothing ' +
     'on the chart. Returns results, best first: symbol (EXCHANGE:TICKER, ready for ' +
     'chart_set_symbol and the other tools), ticker, description, exchange, type and currency; ' +
-    'and remaining, how many more results TradingView has that it did not return. A futures ' +
+    'and remaining, how many more results there are than those returned: those TradingView did ' +
+    'not send, and those it sent beyond limit. A futures ' +
     'root is reported as its first contract, such as CME_MINI:ES1!.',
   inputSchema: {
     query: z
@@ -549,8 +550,13 @@ export const dataSearchSymbols = defineTool({
       exchange ?? null,
       type === undefined ? null : searchTypeParam(type),
     );
+    // What is left out counts as remaining too: the results TradingView has not sent, and those
+    // it sent beyond the limit.
     return {
-      data: { results: items.slice(0, limit).map(mapSearchResult), remaining: remaining ?? 0 },
+      data: {
+        results: items.slice(0, limit).map(mapSearchResult),
+        remaining: (remaining ?? 0) + Math.max(items.length - limit, 0),
+      },
       via: 'api',
     };
   },

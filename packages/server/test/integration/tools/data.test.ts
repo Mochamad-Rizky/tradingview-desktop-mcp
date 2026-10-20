@@ -557,13 +557,25 @@ describe('data_search_symbols', () => {
             currency: 'USD',
           },
         ],
-        remaining: 37,
+        // The 37 TradingView did not send, and the third match, which the limit left out.
+        remaining: 38,
       },
       meta: { via: 'api', durationMs: expect.any(Number) as number, warnings: [] },
     });
     expect(inspectFakeWindow(win).callsTo('TradingViewApi.searchSymbols')).toEqual([
       [{ text: 'AAPL', serverHighlight: false }],
     ]);
+  });
+
+  test('data_search_symbols counts in remaining only what it did not return', async () => {
+    const { client } = await startHarness();
+
+    const all = await callTool(client, 'data_search_symbols', { query: 'AAPL', limit: 3 });
+    const one = await callTool(client, 'data_search_symbols', { query: 'AAPL', limit: 1 });
+
+    expect(dataOf(all)).toMatchObject({ remaining: 37 });
+    expect((dataOf(all).results as unknown[]).length).toBe(3);
+    expect(dataOf(one)).toMatchObject({ remaining: 39 });
   });
 
   test('data_search_symbols sends the type the app knows for crypto, and the exchange', async () => {
