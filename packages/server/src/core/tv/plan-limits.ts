@@ -1,11 +1,12 @@
-import { PlanLimitError } from '../errors.js';
+import { PlanLimitError, TvMcpError } from '../errors.js';
 import type { PageHandle } from '../connection.js';
 import type { PageLib } from './page-lib.js';
 import type { TvWindow } from './tv-window.js';
 
 // What the plan of the signed-in account allows, as the app itself reports it (reverse-engineering
 // notes, section 7). The tools check a limit before they act, so that they fail with PLAN_LIMIT
-// instead of letting TradingView open a paywall dialog; none of them works around a limit.
+// instead of letting TradingView open a paywall dialog, and a limit they cannot read stops them as
+// well; none of them works around a limit.
 
 // The plan features the tools check or report. The names are those of the ProductFeatures enum of
 // the app.
@@ -78,15 +79,36 @@ export async function getPlanLimits(
   return page.bridge.evaluateWithLib(readPlanLimits, [[...features]]);
 }
 
-// Fails with PLAN_LIMIT when `used` has reached `limit`. An unknown limit passes: the app then
-// applies its own check, which is the last word. `hint` says what the caller can do about it.
+// The error of a tool that cannot tell whether a plan limit leaves room for what it would do. It
+// does not act then: TradingView would check the limit itself, and its check opens a paywall or a
+// limit dialog when the limit is reached.
+export function unreadableLimitError(feature: PlanFeature): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    `The plan limit ${feature} cannot be checked on this TradingView build, so nothing was done`,
+    {
+      hint:
+        'The plan limit cannot be read on this TradingView build, and TradingView would check it ' +
+        'with a dialog of its own: do this in TradingView itself.',
+      details: { feature },
+    },
+  );
+}
+
+// Fails with PLAN_LIMIT when `used` has reached `limit`, and with NOT_AVAILABLE when either is not
+// known (unreadableLimitError): a tool never acts on a limit it could not read. A limit at the
+// unlimited value of the app (99999) leaves room for any count. `hint` says what the caller can do
+// about a reached limit.
 export function requireBelowLimit(
   feature: PlanFeature,
-  used: number,
+  used: number | null,
   limit: number | null | undefined,
   hint: string,
 ): void {
-  if (typeof limit === 'number' && used >= limit) {
+  if (used === null || typeof limit !== 'number') {
+    throw unreadableLimitError(feature);
+  }
+  if (used >= limit) {
     throw new PlanLimitError(
       feature,
       limit,

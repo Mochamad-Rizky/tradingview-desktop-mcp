@@ -22,7 +22,9 @@ import type { TvStateFixture } from './fixture.js';
 //   saved script of that id, and on any failure it opens a new script, as the app does.
 //   saveScript saves a new version of a saved script under its name. For a draft it would ask the
 //   user for a name in a dialog (dialog.renameScript), and signed out it would ask the user to sign
-//   in (dialog.signIn); either way it rejects, as the app does when the dialog is cancelled.
+//   in (dialog.signIn); either way it rejects, as the app does when the dialog is cancelled. For a
+//   saved script outside the newest the saved-script limit lets be updated it opens the paywall
+//   (dialog.paywall) and rejects, as isScriptUpdateBlockedByPaywall of the app does.
 //   addToChart adds the script the editor holds to the chart. Signed out it asks the user to sign
 //   in (dialog.signIn); for a saved script with unsaved changes it asks in the modal dialog
 //   confirmSaveChanges whether to save a new version first (dialog.confirmSaveChanges), which no
@@ -487,6 +489,30 @@ export function createFakePineEditor(
     }
     return blocked;
   };
+  // isScriptUpdateBlockedByPaywall of the app, which runs the same limit and opens the paywall when
+  // it answers true: only the newest `limit` saved scripts that count, by modified, can be given a
+  // new version. A script the list does not have is not blocked.
+  const updateBlocked = (scriptIdPart: string): boolean => {
+    const limit = options.savedScriptsLimit;
+    if (
+      !state.signedIn ||
+      !options.isFeatureEnabled('pine_free_saved_scripts_limit') ||
+      limit === undefined ||
+      limit >= UNLIMITED
+    ) {
+      return false;
+    }
+    const counted = state.savedScripts.filter(({ version }) => Number.parseInt(version, 10) !== 0);
+    if (!counted.some((script) => script.scriptIdPart === scriptIdPart)) {
+      return false;
+    }
+    const newest = [...counted].sort((a, b) => b.modified - a.modified).slice(0, limit);
+    const blocked = !newest.some((script) => script.scriptIdPart === scriptIdPart);
+    if (blocked) {
+      record('dialog.paywall', [{ feature: 'pineScriptsLimit' }]);
+    }
+    return blocked;
+  };
 
   // What the ensureNotNull of the app throws for an editor that is not mounted.
   const notMounted = (): Promise<never> => Promise.reject(new Error('Value is null'));
@@ -629,6 +655,11 @@ export function createFakePineEditor(
         // undefined.
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         return Promise.reject(undefined);
+      }
+      if (updateBlocked(script.scriptIdPart)) {
+        return Promise.reject(
+          new Error('Updating this script is not available on the current plan'),
+        );
       }
       const version = `${String(majorOf(script.version) + 1)}.0`;
       const saved = state.savedScripts.find((item) => item.scriptIdPart === script.scriptIdPart);

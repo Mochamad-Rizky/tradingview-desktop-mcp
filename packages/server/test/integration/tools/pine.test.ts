@@ -830,6 +830,57 @@ describe('pine_save', () => {
     expect(callsOf(win, 'dialog.paywall')).toEqual([]);
   });
 
+  // The fixture without a saved-script limit the app reports, while its toggle is on.
+  const withoutScriptLimit = (from: TvStateFixture): TvStateFixture => ({
+    ...from,
+    planLimits: Object.fromEntries(
+      Object.entries(from.planLimits).filter(([feature]) => feature !== 'SAVED_PINE_SCRIPTS'),
+    ),
+  });
+
+  test('pine_save of a new script refuses, and saves nothing, when the saved-script limit cannot be read', async () => {
+    const { client, win, ctx } = await startHarness(
+      withoutScriptLimit(withEditor({ script: null, source: NEW_SOURCE })),
+    );
+
+    const result = await callTool(client, 'pine_save', { name: 'Breakout' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: expect.stringMatching(/cannot be read.*TradingView itself/) as string,
+      details: { feature: 'SAVED_PINE_SCRIPTS' },
+    });
+    expect(callsOf(win, 'pineEditorApi.saveNewScript')).toEqual([]);
+    expect(callsOf(win, 'dialog.paywall')).toEqual([]);
+    expect(ctx.session.createdScriptIds).toEqual(new Set());
+  });
+
+  test('pine_save of a new version refuses, and saves nothing, when the saved-script limit cannot be read', async () => {
+    const { client, win } = await startHarness(withoutScriptLimit(modified()));
+
+    const result = await callTool(client, 'pine_save', { confirm: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { feature: 'SAVED_PINE_SCRIPTS' },
+    });
+    expect(callsOf(win, 'pineFacade.saveScript')).toEqual([]);
+    expect(callsOf(win, 'dialog.paywall')).toEqual([]);
+    expect(editorOf(win).savedScripts[0]?.version).toBe(SCRIPT.version);
+  });
+
+  test('pine_save saves when the limit toggle is off, whose limit the app then does not apply', async () => {
+    const { client, win } = await startHarness({
+      ...withoutScriptLimit(withEditor({ script: null, source: NEW_SOURCE })),
+      featureToggles: {},
+    });
+
+    const result = await callTool(client, 'pine_save', { name: 'Breakout' });
+
+    expect(dataOf(result)).toMatchObject({ created: true });
+    expect(callsOf(win, 'pineEditorApi.saveNewScript')).toHaveLength(1);
+  });
+
   test('pine_save signed out fails AUTH_REQUIRED and opens no sign-in dialog', async () => {
     const { client, win } = await startHarness(modified());
     editorOf(win).signedIn = false;
@@ -1031,6 +1082,30 @@ describe('pine_compile', () => {
     });
     expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
     expect(callsOf(win, 'dialog.paywall')).toEqual([]);
+    expect(studyIdsOf(win)).toEqual(studies);
+  });
+
+  test('pine_compile with addToChart refuses, and adds nothing, when nothing says whether the chart has room', async () => {
+    // The chart model cannot check, and the plan reports no indicator limit.
+    const otherLimits = Object.fromEntries(
+      Object.entries(fixture.planLimits).filter(([feature]) => feature !== 'INDICATORS_ON_CHART'),
+    );
+    const { client, win } = await startHarness({ ...withEditor(), planLimits: otherLimits });
+    const model = win.TradingViewApi?.activeChart()._chartWidget.model();
+    delete model?.canCreateStudy;
+    const studies = studyIdsOf(win);
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: expect.stringMatching(/cannot be read.*TradingView itself/) as string,
+      details: { feature: 'INDICATORS_ON_CHART' },
+    });
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(inspectFakeWindow(win).calls.filter(({ name }) => name.startsWith('dialog.'))).toEqual(
+      [],
+    );
     expect(studyIdsOf(win)).toEqual(studies);
   });
 

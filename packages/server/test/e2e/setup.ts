@@ -30,7 +30,11 @@ import {
   type PineEditorState,
   type SavedScriptRow,
 } from '../../src/tools/pine/page.js';
-import { isOpenLimited, savedScriptLimit } from '../../src/tools/pine/scripts.js';
+import {
+  isOpenLimited,
+  savedScriptLimit,
+  type SavedScriptLimit,
+} from '../../src/tools/pine/scripts.js';
 import type { ToolContext } from '../../src/tools/types.js';
 import type { JsonValue } from '../../src/utils/json.js';
 import { pollUntil } from '../../src/utils/poll.js';
@@ -241,8 +245,9 @@ export function observe(name: string, facts: JsonValue): void {
 // Why a test that needs room under a plan limit cannot run, or null when it can. `used` is how much
 // of the feature the account already uses and `needed` how much the test adds, so a suite that adds
 // two indicators to a chart that has two on a plan of three is skipped, instead of running into the
-// paywall of the app. A limit the app does not report counts as room: the tool under test then
-// meets the check of the app itself.
+// paywall of the app. A limit the app does not report gives no reason to skip: the tool under test
+// then refuses on its own (NOT_AVAILABLE) wherever nothing else tells it that there is room (for
+// indicators, the check of the chart model can), so that no dialog of the app opens.
 export async function planLimitSkipReason(
   client: Client,
   feature: PlanFeature,
@@ -943,11 +948,12 @@ export function editorDifferences(now: EditorSnapshot, target: EditorTarget): st
 // Why pine_open could not show a saved script again after a test replaced it, one reason each, or
 // none: the saved scripts (readSavedPineScripts) must have it at its version, which pine_open opens,
 // and the plan must let TradingView open it (only the `limit` most recently changed saved scripts
-// can be). A new script (null) needs none of this: pine_new starts its template again.
+// can be), which a limit that applies but cannot be read leaves unknown. A new script (null) needs
+// none of this: pine_new starts its template again.
 export function editorReopenProblems(
   script: PineEditorState['script'],
   saved: readonly SavedScriptRow[],
-  limit: number | null,
+  limit: SavedScriptLimit,
 ): string[] {
   if (script === null) {
     return [];
@@ -960,7 +966,12 @@ export function editorReopenProblems(
   if (script.version === null || row.version !== script.version) {
     problems.push('pine_open would open another version of the script than the one shown');
   }
-  if (isOpenLimited(saved, script.id, limit)) {
+  if (limit === 'unreadable') {
+    problems.push(
+      'the saved-script limit of the plan cannot be read, so whether TradingView opens the script ' +
+        'again is not known',
+    );
+  } else if (isOpenLimited(saved, script.id, limit)) {
     problems.push(
       `the plan lets TradingView open only the ${String(limit)} most recently changed saved scripts`,
     );

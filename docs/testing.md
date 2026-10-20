@@ -203,8 +203,10 @@ A test that adds something a plan limit counts asks `planLimitSkipReason(client,
 needed)` (`test/e2e/setup.ts`) first. It reads the limit with `app_get_plan_limits`, and when `used`
 plus `needed` would go over it, the test is skipped before anything is changed, with a reason that
 names the feature and the limit, such as `The plan allows 2 of INDICATORS_ON_CHART (limit of 2), 2
-in use and the test needs 1 more`. A limit the app does not report counts as room: the tool under
-test then meets the app's own check. No test makes room by touching what the user has.
+in use and the test needs 1 more`. A limit the app does not report gives no skip reason: the tool
+under test refuses on its own with `NOT_AVAILABLE` wherever nothing else tells it that there is room
+(for indicators, the chart model's `canCreateStudy` can), so no dialog of the app opens either way. No
+test makes room by touching what the user has.
 
 On a chart without a free indicator slot (2 of 2 on a Basic plan):
 

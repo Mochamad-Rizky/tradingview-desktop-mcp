@@ -803,6 +803,15 @@ describe('editorReopenProblems', () => {
       'the plan lets TradingView open only the 1 most recently changed saved scripts',
     ]);
   });
+
+  test('objects to a saved script when the limit of the plan applies but cannot be read', () => {
+    expect(editorReopenProblems({ id: 'USER;new', version: '2.0' }, saved, 'unreadable')).toEqual([
+      'the saved-script limit of the plan cannot be read, so whether TradingView opens the script ' +
+        'again is not known',
+    ]);
+    // A new script needs no saved script.
+    expect(editorReopenProblems(null, saved, 'unreadable')).toEqual([]);
+  });
 });
 
 // The guard of the suites that use the Pine Editor, on the fake app, whose editor is closed and

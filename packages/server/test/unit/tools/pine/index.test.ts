@@ -54,7 +54,8 @@ function contextFor(win: object): ToolContext {
 }
 
 // A signed-in page with an editor in the side panel, answered by `getOpenPineEditor`, the Pine
-// Editor API `api` and no saved scripts.
+// Editor API `api` and no saved scripts, whose toggle of the saved-script limit is off, so that
+// the app applies none.
 function pageWith(getOpenPineEditor: (placement: string) => unknown, api: object = {}): object {
   return {
     is_authenticated: true,
@@ -66,6 +67,10 @@ function pageWith(getOpenPineEditor: (placement: string) => unknown, api: object
         // The helpers the app keeps its flag of unsaved changes with: none kept.
         hasScriptModificationsKey: 'has_unsaved_modifications',
         getPersistedValue: () => null,
+      },
+      2: {
+        isFeatureEnabled: () => false,
+        onFeaturesStateChanged: () => ({ subscribe: () => undefined }),
       },
     }),
   };

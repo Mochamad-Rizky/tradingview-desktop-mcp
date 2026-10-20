@@ -1,4 +1,4 @@
-import { PlanLimitError } from '../../../../src/core/errors.js';
+import { PlanLimitError, TvMcpError } from '../../../../src/core/errors.js';
 import { createPageBridge } from '../../../../src/core/tv/page-bridge.js';
 import { createPageLib } from '../../../../src/core/tv/page-lib.js';
 import {
@@ -6,6 +6,7 @@ import {
   PLAN_FEATURES,
   readPlanLimits,
   requireBelowLimit,
+  unreadableLimitError,
 } from '../../../../src/core/tv/plan-limits.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
@@ -174,12 +175,43 @@ describe('requireBelowLimit', () => {
     }).not.toThrow();
   });
 
-  test('passes when the limit is unknown', () => {
+  test('passes any count under the unlimited value of the app', () => {
     expect(() => {
-      requireBelowLimit('INDICATORS_ON_CHART', 50, null, 'hint');
+      requireBelowLimit('INDICATORS_ON_CHART', 500, 99999, 'hint');
     }).not.toThrow();
-    expect(() => {
-      requireBelowLimit('INDICATORS_ON_CHART', 50, undefined, 'hint');
-    }).not.toThrow();
+  });
+
+  test.each([
+    ['the limit is unknown', 1, null],
+    ['the limit is not reported', 1, undefined],
+    ['the count is unknown', null, 2],
+  ] as const)('fails NOT_AVAILABLE, naming the feature, when %s', (_case, used, limit) => {
+    let thrown: unknown;
+    try {
+      requireBelowLimit('INDICATORS_ON_CHART', used, limit, 'Remove an indicator first.');
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(TvMcpError);
+    expect((thrown as TvMcpError).toPayload()).toEqual({
+      code: 'NOT_AVAILABLE',
+      message: expect.stringContaining('INDICATORS_ON_CHART') as string,
+      hint: expect.stringMatching(
+        /cannot be read on this TradingView build.*TradingView itself/,
+      ) as string,
+      details: { feature: 'INDICATORS_ON_CHART' },
+    });
+  });
+});
+
+test('unreadableLimitError says the limit cannot be read and that TradingView itself can do it', () => {
+  expect(unreadableLimitError('SAVED_PINE_SCRIPTS').toPayload()).toEqual({
+    code: 'NOT_AVAILABLE',
+    message: expect.stringContaining('SAVED_PINE_SCRIPTS') as string,
+    hint: expect.stringMatching(
+      /cannot be read on this TradingView build.*TradingView itself/,
+    ) as string,
+    details: { feature: 'SAVED_PINE_SCRIPTS' },
   });
 });

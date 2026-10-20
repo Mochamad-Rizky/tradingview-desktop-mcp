@@ -32,8 +32,9 @@ export type { PineCompileError, PineCompileResult } from './mappers.js';
 // Compiling alone touches nothing: the text goes to the compiler of TradingView (one request, the
 // one its own client sends) and nothing is saved, opened or added. Adding to the chart keeps to the
 // rules of the domain: the indicator limit of the plan is checked first (PLAN_LIMIT instead of the
-// paywall of the app), and what would open a dialog of TradingView (signed out, a saved script with
-// unsaved changes) is refused before anything is added. Texts are the user's own: none is logged.
+// paywall of the app, NOT_AVAILABLE when it cannot be read), and what would open a dialog of
+// TradingView (signed out, a saved script with unsaved changes) is refused before anything is
+// added. Texts are the user's own: none is logged.
 
 // The id every text is compiled as. translateScriptAsync of the app stamps the compiled metadata
 // with the id it is given and needs one (an empty id is refused); this one names no script, so a
@@ -170,7 +171,8 @@ export const pineCompile = defineTool({
     'opens it). Compiling alone saves nothing and touches neither the editor nor the chart. ' +
     'addToChart: true adds the script of the editor to the chart instead, as its Add to chart ' +
     'button does: the indicator limit of the plan is checked first (a full chart fails with ' +
-    'PLAN_LIMIT, error.details.feature INDICATORS_ON_CHART and limit, and nothing is added); a new ' +
+    'PLAN_LIMIT, error.details.feature INDICATORS_ON_CHART and limit, and a limit that cannot be ' +
+    'read on this TradingView build with NOT_AVAILABLE; either way nothing is added); a new ' +
     'script or draft is saved by TradingView as a server draft (version 0.x) on the way; a saved ' +
     'script with unsaved changes is refused with NOT_AVAILABLE (save it with pine_save first), ' +
     'and signed out the call fails with AUTH_REQUIRED. source and addToChart together fail with ' +

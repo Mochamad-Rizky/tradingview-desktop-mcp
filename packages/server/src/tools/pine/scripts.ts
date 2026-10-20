@@ -66,15 +66,21 @@ export function toSavedScript(row: SavedScriptRow) {
 
 export type SavedScript = ReturnType<typeof toSavedScript>;
 
-// The saved-script limit the app applies, or null when it applies none: signed out, with the
-// feature toggle off, without a known limit, or with a limit at the unlimited value. A toggle that
-// could not be read counts as on, so that an unknown state never opens the paywall.
+// The saved-script limit the app applies: the limit; null when it applies none, signed out, with
+// the feature toggle off or with a limit at the unlimited value; or 'unreadable' when it applies
+// one whose value cannot be read. A toggle that could not be read counts as on, so that an unknown
+// state never opens the paywall.
+export type SavedScriptLimit = number | null | 'unreadable';
+
 export function savedScriptLimit(
   context: SavedScriptLimitContext,
   limit: number | null | undefined,
-): number | null {
-  if (!context.authenticated || context.limitEnabled === false || typeof limit !== 'number') {
+): SavedScriptLimit {
+  if (!context.authenticated || context.limitEnabled === false) {
     return null;
+  }
+  if (typeof limit !== 'number') {
+    return 'unreadable';
   }
   return limit < (context.unlimited ?? UNLIMITED_FEATURE_LIMIT) ? limit : null;
 }

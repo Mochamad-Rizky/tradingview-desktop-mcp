@@ -79,15 +79,21 @@ describe('savedScriptLimit', () => {
     expect(savedScriptLimit({ ...signedIn, unlimited: null }, 3)).toBe(3);
   });
 
-  test('applies none signed out, with the toggle off, or without a known limit', () => {
+  test('applies none signed out or with the toggle off, whether the limit is known or not', () => {
     expect(savedScriptLimit({ ...signedIn, authenticated: false }, 3)).toBeNull();
     expect(savedScriptLimit({ ...signedIn, limitEnabled: false }, 3)).toBeNull();
-    expect(savedScriptLimit(signedIn, null)).toBeNull();
-    expect(savedScriptLimit(signedIn, undefined)).toBeNull();
+    expect(savedScriptLimit({ ...signedIn, authenticated: false }, null)).toBeNull();
+    expect(savedScriptLimit({ ...signedIn, limitEnabled: false }, undefined)).toBeNull();
   });
 
   test('applies the limit when the toggle cannot be read, which fails closed', () => {
     expect(savedScriptLimit({ ...signedIn, limitEnabled: null }, 3)).toBe(3);
+  });
+
+  test('says when a limit applies whose value cannot be read', () => {
+    expect(savedScriptLimit(signedIn, null)).toBe('unreadable');
+    expect(savedScriptLimit(signedIn, undefined)).toBe('unreadable');
+    expect(savedScriptLimit({ ...signedIn, limitEnabled: null }, null)).toBe('unreadable');
   });
 });
 

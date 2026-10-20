@@ -396,6 +396,32 @@ test('saveScript saves a new version of a saved script, and refuses drafts, sign
   expect(inspector.callsTo('dialog.renameScript')).toEqual([[]]);
 });
 
+test('saveScript opens the paywall for a saved script outside the newest the plan lets be updated', async () => {
+  const { getOpen, inspector } = editorOf(withEditor('dialog'));
+  const facade = getOpen('dialog')?.getFacade();
+  const editor = inspector.state.pineEditor;
+  const [, strategy] = SAVED;
+  await facade?.openScript({ scriptIdPart: strategy?.scriptIdPart ?? '' });
+  editor.source = `${strategy?.source ?? ''}plot(close)\n`;
+
+  // The plan allows one saved script, and the newest one is another.
+  await expect(facade?.saveScript()).rejects.toThrow(
+    'Updating this script is not available on the current plan',
+  );
+  expect(inspector.callsTo('dialog.paywall')).toEqual([[{ feature: 'pineScriptsLimit' }]]);
+  expect(editor.savedScripts[1]?.version).toBe(strategy?.version);
+
+  // With the toggle off, the app applies no limit.
+  const off = editorOf({ ...withEditor('dialog'), featureToggles: {} });
+  const free = off.getOpen('dialog')?.getFacade();
+  await free?.openScript({ scriptIdPart: strategy?.scriptIdPart ?? '' });
+  off.inspector.state.pineEditor.source = `${strategy?.source ?? ''}plot(close)\n`;
+  await expect(free?.saveScript()).resolves.toMatchObject({
+    script: { scriptIdPart: strategy?.scriptIdPart, version: '4.0' },
+  });
+  expect(off.inspector.callsTo('dialog.paywall')).toEqual([]);
+});
+
 test('the fake compiler finds undeclared and deprecated words and legacy errors, CRLF or not', () => {
   expect(
     compileFakePine(

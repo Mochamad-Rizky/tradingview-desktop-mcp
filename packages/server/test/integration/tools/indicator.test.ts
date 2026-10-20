@@ -4,6 +4,8 @@ import { createMcpServer } from '../../../src/server.js';
 import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
 import { loadTvFixture, type TvStateFixture } from '../../helpers/fake-tv/fixture.js';
+import { createPlanLimitModules } from '../../helpers/fake-tv/plan-limits.js';
+import { createStudyCatalogModules } from '../../helpers/fake-tv/studies.js';
 import { syntheticBars } from '../../helpers/fake-tv/synthetic-bars.js';
 import {
   createFakeTvWindow,
@@ -699,6 +701,87 @@ describe('indicator_add', () => {
     });
     expect(inspectFakeWindow(full).callsTo('chart.createStudy')).toEqual([]);
     expect(dataOf(added)).toMatchObject({ id: 'NEW001' });
+  });
+
+  test('indicator_add refuses, and adds nothing, when nothing says whether the chart has room', async () => {
+    // The chart model cannot check, and the plan reports no indicator limit.
+    const otherLimits = Object.fromEntries(
+      Object.entries(fixture.planLimits).filter(([feature]) => feature !== 'INDICATORS_ON_CHART'),
+    );
+    const noLimit = createFakeTvWindow({ ...fixture, planLimits: otherLimits });
+    delete chartOf(noLimit)._chartWidget.model().canCreateStudy;
+    // The chart model cannot check, and the studies on the chart cannot be listed.
+    const noCount = createFakeTvWindow(roomy());
+    delete chartOf(noCount)._chartWidget.model().canCreateStudy;
+    chartOf(noCount).getAllStudies = () => {
+      throw new Error('The studies are not ready');
+    };
+    const { client: noLimitClient } = await startHarness(fixture, {}, noLimit);
+    const { client: noCountClient } = await startHarness(fixture, {}, noCount);
+
+    const results = [
+      await callTool(noLimitClient, 'indicator_add', { name: 'RSI' }),
+      await callTool(noCountClient, 'indicator_add', { name: 'RSI' }),
+    ];
+
+    for (const result of results) {
+      expect(errorOf(result)).toMatchObject({
+        code: 'NOT_AVAILABLE',
+        hint: expect.stringMatching(/cannot be read.*TradingView itself/) as string,
+        details: { feature: 'INDICATORS_ON_CHART' },
+      });
+    }
+    for (const win of [noLimit, noCount]) {
+      expect(inspectFakeWindow(win).callsTo('chart.createStudy')).toEqual([]);
+      expect(dialogsOf(win)).toEqual([]);
+    }
+  });
+
+  test('indicator_add refuses a built-in whose metadata cannot be read, and adds nothing', async () => {
+    const custom = roomy();
+    const modules = {
+      ...createPlanLimitModules(custom.planLimits),
+      ...createStudyCatalogModules(custom.studyCatalog, {
+        repositoryReady: true,
+        builtinScriptsError: undefined,
+        record: () => undefined,
+      }),
+    };
+    // The repository answers the catalog of the indicator search, and nothing after it: the
+    // metadata the add reads of the built-in cannot be read.
+    const repository = Object.values(modules)
+      .map((module) => module.studyMetaInfoRepository)
+      .find((found) => typeof found === 'function') as () => {
+      getInternalMetaInfoArray(): unknown[];
+    };
+    let reads = 0;
+    const once = {
+      ...repository(),
+      getInternalMetaInfoArray() {
+        reads += 1;
+        if (reads > 1) {
+          throw new Error('The metadata is being replaced');
+        }
+        return repository().getInternalMetaInfoArray();
+      },
+    };
+    for (const module of Object.values(modules)) {
+      if (typeof module.studyMetaInfoRepository === 'function') {
+        module.studyMetaInfoRepository = () => once;
+      }
+    }
+    const { client, win } = await startHarness(custom, { webpackModules: modules });
+
+    const result = await callTool(client, 'indicator_add', { name: 'Volume' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: expect.stringMatching(/Volume/) as string,
+      hint: expect.stringMatching(/TradingView itself/) as string,
+      details: { id: 'Volume@tv-basicstudies' },
+    });
+    expect(inspectFakeWindow(win).callsTo('chart.createStudy')).toEqual([]);
+    expect(dialogsOf(win)).toEqual([]);
   });
 
   test('indicator_add applies inputs by id or name after the insert', async () => {

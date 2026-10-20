@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import type { PageHandle } from '../../core/connection.js';
 import { PlanLimitError, TvMcpError } from '../../core/errors.js';
-import { getPlanLimits, requireBelowLimit } from '../../core/tv/plan-limits.js';
+import {
+  getPlanLimits,
+  requireBelowLimit,
+  unreadableLimitError,
+} from '../../core/tv/plan-limits.js';
 import { READ_ONLY } from '../annotations.js';
 import { pageWaitMs } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
@@ -28,6 +32,7 @@ import {
   isOpenLimited,
   savedScriptLimit,
   toSavedScript,
+  type SavedScriptLimit,
   type SavedScriptRow,
 } from './scripts.js';
 import { smartCompile } from './smart-compile.js';
@@ -41,11 +46,11 @@ import { smartCompile } from './smart-compile.js';
 // rules (design spec 5.3): no text in the editor is replaced while it has unsaved changes unless
 // the call passes confirm: true; a new version of a saved script this session did not create needs
 // confirm: true; nothing deletes or renames a script; the saved-script limit of the plan is checked
-// with read-only replicas of the checks of the app before anything could open its paywall; and
-// nothing calls what would open a dialog of TradingView (the naming dialog of a new script, the
-// sign-in dialog). The text of the editor is returned by pine_get_source and the resource
-// tradingview://pine/source only, and never logged, and the template of a new script, which names
-// the account, is never returned.
+// with read-only replicas of the checks of the app before anything could open its paywall, and a
+// limit that cannot be read stops a save; and nothing calls what would open a dialog of
+// TradingView (the naming dialog of a new script, the sign-in dialog). The text of the editor is
+// returned by pine_get_source and the resource tradingview://pine/source only, and never logged,
+// and the template of a new script, which names the account, is never returned.
 
 // The tools that can replace the text of the editor, which with confirm: true can be unsaved text.
 const REPLACES_TEXT = {
@@ -116,12 +121,12 @@ async function changeEditor(
   };
 }
 
-// The saved scripts of the account and the saved-script limit the app applies to them, null when
-// it applies none.
+// The saved scripts of the account and the saved-script limit the app applies to them
+// (savedScriptLimit).
 async function loadSavedScripts(page: PageHandle): Promise<{
   authenticated: boolean;
   scripts: SavedScriptRow[];
-  limit: number | null;
+  limit: SavedScriptLimit;
 }> {
   const listing = await page.bridge.evaluateWithLib(readSavedPineScripts, []);
   const limits = await getPlanLimits(page, ['SAVED_PINE_SCRIPTS']);
@@ -256,11 +261,14 @@ export const pineOpen = defineTool({
       );
     }
     const title = match.scriptName ?? match.scriptTitle ?? match.scriptIdPart;
-    if (saved.limit !== null && isOpenLimited(saved.scripts, match.scriptIdPart, saved.limit)) {
+    // Opening runs no paywall check in the app, which opens a new script instead of one the plan
+    // does not let it open (reported below), so a limit that cannot be read does not stop it.
+    const limit = typeof saved.limit === 'number' ? saved.limit : null;
+    if (limit !== null && isOpenLimited(saved.scripts, match.scriptIdPart, limit)) {
       throw new PlanLimitError(
         'SAVED_PINE_SCRIPTS',
-        saved.limit,
-        `The plan lets TradingView open only the ${String(saved.limit)} most recently changed ` +
+        limit,
+        `The plan lets TradingView open only the ${String(limit)} most recently changed ` +
           `saved Pine scripts, and ${title} is not one of them`,
         LIMIT_HINT,
       );
@@ -408,11 +416,14 @@ export const pineSave = defineTool({
   description:
     'Saves the script in the Pine Editor of TradingView. A new script, or a draft TradingView ' +
     'saved on its own (version 0.x, which stays as it is), is saved as a new script under name, ' +
-    'which it needs (TradingView would ask for it in a dialog) and which no saved script may have; the ' +
-    'saved-script limit of the plan is checked first and fails with PLAN_LIMIT (error.details ' +
-    'feature SAVED_PINE_SCRIPTS and limit). A saved script gets a new version under its own ' +
-    'name: one this session did not create needs confirm: true, else the call fails with ' +
-    'CONFIRMATION_REQUIRED and saves nothing. Scripts are never renamed: a name other than the ' +
+    'which it needs (TradingView would ask for it in a dialog) and which no saved script may ' +
+    'have. A saved script gets a new version under its own name: one this session did not ' +
+    'create needs confirm: true, else the call fails with CONFIRMATION_REQUIRED and saves ' +
+    'nothing. The saved-script limit of the plan is checked first: a save it does not allow (a ' +
+    'new script beyond the limit, or a new version of a script outside the newest ones the plan ' +
+    'lets TradingView update) fails with PLAN_LIMIT (error.details feature SAVED_PINE_SCRIPTS ' +
+    'and limit), and a limit TradingView applies but this build does not let be read fails with ' +
+    'NOT_AVAILABLE; either way nothing is saved. Scripts are never renamed: a name other than the ' +
     'current one fails with INVALID_INPUT. Returns script (id and version) and created. Compile ' +
     'errors fail with INVALID_INPUT and the errors in error.details.errors. Needs a signed-in ' +
     'account (AUTH_REQUIRED) and an open editor (NOT_AVAILABLE).',
@@ -481,12 +492,15 @@ export const pineSave = defineTool({
         );
       }
       // The check isSaveBlockedByPaywall of the app, which would open the paywall.
-      requireBelowLimit(
-        'SAVED_PINE_SCRIPTS',
-        countedScripts(saved.scripts).length,
-        saved.limit,
-        LIMIT_HINT,
-      );
+      const limit = saveLimit(saved.limit);
+      if (limit !== null) {
+        requireBelowLimit(
+          'SAVED_PINE_SCRIPTS',
+          countedScripts(saved.scripts).length,
+          limit,
+          LIMIT_HINT,
+        );
+      }
       const outcome = await page.bridge.evaluateWithLib(savePineScript, [
         { kind: 'new', name: wantedName, draftOf },
       ]);
@@ -555,11 +569,12 @@ export const pineSave = defineTool({
       );
     }
     // The check isScriptUpdateBlockedByPaywall of the app, which would open the paywall.
-    if (saved.limit !== null && isOpenLimited(saved.scripts, id, saved.limit)) {
+    const limit = saveLimit(saved.limit);
+    if (limit !== null && isOpenLimited(saved.scripts, id, limit)) {
       throw new PlanLimitError(
         'SAVED_PINE_SCRIPTS',
-        saved.limit,
-        `The plan lets TradingView update only the ${String(saved.limit)} most recently ` +
+        limit,
+        `The plan lets TradingView update only the ${String(limit)} most recently ` +
           `changed saved Pine scripts, and ${id} is not one of them`,
         LIMIT_HINT,
       );
@@ -573,6 +588,16 @@ export const pineSave = defineTool({
     return { data: { script: outcome.script, created: false }, via: 'internal', warnings };
   },
 });
+
+// The saved-script limit a save is checked against, null when the app applies none. A limit the
+// app applies but whose value cannot be read fails NOT_AVAILABLE: the app checks it itself before
+// it saves, and opens its paywall when it is reached.
+function saveLimit(limit: SavedScriptLimit): number | null {
+  if (limit === 'unreadable') {
+    throw unreadableLimitError('SAVED_PINE_SCRIPTS');
+  }
+  return limit;
+}
 
 // Fails AUTH_REQUIRED while no account is signed in: the app would ask the user to sign in.
 function requireSignedIn(authenticated: boolean): void {

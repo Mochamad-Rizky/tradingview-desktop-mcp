@@ -34,9 +34,10 @@ import {
 //
 // The others change the user's chart, so they keep to these rules: indicator_add checks the
 // indicator limit of the plan before it adds anything and refuses indicators that need an input
-// dialog of TradingView, so that no paywall or dialog opens; inputs are checked against what the
-// study accepts before any is set; and indicator_remove needs confirm: true for a study this
-// session did not add (design spec 5.3, rule 2), removing it the way the user could undo.
+// dialog of TradingView, so that no paywall or dialog opens, and refuses as well when it cannot
+// read the limit or the metadata of a built-in; inputs are checked against what the study accepts
+// before any is set; and indicator_remove needs confirm: true for a study this session did not add
+// (design spec 5.3, rule 2), removing it the way the user could undo.
 
 const MAX_ROWS = 500;
 
@@ -166,9 +167,10 @@ export const indicatorSearch = defineTool({
 
 // Fails unless the chart has room for one more study, before anything is added. The check of the
 // chart model answers for the study itself (the app does not count some built-ins, such as
-// Volume); without it the studies on the chart are counted against the plan. check and count are
-// what readStudyInsertContext reads (with an empty id for a Pine script). pine_compile with
-// addToChart shares it.
+// Volume); without it the studies on the chart are counted against the plan, and when either the
+// count or the limit cannot be read the call fails with NOT_AVAILABLE, since the app would apply
+// its own check, with a dialog. check and count are what readStudyInsertContext reads (with an
+// empty id for a Pine script). pine_compile with addToChart shares it.
 export async function requireStudyRoom(
   page: PageHandle,
   check: { success: boolean; reason: string | null; limitValue: number | null } | null,
@@ -177,7 +179,7 @@ export async function requireStudyRoom(
   const planLimit = async (): Promise<number | null | undefined> =>
     (await getPlanLimits(page, ['INDICATORS_ON_CHART'])).INDICATORS_ON_CHART;
   if (check === null) {
-    requireBelowLimit('INDICATORS_ON_CHART', count ?? 0, await planLimit(), FULL_CHART_HINT);
+    requireBelowLimit('INDICATORS_ON_CHART', count, await planLimit(), FULL_CHART_HINT);
     return;
   }
   if (check.success) {
@@ -218,12 +220,14 @@ export const indicatorAdd = defineTool({
     '(case aside, such as RSI or Relative Strength Index); standard Pine scripts win over ' +
     'built-in studies. Returns id (for the other indicator tools), name and chartIndex. The ' +
     'indicator limit of the plan is checked first: a full chart fails with PLAN_LIMIT ' +
-    '(error.details.feature INDICATORS_ON_CHART and limit) and nothing is added. inputs are ' +
+    '(error.details.feature INDICATORS_ON_CHART and limit) and nothing is added, and so does a ' +
+    'limit that cannot be read on this TradingView build, with NOT_AVAILABLE. inputs are ' +
     'checked like indicator_set_inputs and set after the indicator is added; invalid inputs fail ' +
     'with INVALID_INPUT and leave the chart as it was. overlay: true puts a built-in study on ' +
     'the price pane where TradingView allows it; for other indicators it is not applied and a ' +
-    'warning says so. Indicators that need the input dialog of TradingView fail with ' +
-    'NOT_AVAILABLE. indicator_remove removes what this tool added without confirm.',
+    'warning says so. Indicators that need the input dialog of TradingView, and built-in studies ' +
+    'whose metadata cannot be read, fail with NOT_AVAILABLE. indicator_remove removes what this ' +
+    'tool added without confirm.',
   inputSchema: {
     name: z
       .string()
@@ -276,6 +280,19 @@ export const indicatorAdd = defineTool({
         hint: DIALOG_HINT,
         details: { id: indicator.id },
       });
+    }
+    // Without its metadata, whether a built-in needs the input dialog cannot be told, so it is
+    // refused rather than added on a guess.
+    if (indicator.kind === 'builtin' && builtin === null) {
+      throw new TvMcpError(
+        'NOT_AVAILABLE',
+        `The metadata of ${indicator.name} cannot be read on this TradingView build, so whether ` +
+          'TradingView would ask for its inputs in a dialog cannot be checked',
+        {
+          hint: 'Add this indicator in TradingView itself.',
+          details: { id: indicator.id },
+        },
+      );
     }
     await requireStudyRoom(page, context.check, context.count);
     const wanted = inputs ?? {};
