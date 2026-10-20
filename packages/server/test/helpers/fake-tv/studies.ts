@@ -1,5 +1,13 @@
 import type { JsonValue } from '../../../src/utils/json.js';
 import type { FixtureStudy, FixtureStudyInput, TvStateFixture } from './fixture.js';
+import {
+  createFakeGraphics,
+  createFakeProperties,
+  createPrimitiveSet,
+  type FakePrimitiveSet,
+  type FakePropertyNode,
+  type FakeStudyGraphics,
+} from './pine-graphics.js';
 import type { SyntheticBar } from './synthetic-bars.js';
 
 // The studies on the chart and what the app knows of the indicators it can add, built from the
@@ -9,13 +17,19 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   study" for any other id, as the app does. The API reports title(), isVisible(),
 //   getInputsInfo() (every input, the hidden Pine internals included, with localizedName) and
 //   getInputValues() ({ id, value } in the same order), and study() answers the study core.
-// - The study core has id(), metaInfo() (description, plots, styles, ohlcPlots, inputs, and pine
-//   with scriptIdPart for a Pine study) and data(), the plot list of its rows. A strategy carries
-//   the own flag isStudyStrategy and the members the duck test of the app looks for. It also has
-//   hasCompileError() (whether the script of a Pine study failed to compile) and logs(): null for a
-//   study whose script writes no Pine logs, else a set like the PrimitiveSet of the app (forEach,
-//   values(), the iterator and size; entries() and keys() throw, as on the app) of the log items
-//   { barTime, time, level, source: { start, end }, message } of the fixture.
+// - The study core has id(), metaInfo() (description, plots, styles, ohlcPlots, inputs, isRGB when
+//   the colors of its drawings are packed integers, and pine with scriptIdPart for a Pine study)
+//   and data(), the plot list of its rows. A strategy carries the own flag isStudyStrategy and the
+//   members the duck test of the app looks for. It also has hasCompileError() (whether the script
+//   of a Pine study failed to compile) and logs(): null for a study whose script writes no Pine
+//   logs, else a set like the PrimitiveSet of the app (forEach, values(), the iterator and size;
+//   entries() and keys() throw, as on the app) of the log items { barTime, time, level, source:
+//   { start, end }, message } of the fixture.
+// - Every study core also has graphics() and properties(), made from the graphics of the fixture
+//   study (pine-graphics.ts): the drawings of a Pine script in grouped and regular maps of
+//   PrimitiveSets (empty for a study that draws nothing, a built-in included), and the property
+//   tree of its palette. getStudyCore(id) is the getStudyById of the core model: the same core
+//   object the study API gives, null for an id that is not a study of the chart.
 // - The plot list holds a row [time, ...one slot per plot] for each bar, at the index of the bar
 //   (the same indices as bars()), after the pre-history rows at -1e6 and below. It has the members
 //   of the PlotList of the app the tools read: size, firstIndex, lastIndex, firstPlottableIndex,
@@ -109,6 +123,7 @@ export interface FakeStudyMetaInfo {
   pine?: { version: string; digest: string };
   scriptIdPart?: string;
   isTVScript?: boolean;
+  isRGB?: true;
 }
 
 export interface FakeStudyCore {
@@ -117,6 +132,8 @@ export interface FakeStudyCore {
   data(): FakePlotList;
   hasCompileError(): boolean;
   logs(): FakeLogSet | null;
+  graphics(): FakeStudyGraphics;
+  properties(): FakePropertyNode;
   isStudyStrategy?: true;
 }
 
@@ -129,14 +146,8 @@ export interface FakePineLog {
   message: string;
 }
 
-// The PrimitiveSet of the app, as far as the fake models it.
-export interface FakeLogSet extends Iterable<FakePineLog> {
-  readonly size: number;
-  forEach(callback: (item: FakePineLog) => void): void;
-  values(): IterableIterator<FakePineLog>;
-  entries(): never;
-  keys(): never;
-}
+// The PrimitiveSet of the app, as far as the fake models it (pine-graphics.ts).
+export type FakeLogSet = FakePrimitiveSet<FakePineLog>;
 
 export interface FakeStudyApi {
   title(): string;
@@ -160,6 +171,8 @@ export interface FakeCanCreateStudy {
 export interface FakeStudies {
   getAllStudies(): { id: string; name: string }[];
   getStudyById(id: string): FakeStudyApi;
+  // The core of a study, the getStudyById of the core model: null for any other id.
+  getStudyCore(id: string): FakeStudyCore | null;
   createStudy(
     nameOrDescriptor: string | FakeStudyDescriptor,
     forceOverlay?: boolean,
@@ -317,31 +330,15 @@ function createPlotList(items: readonly FakePlotItem[]): FakePlotList {
 
 // The set logs() answers, built anew on every call from the logs of the fixture.
 function createLogSet(logs: NonNullable<FixtureStudy['logs']>): FakeLogSet {
-  const items = logs.map(({ barTime, time, level, message, line = 1 }): FakePineLog => ({
-    barTime,
-    time,
-    level,
-    source: { start: { line, column: 1 }, end: { line, column: 1 } },
-    message,
-  }));
-  const values = (): IterableIterator<FakePineLog> =>
-    items.map((item) => ({ ...item }))[Symbol.iterator]();
-  return {
-    size: items.length,
-    forEach(callback) {
-      for (const item of values()) {
-        callback(item);
-      }
-    },
-    values,
-    [Symbol.iterator]: values,
-    entries() {
-      throw new Error('Method not implemented.');
-    },
-    keys() {
-      throw new Error('Method not implemented.');
-    },
-  };
+  return createPrimitiveSet(
+    logs.map(({ barTime, time, level, message, line = 1 }): FakePineLog => ({
+      barTime,
+      time,
+      level,
+      source: { start: { line, column: 1 }, end: { line, column: 1 } },
+      message,
+    })),
+  );
 }
 
 export function createFakeStudies(
@@ -403,13 +400,19 @@ export function createFakeStudies(
             scriptIdPart: study.pine.scriptIdPart,
             isTVScript: true,
           }),
+      ...(study.graphics?.isRGB === true ? { isRGB: true as const } : {}),
     });
+    // The app keeps one graphics object and one property tree for the life of a study.
+    const graphics = createFakeGraphics(study.graphics);
+    const properties = createFakeProperties(study.graphics);
     const core: FakeStudyCore = {
       id: () => study.id,
       metaInfo,
       data: () => createPlotList(rowsOf(study)),
       hasCompileError: () => study.compileError === true,
       logs: () => (study.logs === undefined ? null : createLogSet(study.logs)),
+      graphics: () => graphics,
+      properties: () => properties,
     };
     if (study.strategy === true) {
       Object.assign(core, {
@@ -508,6 +511,7 @@ export function createFakeStudies(
       }
       return entry.api;
     },
+    getStudyCore: (id) => entries.find(({ study }) => study.id === id)?.api.study() ?? null,
     canCreateStudy,
     createStudy(...args) {
       options.record('chart.createStudy', args);

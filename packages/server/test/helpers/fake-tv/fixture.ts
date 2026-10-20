@@ -118,6 +118,8 @@ export interface TvStateFixture {
 //   out, the script writes no logs and logs() is null; an empty list stands for a script that writes
 //   logs while TradingView holds none of them (logs not enabled). barTime and time are given in the
 //   unit the test wants to stage, and line is where the log call is.
+// - graphics: what the script drew, which graphics() of the study core holds (pine-graphics.ts).
+//   Left out, graphics() holds empty maps, as for a script that draws nothing.
 export interface FixtureStudy {
   id: string;
   name: string;
@@ -133,6 +135,78 @@ export interface FixtureStudy {
   preHistory?: number | undefined;
   compileError?: boolean | undefined;
   logs?: FixtureStudyLog[] | undefined;
+  graphics?: FixtureGraphics | undefined;
+}
+
+// The drawings of a Pine study, each as the app materializes it (reverse-engineering notes of Plan
+// 2, section Q5), with the style it belongs to and whether it is forced onto the price pane. x, left
+// and right are time-point indexes, null for a point the app has no index for; the fields a test
+// does not stage are filled in with the defaults of the fake. The app has no id for labels and
+// boxes, and table cells carry the id of their table.
+// - isRGB: the colors are packed integers (metaInfo().isRGB) and not indexes into the palette.
+// - palette: the CSS colors of palette_common by index. Left out, the palette is missing.
+export interface FixtureGraphics {
+  isRGB?: boolean | undefined;
+  palette?: string[] | undefined;
+  lines?: FixtureLine[] | undefined;
+  labels?: FixtureLabel[] | undefined;
+  boxes?: FixtureBox[] | undefined;
+  tables?: FixtureTable[] | undefined;
+  tableCells?: FixtureTableCell[] | undefined;
+}
+
+interface FixtureDrawing {
+  styleId: string;
+  forceOverlay?: boolean | undefined;
+}
+
+export interface FixtureLine extends FixtureDrawing {
+  id: number;
+  x1: number | null;
+  y1: number;
+  x2: number | null;
+  y2: number;
+  style: string;
+  extend: string;
+  width: number;
+  colorIndex: number | null;
+}
+
+export interface FixtureLabel extends FixtureDrawing {
+  x: number;
+  y: number;
+  yloc: string;
+  text: string;
+  style: string;
+  colorIndex: number | null;
+  textColorIndex: number | null;
+}
+
+export interface FixtureBox extends FixtureDrawing {
+  left: number | null;
+  right: number | null;
+  top: number;
+  bottom: number;
+  extend: string;
+  text: string;
+  borderColorIndex: number | null;
+  backgroundColorIndex: number | null;
+}
+
+export interface FixtureTable extends FixtureDrawing {
+  id: number;
+  position: string;
+  rows: number;
+  columns: number;
+}
+
+// A cell is kept by style only: the app does not group cells by forceOverlay.
+export interface FixtureTableCell {
+  styleId: string;
+  tableId: number;
+  row: number;
+  column: number;
+  text: string;
 }
 
 export interface FixtureStudyLog {
@@ -171,6 +245,83 @@ const fixtureStudyInputSchema = z.strictObject({
   min: z.number().optional(),
   max: z.number().optional(),
   confirm: z.boolean().optional(),
+});
+
+const drawingShape = {
+  styleId: z.string(),
+  forceOverlay: z.boolean().optional(),
+};
+
+const fixtureGraphicsSchema = z.strictObject({
+  isRGB: z.boolean().optional(),
+  palette: z.array(z.string()).optional(),
+  lines: z
+    .array(
+      z.strictObject({
+        ...drawingShape,
+        id: z.number(),
+        x1: z.number().nullable(),
+        y1: z.number(),
+        x2: z.number().nullable(),
+        y2: z.number(),
+        style: z.string(),
+        extend: z.string(),
+        width: z.number(),
+        colorIndex: z.number().nullable(),
+      }),
+    )
+    .optional(),
+  labels: z
+    .array(
+      z.strictObject({
+        ...drawingShape,
+        x: z.number(),
+        y: z.number(),
+        yloc: z.string(),
+        text: z.string(),
+        style: z.string(),
+        colorIndex: z.number().nullable(),
+        textColorIndex: z.number().nullable(),
+      }),
+    )
+    .optional(),
+  boxes: z
+    .array(
+      z.strictObject({
+        ...drawingShape,
+        left: z.number().nullable(),
+        right: z.number().nullable(),
+        top: z.number(),
+        bottom: z.number(),
+        extend: z.string(),
+        text: z.string(),
+        borderColorIndex: z.number().nullable(),
+        backgroundColorIndex: z.number().nullable(),
+      }),
+    )
+    .optional(),
+  tables: z
+    .array(
+      z.strictObject({
+        ...drawingShape,
+        id: z.number(),
+        position: z.string(),
+        rows: z.number(),
+        columns: z.number(),
+      }),
+    )
+    .optional(),
+  tableCells: z
+    .array(
+      z.strictObject({
+        styleId: z.string(),
+        tableId: z.number(),
+        row: z.number(),
+        column: z.number(),
+        text: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 // Strict, so a field a recording adds but this interface lacks fails loudly instead of being
@@ -212,6 +363,7 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
           }),
         )
         .optional(),
+      graphics: fixtureGraphicsSchema.optional(),
     }),
   ),
   shapes: z.array(z.strictObject({ id: z.string(), name: z.string() })),

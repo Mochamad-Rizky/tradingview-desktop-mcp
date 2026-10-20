@@ -17,7 +17,162 @@
         { "id": "in_1", "name": "Source", "type": "source", "value": "close" },
         { "id": "in_2", "name": "Offset", "type": "integer", "value": 0, "min": -500, "max": 500 }
       ],
-      "warmup": 8
+      "warmup": 8,
+      "graphics": {
+        "palette": ["#2962FF", "#F23645", "rgba(8, 153, 129, 0.4)"],
+        "lines": [
+          {
+            "styleId": "lines_a",
+            "id": 101,
+            "x1": 280,
+            "y1": 108.5,
+            "x2": 299,
+            "y2": 104.25,
+            "style": "sol",
+            "extend": "n",
+            "width": 2,
+            "colorIndex": 0
+          },
+          {
+            "styleId": "lines_a",
+            "forceOverlay": true,
+            "id": 102,
+            "x1": 290,
+            "y1": 106,
+            "x2": 305,
+            "y2": 106,
+            "style": "dsh",
+            "extend": "r",
+            "width": 1,
+            "colorIndex": 1
+          },
+          {
+            "styleId": "lines_b",
+            "id": 103,
+            "x1": null,
+            "y1": 102.5,
+            "x2": 299,
+            "y2": 102.5,
+            "style": "dot",
+            "extend": "l",
+            "width": 3,
+            "colorIndex": null
+          }
+        ],
+        "labels": [
+          {
+            "styleId": "labels_a",
+            "x": 290,
+            "y": 108.28,
+            "yloc": "ab",
+            "text": "Peak",
+            "style": "ldn",
+            "colorIndex": 1,
+            "textColorIndex": 0
+          },
+          {
+            "styleId": "labels_a",
+            "x": 285,
+            "y": 102.81,
+            "yloc": "bl",
+            "text": "Dip",
+            "style": "lup",
+            "colorIndex": 0,
+            "textColorIndex": 1
+          },
+          {
+            "styleId": "labels_a",
+            "forceOverlay": true,
+            "x": 295,
+            "y": 105.5,
+            "yloc": "pr",
+            "text": "Level",
+            "style": "lcn",
+            "colorIndex": 2,
+            "textColorIndex": 0
+          },
+          {
+            "styleId": "labels_b",
+            "x": 299,
+            "y": 103.42,
+            "yloc": "auto",
+            "text": "Last",
+            "style": "n",
+            "colorIndex": null,
+            "textColorIndex": 1
+          },
+          {
+            "styleId": "labels_b",
+            "x": 305,
+            "y": 104,
+            "yloc": "pr",
+            "text": "Next",
+            "style": "flg",
+            "colorIndex": 0,
+            "textColorIndex": null
+          }
+        ],
+        "boxes": [
+          {
+            "styleId": "boxes_a",
+            "left": 270,
+            "right": 299,
+            "top": 110.5,
+            "bottom": 106,
+            "extend": "n",
+            "text": "Range",
+            "borderColorIndex": 0,
+            "backgroundColorIndex": 2
+          },
+          {
+            "styleId": "boxes_a",
+            "forceOverlay": true,
+            "left": 285,
+            "right": 305,
+            "top": 104,
+            "bottom": 102,
+            "extend": "r",
+            "text": "",
+            "borderColorIndex": 1,
+            "backgroundColorIndex": null
+          },
+          {
+            "styleId": "boxes_b",
+            "left": null,
+            "right": 299,
+            "top": 108,
+            "bottom": 107,
+            "extend": "l",
+            "text": "Floor",
+            "borderColorIndex": null,
+            "backgroundColorIndex": 2
+          }
+        ],
+        "tables": [
+          {
+            "styleId": "tables_a",
+            "id": 201,
+            "position": "top_right",
+            "rows": 2,
+            "columns": 2
+          },
+          {
+            "styleId": "tables_a",
+            "forceOverlay": true,
+            "id": 202,
+            "position": "bottom_left",
+            "rows": 1,
+            "columns": 1
+          }
+        ],
+        "tableCells": [
+          { "styleId": "cells_a", "tableId": 201, "row": 1, "column": 1, "text": "Short" },
+          { "styleId": "cells_a", "tableId": 201, "row": 0, "column": 1, "text": "Bias" },
+          { "styleId": "cells_a", "tableId": 201, "row": 0, "column": 0, "text": "Trend" },
+          { "styleId": "cells_b", "tableId": 201, "row": 1, "column": 0, "text": "Up" },
+          { "styleId": "cells_b", "tableId": 202, "row": 0, "column": 0, "text": "Note" }
+        ]
+      }
     },
     {
       "id": "STUDY02",

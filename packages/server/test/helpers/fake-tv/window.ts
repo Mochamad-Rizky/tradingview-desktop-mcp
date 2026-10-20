@@ -16,6 +16,7 @@ import {
   type FakeCanCreateStudy,
   type FakeStudies,
   type FakeStudyApi,
+  type FakeStudyCore,
 } from './studies.js';
 import type { SyntheticBar } from './synthetic-bars.js';
 import { createFakeWebpack } from './webpack.js';
@@ -45,6 +46,11 @@ import { createFakeWebpack } from './webpack.js';
 // with canCreateStudy, which a test can replace or delete on the model (studies.ts). A plain empty list, as before the webpack
 // runtime has loaded, is what withoutWebpackRuntime asks for. TradingViewApi.searchSymbols answers
 // from the search items of the fixture (search.ts).
+//
+// The core model also answers the study core of a study on the chart by id, the same object the
+// study API gives, and the core time scale gives the time of a time point by its index, in the time
+// base of the bar rows, the points after the last bar included (futurePoints). The drawings a Pine
+// study holds come with its core (pine-graphics.ts).
 //
 // The Pine Editor comes from the pineEditor of the fixture (pine-editor.ts): its registry, the
 // service locator with the page layout service and the descriptor of that service are in the
@@ -124,6 +130,9 @@ export interface FakeTimeScale {
   zoomToBarsRange(fromIndex: number, toIndex: number): void;
   scrollToBar(index: number): void;
   timePointToIndex(time: number): number | null;
+  // The time of the time point at an index, in the time base of the bar rows: the bar times, then
+  // the points after the last bar. Null for an index without a point.
+  indexToTimePoint(index: number): number | null;
   logicalRange(): { left(): number; right(): number } | null;
   // The indices of the time points, bars and the points after them.
   points(): { range(): { value(): { firstIndex: number; lastIndex: number } | null } };
@@ -151,7 +160,8 @@ export interface FakeSetOptions {
 // on a build without it.
 export interface FakeChartModel {
   mainSeries(): FakeMainSeries;
-  model(): { timeScale(): FakeTimeScale };
+  // The core model: the time scale, and the cores of the studies by id (null for any other id).
+  model(): { timeScale(): FakeTimeScale; getStudyById(id: string): FakeStudyCore | null };
   canCreateStudy?: (spec: { id: string }) => FakeCanCreateStudy;
 }
 
@@ -408,12 +418,14 @@ export function createFakeTvWindow(
   const loaded = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : history.bars());
   // The time points a page sees, which go with the bars.
   const points = (): readonly number[] => (loaded().length === 0 ? [] : publicTimes());
+  // Their times in the time base of the rows.
+  const rowPointTimes = (): readonly number[] => (loaded().length === 0 ? [] : pointTimes());
 
   // What timePointToIndex answers on the app, for a time in the time base of the rows: the index of
   // the first time point at or after the time, the last point for a time after every point, and
   // null when there are no points or the time is not a number.
   const firstPointAtOrAfter = (time: number): number | null => {
-    const internal = loaded().length === 0 ? [] : pointTimes();
+    const internal = rowPointTimes();
     if (internal.length === 0 || Number.isNaN(time)) {
       return null;
     }
@@ -454,6 +466,8 @@ export function createFakeTvWindow(
       record('timeScale.scrollToBar', [index]);
     },
     timePointToIndex: firstPointAtOrAfter,
+    indexToTimePoint: (index) =>
+      Number.isInteger(index) ? (rowPointTimes()[index] ?? null) : null,
     // An object with left() and right(), the shape of the app's logical range.
     logicalRange() {
       if (loaded().length === 0) {
@@ -498,7 +512,11 @@ export function createFakeTvWindow(
   };
 
   // Stable like the model of the real widget: the same objects come back on every call.
-  const coreModel = { timeScale: () => timeScale };
+  const coreModel = {
+    timeScale: () => timeScale,
+    // The studies are built below; the model reaches them when it is asked.
+    getStudyById: (id: string) => studies.getStudyCore(id),
+  };
   const chartModel: FakeChartModel = { mainSeries: () => mainSeries, model: () => coreModel };
   const studies = createFakeStudies(fixture, loaded, {
     record,
