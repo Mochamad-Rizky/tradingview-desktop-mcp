@@ -1,5 +1,5 @@
 import type { JsonValue } from '../../../src/utils/json.js';
-import type { FixtureStudy, FixtureStudyPlot, TvStateFixture } from './fixture.js';
+import type { FixtureStudy, TvStateFixture } from './fixture.js';
 import type { SyntheticBar } from './synthetic-bars.js';
 
 // The studies on the chart and what the app knows of the indicators it can add, built from the
@@ -64,13 +64,13 @@ export interface FakeStudyMetaInfo {
   id: string;
   description: string;
   shortDescription: string;
-  plots: FixtureStudyPlot[];
+  plots: FakeStudyPlot[];
   styles: Record<string, { title: string }>;
   ohlcPlots: Record<string, { title: string }>;
   inputs: FakeInputInfo[];
-  pine?: { version: string; digest: string } | undefined;
-  scriptIdPart?: string | undefined;
-  isTVScript?: boolean | undefined;
+  pine?: { version: string; digest: string };
+  scriptIdPart?: string;
+  isTVScript?: boolean;
 }
 
 export interface FakeStudyCore {
@@ -95,9 +95,24 @@ export interface FakeStudies {
 
 const roundPrice = (price: number): number => Math.round(price * 100) / 100;
 
+// A plot of the metadata of a study, which has a target only when it targets something.
+export interface FakeStudyPlot {
+  id: string;
+  type: string;
+  target?: string;
+}
+
 // The plots of a study, with a plot id standing for a line.
-function plotsOf(study: FixtureStudy): FixtureStudyPlot[] {
-  return study.plots.map((plot) => (typeof plot === 'string' ? { id: plot, type: 'line' } : plot));
+function plotsOf(study: FixtureStudy): FakeStudyPlot[] {
+  return study.plots.map((plot) =>
+    typeof plot === 'string'
+      ? { id: plot, type: 'line' }
+      : {
+          id: plot.id,
+          type: plot.type,
+          ...(plot.target === undefined ? {} : { target: plot.target }),
+        },
+  );
 }
 
 // The inputs of a study as the app holds them: the hidden internals of a Pine study first, then

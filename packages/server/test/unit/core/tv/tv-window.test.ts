@@ -36,6 +36,22 @@ describe('the TvWindow contract', () => {
     expect(chart?.getVisibleRange()).toEqual(fixture.visibleRange);
     expect(chart?.getAllStudies()).toHaveLength(fixture.studies.length);
     expect(chart?.getAllShapes()).toHaveLength(fixture.shapes.length);
+    const study = chart?.getStudyById('STUDY02');
+    const core = study?.study();
+    const rows = core?.data();
+    expect([study?.title(), study?.isVisible()]).toEqual(['RSI 14 close', false]);
+    expect(study?.getInputsInfo().filter(({ isHidden }) => isHidden !== true)).toHaveLength(3);
+    expect(study?.getInputValues()).toHaveLength(6);
+    expect([core?.id(), core?.isStudyStrategy, core?.metaInfo().pine?.version]).toEqual([
+      'STUDY02',
+      undefined,
+      '41.0',
+    ]);
+    expect(core?.metaInfo().plots?.map(({ type }) => type)).toEqual(['line', 'line', 'bg_colorer']);
+    expect([rows?.firstPlottableIndex(), rows?.lastIndex()]).toEqual([0, bars.length - 1]);
+    expect(rows?.valueAt(0)?.[0]).toBe(bars[0]?.[0]);
+    expect(rows?.search(1000, -1)?.index).toBe(bars.length - 1);
+    expect([...(rows?.rangeIterator(0, 1) ?? [])].map(({ index }) => index)).toEqual([0, 1]);
     expect(series?.bars().size()).toBe(bars.length);
     expect(series?.bars().valueAt(0)).toEqual(bars[0]);
     expect([series?.bars().firstIndex(), series?.bars().lastIndex()]).toEqual([0, bars.length - 1]);

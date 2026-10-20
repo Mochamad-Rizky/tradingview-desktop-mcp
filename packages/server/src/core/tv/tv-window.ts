@@ -95,7 +95,10 @@ export interface ChartWidgetApiLike {
   chartType(): number;
   // Unix seconds.
   getVisibleRange(): { from: number; to: number };
+  // Every study on the chart, strategies included. name is the description of its metadata.
   getAllStudies(): { id: string; name: string }[];
+  // The API of a study on the chart; throws "There is no such study" for any other id.
+  getStudyById(id: string): StudyApiLike;
   getAllShapes(): { id: string; name: string }[];
   // What these return is not recorded. A change is complete when dataReady runs.
   setSymbol(symbol: string, options?: ChartChangeOptions): unknown;
@@ -285,6 +288,122 @@ export interface QuoteSessionAdaptersLike {
     has(symbol: string): boolean;
     get(symbol: string): QuoteEntryLike | undefined;
   };
+}
+
+// The API of one study on the chart, from getStudyById (notes of Plan 2, section 5). Every member
+// of the real class is a function; only those page code reads are described.
+export interface StudyApiLike {
+  // What the legend shows, such as "RSI 14 close".
+  title(): string;
+  isVisible(): boolean;
+  // The inputs of the metadata with localizedName: every input, the hidden Pine internals (text,
+  // pineId, pineVersion and more, with isHidden true) included.
+  getInputsInfo(): StudyInputInfoLike[];
+  // The value of each input, in the order of getInputsInfo, unwrapped.
+  getInputValues(): { id: string; value: unknown }[];
+  // The study core, which holds the metadata and the rows.
+  study(): StudyCoreLike;
+}
+
+// An input as getInputsInfo reports it. type is one of integer, float, price, bool, text, symbol,
+// session, source, resolution, time, bar_time, color and text_area; options lists the choices of
+// an input that has them. The inputs of a Pine script are isFake, which is normal for Pine.
+export interface StudyInputInfoLike {
+  id: string;
+  name: string;
+  localizedName?: string;
+  type: string;
+  defval?: unknown;
+  options?: string[];
+  isHidden?: boolean;
+  isFake?: boolean;
+}
+
+// The study core, api.study(). A strategy carries the own flag isStudyStrategy, which indicators do
+// not have, and the members strategyOrdersPaneView, ordersData and reportData, which the app tests
+// for (not observed live).
+export interface StudyCoreLike {
+  id(): string;
+  metaInfo(): StudyMetaInfoLike;
+  // The rows of the study.
+  data(): PlotListLike;
+  readonly isStudyStrategy?: boolean;
+}
+
+// The metadata of a study, a class instance on the app. A Pine study has pine (its script version
+// and digest) and scriptIdPart, such as STD;RSI; a built-in has neither. styles holds the title of
+// each plot by plot id, HTML-entity encoded, and has no entry for a colorer; ohlcPlots holds the
+// title of the bars that the ohlc_* plots with that target draw. The metadata of the study
+// repository is the same class: is_hidden_study is there only when true, and extra.kind or
+// isTVScriptStrategy mark a strategy.
+export interface StudyMetaInfoLike {
+  id?: string;
+  description?: string;
+  shortDescription?: string;
+  plots?: StudyPlotLike[];
+  styles?: Record<string, { title?: string } | undefined>;
+  ohlcPlots?: Record<string, { title?: string } | undefined>;
+  inputs?: StudyInputInfoLike[];
+  pine?: { version: string; digest?: string };
+  scriptIdPart?: string;
+  is_hidden_study?: boolean;
+  extra?: { kind?: string };
+  isTVScriptStrategy?: boolean;
+}
+
+// A plot of a study. type is line, shapes, chars, arrows, data, dataoffset, alertcondition, one of
+// the ohlc_* plots, or a colorer (colorer, bar_colorer, bg_colorer and the other *_colorer types),
+// whose target is the plot or filled area it colors.
+export interface StudyPlotLike {
+  id: string;
+  type: string;
+  target?: string;
+}
+
+// The rows of a study, study().data(). A row is [time, ...one slot per plot]: slot k + 1 belongs to
+// plot k, the time is in the time base of the bar rows, and a value that was not computed is
+// undefined or NaN. Rows at the indices of the bars (firstPlottableIndex to lastIndex) follow
+// pre-history rows at -1e6 and below, which page code skips. search finds the row at an index
+// (mode 0), the nearest at or before it (-1) or at or after it (1); rangeIterator yields the rows
+// whose indices lie between two indices.
+export interface PlotListLike {
+  firstPlottableIndex(): number | null;
+  lastIndex(): number | null;
+  valueAt(index: number): PlotRowLike | null;
+  search(index: number, mode?: number): PlotItemLike | null;
+  rangeIterator(from: number, to: number): Iterable<PlotItemLike>;
+}
+
+export type PlotRowLike = (number | null | undefined)[];
+
+export interface PlotItemLike {
+  index: number;
+  value: PlotRowLike;
+}
+
+// The export studyMetaInfoRepository: a getter of the repository of study metadata. Once isReady
+// is true, getInternalMetaInfoArray is the array of the metadata of the built-in studies, the
+// hidden ones included, and findAllJavaStudies resolves with it from the cache. Before that,
+// findAllJavaStudies requests the metadata from the data servers, once. findById, which can
+// compile Pine, is left out on purpose.
+export interface StudyMetaInfoRepositoryLike {
+  isReady(): boolean;
+  getInternalMetaInfoArray(): StudyMetaInfoLike[];
+  findAllJavaStudies(): Promise<StudyMetaInfoLike[]>;
+}
+
+// An item of the list of standard Pine scripts that the export requestBuiltinScripts resolves with
+// (a request to the pine facade, list?filter=standard, on every call). The shape is that of the
+// saved script list of the same service, read from the consumers of both in the web build:
+// scriptIdPart (STD;RSI), scriptName, version (the script version a Pine study descriptor takes as
+// pineVersion) and extra.kind (study, strategy or library; study when missing). scriptTitle is
+// not confirmed. Typed loosely because the list was never observed.
+export interface StandardScriptLike {
+  scriptIdPart?: unknown;
+  scriptName?: unknown;
+  scriptTitle?: unknown;
+  version?: unknown;
+  extra?: { kind?: unknown } | null;
 }
 
 // window.TVD. Only reloadTab, a last-resort recovery step, is described. The object also carries

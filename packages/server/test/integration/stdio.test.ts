@@ -17,6 +17,7 @@ import { createMcpServer } from '../../src/server.js';
 import { appTools } from '../../src/tools/app/index.js';
 import { chartTools } from '../../src/tools/chart/index.js';
 import { dataTools } from '../../src/tools/data/index.js';
+import { indicatorTools } from '../../src/tools/indicator/index.js';
 import { startStdioTransport } from '../../src/transports/stdio.js';
 import { startFakeCdpServer, type FakeCdpServer } from '../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
@@ -73,6 +74,7 @@ describe('startStdioTransport', () => {
       ...appTools.map(({ name }) => name),
       ...chartTools.map(({ name }) => name),
       ...dataTools.map(({ name }) => name),
+      ...indicatorTools.map(({ name }) => name),
       'batch_run',
     ]);
   });

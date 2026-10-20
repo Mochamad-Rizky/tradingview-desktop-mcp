@@ -19,6 +19,7 @@ import {
   requestHistory,
   searchSymbolsViaApi,
 } from '../../tools/data/page.js';
+import { readStudies, readStudyCatalog, readStudyValues } from '../../tools/indicator/page.js';
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
@@ -47,6 +48,8 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readChartState,
   readChartSymbolInfo,
   readHistory,
+  readStudies,
+  readStudyValues,
   readUiState,
   readVisibilityState,
   readVisibleRange,
@@ -68,4 +71,5 @@ export const pageLibFunctions: Record<
 > = {
   readCachedQuote,
   readPlanLimits,
+  readStudyCatalog,
 };
