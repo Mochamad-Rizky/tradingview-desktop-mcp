@@ -184,6 +184,17 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     expect(editorOf(win)).toMatchObject({ placement: 'dialog', source: UNSAVED });
   });
 
+  test('pine_set_source says what TradingView shows when it opens the editor', async () => {
+    const { client } = await startHarness();
+
+    const { tools } = await client.listTools();
+    const description = tools.find(({ name }) => name === 'pine_set_source')?.description ?? '';
+
+    expect(description).toContain('the way the Pine button of TradingView opens it');
+    expect(description).toContain('unsaved text it kept');
+    expect(description).not.toContain('restores the script it last held');
+  });
+
   test('pine_get_source reports it as unsaved, and confirm replaces it', async () => {
     const { client, win } = await closedWithUnsavedText();
     await callTool(client, 'pine_new', {});
@@ -1783,7 +1794,8 @@ describe('pine_smart_compile', () => {
   });
 
   test('smart compile writeBack checks again when it writes, so that opening an editor with unsaved text is refused', async () => {
-    // A closed editor restores the script it last held, here one with unsaved changes.
+    // On its first open a closed editor shows the script it last held, here one with unsaved
+    // changes.
     const { client, win, ctx } = await startHarness({
       ...fixture,
       pineEditor: { ...fixture.pineEditor, open: null, source: EDITED },

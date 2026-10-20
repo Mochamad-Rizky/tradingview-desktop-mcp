@@ -314,7 +314,9 @@ export const pineSetSource = defineTool({
   title: 'Replace the Pine source',
   description:
     'Replaces the text of the Pine Editor of TradingView with source, keeping the script it ' +
-    'holds, and opens the editor first if needed (which restores the script it last held). ' +
+    'holds, and opens the editor first if needed, the way the Pine button of TradingView opens ' +
+    'it: it shows the script it last held the first time in a session, a new script after it was ' +
+    'closed, and in either case the unsaved text it kept, which counts as unsaved changes. ' +
     'Nothing is saved; pine_save does that. Returns script, modified and draft. When the editor ' +
     'holds unsaved changes the call fails with CONFIRMATION_REQUIRED and changes nothing, unless ' +
     'confirm: true, which discards them.',

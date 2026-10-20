@@ -56,9 +56,8 @@ export async function readEditorState(
 }
 
 // The state of the editor, opened first when it is closed, the way the Pine button of the toolbar
-// opens it, which restores the script or draft the editor last held. An open editor is left as it
-// is. Waits at most waitMs for the editor to be ready (TIMEOUT); see openPineEditor for the other
-// failures.
+// opens it (see openPineEditor for what it then shows). An open editor is left as it is. Waits at
+// most waitMs for the editor to be ready (TIMEOUT); see openPineEditor for the other failures.
 export async function ensureEditorOpen(
   page: PageHandle,
   waitMs: number,

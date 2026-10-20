@@ -550,8 +550,10 @@ export interface TvdLike {
 export interface PineEditorApiLike {
   // Loads the chunk of the editor and opens it, as the side panel on the current layout. The Pine
   // button of the toolbar passes { scriptInfo: { script: null }, openSourceId: "main_button",
-  // forceOpen: true }, which restores the script or draft the editor last held. Resolves once the
-  // chunk has loaded, which may be before the editor is mounted.
+  // forceOpen: true }. Seen on the app: that shows the script or draft the editor last held on the
+  // first open of a session, a new script on an open after the side panel closed, and either way
+  // the unsaved text the app kept. Resolves once the chunk has loaded, which may be before the
+  // editor is mounted.
   open(options?: PineEditorOpenOptions): Promise<void>;
   // The facade of the editor at a placement, or null when none is open there.
   getDialogFacade?(): PineEditorFacadeLike | null;
@@ -603,8 +605,8 @@ export interface PineEditorOpenOptions {
 
 // What the export getOpenPineEditor(placement) of the editor registry answers for "dialog" or
 // "bottom" while an editor is open there, and null otherwise. The registry is a Map that only
-// knows these two placements; the side panel of the current layout is taken to register as
-// "dialog", which was inferred, not observed. getFacade is a pure getter.
+// knows these two placements; the side panel of the current layout registers as "dialog" (seen on
+// the app), and leaves the registry when it closes. getFacade is a pure getter.
 export interface OpenPineEditorLike {
   getFacade(): PineEditorFacadeLike | null;
 }
