@@ -434,7 +434,30 @@ describe('pine_open', () => {
 
     expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
     expect(errorOf(result)?.message).toContain('could not be opened');
+    // The editor opened without unsaved changes, so none were lost.
+    expect(errorOf(result)?.hint).toMatch(/held no unsaved changes, so none were lost/);
     expect(callsOf(win, 'pineFacade.openScript')).toHaveLength(1);
+  });
+
+  test('pine_open says that the unsaved text confirm let it replace is gone when TradingView falls back to a new script', async () => {
+    const { client, win } = await startHarness(withLimit(5, modified()));
+    const broken = editorOf(win).savedScripts[1];
+    if (broken !== undefined) {
+      broken.source = null;
+    }
+
+    const result = await callTool(client, 'pine_open', {
+      scriptId: STRATEGY.scriptIdPart,
+      confirm: true,
+    });
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    expect(errorOf(result)?.hint).not.toMatch(/no unsaved/i);
+    expect(errorOf(result)?.hint).toMatch(
+      /unsaved changes .* were replaced, as confirm: true allowed/,
+    );
+    // TradingView shows a new script in place of the text.
+    expect(editorOf(win).source).not.toBe(EDITED);
   });
 
   test('pine_open refuses to replace unsaved content without confirm', async () => {

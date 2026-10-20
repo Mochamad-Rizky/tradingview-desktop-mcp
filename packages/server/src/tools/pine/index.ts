@@ -100,8 +100,10 @@ function editorData(state: PineEditorState) {
 // opened with, and in the page right before the facade acts. A text change that says what the
 // editor must hold (expect) is guarded in the page only, where that is looked at first, so that an
 // editor that has changed is told from unsaved text this call may not replace. Answers the state
-// afterwards and, when nothing was changed because the editor did not hold what was expected,
-// which part it did not hold (null when the change was made).
+// afterwards; when nothing was changed because the editor did not hold what was expected, which
+// part it did not hold (null when the change was made); and whether the editor held unsaved
+// changes, as the tools count them, when the call came to change it, which only confirm: true lets
+// a change replace.
 async function changeEditor(
   page: PageHandle,
   ctx: ToolContext,
@@ -109,7 +111,7 @@ async function changeEditor(
   confirm: boolean | undefined,
   change: (allowModified: boolean) => PineEditorChange,
   warnings: string[],
-): Promise<{ state: PineEditorState; differs: 'script' | 'text' | null }> {
+): Promise<{ state: PineEditorState; differs: 'script' | 'text' | null; hadUnsaved: boolean }> {
   const opened = await ensureEditorOpen(page, pageWaitMs(ctx.config.callTimeoutMs), warnings);
   const wanted = change(confirm === true);
   if (wanted.kind !== 'source' || wanted.expect === undefined) {
@@ -119,6 +121,7 @@ async function changeEditor(
   return {
     state: await readEditorState(page, warnings),
     differs: outcome.changed ? null : outcome.differs,
+    hadUnsaved: opened.modified,
   };
 }
 
@@ -275,7 +278,7 @@ export const pineOpen = defineTool({
       );
     }
     const warnings: string[] = [];
-    const { state } = await changeEditor(
+    const { state, hadUnsaved } = await changeEditor(
       page,
       ctx,
       'pine_open',
@@ -289,15 +292,19 @@ export const pineOpen = defineTool({
       }),
       warnings,
     );
-    // TradingView opens a new script whenever opening the saved one fails.
+    // TradingView opens a new script whenever opening the saved one fails, in place of what the
+    // editor held: the hint says whether that was unsaved text.
     if (state.script?.id !== match.scriptIdPart) {
       throw new TvMcpError(
         'NOT_AVAILABLE',
         `The saved Pine script ${title} could not be opened: TradingView opened a new script instead`,
         {
           hint:
-            'No unsaved text was lost. Try again in a moment, or open the script in TradingView ' +
-            'itself.',
+            (hadUnsaved
+              ? 'The unsaved changes the Pine Editor held, or that TradingView still flagged, ' +
+                'were replaced, as confirm: true allowed, and TradingView shows a new script now. '
+              : 'The Pine Editor held no unsaved changes, so none were lost. ') +
+            'Try again in a moment, or open the script in TradingView itself.',
           details: { id: match.scriptIdPart },
         },
       );
