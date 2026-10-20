@@ -3,6 +3,7 @@ import type { PageHandle } from '../../core/connection.js';
 import { isTvMcpError, PlanLimitError, TvMcpError } from '../../core/errors.js';
 import { getPlanLimits, requireBelowLimit } from '../../core/tv/plan-limits.js';
 import { parseTimeInput, toIso } from '../../utils/time.js';
+import { READ_ONLY } from '../annotations.js';
 import { chartIndexInput, TIME_INPUT, timeInput } from '../chart/index.js';
 import { pageWaitMs, resolveChartTarget } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition } from '../types.js';
@@ -36,13 +37,6 @@ import {
 // dialog of TradingView, so that no paywall or dialog opens; inputs are checked against what the
 // study accepts before any is set; and indicator_remove needs confirm: true for a study this
 // session did not add (design spec 5.3, rule 2), removing it the way the user could undo.
-
-const READ_ONLY = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-} as const;
 
 const MAX_ROWS = 500;
 
@@ -420,7 +414,6 @@ export const indicatorSetInputs = defineTool({
     idempotentHint: true,
     openWorldHint: false,
   },
-  core: true,
   async handler({ id, inputs, chartIndex }, ctx) {
     if (Object.keys(inputs).length === 0) {
       throw new TvMcpError('INVALID_INPUT', 'No inputs to change were given', {
@@ -457,7 +450,6 @@ export const indicatorSetVisibility = defineTool({
     idempotentHint: true,
     openWorldHint: false,
   },
-  core: true,
   async handler({ id, visible, chartIndex }, ctx) {
     const page = await ctx.connection.chartPage();
     const target = await resolveChartTarget(page, chartIndex);

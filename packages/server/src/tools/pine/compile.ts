@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { PageHandle } from '../../core/connection.js';
 import { TvMcpError } from '../../core/errors.js';
 import { pollUntil } from '../../utils/poll.js';
+import { READ_ONLY } from '../annotations.js';
 import { pageWaitMs } from '../chart/strategies.js';
 import { requireStudyRoom } from '../indicator/index.js';
 import { readStudyInsertContext } from '../indicator/page.js';
@@ -238,12 +239,7 @@ export const pineGetErrors = defineTool({
     'returns an empty result: success true, no errors or warnings, and compiledAt and ' +
     'compiledAtIso null. It asks TradingView nothing and changes nothing; pine_compile compiles anew.',
   inputSchema: {},
-  annotations: {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
+  annotations: READ_ONLY,
   core: true,
   handler(_input, ctx) {
     const data: PineCompileResult = ctx.session.lastPineCompile ?? {
@@ -283,13 +279,7 @@ export const pineGetConsole = defineTool({
       .optional()
       .describe('The most messages to return, newest first. Default: 100.'),
   },
-  annotations: {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
-  core: true,
+  annotations: READ_ONLY,
   async handler({ limit }, ctx) {
     const page = await ctx.connection.chartPage();
     const reading = await page.bridge.evaluateWithLib(readPineConsole, []);

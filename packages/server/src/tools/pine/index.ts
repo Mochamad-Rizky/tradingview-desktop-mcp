@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { PageHandle } from '../../core/connection.js';
 import { PlanLimitError, TvMcpError } from '../../core/errors.js';
 import { getPlanLimits, requireBelowLimit } from '../../core/tv/plan-limits.js';
+import { READ_ONLY } from '../annotations.js';
 import { pageWaitMs } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import { analyzePine, pineVersion } from './analyze/analyze.js';
@@ -44,13 +45,6 @@ import { smartCompile } from './smart-compile.js';
 // nothing calls what would open a dialog of TradingView (the naming dialog of a new script, the
 // sign-in dialog). The text of the editor is returned by pine_get_source only and never logged, and
 // the template of a new script, which names the account, is never returned.
-
-const READ_ONLY = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-} as const;
 
 // The tools that can replace the text of the editor, which with confirm: true can be unsaved text.
 const REPLACES_TEXT = {
@@ -215,7 +209,6 @@ export const pineOpen = defineTool({
     confirm: confirmInput('open the script'),
   },
   annotations: REPLACES_TEXT,
-  core: true,
   async handler({ scriptId, name, confirm }, ctx) {
     let wanted: { scriptId: string } | { name: string };
     if (scriptId !== undefined && name === undefined) {
@@ -357,7 +350,6 @@ export const pineListScripts = defineTool({
     'no account is signed in.',
   inputSchema: {},
   annotations: READ_ONLY,
-  core: true,
   async handler(_input, ctx) {
     const page = await ctx.connection.chartPage();
     const listing = await page.bridge.evaluateWithLib(readSavedPineScripts, []);
@@ -436,7 +428,6 @@ export const pineSave = defineTool({
     idempotentHint: false,
     openWorldHint: false,
   },
-  core: true,
   async handler({ name, confirm }, ctx) {
     const page = await ctx.connection.chartPage();
     const warnings: string[] = [];
@@ -613,7 +604,6 @@ export const pineAnalyze = defineTool({
       .describe('The Pine source to analyze. Default: the text of the Pine Editor.'),
   },
   annotations: READ_ONLY,
-  core: true,
   async handler({ source }, ctx) {
     const local = source !== undefined;
     const read = local ? { data: { source }, warnings: [] } : await readPineSourceData(ctx);

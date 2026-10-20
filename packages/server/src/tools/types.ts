@@ -83,7 +83,8 @@ export interface ToolDefinition<S extends z.ZodRawShape, T extends JsonValue> {
   // so a transform would run on its own output. Conversions belong in the handler.
   inputSchema: S;
   annotations: ToolAnnotations;
-  // Kept by the core profile (design spec 5.4).
+  // Kept by the core profile (design spec 5.4), the reduced set for clients that cap the number of
+  // tools: the essentials of a domain, so a tool is not core unless it says so.
   core?: boolean;
   // Declared as a method so that a definition with a narrower input still counts as an
   // AnyToolDefinition. Errors are thrown: a TvMcpError reaches the client as it is, anything else

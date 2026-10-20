@@ -1,9 +1,5 @@
 import * as api from '../../src/index.js';
-import { appTools } from '../../src/tools/app/index.js';
-import { chartTools } from '../../src/tools/chart/index.js';
-import { dataTools } from '../../src/tools/data/index.js';
-import { indicatorTools } from '../../src/tools/indicator/index.js';
-import { pineTools } from '../../src/tools/pine/index.js';
+import { allTools } from '../../src/tools/index.js';
 import { quietLogger, refusingLauncher, unreachableConnection } from '../helpers/tool-context.js';
 
 // The package entry is the programmatic API (design spec 4): what it exports is a contract with
@@ -22,14 +18,9 @@ test('builds a server from a loaded configuration', () => {
   });
 
   expect(ctx.config.profile).toBe('core');
-  // The tools of the app, of the chart, of the indicators and of Pine are all part of the core
-  // profile, and so are the batch and the data tools but market depth.
-  expect(registry.list().map(({ name }) => name)).toEqual([
-    ...appTools.map(({ name }) => name),
-    ...chartTools.map(({ name }) => name),
-    ...dataTools.map(({ name }) => name).filter((name) => name !== 'data_get_market_depth'),
-    ...indicatorTools.map(({ name }) => name),
-    ...pineTools.map(({ name }) => name),
-    'batch_run',
-  ]);
+  // The tools that say they are core, in the order of the catalog. Which they are is pinned by
+  // test/unit/tools/registry.test.ts.
+  expect(registry.list().map(({ name }) => name)).toEqual(
+    allTools.filter(({ core }) => core === true).map(({ name }) => name),
+  );
 });

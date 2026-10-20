@@ -11,6 +11,7 @@ import { appTools } from '../../src/tools/app/index.js';
 import { batchTools } from '../../src/tools/batch/index.js';
 import { chartTools } from '../../src/tools/chart/index.js';
 import { dataTools } from '../../src/tools/data/index.js';
+import { allTools } from '../../src/tools/index.js';
 import { indicatorTools } from '../../src/tools/indicator/index.js';
 import { pineTools } from '../../src/tools/pine/index.js';
 import { strategyTools } from '../../src/tools/strategy/index.js';
@@ -33,13 +34,13 @@ import {
 
 const HEALTH_URI = 'tradingview://app/health';
 // What a server offers when nothing narrows its tools: the tools of the app, of the chart, of
-// market data, of indicators, of Pine and of the Strategy Tester, then the batch. Market depth is
-// the one data tool outside the core profile, and the tools of the Strategy Tester are outside it
-// as well for now.
+// market data, of indicators, of Pine and of the Strategy Tester, then the batch. The core profile
+// keeps the tools that say they are core, in the same order; which tools those are is pinned by
+// test/unit/tools/registry.test.ts.
 const APP_TOOL_NAMES = appTools.map(({ name }) => name);
 const CHART_TOOL_NAMES = chartTools.map(({ name }) => name);
 const DATA_TOOL_NAMES = dataTools.map(({ name }) => name);
-const CORE_DATA_TOOL_NAMES = DATA_TOOL_NAMES.filter((name) => name !== 'data_get_market_depth');
+const CORE_TOOL_NAMES = allTools.filter(({ core }) => core === true).map(({ name }) => name);
 const INDICATOR_TOOL_NAMES = indicatorTools.map(({ name }) => name);
 const READ_INDICATOR_TOOL_NAMES = indicatorTools
   .filter(({ annotations }) => annotations.readOnlyHint === true)
@@ -609,14 +610,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
       .registry.list()
       .map(({ name }) => name);
 
-  expect(toolsOf({ profile: 'core' })).toEqual([
-    ...APP_TOOL_NAMES,
-    ...CHART_TOOL_NAMES,
-    ...CORE_DATA_TOOL_NAMES,
-    ...INDICATOR_TOOL_NAMES,
-    ...PINE_TOOL_NAMES,
-    'batch_run',
-  ]);
+  expect(toolsOf({ profile: 'core' })).toEqual(CORE_TOOL_NAMES);
   expect(toolsOf({ profile: 'full', toolPatterns: ['batch_*'] })).toEqual(['batch_run']);
   expect(toolsOf({ profile: 'full', toolPatterns: ['app_*'] })).toEqual(APP_TOOL_NAMES);
   expect(toolsOf({ profile: 'core', toolPatterns: ['app_h*', 'batch_*'] })).toEqual([

@@ -4,6 +4,7 @@ import { TvMcpError } from '../../core/errors.js';
 import type { PageErrorSentinel } from '../../core/tv/page-bridge.js';
 import { pollUntil } from '../../utils/poll.js';
 import { parseTimeInput, toIso } from '../../utils/time.js';
+import { READ_ONLY } from '../annotations.js';
 import { chartIndexInput, TIME_INPUT, timeInput } from '../chart/index.js';
 import { sameSymbol } from '../chart/mappers.js';
 import { pageWaitMs, resolveChartTarget } from '../chart/strategies.js';
@@ -34,13 +35,6 @@ import {
 // a scroll to the left does), the quote caches, and the symbol search. None creates a quote
 // session, resolves a symbol on the chart session or opens a depth session, which TradingView
 // Desktop 3.4.1 was seen to do with the web build of 2026-10-16.
-
-const READ_ONLY = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-} as const;
 
 // How often the series is asked while older bars load.
 const HISTORY_POLL_MS = 100;

@@ -38,10 +38,18 @@ test('the catalog lists the indicator tools after the data tools', () => {
   expect(names.indexOf('indicator_list')).toBe(names.indexOf('data_get_market_depth') + 1);
 });
 
-test('every indicator read tool only reads, and every indicator tool is core', () => {
-  for (const tool of indicatorTools) {
-    expect(tool.core, tool.name).toBe(true);
-  }
+test('every indicator read tool only reads, and the tools that edit an indicator are not core', () => {
+  // Reading, adding and removing indicators are the essentials; changing the inputs or the
+  // visibility of one that is on the chart can be done with the full profile.
+  expect(indicatorTools.filter(({ core }) => core === true).map(({ name }) => name)).toEqual([
+    'indicator_list',
+    'indicator_search',
+    'indicator_add',
+    'indicator_remove',
+    'indicator_get_values',
+  ]);
+  expect(toolNamed('indicator_set_inputs').core).toBeUndefined();
+  expect(toolNamed('indicator_set_visibility').core).toBeUndefined();
   for (const tool of indicatorTools.filter(({ name }) => READ_TOOLS.includes(name))) {
     expect(tool.annotations, tool.name).toEqual({
       readOnlyHint: true,

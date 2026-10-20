@@ -29,8 +29,17 @@ test('appTools lists the app tools of the catalog, in its order', () => {
   expect(new Set(appTools.map(({ domain }) => domain))).toEqual(new Set(['app']));
 });
 
-test('every app tool is part of the core profile', () => {
-  expect(appTools.map(({ core }) => core)).toEqual([true, true, true, true, true, true]);
+test('every app tool but the plan limits is part of the core profile', () => {
+  // Launching, health, discovery, the interface state and reconnecting keep a client going. The
+  // limits of the plan are there to look at before acting, and the tools that act check them too.
+  expect(appTools.map(({ name, core }) => [name, core === true])).toEqual([
+    ['app_launch', true],
+    ['app_health', true],
+    ['app_discover', true],
+    ['app_get_ui_state', true],
+    ['app_get_plan_limits', false],
+    ['app_reconnect', true],
+  ]);
 });
 
 // A client asks the user before a call by these hints, while confirm is filled in by the model, so

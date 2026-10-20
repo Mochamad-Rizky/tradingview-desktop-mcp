@@ -647,3 +647,51 @@ test('batch_run belongs to the core profile and stays out of the readonly one', 
     'batch_run',
   );
 });
+
+// The core profile is the reduced set for clients that cap the number of tools (design spec 5.4),
+// so it holds the essentials of each domain and not nearly every tool. A tool joins it, or leaves
+// it, by changing this list: nothing else keeps the profile from growing back one tool at a time.
+test('the core profile keeps exactly the essential tools', () => {
+  const core = [
+    // App
+    'app_launch',
+    'app_health',
+    'app_discover',
+    'app_get_ui_state',
+    'app_reconnect',
+    // Chart
+    'chart_get_state',
+    'chart_set_symbol',
+    'chart_set_timeframe',
+    'chart_set_type',
+    'chart_get_visible_range',
+    'chart_set_visible_range',
+    'chart_scroll_to_date',
+    // Market data
+    'data_get_ohlcv',
+    'data_get_quote',
+    'data_get_symbol_info',
+    'data_search_symbols',
+    // Indicators
+    'indicator_list',
+    'indicator_search',
+    'indicator_get_values',
+    'indicator_add',
+    'indicator_remove',
+    // Pine
+    'pine_new',
+    'pine_get_source',
+    'pine_set_source',
+    'pine_compile',
+    'pine_get_errors',
+    'pine_smart_compile',
+    // Strategy Tester
+    'strategy_get_results',
+    // Batch
+    'batch_run',
+  ];
+
+  expect(names(selectTools(allTools, { profile: 'core', patterns: [] })).sort()).toEqual(
+    [...core].sort(),
+  );
+});

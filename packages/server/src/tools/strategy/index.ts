@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TvMcpError } from '../../core/errors.js';
+import { READ_ONLY } from '../annotations.js';
 import { chartIndexInput } from '../chart/index.js';
 import { resolveChartTarget } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.js';
@@ -12,13 +13,6 @@ import { readStrategyReport } from './page.js';
 // of the app was never observed (the chart of the notes had no strategy), so what the tools say of
 // its shape is what the web build suggests and the descriptions are open about it (reverse-
 // engineering notes of Plan 2, section Q6).
-
-const READ_ONLY = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-} as const;
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
@@ -112,6 +106,7 @@ export const strategyGetResults = defineTool({
     `nothing is opened or calculated. ${AVAILABILITY_TEXT}`,
   inputSchema: strategyInputs(),
   annotations: READ_ONLY,
+  core: true,
   async handler({ studyId, chartIndex }, ctx) {
     const { data, warnings } = await readStrategyResultsData(ctx, studyId, chartIndex);
     return { data, via: 'internal', warnings };

@@ -324,7 +324,6 @@ export const appGetPlanLimits = defineTool({
     idempotentHint: true,
     openWorldHint: false,
   },
-  core: true,
   async handler(_input, ctx) {
     const page = await ctx.connection.chartPage();
     const read = await getPlanLimits(page, PLAN_FEATURES);

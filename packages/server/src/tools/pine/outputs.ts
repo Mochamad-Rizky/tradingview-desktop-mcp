@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { READ_ONLY } from '../annotations.js';
 import { chartIndexInput } from '../chart/index.js';
 import { resolveChartTarget } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.js';
@@ -8,13 +9,6 @@ import { readPineGraphics, type PineDrawingKind } from './outputs-page.js';
 // The Pine output tools (design spec 7, domain Pine outputs): the lines, labels, boxes and tables
 // that Pine scripts on a chart have drawn. They read what the app holds of them, in the graphics of
 // each study, and change nothing, send no request and open nothing.
-
-const READ_ONLY = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-} as const;
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -103,7 +97,6 @@ export const pineGetLines = defineTool({
     `${POINT_TEXT} ${openEndText('a horizontal line')} ${SELECTION_TEXT}`,
   inputSchema: outputInputs(),
   annotations: READ_ONLY,
-  core: true,
   async handler({ studyId, limit, chartIndex }, ctx) {
     const { studies, warnings } = await readDrawings('lines', studyId, chartIndex, ctx);
     return { data: toLines(studies, limit), via: 'internal', warnings };
@@ -124,7 +117,6 @@ export const pineGetLabels = defineTool({
     `${idText('labels', 'labels_a:2')} ${POINT_TEXT} ${SELECTION_TEXT}`,
   inputSchema: outputInputs(),
   annotations: READ_ONLY,
-  core: true,
   async handler({ studyId, limit, chartIndex }, ctx) {
     const { studies, warnings } = await readDrawings('labels', studyId, chartIndex, ctx);
     return { data: toLabels(studies, limit), via: 'internal', warnings };
@@ -143,7 +135,6 @@ export const pineGetBoxes = defineTool({
     `${idText('boxes', 'boxes_a:2')} ${POINT_TEXT} ${openEndText('a box')} ${SELECTION_TEXT}`,
   inputSchema: outputInputs(),
   annotations: READ_ONLY,
-  core: true,
   async handler({ studyId, limit, chartIndex }, ctx) {
     const { studies, warnings } = await readDrawings('boxes', studyId, chartIndex, ctx);
     return { data: toBoxes(studies, limit), via: 'internal', warnings };
@@ -164,7 +155,6 @@ export const pineGetTables = defineTool({
     `has no bar index or time. ${SELECTION_TEXT}`,
   inputSchema: outputInputs(),
   annotations: READ_ONLY,
-  core: true,
   async handler({ studyId, limit, chartIndex }, ctx) {
     const { studies, warnings } = await readDrawings('tables', studyId, chartIndex, ctx);
     return { data: toTables(studies, limit), via: 'internal', warnings };
