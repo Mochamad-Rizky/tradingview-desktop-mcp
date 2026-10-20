@@ -208,8 +208,9 @@ test then meets the app's own check. No test makes room by touching what the use
 
 On a chart without a free indicator slot (2 of 2 on a Basic plan):
 
-- `adds and removes RSI`, `adds a script that draws, …` and `adds a strategy, …` are skipped with
-  that reason.
+- `adds and removes RSI` is skipped with that reason, and so are `adds a script that draws, …` and
+  `adds a strategy, …` when `TV_E2E_ALLOW_DRAFTS=1` allows them; without it they are skipped first
+  for the draft they would leave.
 - `adding an indicator on a full chart returns PLAN_LIMIT and changes nothing` runs, and only there:
   the plan and the app's own check (`canCreateStudy`, reason `general`) must both call the chart
   full, so the call cannot add a study. It asserts the `PLAN_LIMIT` error with the feature and the
