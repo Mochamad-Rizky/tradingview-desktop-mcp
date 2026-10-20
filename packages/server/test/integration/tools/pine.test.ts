@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createMcpServer } from '../../../src/server.js';
@@ -1911,6 +1912,96 @@ describe('pine_smart_compile', () => {
     expect(warningsOf(result).join(' ')).toContain('left as it is');
     expect(callsOf(win, 'translateScriptAsync')).toHaveLength(1);
     expect(callsOf(win, 'pineFacade.setScript')).toEqual([]);
+  });
+
+  test('smart compile stops when too little time is left for another attempt, and says so', async () => {
+    // A call timeout of 3000 ms leaves the whole call 2000 ms of the page.
+    const { client, win, ctx } = await startHarness(fixture, {}, 3000);
+    onCompile(win, () => delay(1200));
+
+    const result = await callTool(client, 'pine_smart_compile', { source: V4_IN_V6 });
+
+    // The first attempt took more than half of the time, and the fixes found are not made: the
+    // text with them would not be compiled in what is left.
+    expect(dataOf(result)).toStrictEqual({
+      success: false,
+      attempts: [{ errors: V4_ERRORS, applied: [] }],
+      source: V4_IN_V6,
+      diff: '',
+      writtenBack: false,
+    });
+    expect(warningsOf(result).join(' ')).toContain('time limit');
+    expect(callsOf(win, 'translateScriptAsync')).toHaveLength(1);
+    expect(ctx.session.lastPineCompile).toMatchObject({ success: false, errors: V4_ERRORS });
+  });
+
+  test('smart compile gives each compilation only what is left of the time of the call', async () => {
+    const { client, win, ctx } = await startHarness(fixture, {}, 3000);
+    // An older result, which the failing call must not leave in place.
+    await callTool(client, 'pine_compile', { source: FIXED });
+    expect(ctx.session.lastPineCompile).toMatchObject({ success: true });
+    // The first compilation takes 200 ms, and the second never answers.
+    onCompile(win, (call) =>
+      call === 1 ? delay(200) : call === 2 ? new Promise<void>(() => undefined) : undefined,
+    );
+
+    const result = await callTool(client, 'pine_smart_compile', { source: V4_IN_V6 });
+
+    const error = errorOf(result);
+    expect(error).toMatchObject({ code: 'TIMEOUT' });
+    const waited = error?.details?.waitMs as number;
+    expect(waited).toBeLessThanOrEqual(1800);
+    expect(waited).toBeGreaterThan(1000);
+    // The first attempt completed: it is what pine_get_errors returns, not the older result.
+    expect(ctx.session.lastPineCompile).toMatchObject({ success: false, errors: V4_ERRORS });
+  });
+
+  test('smart compile keeps the result of the last attempt that completed when a later one fails', async () => {
+    const { client, win, ctx } = await startHarness();
+    await callTool(client, 'pine_compile', { source: FIXED });
+    onCompile(win, (call) => {
+      if (call === 2) {
+        editorOf(win).compileHttpError = 'Request error, try again or contact support.';
+      }
+    });
+
+    const result = await callTool(client, 'pine_smart_compile', { source: V4_IN_V6 });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: 'Request error, try again or contact support.',
+    });
+    expect(ctx.session.lastPineCompile).toMatchObject({ success: false, errors: V4_ERRORS });
+    const errors = await callTool(client, 'pine_get_errors', {});
+    expect(dataOf(errors)).toMatchObject({ success: false, errors: V4_ERRORS });
+  });
+
+  test('smart compile records each attempt as it completes', async () => {
+    const { client, win, ctx } = await startHarness();
+    const seen: (number | null)[] = [];
+    // What pine_get_errors would say as each compilation starts.
+    onCompile(win, () => {
+      seen.push(ctx.session.lastPineCompile?.errors.length ?? null);
+    });
+
+    await callTool(client, 'pine_smart_compile', { source: V4_IN_V6 });
+
+    expect(seen).toEqual([null, 2]);
+    expect(ctx.session.lastPineCompile).toMatchObject({ success: true, errors: [] });
+  });
+
+  test('smart compile says in its description when the unsaved text is checked and what the time limit is', async () => {
+    const { client } = await startHarness();
+
+    const { tools } = await client.listTools();
+    const description = tools.find(({ name }) => name === 'pine_smart_compile')?.description ?? '';
+
+    // An open editor is refused before any compilation, a closed one that restores unsaved text
+    // only when it is opened by the write, after them.
+    expect(description).toContain('open one is refused with CONFIRMATION_REQUIRED before anything');
+    expect(description).toContain('closed one that the write opens');
+    expect(description).toContain('after the compilations');
+    expect(description).toContain('share one time limit');
   });
 
   test('smart compile keeps the line endings of the text it fixes and diffs without them', async () => {

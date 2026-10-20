@@ -210,6 +210,13 @@ describe('collectFixes', () => {
   });
 });
 
+// The settings of a loop that has all the time it wants.
+const settings = (maxAttempts: number, applyFixes = true) => ({
+  maxAttempts,
+  applyFixes,
+  deadline: Number.POSITIVE_INFINITY,
+});
+
 describe('smartCompile', () => {
   // Compiles the text with the rules of a script of version 6: a v4 name is undeclared.
   const v6Compiler = (calls: string[] = []) => {
@@ -231,7 +238,7 @@ describe('smartCompile', () => {
     const calls: string[] = [];
     const source = `${HEAD}plot(close)\n`;
 
-    const run = await smartCompile(v6Compiler(calls), source, { maxAttempts: 3, applyFixes: true });
+    const run = await smartCompile(v6Compiler(calls), source, settings(3));
 
     expect(run).toMatchObject({
       success: true,
@@ -246,7 +253,7 @@ describe('smartCompile', () => {
     const calls: string[] = [];
     const source = '//@version=6\nstudy("x")\nplot(rsi(close,14))\n';
 
-    const run = await smartCompile(v6Compiler(calls), source, { maxAttempts: 3, applyFixes: true });
+    const run = await smartCompile(v6Compiler(calls), source, settings(3));
 
     const fixed = '//@version=6\nindicator("x")\nplot(ta.rsi(close,14))\n';
     expect(calls).toEqual([source, fixed]);
@@ -270,18 +277,14 @@ describe('smartCompile', () => {
         '',
       ].join('\n'),
     );
-    // The result to remember is the one of the last compilation.
-    expect(run.last).toEqual(outcome());
+    expect(run.outOfTime).toBe(false);
   });
 
   test('smartCompile compiles once with applyFixes false and changes nothing', async () => {
     const calls: string[] = [];
     const source = '//@version=6\nstudy("x")\n';
 
-    const run = await smartCompile(v6Compiler(calls), source, {
-      maxAttempts: 3,
-      applyFixes: false,
-    });
+    const run = await smartCompile(v6Compiler(calls), source, settings(3, false));
 
     expect(calls).toEqual([source]);
     expect(run.success).toBe(false);
@@ -290,11 +293,22 @@ describe('smartCompile', () => {
     expect(run.diff).toBe('');
   });
 
+  test('smartCompile makes one attempt when the number of attempts is not a number', async () => {
+    const calls: string[] = [];
+    const source = '//@version=6\nstudy("x")\n';
+
+    const run = await smartCompile(v6Compiler(calls), source, settings(Number.NaN));
+
+    expect(calls).toEqual([source]);
+    expect(run.attempts).toHaveLength(1);
+    expect(run.source).toBe(source);
+  });
+
   test('smartCompile applies a fix only when another compilation follows, so one attempt changes nothing', async () => {
     const calls: string[] = [];
     const source = '//@version=6\nstudy("x")\n';
 
-    const run = await smartCompile(v6Compiler(calls), source, { maxAttempts: 1, applyFixes: true });
+    const run = await smartCompile(v6Compiler(calls), source, settings(1));
 
     expect(calls).toEqual([source]);
     expect(run.attempts).toEqual([{ errors: [undeclared('study', 2, 1)], applied: [] }]);
@@ -319,7 +333,7 @@ describe('smartCompile', () => {
   test('smartCompile stops after maxAttempts and returns the last errors', async () => {
     const calls: string[] = [];
 
-    const run = await smartCompile(firstOnly(calls), SEVERAL, { maxAttempts: 3, applyFixes: true });
+    const run = await smartCompile(firstOnly(calls), SEVERAL, settings(3));
 
     expect(calls).toHaveLength(3);
     expect(run.success).toBe(false);
@@ -334,13 +348,13 @@ describe('smartCompile', () => {
     expect(run.source).toContain('rsi = ta.rsi(close, 14)');
     expect(run.source).toContain('sma = ta.sma(close, 14)');
     expect(run.source).toContain('ema = ema(close, 14)');
-    expect(run.last.errors).toEqual(run.attempts.at(-1)?.errors);
+    expect(run.outOfTime).toBe(false);
     expect(run.diff).toContain('+rsi = ta.rsi(close, 14)');
     expect(run.diff).not.toContain('ta.ema');
   });
 
   test('smartCompile goes on while fixes apply and the attempts allow', async () => {
-    const run = await smartCompile(firstOnly(), SEVERAL, { maxAttempts: 5, applyFixes: true });
+    const run = await smartCompile(firstOnly(), SEVERAL, settings(5));
 
     expect(run.success).toBe(true);
     expect(run.attempts.map(({ applied }) => applied.length)).toEqual([1, 1, 1, 0]);
@@ -354,10 +368,7 @@ describe('smartCompile', () => {
       return Promise.resolve(outcome([undeclared('mystery', 3, 1)]));
     };
 
-    const run = await smartCompile(compile, `${HEAD}mystery(close)\n`, {
-      maxAttempts: 5,
-      applyFixes: true,
-    });
+    const run = await smartCompile(compile, `${HEAD}mystery(close)\n`, settings(5));
 
     expect(calls).toHaveLength(1);
     expect(run.attempts).toEqual([{ errors: [undeclared('mystery', 3, 1)], applied: [] }]);
@@ -374,10 +385,11 @@ describe('smartCompile', () => {
       );
     };
 
-    const run = await smartCompile(compile, `${HEAD}mystery(close)\nx = sma(close, 5)\n`, {
-      maxAttempts: 5,
-      applyFixes: true,
-    });
+    const run = await smartCompile(
+      compile,
+      `${HEAD}mystery(close)\nx = sma(close, 5)\n`,
+      settings(5),
+    );
 
     expect(calls).toHaveLength(2);
     expect(run.attempts.map(({ applied }) => applied)).toEqual([['Replace sma( with ta.sma('], []]);
@@ -393,7 +405,7 @@ describe('smartCompile', () => {
     };
     const source = `${HEAD}x = sma(close, 5)\n`;
 
-    const run = await smartCompile(compile, source, { maxAttempts: 5, applyFixes: true });
+    const run = await smartCompile(compile, source, settings(5));
 
     // The first round fixes the call. The second finds nothing at the position of the error.
     expect(calls).toEqual([source, `${HEAD}x = ta.sma(close, 5)\n`]);
@@ -404,19 +416,16 @@ describe('smartCompile', () => {
   test('smartCompile passes on a failure of the compiler, which is not a compile error', async () => {
     const compile = (): Promise<PineCompileResult> => Promise.reject(new Error('Compiler is down'));
 
-    await expect(
-      smartCompile(compile, `${HEAD}plot(close)\n`, { maxAttempts: 3, applyFixes: true }),
-    ).rejects.toThrow('Compiler is down');
+    await expect(smartCompile(compile, `${HEAD}plot(close)\n`, settings(3))).rejects.toThrow(
+      'Compiler is down',
+    );
   });
 
   test('smartCompile fixes a script without a version when the compiler rejects it', async () => {
     const compile = (source: string): Promise<PineCompileResult> =>
       Promise.resolve(outcome(source.includes('//@version') ? [] : [undeclared('mystery', 2, 1)]));
 
-    const run = await smartCompile(compile, 'indicator("T")\nplot(close)\n', {
-      maxAttempts: 3,
-      applyFixes: true,
-    });
+    const run = await smartCompile(compile, 'indicator("T")\nplot(close)\n', settings(3));
 
     expect(run.success).toBe(true);
     expect(run.source).toBe('//@version=6\nindicator("T")\nplot(close)\n');
@@ -426,7 +435,7 @@ describe('smartCompile', () => {
   test('smartCompile gives a diff that does not see line endings', async () => {
     const source = '//@version=6\r\nstudy("x")\r\nplot(close)\r\n';
 
-    const run = await smartCompile(v6Compiler(), source, { maxAttempts: 3, applyFixes: true });
+    const run = await smartCompile(v6Compiler(), source, settings(3));
 
     expect(run.source).toBe('//@version=6\r\nindicator("x")\r\nplot(close)\r\n');
     expect(run.diff).toBe(
@@ -439,5 +448,123 @@ describe('smartCompile', () => {
         '',
       ].join('\n'),
     );
+  });
+
+  describe('with the time limit of the call', () => {
+    // The loop run on a clock that every compilation moves on by `took` ms, from 1000, with a
+    // deadline `limit` ms after that, over a script that takes three rounds. `waits` holds the
+    // time each compilation was given.
+    const timed = (took: number, limit: number, maxAttempts = 5) => {
+      let clock = 1_000;
+      const waits: number[] = [];
+      const compile = async (source: string, waitMs: number): Promise<PineCompileResult> => {
+        waits.push(waitMs);
+        const result = await firstOnly()(source);
+        clock += took;
+        return result;
+      };
+      return {
+        waits,
+        run: () =>
+          smartCompile(compile, SEVERAL, {
+            maxAttempts,
+            applyFixes: true,
+            deadline: 1_000 + limit,
+            now: () => clock,
+          }),
+      };
+    };
+
+    test('smartCompile gives the first compilation the whole time and each later one what is left', async () => {
+      const { waits, run } = timed(1500, 20_000);
+
+      const done = await run();
+
+      expect(waits).toEqual([20_000, 18_500, 17_000, 15_500]);
+      expect(done.success).toBe(true);
+      expect(done.outOfTime).toBe(false);
+    });
+
+    test('smartCompile stops, applying no fix, when too little time is left for another attempt', async () => {
+      const { waits, run } = timed(1000, 2500);
+
+      const done = await run();
+
+      // The second attempt ends with half a second left, which the third would not finish in.
+      expect(waits).toEqual([2500, 1500]);
+      expect(done.outOfTime).toBe(true);
+      expect(done.success).toBe(false);
+      expect(done.attempts.map(({ applied }) => applied)).toEqual([
+        ['Replace rsi( with ta.rsi('],
+        [],
+      ]);
+      // The text is the one the last attempt compiled: the fix for its error was not made.
+      expect(done.attempts.at(-1)?.errors).toEqual([undeclared('sma', 4, 7)]);
+      expect(done.source).toContain('rsi = ta.rsi(close, 14)');
+      expect(done.source).toContain('sma = sma(close, 14)');
+    });
+
+    test('smartCompile does not start an attempt with less time left than the slowest one took', async () => {
+      const { waits, run } = timed(4000, 10_000);
+
+      const done = await run();
+
+      // Two seconds are left after the second attempt, which took four.
+      expect(waits).toEqual([10_000, 6000]);
+      expect(done.attempts).toHaveLength(2);
+      expect(done.outOfTime).toBe(true);
+    });
+
+    test('smartCompile does not start an attempt with less than a second left, however fast they are', async () => {
+      const { waits, run } = timed(100, 1250);
+
+      const done = await run();
+
+      expect(waits).toEqual([1250, 1150, 1050]);
+      expect(done.attempts).toHaveLength(3);
+      expect(done.outOfTime).toBe(true);
+    });
+
+    test('smartCompile reports no lack of time when it stopped for another reason', async () => {
+      // The attempts allowed are used up, with no time left either.
+      const used = await timed(1000, 1500, 1).run();
+      // The script compiles, long after the deadline.
+      const compiles = await smartCompile(
+        async () => {
+          await Promise.resolve();
+          return outcome();
+        },
+        `${HEAD}plot(close)\n`,
+        { ...settings(3), deadline: 0, now: () => 5000 },
+      );
+      // Errors that nothing fixes.
+      const unfixable = await smartCompile(
+        () => Promise.resolve(outcome([undeclared('mystery', 3, 1)])),
+        `${HEAD}mystery(close)\n`,
+        { ...settings(3), deadline: 0, now: () => 5000 },
+      );
+
+      expect([used.outOfTime, compiles.outOfTime, unfixable.outOfTime]).toEqual([
+        false,
+        false,
+        false,
+      ]);
+    });
+
+    test('smartCompile gives the first compilation no negative time when the deadline has gone', async () => {
+      const waits: number[] = [];
+      const compile = (_source: string, waitMs: number): Promise<PineCompileResult> => {
+        waits.push(waitMs);
+        return Promise.resolve(outcome());
+      };
+
+      await smartCompile(compile, `${HEAD}plot(close)\n`, {
+        ...settings(3),
+        deadline: 100,
+        now: () => 600,
+      });
+
+      expect(waits).toEqual([0]);
+    });
   });
 });

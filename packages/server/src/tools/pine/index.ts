@@ -673,12 +673,16 @@ export const pineSmartCompile = defineTool({
     'text, the one the last attempt compiled), diff (a unified diff of what the fixes changed, ' +
     'line breaks aside, empty when nothing changed) and writtenBack. It stops early when no fix ' +
     'changes the text. A fix is applied only when another compilation follows, so maxAttempts 1 ' +
-    'or applyFixes: false compiles once and changes nothing. Compile errors are a result; a ' +
-    'failure of TradingView to compile at all is NOT_AVAILABLE or TIMEOUT. Nothing is written to ' +
-    'the editor unless writeBack: true, which writes the final text into it, as pine_set_source ' +
-    'does, when it differs from the text the call started with. That needs confirm: true while ' +
-    'the editor holds unsaved changes, else the call fails with CONFIRMATION_REQUIRED before ' +
-    'anything is compiled and nothing is written. When the text came from the editor, it is ' +
+    'or applyFixes: false compiles once and changes nothing. The compilations share one time ' +
+    'limit, that of one page call: each waits only for the time left, and when too little is ' +
+    'left for another attempt the call stops there, applies no further fix and says so in a ' +
+    'warning. Compile errors are a result; a failure of TradingView to compile at all is ' +
+    'NOT_AVAILABLE or TIMEOUT. Nothing is written to the editor unless writeBack: true, which ' +
+    'writes the final text into it, as pine_set_source does, when it differs from the text the ' +
+    'call started with. An editor with unsaved changes needs confirm: true. An open one is ' +
+    'refused with CONFIRMATION_REQUIRED before anything is compiled, and a closed one that the ' +
+    'write opens, and that restores unsaved text when it opens, is refused then, after the ' +
+    'compilations; either way nothing is written. When the text came from the editor, it is ' +
     'written back only if the editor still holds the same script and text when the write comes ' +
     '(checked in the page, right before it acts, whatever confirm says); else nothing is ' +
     'written, writtenBack is false, a warning says that the editor changed and the result is ' +
@@ -723,21 +727,37 @@ export const pineSmartCompile = defineTool({
   core: true,
   async handler({ source, maxAttempts, applyFixes: fix, writeBack, confirm }, ctx) {
     const page = await ctx.connection.chartPage();
+    // One time limit for the compilations, that of one page call: they share it, so that up to
+    // five slow ones cannot take several times what a client waits for a call.
+    const deadline = Date.now() + pageWaitMs(ctx.config.callTimeoutMs);
     const warnings: string[] = [];
-    const attempts = maxAttempts ?? DEFAULT_ATTEMPTS;
+    const limit = maxAttempts ?? DEFAULT_ATTEMPTS;
     // Before anything is compiled, so that a refusal wastes no compilation. The write checks
     // again when it happens (changeEditor). Without a fix to make, and a fix is made only when
     // another attempt follows, nothing is ever written.
-    if (writeBack === true && fix !== false && attempts > 1) {
+    if (writeBack === true && fix !== false && limit > 1) {
       requireUnmodifiedOrConfirmed(await readEditorState(page), confirm, WRITE_BACK);
     }
     const { text: start, held } = await startOf(ctx, source, warnings);
-    const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
-    const run = await smartCompile((text) => compileSource(page, text, waitMs), start, {
-      maxAttempts: attempts,
-      applyFixes: fix !== false,
-    });
-    ctx.session.lastPineCompile = run.last;
+    const run = await smartCompile(
+      async (text, waitMs) => {
+        const result = await compileSource(page, text, waitMs);
+        // What pine_get_errors returns from now on, so that a failure of a later attempt (a
+        // TIMEOUT, say) leaves this result there, not that of an older call.
+        ctx.session.lastPineCompile = result;
+        return result;
+      },
+      start,
+      { maxAttempts: limit, applyFixes: fix !== false, deadline },
+    );
+    if (run.outOfTime) {
+      warnings.push(
+        `Stopped after attempt ${String(run.attempts.length)}: the time limit of the call left ` +
+          'too little time to compile the fixed text again, so the fixes found for the errors of ' +
+          'that attempt were not applied. source is the text it compiled; call ' +
+          'pine_smart_compile again with it to go on.',
+      );
+    }
 
     let writtenBack = false;
     if (writeBack === true && run.source === start) {

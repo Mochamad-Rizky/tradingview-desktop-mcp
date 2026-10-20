@@ -10,6 +10,10 @@ import type { PineCompileError, PineCompileResult } from './mappers.js';
 // reaches the editor or the chart: the tool (index.ts) says where the text comes from and whether
 // the result is written back.
 
+// The least time left with which another attempt is started: a compilation given less does not
+// finish. An attempt is not started either with less left than the slowest attempt so far took.
+const MIN_ATTEMPT_MS = 1000;
+
 // The message of the compiler for a name that is not declared, as normalizeCompileErrors words it.
 const UNDECLARED = /^Undeclared identifier "([A-Za-z_]\w*)"$/;
 
@@ -65,37 +69,55 @@ export function collectFixes(source: string, errors: PineCompileError[]): PineFi
 
 // Compiles `start` with `compile` and, while the text has errors, applies the fixes and compiles
 // the fixed text, up to maxAttempts compilations. It stops when a compilation succeeds, when
-// applyFixes is false, when the attempts are used up and when no fix changes the text.
+// applyFixes is false, when the attempts are used up, when no fix changes the text and when too
+// little time is left for another attempt.
+//
+// The whole loop has one time limit, `deadline` (a time in ms on the clock `now`, Date.now by
+// default). A compilation is given what is left of it, and a fix is applied only if enough is left
+// to compile the fixed text: at least a second, and at least as long as the slowest attempt took.
+// Otherwise the loop ends there with `outOfTime` true, and the fixes it found are not applied.
 //
 // A fix is applied only when another compilation follows it, so the text returned is always the one
 // the last attempt compiled and `success` and the errors of the last attempt are about it. Each
 // attempt lists the errors of its compilation and the descriptions of the fixes applied after it,
-// which made the text of the next attempt; the last attempt applied none. `last` is the whole
-// result of the last compilation. A failure of `compile` (TradingView not compiling at all) is
-// passed on, since the attempts so far are not a result of the call.
+// which made the text of the next attempt; the last attempt applied none. A failure of `compile`
+// (TradingView not compiling at all) is passed on, since the attempts so far are not a result of
+// the call; `compile` is the place to keep each result as it completes.
 export async function smartCompile(
-  compile: (source: string) => Promise<PineCompileResult>,
+  compile: (source: string, waitMs: number) => Promise<PineCompileResult>,
   start: string,
-  options: { maxAttempts: number; applyFixes: boolean },
+  options: { maxAttempts: number; applyFixes: boolean; deadline: number; now?: () => number },
 ): Promise<{
   success: boolean;
   attempts: { errors: PineCompileError[]; applied: string[] }[];
   source: string;
   diff: string;
-  last: PineCompileResult;
+  outOfTime: boolean;
 }> {
+  const now = options.now ?? Date.now;
   const attempts: { errors: PineCompileError[]; applied: string[] }[] = [];
   let source = start;
+  let slowest = 0;
   for (;;) {
-    const last = await compile(source);
+    const began = now();
+    const last = await compile(source, Math.max(options.deadline - began, 0));
+    const ended = now();
+    slowest = Math.max(slowest, ended - began);
     // Phrased as "< maxAttempts" so that a count that is not a number allows no more attempts.
     const fixed =
       !last.success && options.applyFixes && attempts.length + 1 < options.maxAttempts
         ? applyFixes(source, collectFixes(source, last.errors))
         : null;
-    if (fixed === null || fixed.source === source) {
+    const time = options.deadline - ended >= Math.max(MIN_ATTEMPT_MS, slowest);
+    if (fixed === null || fixed.source === source || !time) {
       attempts.push({ errors: last.errors, applied: [] });
-      return { success: last.success, attempts, source, diff: unifiedDiff(start, source), last };
+      return {
+        success: last.success,
+        attempts,
+        source,
+        diff: unifiedDiff(start, source),
+        outOfTime: fixed !== null && fixed.source !== source,
+      };
     }
     attempts.push({ errors: last.errors, applied: fixed.applied });
     source = fixed.source;
