@@ -44,7 +44,9 @@ The fake window models what the real app was seen to do, among others:
   range whose ends are the wrong way round.
 - The Pine Editor is the side panel, registered as `dialog`. Closing it unregisters it and keeps
   unsaved text with the flag of unsaved changes, which the next open shows again as the text of the
-  script; without unsaved changes, an open after the first one shows a new script.
+  script; without unsaved changes, an open after the first one shows a new script. The flag is
+  written only when the side panel closes: starting, opening, saving or adding a script leaves it
+  as it is.
 - The compiler reports, in the order of the text and with the messages and codes of the real one,
   every undeclared name and, in a script of version 5 or later, a call of a Pine v4 name without
   its namespace, after which it stops.
@@ -113,9 +115,10 @@ time, because they share one window.
   position, a valid script and `pine_get_errors`, positions after a tab, `é` and an emoji, a script
   without `//@version`); `pine_smart_compile` with the real compiler; the shape of
   `pine_list_scripts`; the editor: a new script whose text is set, read and compiled, and the editor
-  closed and opened again with unsaved text of the test's own; on a chart with a free slot, a script
-  that draws and a strategy added and removed; and, read only, the drawings of the Pine scripts on
-  the chart and the strategy tools on a chart without a strategy.
+  closed without a change and opened again, its text compared; and, read only, the drawings of the
+  Pine scripts on the chart and the strategy tools on a chart without a strategy. Three tests run
+  only when allowed (below): the editor closed and opened again with unsaved text of the test's own,
+  and, on a chart with a free slot, a script that draws and a strategy added and removed.
 
 The assertions compare what is the user's (the symbol, prices, names, texts) without printing it.
 What a suite sees of the app is printed as `observed <what>: <JSON>` lines of key names, types,
@@ -132,8 +135,10 @@ The end-to-end suites work on the user's own, logged-in app, so they follow thes
 - **What they may change:** the symbol, the timeframe, the chart type and the visible range of the
   active chart; the history loaded into the chart, which the data suite extends by a few dozen
   older bars (TradingView keeps them until the chart loads again); the Pine Editor, under the guard
-  below; and studies a test added itself, within the plan limits, which that test removes again.
-  Compiling a synthetic script without the editor changes nothing in the app. Nothing else.
+  below; and studies a test added itself, within the plan limits, which the test removes again,
+  together with any study a call left on the chart under the name the test added (below).
+  Compiling a synthetic script without the editor changes nothing in the app. Nothing else, and
+  nothing is left behind in the account, unless the person running the suites allows it (below).
 - **What they check first:** before its first change, a suite that changes the chart checks by
   reading only that the chart API has every member the chart tools use (`symbol`, `resolution`,
   `chartType`, `getVisibleRange` and the three setters of the active chart, `zoomToBarsRange` of the
@@ -165,9 +170,32 @@ The end-to-end suites work on the user's own, logged-in app, so they follow thes
   cover). They never reload the tab, and never quit, launch or restart TradingView.
 - **The layout autosave** of TradingView saves the changed chart while a suite runs; the restore
   saves it back as it was.
+- **What they print:** a skip reason, a log line and an error of the harness name the part of the
+  chart, the tool and the error code, never a value of the user: not the symbol, the timeframe, the
+  chart type or the range of the chart that could not be put back, and not the text of a tool that
+  failed, which can name the symbol the chart went back to or a saved script
+  (`describeFailure`, `ToolCallError`).
 - **An interrupted run** (Ctrl+C inside a test) can stop before the restore. Note the symbol,
   timeframe, chart type and range, and what the Pine Editor shows, before a run, and put them back
   by hand if a run is cut short.
+
+### What a run may leave behind, when allowed
+
+By default a run leaves nothing in the account: no study, no script, no draft. Two variables allow
+the tests that would, each set to `1`:
+
+- `TV_E2E_ALLOW_DRAFTS` runs `adds a script that draws, …` and `adds a strategy, …`, which add a
+  script from the Pine Editor to the chart (`pine_compile` with `addToChart`). TradingView saves
+  such a script as a server draft of the account (version 0.x), as its own Add to chart button does,
+  and no tool of this server deletes a script: each run that gets to add them leaves two drafts,
+  `tradingview-mcp E2E drawings` and `tradingview-mcp E2E strategy`, among the scripts of the account
+  (`pine_list_scripts` lists them), to delete in TradingView if they are not wanted. They also need
+  a free indicator slot. Without the variable they are skipped with that reason.
+- `TV_E2E_ALLOW_EDITOR_TEXT` runs `a closed editor shows its unsaved text again when it is opened`,
+  which closes the Pine Editor on unsaved text of the test's own. TradingView keeps that text for
+  the next open; the test puts the script back and closes the editor again, but a run cut short in
+  between leaves the editor reopening on the test text. Without the variable the suite instead
+  closes an unmodified editor without typing, opens it again and compares its text.
 
 ### Plan-aware skips
 
@@ -188,10 +216,13 @@ On a chart without a free indicator slot (2 of 2 on a Basic plan):
   limit, the same studies afterwards and no new dialog (`app_get_ui_state`). Should TradingView add
   the study all the same, the test removes it and fails.
 
-With a free slot the adding tests run, each on its own study only. A script added from the editor
-(`pine_compile` with `addToChart`) is saved by TradingView as a server draft of the account
-(version 0.x), as its own Add to chart button does: the test removes its study, and the draft stays
-among the scripts of the account.
+With a free slot the adding tests run (the two that add a script from the editor only with
+`TV_E2E_ALLOW_DRAFTS=1`, above), each on its own study only, and within the chart snapshot and the
+exact restore of the chart suites. However a test ends, `addThenCleanUp` lists the studies and
+removes, with `confirm: true`, every study that was not on the chart before and has the name the
+test added (Relative Strength Index, or the title of the test script), because a call that failed
+halfway may have added one without answering its id. A study that was on the chart before is never
+touched, whatever its name.
 
 ### The Pine Editor guard
 
@@ -216,8 +247,9 @@ under these rules (`snapshotEditor`, `restoreEditor` and the steps around them i
 - **After the last test** a closed editor is closed again, and the suite checks that the app keeps
   the same script for it as before.
 
-The flag of unsaved changes is written when the editor closes and lags while it is open, so the
-guard asks the editor itself (`isModified()`). Opening and closing the editor rewrites what the app
+The flag of unsaved changes is written when the editor closes and stays as it is while the editor is
+open, also after a call with `confirm: true` replaced the text, so the guard asks the editor itself
+(`isModified()`). Opening and closing the editor rewrites what the app
 keeps of it in local storage: `pine_new` clears the editor console (`console_messages_key`), which
 the tests' compile messages then fill; the view state kept for the last script
 (`last_edited_script_view_state`) changes; and the copy of that script (`last_edited_script`) is
