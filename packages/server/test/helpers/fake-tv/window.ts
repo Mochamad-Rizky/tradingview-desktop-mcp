@@ -50,7 +50,9 @@ import { createFakeWebpack } from './webpack.js';
 // The core model also answers the study core of a study on the chart by id, the same object the
 // study API gives, and the core time scale gives the time of a time point by its index, in the time
 // base of the bar rows, the points after the last bar included (futurePoints). The drawings a Pine
-// study holds come with its core (pine-graphics.ts).
+// study holds come with its core (pine-graphics.ts), and the report of a strategy with its core too
+// (strategy.ts). The core model reports the active strategy source as a watched value, null unless
+// a strategy of the fixture is flagged active.
 //
 // The Pine Editor comes from the pineEditor of the fixture (pine-editor.ts): its registry, the
 // service locator with the page layout service and the descriptor of that service are in the
@@ -160,8 +162,14 @@ export interface FakeSetOptions {
 // on a build without it.
 export interface FakeChartModel {
   mainSeries(): FakeMainSeries;
-  // The core model: the time scale, and the cores of the studies by id (null for any other id).
-  model(): { timeScale(): FakeTimeScale; getStudyById(id: string): FakeStudyCore | null };
+  // The core model: the time scale, the cores of the studies by id (null for any other id) and the
+  // active strategy source, whose value is the core of the strategy the Strategy Tester shows, or
+  // null.
+  model(): {
+    timeScale(): FakeTimeScale;
+    getStudyById(id: string): FakeStudyCore | null;
+    activeStrategySource(): { value(): FakeStudyCore | null };
+  };
   canCreateStudy?: (spec: { id: string }) => FakeCanCreateStudy;
 }
 
@@ -516,6 +524,7 @@ export function createFakeTvWindow(
     timeScale: () => timeScale,
     // The studies are built below; the model reaches them when it is asked.
     getStudyById: (id: string) => studies.getStudyCore(id),
+    activeStrategySource: () => ({ value: () => studies.getActiveStrategyCore() }),
   };
   const chartModel: FakeChartModel = { mainSeries: () => mainSeries, model: () => coreModel };
   const studies = createFakeStudies(fixture, loaded, {

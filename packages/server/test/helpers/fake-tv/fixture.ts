@@ -120,6 +120,10 @@ export interface TvStateFixture {
 //   unit the test wants to stage, and line is where the log call is.
 // - graphics: what the script drew, which graphics() of the study core holds (pine-graphics.ts).
 //   Left out, graphics() holds empty maps, as for a script that draws nothing.
+// - report: the report a strategy holds, which reportData() of its study core answers (strategy.ts).
+//   Left out, the strategy has no report yet and reportData() is null. Only a strategy has one.
+// - activeStrategy: whether the strategy is the active strategy source of the chart, which the core
+//   model reports (the first such strategy counts). Left out, none is.
 export interface FixtureStudy {
   id: string;
   name: string;
@@ -136,6 +140,37 @@ export interface FixtureStudy {
   compileError?: boolean | undefined;
   logs?: FixtureStudyLog[] | undefined;
   graphics?: FixtureGraphics | undefined;
+  report?: FixtureStrategyReport | undefined;
+  activeStrategy?: boolean | undefined;
+}
+
+// The report of a strategy as its study holds it (reverse-engineering notes of Plan 2, section Q6).
+// The members that are raw JSON are what the app keeps, and a test stages whatever it wants the
+// tools to meet in them: numbers, numeric strings, values that are no numbers, or a shape the notes
+// do not know.
+// - currency: the currency member, "NONE" when the strategy has none.
+// - performance: the performance member, with all, long and short and any metric at its top level.
+// - trades: the trades member. The notes do not say whether the raw report has one, and in which
+//   shape: the Strategy Tester of the app keeps trades with entry and exit legs.
+// - filledOrders: the filled orders, with the keys the app abbreviates (id, b for buy, e false for
+//   an exit, p price, q quantity, c comment). barIndex is the time-point index barsIndexes()
+//   reports for the order; the fake adds the tm the app keeps.
+// Each member left out is a member the report does not have.
+export interface FixtureStrategyReport {
+  currency: string;
+  performance?: Record<string, JsonValue> | undefined;
+  trades?: JsonValue | undefined;
+  filledOrders?: FixtureFilledOrder[] | undefined;
+}
+
+export interface FixtureFilledOrder {
+  id: string;
+  b: boolean;
+  e?: boolean | undefined;
+  p: number;
+  q: number;
+  c?: string | undefined;
+  barIndex: number;
 }
 
 // The drawings of a Pine study, each as the app materializes it (reverse-engineering notes of Plan
@@ -223,6 +258,8 @@ export interface FixtureStudyPlot {
   target?: string | undefined;
 }
 
+// internalID is the id the app gives an input of a strategy that has a meaning of its own, such as
+// initial_capital.
 export interface FixtureStudyInput {
   id: string;
   name: string;
@@ -233,6 +270,7 @@ export interface FixtureStudyInput {
   min?: number | undefined;
   max?: number | undefined;
   confirm?: boolean | undefined;
+  internalID?: string | undefined;
 }
 
 const fixtureStudyInputSchema = z.strictObject({
@@ -245,6 +283,26 @@ const fixtureStudyInputSchema = z.strictObject({
   min: z.number().optional(),
   max: z.number().optional(),
   confirm: z.boolean().optional(),
+  internalID: z.string().optional(),
+});
+
+const fixtureStrategyReportSchema = z.strictObject({
+  currency: z.string(),
+  performance: z.record(z.string(), z.json()).optional(),
+  trades: z.json().optional(),
+  filledOrders: z
+    .array(
+      z.strictObject({
+        id: z.string(),
+        b: z.boolean(),
+        e: z.boolean().optional(),
+        p: z.number(),
+        q: z.number(),
+        c: z.string().optional(),
+        barIndex: z.number(),
+      }),
+    )
+    .optional(),
 });
 
 const drawingShape = {
@@ -364,6 +422,8 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
         )
         .optional(),
       graphics: fixtureGraphicsSchema.optional(),
+      report: fixtureStrategyReportSchema.optional(),
+      activeStrategy: z.boolean().optional(),
     }),
   ),
   shapes: z.array(z.strictObject({ id: z.string(), name: z.string() })),

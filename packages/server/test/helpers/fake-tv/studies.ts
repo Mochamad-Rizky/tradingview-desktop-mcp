@@ -8,6 +8,11 @@ import {
   type FakePropertyNode,
   type FakeStudyGraphics,
 } from './pine-graphics.js';
+import {
+  createFakeStrategyMembers,
+  type FakeFilledOrder,
+  type FakeStrategyReport,
+} from './strategy.js';
 import type { SyntheticBar } from './synthetic-bars.js';
 
 // The studies on the chart and what the app knows of the indicators it can add, built from the
@@ -20,7 +25,8 @@ import type { SyntheticBar } from './synthetic-bars.js';
 // - The study core has id(), metaInfo() (description, plots, styles, ohlcPlots, inputs, isRGB when
 //   the colors of its drawings are packed integers, and pine with scriptIdPart for a Pine study)
 //   and data(), the plot list of its rows. A strategy carries the own flag isStudyStrategy and the
-//   members the duck test of the app looks for. It also has hasCompileError() (whether the script
+//   members the duck test of the app looks for, with its report (strategy.ts): reportData(),
+//   ordersData() and barsIndexes(). It also has hasCompileError() (whether the script
 //   of a Pine study failed to compile) and logs(): null for a study whose script writes no Pine
 //   logs, else a set like the PrimitiveSet of the app (forEach, values(), the iterator and size;
 //   entries() and keys() throw, as on the app) of the log items { barTime, time, level, source:
@@ -30,6 +36,8 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   PrimitiveSets (empty for a study that draws nothing, a built-in included), and the property
 //   tree of its palette. getStudyCore(id) is the getStudyById of the core model: the same core
 //   object the study API gives, null for an id that is not a study of the chart.
+//   getActiveStrategyCore() is what activeStrategySource().value() of the core model answers: the
+//   core of the first strategy of the fixture flagged activeStrategy, null when none is on the chart.
 // - The plot list holds a row [time, ...one slot per plot] for each bar, at the index of the bar
 //   (the same indices as bars()), after the pre-history rows at -1e6 and below. It has the members
 //   of the PlotList of the app the tools read: size, firstIndex, lastIndex, firstPlottableIndex,
@@ -110,6 +118,7 @@ export interface FakeInputInfo {
   min?: number;
   max?: number;
   confirm?: boolean;
+  internalID?: string;
 }
 
 export interface FakeStudyMetaInfo {
@@ -134,7 +143,12 @@ export interface FakeStudyCore {
   logs(): FakeLogSet | null;
   graphics(): FakeStudyGraphics;
   properties(): FakePropertyNode;
+  // The members of a strategy, and only of a strategy (strategy.ts).
   isStudyStrategy?: true;
+  strategyOrdersPaneView?(): null;
+  ordersData?(): FakeFilledOrder[] | null;
+  reportData?(): FakeStrategyReport | null;
+  barsIndexes?(): number[];
 }
 
 // A Pine log item as logs() holds it.
@@ -173,6 +187,8 @@ export interface FakeStudies {
   getStudyById(id: string): FakeStudyApi;
   // The core of a study, the getStudyById of the core model: null for any other id.
   getStudyCore(id: string): FakeStudyCore | null;
+  // The core of the active strategy source, or null when no strategy on the chart is flagged.
+  getActiveStrategyCore(): FakeStudyCore | null;
   createStudy(
     nameOrDescriptor: string | FakeStudyDescriptor,
     forceOverlay?: boolean,
@@ -279,6 +295,7 @@ function inputsOf(study: FixtureStudy): { info: FakeInputInfo; value: JsonValue 
       ...(input.min === undefined ? {} : { min: input.min }),
       ...(input.max === undefined ? {} : { max: input.max }),
       ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
+      ...(input.internalID === undefined ? {} : { internalID: input.internalID }),
     },
     value: input.value,
   }));
@@ -415,12 +432,7 @@ export function createFakeStudies(
       properties: () => properties,
     };
     if (study.strategy === true) {
-      Object.assign(core, {
-        isStudyStrategy: true,
-        strategyOrdersPaneView: () => null,
-        ordersData: () => null,
-        reportData: () => null,
-      });
+      Object.assign(core, { isStudyStrategy: true, ...createFakeStrategyMembers(study.report) });
     }
     return {
       title: () => study.title ?? study.name,
@@ -512,6 +524,10 @@ export function createFakeStudies(
       return entry.api;
     },
     getStudyCore: (id) => entries.find(({ study }) => study.id === id)?.api.study() ?? null,
+    getActiveStrategyCore: () =>
+      entries
+        .find(({ study }) => study.strategy === true && study.activeStrategy === true)
+        ?.api.study() ?? null,
     canCreateStudy,
     createStudy(...args) {
       options.record('chart.createStudy', args);
