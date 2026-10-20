@@ -211,6 +211,22 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     expect(editorOf(win).source).toBe(fixture.pineEditor.templates.indicator);
   });
 
+  test('the tools that replace the text say that changes need confirm until the editor closes', async () => {
+    const { client } = await startHarness();
+
+    const { tools } = await client.listTools();
+
+    for (const name of ['pine_new', 'pine_open', 'pine_set_source', 'pine_smart_compile']) {
+      const tool = tools.find((candidate) => candidate.name === name);
+      expect(tool?.description, name).toContain(
+        'TradingView keeps flagging unsaved changes until the editor is closed',
+      );
+      expect(tool?.description, name).toContain('later changes need confirm: true too');
+      const confirm = (tool?.inputSchema.properties?.confirm ?? {}) as { description?: string };
+      expect(confirm.description, name).toContain('until the editor is closed');
+    }
+  });
+
   test('after confirm replaced it, changes need confirm until the editor closes', async () => {
     const { client, ctx, win } = await closedWithUnsavedText();
     await callTool(client, 'pine_new', { confirm: true });

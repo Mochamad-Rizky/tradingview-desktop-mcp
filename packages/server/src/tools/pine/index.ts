@@ -61,12 +61,25 @@ const LIMIT_HINT =
   'The plan of the account limits saved Pine scripts. Free a slot in TradingView or upgrade the ' +
   'plan; this server deletes no script.';
 
+// TradingView keeps flagging unsaved changes of the editor until it is closed, also after a call
+// replaced them (seen on the app), and the tools count that flag as unsaved changes: a call with
+// confirm: true does not end the need for confirm. The tools that replace the text say so.
+const KEPT_FLAG =
+  'TradingView keeps flagging unsaved changes until the editor is closed, so after a call with ' +
+  'confirm: true replaced them, later changes need confirm: true too until then.';
+
+const CONFIRM_RULE =
+  'When the editor holds unsaved changes the call fails with CONFIRMATION_REQUIRED and changes ' +
+  `nothing, unless confirm: true, which discards them. ${KEPT_FLAG}`;
+
 const confirmInput = (what: string) =>
   z
     .boolean()
     .optional()
     .describe(
-      `Must be true to ${what} while the Pine Editor holds unsaved changes, which are then lost.`,
+      `Must be true to ${what} while the Pine Editor holds unsaved changes, which are then lost. ` +
+        'TradingView counts them as unsaved until the editor is closed, also after a call with ' +
+        'confirm: true replaced them.',
     );
 
 const sourceInput = () =>
@@ -151,8 +164,7 @@ export const pineNew = defineTool({
     'template of the type (indicator by default, strategy or library), or the given source in ' +
     'its place. Nothing is saved; pine_save saves it under a name. Returns type, script (null ' +
     'for a new script), modified and draft; the template text is not returned (pine_get_source ' +
-    'reads the text). When the editor holds unsaved changes the call fails with ' +
-    'CONFIRMATION_REQUIRED and changes nothing, unless confirm: true, which discards them.',
+    `reads the text). ${CONFIRM_RULE}`,
   inputSchema: {
     type: z
       .enum(['indicator', 'strategy', 'library'])
@@ -191,9 +203,8 @@ export const pineOpen = defineTool({
     'title of the script, case aside). Returns script (id and version), name, modified and ' +
     'draft. An unknown or ambiguous name fails with INVALID_INPUT (the candidates are in ' +
     'error.details.candidates). A script the plan of the account does not let TradingView open ' +
-    '(only the newest saved scripts within the limit can be) fails with PLAN_LIMIT. When the ' +
-    'editor holds unsaved changes the call fails with CONFIRMATION_REQUIRED and changes nothing, ' +
-    'unless confirm: true, which discards them.',
+    '(only the newest saved scripts within the limit can be) fails with PLAN_LIMIT. ' +
+    CONFIRM_RULE,
   inputSchema: {
     scriptId: z
       .string()
@@ -297,7 +308,8 @@ export const pineGetSource = defineTool({
   description:
     'Reads the text of the Pine Editor of TradingView and changes nothing. Returns source, ' +
     'script (its id and version; null for a new script, and a version of null when TradingView ' +
-    'reports none) and modified (whether the text has unsaved changes). It does not open the ' +
+    'reports none) and modified (whether the text has unsaved changes, counting those ' +
+    'TradingView still flags, which it does until the editor is closed). It does not open the ' +
     'editor: when it is closed the call fails with NOT_AVAILABLE; pine_open or pine_new opens it.',
   inputSchema: {},
   annotations: READ_ONLY,
@@ -317,9 +329,7 @@ export const pineSetSource = defineTool({
     'holds, and opens the editor first if needed, the way the Pine button of TradingView opens ' +
     'it: it shows the script it last held the first time in a session, a new script after it was ' +
     'closed, and in either case the unsaved text it kept, which counts as unsaved changes. ' +
-    'Nothing is saved; pine_save does that. Returns script, modified and draft. When the editor ' +
-    'holds unsaved changes the call fails with CONFIRMATION_REQUIRED and changes nothing, unless ' +
-    'confirm: true, which discards them.',
+    `Nothing is saved; pine_save does that. Returns script, modified and draft. ${CONFIRM_RULE}`,
   inputSchema: {
     source: sourceInput(),
     confirm: confirmInput('replace the text'),
@@ -673,7 +683,7 @@ export const pineSmartCompile = defineTool({
     'warning. Compile errors are a result; a failure of TradingView to compile at all is ' +
     'NOT_AVAILABLE or TIMEOUT. Nothing is written to the editor unless writeBack: true, which ' +
     'writes the final text into it, as pine_set_source does, when it differs from the text the ' +
-    'call started with. An editor with unsaved changes needs confirm: true. An open one is ' +
+    `call started with. An editor with unsaved changes needs confirm: true. ${KEPT_FLAG} An open one is ` +
     'refused with CONFIRMATION_REQUIRED before anything is compiled, and a closed one that the ' +
     'write opens, and that restores unsaved text when it opens, is refused then, after the ' +
     'compilations; either way nothing is written. When the text came from the editor, it is ' +
@@ -712,7 +722,8 @@ export const pineSmartCompile = defineTool({
       .optional()
       .describe(
         'Must be true for writeBack while the Pine Editor holds unsaved changes, which the ' +
-          'written text then replaces. Default: false.',
+          'written text then replaces. TradingView counts them as unsaved until the editor is ' +
+          'closed, also after a call with confirm: true replaced them. Default: false.',
       ),
   },
   // Only writeBack changes anything, by replacing the text of the editor, which with confirm: true

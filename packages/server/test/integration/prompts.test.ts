@@ -327,6 +327,15 @@ describe('write_and_backtest_strategy', () => {
     expect(text).toMatch(/never discard/i);
   });
 
+  test('passes confirm: true to the later changes, which TradingView flags until the editor is closed', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'write_and_backtest_strategy', { idea: IDEA });
+
+    expect(text).toMatch(/flags? [^.]*unsaved changes until (?:the editor|it) is closed/i);
+    expect(text).toMatch(/later change[^.]*confirm: true/i);
+  });
+
   test('asks for a summary of the results', async () => {
     const { client } = await startServer();
 
@@ -444,6 +453,15 @@ describe('debug_pine_script', () => {
 
     expect(text).toMatch(/do not change the text of the editor/i);
     expect(text).not.toMatch(/writeBack: true/);
+  });
+
+  test('says that applying a fix needs confirm: true while the editor counts as unsaved', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'debug_pine_script');
+
+    expect(text).toMatch(/confirm: true/);
+    expect(text).toMatch(/until the editor is closed/i);
   });
 
   test('takes no arguments, and ignores what a client sends', async () => {

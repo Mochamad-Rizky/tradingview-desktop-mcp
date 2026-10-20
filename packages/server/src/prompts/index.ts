@@ -172,7 +172,10 @@ function writeAndBacktestStrategy(
         '//@version=6, a strategy() declaration, the entry and exit rules of the idea, and an ' +
         'input for each parameter. If it fails with CONFIRMATION_REQUIRED, the Pine Editor holds ' +
         'unsaved text: ask the user before you call it again with confirm: true, and never ' +
-        'discard that text on your own.',
+        'discard that text on your own. Once a call with confirm: true has replaced it, ' +
+        'TradingView still flags unsaved changes until the editor is closed, so every later ' +
+        'change of the text needs confirm: true too; in the steps below that text is the script ' +
+        'you made.',
       'pine_smart_compile with writeBack: true and confirm: true. The unsaved text in the editor ' +
         'is the script you just made, so nothing of the user is lost. It compiles the text, ' +
         'applies the rule-based fixes it knows and writes the fixed text back. If errors remain, ' +
@@ -228,7 +231,8 @@ function debugPineScript(): GetPromptResult {
       'code. Say which fixes pine_smart_compile found and which need a change of your own. When ' +
       'the script compiles without errors, say so, and explain only the warnings and the ' +
       'findings of pine_analyze. Offer to apply the fixes, but change the editor only when the ' +
-      'user agrees.',
+      'user agrees: a change of the text needs confirm: true while the editor holds unsaved ' +
+      'changes, which TradingView keeps flagging until the editor is closed.',
     MISSING_TOOLS,
   ]);
 }
