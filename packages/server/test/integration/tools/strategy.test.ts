@@ -96,6 +96,10 @@ const at = (time: number) => ({ time, timeIso: isoOf(time) });
 
 const TOOLS = ['strategy_get_results', 'strategy_get_trades', 'strategy_get_equity'] as const;
 
+// The strategy the tools name in their results: the one they read.
+const SAMPLE_REF = { id: 'STRAT01', name: 'RSI Strategy' };
+const SECOND_REF = { id: 'STRAT02', name: 'MACD Strategy' };
+
 // The performance of the sample strategy as strategy_get_results reports it.
 const SAMPLE_PERFORMANCE_RESULT = {
   all: {
@@ -230,7 +234,7 @@ describe('strategy_get_results', () => {
     expect(envelopeOf(result)).toStrictEqual({
       ok: true,
       data: {
-        strategy: { id: 'STRAT01', name: 'RSI Strategy' },
+        strategy: SAMPLE_REF,
         currency: 'USD',
         initialCapital: 10_000,
         performance: SAMPLE_PERFORMANCE_RESULT,
@@ -347,7 +351,7 @@ describe('strategy_get_trades', () => {
     expect(result.isError).not.toBe(true);
     expect(envelopeOf(result)).toStrictEqual({
       ok: true,
-      data: { total: 4, trades: SAMPLE_TRADES_RESULT },
+      data: { strategy: SAMPLE_REF, total: 4, trades: SAMPLE_TRADES_RESULT },
       meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
     });
     expect(inspectFakeWindow(win).calls).toEqual([]);
@@ -392,7 +396,7 @@ describe('strategy_get_trades', () => {
     expect(result.isError).not.toBe(true);
     expect(envelopeOf(result)).toStrictEqual({
       ok: true,
-      data: { total: 7, trades: [], fills: SAMPLE_FILLS_RESULT },
+      data: { strategy: SAMPLE_REF, total: 7, trades: [], fills: SAMPLE_FILLS_RESULT },
       meta: {
         via: 'internal',
         durationMs: expect.any(Number) as number,
@@ -408,12 +412,13 @@ describe('strategy_get_trades', () => {
     const result = await callTool(client, 'strategy_get_trades', { limit: 2, offset: 5 });
 
     expect(dataOf(result)).toStrictEqual({
+      strategy: SAMPLE_REF,
       total: 7,
       trades: [],
       fills: SAMPLE_FILLS_RESULT.slice(5, 7),
     });
     const past = await callTool(client, 'strategy_get_trades', { offset: 7 });
-    expect(dataOf(past)).toStrictEqual({ total: 7, trades: [], fills: [] });
+    expect(dataOf(past)).toStrictEqual({ strategy: SAMPLE_REF, total: 7, trades: [], fills: [] });
     expect(warningsOf(past)).toHaveLength(1);
   });
 
@@ -437,7 +442,7 @@ describe('strategy_get_trades', () => {
 
     expect(envelopeOf(result)).toStrictEqual({
       ok: true,
-      data: { total: 0, trades: [] },
+      data: { strategy: SAMPLE_REF, total: 0, trades: [] },
       meta: { via: 'internal', durationMs: expect.any(Number) as number, warnings: [] },
     });
   });
@@ -448,7 +453,12 @@ describe('strategy_get_trades', () => {
 
     const result = await callTool(client, 'strategy_get_trades');
 
-    expect(dataOf(result)).toStrictEqual({ total: 0, trades: [], fills: [] });
+    expect(dataOf(result)).toStrictEqual({
+      strategy: SAMPLE_REF,
+      total: 0,
+      trades: [],
+      fills: [],
+    });
     expect(warningsOf(result)).toHaveLength(1);
   });
 });
@@ -463,6 +473,7 @@ describe('strategy_get_equity', () => {
     expect(envelopeOf(result)).toStrictEqual({
       ok: true,
       data: {
+        strategy: SAMPLE_REF,
         initialCapital: 10_000,
         // The first entry with the initial capital, then the exit of each closed trade, in time
         // order. The open trade is not in it.
@@ -605,6 +616,7 @@ describe('strategy_get_equity', () => {
     const result = await callTool(client, 'strategy_get_equity');
 
     expect(dataOf(result)).toStrictEqual({
+      strategy: SAMPLE_REF,
       initialCapital: 10_000,
       points: [],
       downsampled: false,
@@ -639,6 +651,28 @@ describe('strategy_get_equity', () => {
 });
 
 describe('the three tools', () => {
+  test('strategy tools name the strategy they read, however it was chosen', async () => {
+    const active = withStudies(fixture, SAMPLE_STRATEGY, {
+      ...SECOND_STRATEGY,
+      activeStrategy: true,
+    });
+    const { client: onlyOne } = await startHarness();
+    const { client: oneActive } = await startHarness(active);
+    const { client: several } = await startHarness(withTwo);
+
+    for (const tool of TOOLS) {
+      // The only strategy on the chart, the active one of two, and the one a studyId names.
+      const strategies = [
+        dataOf(await callTool(onlyOne, tool)).strategy,
+        dataOf(await callTool(oneActive, tool)).strategy,
+        dataOf(await callTool(several, tool, { studyId: 'STRAT01' })).strategy,
+        dataOf(await callTool(several, tool, { studyId: 'STRAT02' })).strategy,
+      ];
+
+      expect(strategies, tool).toEqual([SAMPLE_REF, SECOND_REF, SAMPLE_REF, SECOND_REF]);
+    }
+  });
+
   test('strategy tools fail NOT_AVAILABLE without a strategy on the chart', async () => {
     const { client, win } = await startHarness(withNoStrategy);
 

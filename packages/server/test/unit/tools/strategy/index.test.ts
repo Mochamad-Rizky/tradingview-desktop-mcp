@@ -113,3 +113,9 @@ test('the descriptions say what is derived and what is not known', () => {
   expect(toolNamed('strategy_get_trades').description).toMatch(/fills/);
   expect(toolNamed('strategy_get_results').description).toMatch(/numberOfWiningTrades/);
 });
+
+test('every strategy tool says that it returns the strategy it read', () => {
+  for (const { name, description } of strategyTools) {
+    expect(description, name).toMatch(/Returns strategy \(id, name\)/);
+  }
+});

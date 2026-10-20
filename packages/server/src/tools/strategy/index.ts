@@ -59,7 +59,18 @@ async function readReport(
   return page.bridge.evaluate(readStrategyReport, [target.index, studyId ?? null, part]);
 }
 
-const labelOf = ({ id, name }: { id: string; name: string }) => `${id} (${name})`;
+// The strategy a result was read from: its id and its name. Taken from what the page reads, and not
+// declared as an interface, which would lack the index signature a JSON value needs.
+type StrategyRef = Awaited<ReturnType<typeof readReport>>['strategy'];
+
+const labelOf = ({ id, name }: StrategyRef) => `${id} (${name})`;
+
+// The data of a result with the strategy it was read from in front, so that a caller knows which
+// one that was when the choice was implicit. It is a function and not a spread at the call, which
+// would make the compiler merge the two answers of strategy_get_trades into one shape.
+function ofStrategy<T extends object>(strategy: StrategyRef, data: T) {
+  return { strategy, ...data };
+}
 
 // What strategy_get_results and the resource tradingview://strategy/report report: the results of a
 // strategy, with a warning when the report holds no number. The strategy is the one studyId names,
@@ -119,16 +130,16 @@ export const strategyGetTrades = defineTool({
   title: 'Read Strategy Tester trades',
   description:
     'Lists the trades of a strategy on a chart, and changes nothing. ' +
-    `${SELECTION_TEXT} Returns total, the number of trades, and trades, at most limit of them ` +
-    'from offset, in the order TradingView gives them: number, isOpen, side (long or short), ' +
-    'entry and exit (each with time in Unix seconds, timeIso, price and signal, the name the ' +
-    'script gave the order; exit is null for a trade that is still open), quantity, profit and ' +
-    'profitPercent, cumulativeProfit, runup and drawdown, the amounts as TradingView holds them, ' +
-    'in the currency of the strategy. If the report of this TradingView build holds filled ' +
-    'orders but no list of trades, trades is empty and fills lists the orders instead, with a ' +
-    'warning: each fill has id, side (buy or sell), isEntry, price, quantity, comment, barIndex ' +
-    'and the time of its bar with timeIso, an entry and an exit make a trade, and total then ' +
-    `counts the fills. ${AVAILABILITY_TEXT}`,
+    `${SELECTION_TEXT} Returns strategy (id, name), total, the number of trades, and trades, at ` +
+    'most limit of them from offset, in the order TradingView gives them: number, isOpen, side ' +
+    '(long or short), entry and exit (each with time in Unix seconds, timeIso, price and signal, ' +
+    'the name the script gave the order; exit is null for a trade that is still open), quantity, ' +
+    'profit and profitPercent, cumulativeProfit, runup and drawdown, the amounts as TradingView ' +
+    'holds them, in the currency of the strategy. If the report of this TradingView build holds ' +
+    'filled orders but no list of trades, trades is empty and fills lists the orders instead, ' +
+    'with a warning: each fill has id, side (buy or sell), isEntry, price, quantity, comment, ' +
+    'barIndex and the time of its bar with timeIso, an entry and an exit make a trade, and ' +
+    `total then counts the fills. ${AVAILABILITY_TEXT}`,
   inputSchema: {
     ...strategyInputs(),
     limit: z
@@ -153,11 +164,15 @@ export const strategyGetTrades = defineTool({
   async handler({ studyId, limit, offset, chartIndex }, ctx) {
     const { strategy, trades, fills } = await readReport(ctx, 'trades', studyId, chartIndex);
     if (trades !== null) {
-      return { data: toTrades(trades, offset, limit), via: 'internal', warnings: [] };
+      return {
+        data: ofStrategy(strategy, toTrades(trades, offset, limit)),
+        via: 'internal',
+        warnings: [],
+      };
     }
     const page = toFills(fills, offset, limit);
     return {
-      data: { total: page.total, trades: [], fills: page.fills },
+      data: ofStrategy(strategy, { total: page.total, trades: [], fills: page.fills }),
       via: 'internal',
       warnings: [
         `The report of the strategy ${labelOf(strategy)} has no list of trades in the shape of ` +
@@ -178,13 +193,13 @@ export const strategyGetEquity = defineTool({
     'then has a point at the exit of each closed trade holding the initial capital plus the ' +
     'cumulative profit of the trades closed by then, in time order. It is the realized equity: ' +
     'an open trade is left out, open profit and the drawdown between trades are not in it, and ' +
-    'the equity series of TradingView itself is not read. Returns initialCapital, points (time ' +
-    'in Unix seconds, timeIso and equity) and downsampled. At most maxPoints points come back ' +
-    `(2 to ${String(MAX_POINTS)}, ${String(DEFAULT_MAX_POINTS)} by default): beyond that the ` +
-    'first and the last point are kept with the lowest and the highest point of each stretch ' +
-    'between them, and downsampled is true. NOT_AVAILABLE also when the report has no list of ' +
-    '(closed) trades, which strategy_get_trades then answers with the filled orders, and when ' +
-    `the initial capital cannot be read. ${AVAILABILITY_TEXT}`,
+    'the equity series of TradingView itself is not read. Returns strategy (id, name), ' +
+    'initialCapital, points (time in Unix seconds, timeIso and equity) and downsampled. At most ' +
+    `maxPoints points come back (2 to ${String(MAX_POINTS)}, ${String(DEFAULT_MAX_POINTS)} by ` +
+    'default): beyond that the first and the last point are kept with the lowest and the ' +
+    'highest point of each stretch between them, and downsampled is true. NOT_AVAILABLE also ' +
+    'when the report has no list of (closed) trades, which strategy_get_trades then answers ' +
+    `with the filled orders, and when the initial capital cannot be read. ${AVAILABILITY_TEXT}`,
   inputSchema: {
     ...strategyInputs(),
     maxPoints: z
@@ -243,7 +258,11 @@ export const strategyGetEquity = defineTool({
       warnings.push('No trade has closed yet, so the curve has no points.');
     }
     return {
-      data: { initialCapital, points: kept, downsampled: kept.length < points.length },
+      data: ofStrategy(strategy, {
+        initialCapital,
+        points: kept,
+        downsampled: kept.length < points.length,
+      }),
       via: 'internal',
       warnings,
     };
