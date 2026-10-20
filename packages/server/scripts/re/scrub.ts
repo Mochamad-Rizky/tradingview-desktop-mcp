@@ -550,7 +550,7 @@ export function findLeaks(value: JsonValue, needles: readonly string[]): string[
 }
 
 // The type names a shape of readStudyShapes (shapes.ts) holds as a leaf, alone or several joined by
-// "|" (the items of an array whose types differ), and "mixed".
+// "|" (the items of an array whose types differ), "mixed", and "getter" for an accessor of the API.
 const TYPE_NAMES = new Set([
   'string',
   'number',
@@ -562,20 +562,209 @@ const TYPE_NAMES = new Set([
   'function',
   'bigint',
   'symbol',
+  'getter',
   'mixed',
 ]);
 
-// A key of a shape: the name of a member as the app writes it, or "<id>", which stands for the keys
-// of a map by id. Any other key could be a text of the user.
-const SHAPE_KEY = /^(?:[A-Za-z_$][\w$-]{0,63}|<id>)$/;
+// The key names a shape of the plots, styles, inputs or report of a study keeps: the members the
+// app writes there (reverse-engineering notes, sections 4.4 and 4.6, and the strategy report), and
+// "<id>", which stands for the keys of a map by id. Any other key becomes "<key N>", whatever it
+// looks like: a map of the report can be keyed by ids a script defines (the names of its orders),
+// which are texts of the user.
+const PLOT_KEYS = ['id', 'type', 'target', 'palette', 'title'];
+const STYLE_KEYS = [
+  'title',
+  'histogramBase',
+  'joinPoints',
+  'isHidden',
+  'zorder',
+  'text',
+  'size',
+  'location',
+  'char',
+  'shape',
+  'plottype',
+  'color',
+  'textColor',
+  'linestyle',
+  'linewidth',
+  'transparency',
+  'trackPrice',
+  'showLast',
+  'visible',
+  'display',
+];
+const INPUT_KEYS = [
+  'id',
+  'name',
+  'localizedName',
+  'type',
+  'defval',
+  'display',
+  'isHidden',
+  'isFake',
+  'active',
+  'min',
+  'max',
+  'step',
+  'options',
+  'optionsTitles',
+  'group',
+  'inline',
+  'tooltip',
+  'confirm',
+  'internalID',
+  'isMTFResolution',
+  'isMTFGaps',
+  'solutionId',
+  'migrate',
+];
+const REPORT_KEYS = [
+  // The report, its position, its orders and its trades.
+  'currency',
+  'position',
+  'price',
+  'qty',
+  'openPL',
+  'symbolToAccountRate',
+  'filledOrders',
+  'activeOrders',
+  'ordersBrackets',
+  'b',
+  'e',
+  'p',
+  'q',
+  'c',
+  'tm',
+  'st',
+  'lm',
+  'trades',
+  'entry',
+  'exit',
+  'isOpen',
+  'isPartiallyClosed',
+  'quantity',
+  'symbol',
+  'profit',
+  'commission',
+  'runup',
+  'drawdown',
+  'cumulativeProfit',
+  'tradeNumber',
+  'journal',
+  'tradeId',
+  'value',
+  'percentValue',
+  'time',
+  'orderId',
+  'barIndex',
+  // The performance, by side, and its fields.
+  'performance',
+  'all',
+  'long',
+  'short',
+  'totalProfit',
+  'maxStrategyDrawDown',
+  'percentProfitable',
+  'profitFactor',
+  'initialCapital',
+  'netProfit',
+  'grossProfit',
+  'grossLoss',
+  'avgTrade',
+  'commissionPaid',
+  'buyHoldReturn',
+  'buyHoldGainPercent',
+  'strategyOutperformance',
+  'maxContractsHeld',
+  'annualizedReturn',
+  'returnOnInitialCapital',
+  'accountSizeRequired',
+  'returnOnAccount',
+  'avgMarginUsed',
+  'maxMarginUsed',
+  'marginEfficiency',
+  'totalLiquidatedVolume',
+  'largestLiquidatedVolume',
+  'averageRunupDuration',
+  'averageRunup',
+  'maxRunup',
+  'maxStrategyRunUp',
+  'maxEquityRunUpAsPercentOfInitialCapital',
+  'averageDrawdownDuration',
+  'averageDrawdown',
+  'returnOfMaxEquityDrawdown',
+  'maxDrawdown',
+  'maxEquityDrawdownAsPercentOfInitialCapital',
+  'netProfitAsPercentOfLargestLoss',
+  'largestWinnerAsPercentOfGrossProfit',
+  'largestLoserAsPercentOfGrossLoss',
+  'sharpeRatio',
+  'sortinoRatio',
+  'marginCalls',
+  'totalOpenTrades',
+  'totalTrades',
+  'numberOfWiningTrades',
+  'numberOfLosingTrades',
+  'numberOfEvenTrades',
+  'avgWinTrade',
+  'avgLosTrade',
+  'ratioAvgWinAvgLoss',
+  'largestWinTrade',
+  'largestWinTradePercent',
+  'largestLosTrade',
+  'largestLosTradePercent',
+  'outliersCount',
+  'outliersPnL',
+  'avgBarsInTrade',
+  'avgBarsInWinTrade',
+  'avgBarsInLossTrade',
+  'netProfitPercent',
+  'grossProfitPercent',
+  'grossLossPercent',
+  'avgTradePercent',
+  'avgWinTradePercent',
+  'avgLosTradePercent',
+  'buyHoldReturnPercent',
+  'maxDrawdownPercent',
+  'maxRunupPercent',
+  'maxStrategyDrawDownPercent',
+  'maxStrategyRunUpPercent',
+  'openPLPercent',
+  'totalProfitPercent',
+  'strategyOutperformancePercent',
+  'averageDrawdownPercent',
+  'averageRunupPercent',
+  'avgBarsInTradePercent',
+  'outliersPnLPercent',
+  'percentProfitablePercent',
+];
+const DATA_KEYS: ReadonlySet<string> = new Set([
+  '<id>',
+  ...PLOT_KEYS,
+  ...STYLE_KEYS,
+  ...INPUT_KEYS,
+  ...REPORT_KEYS,
+]);
 
-// A shape of values (readStudyShapes) made safe to commit. Every leaf is a type name: a text that is not one (a value that got
-// into the shape) becomes "string", and a number or a boolean the name of its type, so no value is
-// ever written. A key that is not a member name becomes "<key N>". Arrays and objects deeper than
-// `depth` levels become "array" and "object". null, which says that there is nothing, stays.
-export function scrubValueShape(shape: JsonValue, depth = 8): JsonValue {
+// A key of the map of the members of the study API (readStudyShapes): the name of a member of an
+// object of the app, its own or of a prototype, which only the code of the app defines and so is
+// never a text of the user. That map is flat: a value of it is a type name.
+const MEMBER_KEY = /^[A-Za-z_$][\w$]{0,63}$/;
+
+// A shape of values (readStudyShapes) made safe to commit. Every leaf is a type name: a text that
+// is not one (a value that got into the shape) becomes "string", and a number or a boolean the name
+// of its type, so no value is ever written. A key `keeps` does not take becomes "<key N>"; by
+// default only the member names the app writes in plots, styles, inputs and reports are kept.
+// Arrays and objects deeper than `depth` levels become "array" and "object". null, which says that
+// there is nothing, stays.
+export function scrubValueShape(
+  shape: JsonValue,
+  depth = 8,
+  keeps: (key: string) => boolean = (key) => DATA_KEYS.has(key),
+): JsonValue {
   if (Array.isArray(shape)) {
-    return depth <= 0 ? 'array' : shape.map((item) => scrubValueShape(item, depth - 1));
+    return depth <= 0 ? 'array' : shape.map((item) => scrubValueShape(item, depth - 1, keeps));
   }
   if (isObject(shape)) {
     if (depth <= 0) {
@@ -584,8 +773,8 @@ export function scrubValueShape(shape: JsonValue, depth = 8): JsonValue {
     const scrubbed: JsonObject = {};
     let odd = 0;
     for (const [key, value] of Object.entries(shape)) {
-      const name = SHAPE_KEY.test(key) ? key : `<key ${String((odd += 1))}>`;
-      scrubbed[name] = scrubValueShape(value, depth - 1);
+      const name = keeps(key) ? key : `<key ${String((odd += 1))}>`;
+      scrubbed[name] = scrubValueShape(value, depth - 1, keeps);
     }
     return scrubbed;
   }
@@ -597,8 +786,9 @@ export function scrubValueShape(shape: JsonValue, depth = 8): JsonValue {
 
 // What readStudyShapes read, made safe to commit and rebuilt from an allowlist: for each study, in
 // the order of the chart, whether it is a Pine script and whether it is a strategy, and the shapes
-// of its plots, styles, inputs, API members and report, each through scrubValueShape. Anything else a
-// recording holds (a name or an id of a study, say) is dropped.
+// of its plots, styles, inputs, API members and report, each through scrubValueShape (the API
+// members as a flat map of member names). Anything else a recording holds (a name or an id of a
+// study, say) is dropped.
 export function scrubStudyShapes(raw: JsonValue): JsonObject {
   const studies = list(isObject(raw) ? raw.studies : undefined).map((study): JsonObject => {
     const fields = isObject(study) ? study : {};
@@ -608,7 +798,7 @@ export function scrubStudyShapes(raw: JsonValue): JsonObject {
       plots: scrubValueShape(fields.plots ?? null),
       styles: scrubValueShape(fields.styles ?? null),
       inputs: scrubValueShape(fields.inputs ?? null),
-      api: scrubValueShape(fields.api ?? null),
+      api: scrubValueShape(fields.api ?? null, 1, (key) => MEMBER_KEY.test(key)),
       report: scrubValueShape(fields.report ?? null),
     };
   });

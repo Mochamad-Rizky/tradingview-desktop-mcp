@@ -52,7 +52,7 @@ function leaves(value: JsonValue, path = ''): [string, JsonValue][] {
 }
 
 const TYPE_NAME =
-  /^(string|number|boolean|null|undefined|object|array|function|mixed)(\|(string|number|boolean|null|undefined|object|array|function|mixed))*$/;
+  /^(string|number|boolean|null|undefined|object|array|function|getter|mixed)(\|(string|number|boolean|null|undefined|object|array|function|getter|mixed))*$/;
 
 test('readStudyShapes gives the shapes of the studies on the chart, the same in the page', async () => {
   const win = createFakeTvWindow(fixture);
@@ -139,9 +139,55 @@ test('readStudyShapes reads nothing on a page without a chart, and survives memb
   });
 });
 
-test('the shapes of the fake app pass the scrubber as they are', () => {
+test('readStudyShapes records an accessor of the study API as a getter, without calling it', () => {
+  let reads = 0;
+  class StudyApi {
+    get paneIndex(): number {
+      reads += 1;
+      throw new Error('An accessor was called');
+    }
+
+    title(): string {
+      return 'x';
+    }
+  }
+  const api = new StudyApi();
+  Object.defineProperty(api, 'status', {
+    get: () => {
+      reads += 1;
+      return 1;
+    },
+    enumerable: true,
+  });
+  const win = {
+    TradingViewApi: {
+      activeChart: () => ({ getAllStudies: () => [{ id: 'A' }], getStudyById: () => api }),
+    },
+  } as unknown as TvWindow;
+
+  const shapes = readStudyShapes(win);
+
+  expect(shapes.studies[0]?.api).toEqual({
+    paneIndex: 'getter',
+    status: 'getter',
+    title: 'function',
+  });
+  expect(reads).toBe(0);
+});
+
+test('the shapes of the fake app keep the member names the app writes through the scrubber', () => {
   const win = createFakeTvWindow(withStudies(fixture, SAMPLE_STRATEGY));
   const shapes = readStudyShapes(win);
 
-  expect(scrubStudyShapes(shapes)).toEqual(shapes);
+  const scrubbed = scrubStudyShapes(shapes);
+
+  // Everything but the keys the sample report adds to test the strategy tools, which the app does
+  // not write and the scrubber therefore does not keep.
+  const odd = /notAvailable|inUse|nested|gone/;
+  expect(JSON.stringify(scrubbed)).not.toMatch(odd);
+  const strip = (value: JsonValue): JsonValue =>
+    JSON.parse(JSON.stringify(value), (key, item: unknown) =>
+      odd.test(key) || /^<key \d+>$/.test(key) ? undefined : item,
+    ) as JsonValue;
+  expect(strip(scrubbed as unknown as JsonValue)).toEqual(strip(shapes as unknown as JsonValue));
 });

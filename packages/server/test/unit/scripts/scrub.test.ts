@@ -474,15 +474,36 @@ describe('findLeaks', () => {
 // The shapes the recorder writes next to a fixture (readStudyShapes): key names and value types,
 // which the scrubber reduces to type names and member names whatever the recording holds.
 describe('the shapes of the studies', () => {
-  test('scrubValueShape keeps type names, unions of them and member names', () => {
-    const shape: JsonValue = {
-      plots: [{ id: 'string', type: 'string', target: 'string|undefined' }],
-      styles: { '<id>': { title: 'string', visible: 'boolean' } },
-      report: { performance: { all: { netProfit: 'number' } }, trades: [], position: null },
-      deep: 'mixed',
-    };
+  test('scrubValueShape keeps type names, unions of them and the member names the app writes', () => {
+    const shape: JsonValue = [
+      { id: 'string', type: 'string', target: 'string|undefined', palette: 'string' },
+      { '<id>': { title: 'string', visible: 'boolean', histogramBase: 'number' } },
+      { id: 'string', defval: 'mixed', options: ['string'], isHidden: 'boolean' },
+      {
+        currency: 'string',
+        performance: { all: { netProfit: 'number', numberOfWiningTrades: 'number' } },
+        filledOrders: [{ id: 'string', b: 'boolean', p: 'number', tm: 'number' }],
+        trades: [],
+        position: null,
+      },
+      { title: 'getter' },
+    ];
 
     expect(scrubValueShape(shape)).toEqual(shape);
+  });
+
+  test('scrubValueShape keeps no key the app does not write, such as an order a script names', () => {
+    expect(
+      scrubValueShape({
+        performance: { all: { netProfit: 'number' } },
+        ordersBrackets: { LongEntry: { st: 'number' }, Breakout_2: { lm: 'number' } },
+        ok_key: 'number',
+      }),
+    ).toEqual({
+      performance: { all: { netProfit: 'number' } },
+      ordersBrackets: { '<key 1>': { st: 'number' }, '<key 2>': { lm: 'number' } },
+      '<key 1>': 'number',
+    });
   });
 
   test('scrubValueShape writes the type of a value in place of the value', () => {
@@ -492,25 +513,28 @@ describe('the shapes of the studies', () => {
         title: 'My Secret Edge v2',
         price: 705.25,
         visible: true,
-        both: 'number|My Secret Edge',
-        items: [42, 'stop 690', false],
+        type: 'number|My Secret Edge',
+        options: [42, 'stop 690', false],
       }),
     ).toEqual({
       symbol: 'string',
       title: 'string',
       price: 'number',
       visible: 'boolean',
-      both: 'string',
-      items: ['number', 'string', 'boolean'],
+      type: 'string',
+      options: ['number', 'string', 'boolean'],
     });
   });
 
   test('scrubValueShape replaces keys that are no member names, and cuts deep shapes', () => {
     expect(
-      scrubValueShape({ 'My Secret Edge': 'number', 'entry 705': 'string', ok_key: 'number' }),
-    ).toEqual({ '<key 1>': 'number', '<key 2>': 'string', ok_key: 'number' });
-    const deep: JsonValue = { a: { b: { c: { d: { e: { f: { g: { h: { i: 'number' } } } } } } } } };
-    expect(JSON.stringify(scrubValueShape(deep))).toContain('"h":"object"');
+      scrubValueShape({ 'My Secret Edge': 'number', 'entry 705': 'string', LongEntry: 'number' }),
+    ).toEqual({ '<key 1>': 'number', '<key 2>': 'string', '<key 3>': 'number' });
+    let deep: JsonValue = 'number';
+    for (let level = 0; level < 9; level += 1) {
+      deep = { '<id>': deep };
+    }
+    expect(JSON.stringify(scrubValueShape(deep))).toMatch(/\{"<id>":"object"\}+$/);
     expect(scrubValueShape([[[[[[[[['number']]]]]]]]])).toEqual([[[[[[[['array']]]]]]]]);
   });
 
@@ -526,7 +550,13 @@ describe('the shapes of the studies', () => {
           plots: [{ id: 'string', title: 'Fast line' }],
           styles: { '<id>': { title: 'string' } },
           inputs: [{ id: 'string', defval: 14 }],
-          api: { title: 'function' },
+          api: {
+            title: 'function',
+            _study: 'object',
+            status: 'getter',
+            'My Secret Edge': 'function',
+            nested: { LongEntry: 'number' },
+          },
           report: null,
         },
         'junk',
@@ -543,7 +573,14 @@ describe('the shapes of the studies', () => {
           plots: [{ id: 'string', title: 'string' }],
           styles: { '<id>': { title: 'string' } },
           inputs: [{ id: 'string', defval: 'number' }],
-          api: { title: 'function' },
+          // The names of members of an object of the app, flat: a deeper level is only "object".
+          api: {
+            title: 'function',
+            _study: 'object',
+            status: 'getter',
+            '<key 1>': 'function',
+            nested: 'object',
+          },
           report: null,
         },
         {

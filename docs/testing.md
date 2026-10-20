@@ -314,8 +314,11 @@ commit:
   host, with the path `/`, a frame of another site (ad and anti-abuse frames) and a TradingView
   profile among them; an address of another scheme keeps only the scheme. Paths, queries and
   fragments of web addresses are always dropped, and so are the debugger addresses.
-- The shapes keep type names only (`number`, `string`, `number|null`, ...): a value that got into a
-  shape is replaced by the name of its type, and a key that is not a member name by `<key N>`. A map
+- The shapes keep type names only (`number`, `string`, `number|null`, ..., and `getter` for an
+  accessor of the study API, which is never called): a value that got into a shape is replaced
+  by the name of its type. Of the plots, styles, inputs and report only the member names the app
+  writes there are kept (an allowlist in `scrub.ts`); any other key, such as an order name a
+  strategy defines, becomes `<key N>`. The API members stay a flat map of member names. A map
   keyed by ids (the styles by plot id) is written with the one key `<id>`.
 
 Before it writes, the recorder searches the three files for the recorded layout name, layout ids
