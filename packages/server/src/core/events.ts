@@ -46,11 +46,13 @@ export class ToolEventBus {
 
   // Oldest first among the newest `limit` events. A copy is returned so callers can reorder it.
   recent(limit = BUFFER_SIZE): ToolCallEvent[] {
-    // slice(-0) and slice(-NaN) return everything and a negative limit would skip the oldest
-    // events, so anything that is not a positive count yields nothing.
-    if (Number.isNaN(limit) || limit <= 0) {
+    // slice(-0), slice(-0.5) and slice(-NaN) return everything, and a negative limit would skip
+    // the oldest events instead of yielding none. So the limit counts whole events only, and
+    // anything below one yields nothing.
+    const count = Math.floor(limit);
+    if (Number.isNaN(count) || count < 1) {
       return [];
     }
-    return this.#buffer.slice(-limit);
+    return this.#buffer.slice(-count);
   }
 }

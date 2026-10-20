@@ -48,11 +48,24 @@ test('recent(limit) returns the newest events, oldest first', () => {
 
 // A negative limit must not fall through to slice(n) and return everything but the oldest event,
 // and NaN must not turn into slice(0), which returns everything. Dashboards pass user input here.
-test.each([0, -1, Number.NaN])('recent(%s) returns no events', (limit) => {
+test.each([0, -1, -0.5, Number.NaN])('recent(%s) returns no events', (limit) => {
   const bus = new ToolEventBus();
   emitMany(bus, 3);
 
   expect(bus.recent(limit)).toEqual([]);
+});
+
+// slice(-0.5) is slice(0) and returns every event, so a fraction is cut to whole events first, and
+// a limit below one event yields none.
+test('ToolEventBus.recent floors a fractional limit', () => {
+  const bus = new ToolEventBus();
+  emitMany(bus, 3);
+
+  expect(bus.recent(0.5)).toEqual([]);
+  expect(bus.recent(0.999)).toEqual([]);
+  expect(bus.recent(1.9).map((e) => e.id)).toEqual(['e3']);
+  expect(bus.recent(2.7).map((e) => e.id)).toEqual(['e2', 'e3']);
+  expect(bus.recent(3.2).map((e) => e.id)).toEqual(['e1', 'e2', 'e3']);
 });
 
 test('recent() returns a copy, so reversing the result does not reorder the buffer', () => {
