@@ -106,7 +106,7 @@ function withModules(modules: Record<string, unknown>, globals: object = {}): Ma
 // signed in unless `signedIn` is false, and with the Pine Editor API `api()` builds.
 function withFacade(
   facade: () => unknown,
-  options: { api?: () => Record<string, unknown>; signedIn?: boolean } = {},
+  options: { api?: () => Record<string, unknown>; signedIn?: boolean; kept?: unknown } = {},
 ): Make {
   return () => {
     // Built on the first getFacade, so that a facade() that throws makes getFacade throw.
@@ -122,6 +122,20 @@ function withFacade(
       webpackChunktradingview: createFakeWebpack({
         1: {
           getOpenPineEditor: (placement: string) => (placement === 'dialog' ? { getFacade } : null),
+          // The helpers the app keeps its flag of unsaved changes with, keeping options.kept.
+          ...('kept' in options
+            ? {
+                hasScriptModificationsKey: 'has_unsaved_modifications',
+                getPersistenceKey: (key: string) => key,
+                // A function stands for a helper that answers what it returns, or throws.
+                getPersistedValue: (_key: string, perUser: boolean): unknown =>
+                  perUser
+                    ? typeof options.kept === 'function'
+                      ? (options.kept as () => unknown)()
+                      : options.kept
+                    : null,
+              }
+            : {}),
         },
       }),
     };
@@ -455,6 +469,43 @@ describe('changePineEditor', () => {
       }),
     ).resolves.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
     expect(setScript).not.toHaveBeenCalled();
+  });
+
+  test('refuses CONFIRMATION_REQUIRED for unsaved changes TradingView keeps, though isModified() says none', async () => {
+    const setScript = vi.fn(() => Promise.resolve());
+    const outcome = async (kept: unknown) =>
+      (
+        await libResultOf(
+          changePineEditor,
+          change({ kind: 'source', source: SOURCE, allowModified: false }),
+          withFacade(() => ({ isModified: () => false, setScript }), { kept }),
+        ).catch((error: unknown) => ({ result: error }))
+      ).result;
+
+    await expect(outcome(true)).resolves.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+    await expect(outcome('unknown')).resolves.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+    expect(setScript).not.toHaveBeenCalled();
+    await expect(outcome(false)).resolves.toStrictEqual({ changed: true });
+    await expect(outcome(null)).resolves.toStrictEqual({ changed: true });
+    expect(setScript).toHaveBeenCalled();
+    // Without the helpers of the app the flag is unknown, which counts as unsaved changes, and so
+    // does a helper that throws.
+    const { error } = await libFailureOfBoth(
+      changePineEditor,
+      change({ kind: 'source', source: SOURCE, allowModified: false }),
+      withFacade(() => ({ isModified: () => false, setScript })),
+    );
+    expect(error).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+    const throwing = await libFailureOfBoth(
+      changePineEditor,
+      change({ kind: 'source', source: SOURCE, allowModified: false }),
+      withFacade(() => ({ isModified: () => false, setScript }), {
+        kept: () => {
+          throw new Error('no storage');
+        },
+      }),
+    );
+    expect(throwing.error).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
   });
 
   test('fails without the registry, an open editor, its facade or the member it needs', async () => {

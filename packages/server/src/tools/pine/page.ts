@@ -26,23 +26,26 @@ import type {
 //
 // An editor is open while the registry of open editors (the export getOpenPineEditor) answers for
 // one of its two placements, "dialog" and "bottom". The current layout opens the editor as the
-// right side panel, which is taken to register as "dialog" (inferred, not observed), so "dialog" is
-// looked at first. Members of the app are read defensively: another web build can drop or reshape
-// any of them, and a read that throws counts as no answer.
+// right side panel, which registers as "dialog" (seen on the app), so "dialog" is looked at first.
+// Members of the app are read defensively: another web build can drop or reshape any of them, and
+// a read that throws counts as no answer.
 //
-// Nothing here returns or keeps the text of the editor, and nothing reads the name of the account
-// or the state the editor persists under it. Every function says CAPABILITY_UNAVAILABLE only
-// before it acts.
+// Nothing here returns or keeps the text of the editor, and nothing reads the name of the account.
+// Of the state the editor persists under it, only the flag for unsaved changes is read, through
+// the helper of the app (getPersistedValue), because the app shows unsaved text again when the
+// editor opens and its isModified() then reads false. Every function says CAPABILITY_UNAVAILABLE
+// only before it acts.
 
 // The state of the editor, read without changing anything: whether one is open and where, whether
-// its text has unsaved changes (modified), whether its script is new or saved only as a server
-// draft (draft), and the id and version of its script: null for a script that has no id yet, and
-// a version of null for one that has an id but no version, which is not a new script either.
-// unreadable lists the members of the facade that could not be read, in the order
-// they were read: getFacade when the facade itself could not be had, else any of
-// getScriptIdVersion, isModified and isDraft. An unreadable isModified counts as modified, so that
-// the text is not replaced without confirm, and an unreadable isDraft as a draft when there is no
-// script or no version.
+// its text has unsaved changes (modified: isModified() of the facade, or the flag the app keeps for
+// unsaved changes, which is set for unsaved text the app showed again when the editor opened),
+// whether its script is new or saved only as a server draft (draft), and the id and version of its
+// script: null for a script that has no id yet, and a version of null for one that has an id but no
+// version, which is not a new script either. unreadable lists what could not be read, in the order
+// it was read: getFacade when the facade itself could not be had, else any of getScriptIdVersion,
+// isModified, unsavedChanges (the flag) and isDraft. An unreadable isModified or flag counts as
+// modified, so that the text is not replaced without confirm, and an unreadable isDraft as a draft
+// when there is no script or no version.
 export function readPineEditorState(
   _win: TvWindow,
   lib: PageLib,
@@ -68,6 +71,31 @@ export function readPineEditorState(
       },
     };
   }
+  // Whether the app keeps unsaved changes for the editor at a placement (has_unsaved_modifications,
+  // read with the helpers of the app, which keep it per account), or null when that cannot be read.
+  // The app shows unsaved text of an editor whose side panel closed again when the editor opens,
+  // and isModified() then reads false (seen on the app), so its own guard asks this flag as well.
+  const keptUnsaved = (at: string): boolean | null => {
+    try {
+      const read = lib.findExport('getPersistedValue');
+      const keyOf = lib.findExport('getPersistenceKey');
+      const key = lib.findExport('hasScriptModificationsKey');
+      if (typeof read !== 'function' || typeof keyOf !== 'function' || typeof key !== 'string') {
+        return null;
+      }
+      const value: unknown = (read as (key: unknown, perUser: boolean) => unknown)(
+        (keyOf as (key: string, placement: string) => unknown)(key, at),
+        true,
+      );
+      return value === null || value === undefined
+        ? false
+        : typeof value === 'boolean'
+          ? value
+          : null;
+    } catch {
+      return null;
+    }
+  };
   let placement: PineEditorPlacement | null = null;
   let entry: Partial<OpenPineEditorLike> | null = null;
   for (const candidate of ['dialog', 'bottom'] as const) {
@@ -134,10 +162,15 @@ export function readPineEditorState(
   }
   let modified = true;
   const changed = ask('isModified');
-  if (typeof changed?.value === 'boolean') {
-    modified = changed.value;
-  } else {
+  if (typeof changed?.value !== 'boolean') {
     unreadable.push('isModified');
+  }
+  const kept = keptUnsaved(at);
+  if (kept === null) {
+    unreadable.push('unsavedChanges');
+  }
+  if (typeof changed?.value === 'boolean' && kept !== null) {
+    modified = changed.value || kept;
   }
   let draft = (script?.version ?? null) === null;
   const isNew = ask('isDraft');
@@ -203,6 +236,31 @@ export function openPineEditor(
       return null;
     }
   };
+  // Whether the app keeps unsaved changes for the editor at a placement (has_unsaved_modifications,
+  // read with the helpers of the app, which keep it per account), or null when that cannot be read.
+  // The app shows unsaved text of an editor whose side panel closed again when the editor opens,
+  // and isModified() then reads false (seen on the app), so its own guard asks this flag as well.
+  const keptUnsaved = (at: string): boolean | null => {
+    try {
+      const read = lib.findExport('getPersistedValue');
+      const keyOf = lib.findExport('getPersistenceKey');
+      const key = lib.findExport('hasScriptModificationsKey');
+      if (typeof read !== 'function' || typeof keyOf !== 'function' || typeof key !== 'string') {
+        return null;
+      }
+      const value: unknown = (read as (key: unknown, perUser: boolean) => unknown)(
+        (keyOf as (key: string, placement: string) => unknown)(key, at),
+        true,
+      );
+      return value === null || value === undefined
+        ? false
+        : typeof value === 'boolean'
+          ? value
+          : null;
+    } catch {
+      return null;
+    }
+  };
   // What readPineEditorState answers for an open editor, from the facade at hand.
   const readFacade = (at: PineEditorPlacement, facade: unknown): PineEditorReading => {
     if (typeof facade !== 'object' || facade === null) {
@@ -242,10 +300,15 @@ export function openPineEditor(
     }
     let modified = true;
     const changed = ask('isModified');
-    if (typeof changed?.value === 'boolean') {
-      modified = changed.value;
-    } else {
+    if (typeof changed?.value !== 'boolean') {
       unreadable.push('isModified');
+    }
+    const kept = keptUnsaved(at);
+    if (kept === null) {
+      unreadable.push('unsavedChanges');
+    }
+    if (typeof changed?.value === 'boolean' && kept !== null) {
+      modified = changed.value || kept;
     }
     let draft = (script?.version ?? null) === null;
     const isNew = ask('isDraft');
@@ -772,6 +835,7 @@ export function changePineEditor(
     };
   }
   let entry: Partial<OpenPineEditorLike> | null = null;
+  let placement: PineEditorPlacement = 'dialog';
   for (const candidate of ['dialog', 'bottom'] as const) {
     let found: unknown;
     try {
@@ -781,6 +845,7 @@ export function changePineEditor(
     }
     if (found !== null && found !== undefined) {
       entry = found;
+      placement = candidate;
       break;
     }
   }
@@ -875,8 +940,27 @@ export function changePineEditor(
       } catch {
         modified = undefined;
       }
-      // An answer that is not false counts as unsaved changes.
-      if (modified !== false) {
+      // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, read with
+      // its own helpers, which keep it per account): unsaved text of an editor whose side panel
+      // closed comes back when it opens with isModified() false (seen on the app), so the guard of
+      // the app asks this flag too. null when it cannot be read.
+      let kept: unknown = null;
+      try {
+        const read = lib.findExport('getPersistedValue');
+        const keyOf = lib.findExport('getPersistenceKey');
+        const key = lib.findExport('hasScriptModificationsKey');
+        if (typeof read === 'function' && typeof keyOf === 'function' && typeof key === 'string') {
+          const value: unknown = (read as (key: unknown, perUser: boolean) => unknown)(
+            (keyOf as (key: string, at: string) => unknown)(key, placement),
+            true,
+          );
+          kept = value ?? false;
+        }
+      } catch {
+        kept = null;
+      }
+      // An answer that is not false, of either, counts as unsaved changes.
+      if (modified !== false || kept !== false) {
         return {
           __tvmcpError: {
             code: 'CONFIRMATION_REQUIRED',

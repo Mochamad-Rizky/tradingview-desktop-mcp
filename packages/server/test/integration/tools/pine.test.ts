@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createMcpServer } from '../../../src/server.js';
+import { closePineEditor } from '../../../src/tools/pine/page.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
@@ -149,6 +150,52 @@ describe('pine_set_source', () => {
     });
     expect(callsOf(win, 'pineEditorApi.open')).toHaveLength(1);
     expect(editorOf(win).source).toBe(NEW_SOURCE);
+  });
+});
+
+// Seen on the app: unsaved text of an editor whose side panel was closed is kept by TradingView,
+// and the next open shows it again as the text of the script, so that isModified() reads false;
+// TradingView keeps a flag for it, which its own guard asks too.
+describe('unsaved text TradingView keeps for a closed editor', () => {
+  const UNSAVED = '//@version=6\nindicator("Unsaved work")\nplot(open)\n';
+
+  async function closedWithUnsavedText() {
+    const harness = await startHarness(withEditor());
+    await callTool(harness.client, 'pine_new', {});
+    await callTool(harness.client, 'pine_set_source', { source: UNSAVED });
+    const page = await harness.ctx.connection.chartPage();
+    await page.bridge.evaluateWithLib(closePineEditor, []);
+    expect(editorOf(harness.win)).toMatchObject({ placement: null, unsavedKept: true });
+    return harness;
+  }
+
+  test('pine_new, pine_set_source and pine_open do not replace it without confirm', async () => {
+    const { client, win } = await closedWithUnsavedText();
+
+    for (const [tool, args] of [
+      ['pine_new', {}],
+      ['pine_set_source', { source: NEW_SOURCE }],
+      ['pine_open', { scriptId: SCRIPT.scriptIdPart }],
+    ] as const) {
+      const result = await callTool(client, tool, args);
+      expect(errorOf(result)?.code, tool).toBe('CONFIRMATION_REQUIRED');
+    }
+    // The editor is open again, with the text as it was.
+    expect(editorOf(win)).toMatchObject({ placement: 'dialog', source: UNSAVED });
+  });
+
+  test('pine_get_source reports it as unsaved, and confirm replaces it', async () => {
+    const { client, win } = await closedWithUnsavedText();
+    await callTool(client, 'pine_new', {});
+
+    expect(dataOf(await callTool(client, 'pine_get_source'))).toMatchObject({
+      source: UNSAVED,
+      modified: true,
+    });
+    expect(dataOf(await callTool(client, 'pine_new', { confirm: true }))).toMatchObject({
+      modified: false,
+    });
+    expect(editorOf(win).source).toBe(fixture.pineEditor.templates.indicator);
   });
 });
 

@@ -110,10 +110,12 @@ describe('readEditorState', () => {
       draft: true,
       script: null,
     });
-    expect(warnings).toHaveLength(3);
+    // The page has no helpers of the app to read the flag of kept unsaved changes with.
+    expect(warnings).toHaveLength(4);
     expect(warnings[0]).toContain('id and version');
     expect(warnings[1]).toContain('modified: true');
-    expect(warnings[2]).toContain('draft');
+    expect(warnings[2]).toContain('keeps unsaved changes');
+    expect(warnings[3]).toContain('draft');
   });
 
   test('warns once when the facade itself cannot be had', async () => {

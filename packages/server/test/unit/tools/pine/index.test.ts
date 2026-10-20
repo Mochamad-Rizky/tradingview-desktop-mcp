@@ -60,7 +60,14 @@ function pageWith(getOpenPineEditor: (placement: string) => unknown, api: object
     is_authenticated: true,
     TradingViewApi: { pineEditorApi: () => api },
     webpackChunktradingview: createFakeWebpack({
-      1: { getOpenPineEditor, requestUserScripts: () => Promise.resolve([]) },
+      1: {
+        getOpenPineEditor,
+        requestUserScripts: () => Promise.resolve([]),
+        // The helpers the app keeps its flag of unsaved changes with: none kept.
+        hasScriptModificationsKey: 'has_unsaved_modifications',
+        getPersistenceKey: (key: string) => key,
+        getPersistedValue: () => null,
+      },
     }),
   };
 }

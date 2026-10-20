@@ -113,9 +113,19 @@ function withModules(modules: Record<string, unknown>, globals: object = {}): Ma
 }
 
 // A registry that answers `entries` by placement.
-function registry(entries: Partial<Record<'dialog' | 'bottom', unknown>>): Record<string, unknown> {
+// The registry of open editors, with the helpers the app keeps its flag of unsaved changes with,
+// keeping `kept` for both placements (none by default).
+function registry(
+  entries: Partial<Record<'dialog' | 'bottom', unknown>>,
+  kept: unknown = null,
+): Record<string, unknown> {
   return {
     getOpenPineEditor: (placement: 'dialog' | 'bottom') => entries[placement] ?? null,
+    hasScriptModificationsKey: 'has_unsaved_modifications',
+    getPersistenceKey: (key: string, placement: string) =>
+      `${placement === 'bottom' ? 'bottom_' : ''}${key}`,
+    getPersistedValue: (key: string, perUser: boolean) =>
+      perUser && key.endsWith('has_unsaved_modifications') ? kept : null,
   };
 }
 
@@ -185,6 +195,78 @@ describe('readPineEditorState', () => {
     );
 
     expect(result).toMatchObject({ state: { placement: 'dialog', modified: true } });
+  });
+
+  test('counts the unsaved changes TradingView keeps as unsaved, though isModified() says none', async () => {
+    const facade = {
+      isModified: () => false,
+      isDraft: () => true,
+      getScriptIdVersion: () => null,
+    };
+    const read = async (kept: unknown) =>
+      (
+        await libResultOf(
+          readPineEditorState,
+          [],
+          withModules(registry({ dialog: { getFacade: () => facade } }, kept)),
+        )
+      ).result;
+
+    expect(await read(true)).toMatchObject({ state: { modified: true }, unreadable: [] });
+    expect(await read(false)).toMatchObject({ state: { modified: false }, unreadable: [] });
+    // Nothing kept for the account.
+    expect(await read(undefined)).toMatchObject({ state: { modified: false }, unreadable: [] });
+    // A flag that is not one, or a page without the helpers of the app: unsaved changes assumed.
+    expect(await read('yes')).toMatchObject({
+      state: { modified: true },
+      unreadable: ['unsavedChanges'],
+    });
+    const { result } = await libResultOf(
+      readPineEditorState,
+      [],
+      withModules({
+        getOpenPineEditor: (placement: string) =>
+          placement === 'dialog' ? { getFacade: () => facade } : null,
+      }),
+    );
+    expect(result).toMatchObject({ state: { modified: true }, unreadable: ['unsavedChanges'] });
+    // A helper that throws counts as no answer.
+    const throwing = await libResultOf(
+      readPineEditorState,
+      [],
+      withModules({
+        ...registry({ dialog: { getFacade: () => facade } }),
+        getPersistedValue: () => {
+          throw new Error('no storage');
+        },
+      }),
+    );
+    expect(throwing.result).toMatchObject({
+      state: { modified: true },
+      unreadable: ['unsavedChanges'],
+    });
+  });
+
+  test('openPineEditor reads the flag of unsaved changes TradingView keeps as well', async () => {
+    const facade = {
+      isModified: () => false,
+      isDraft: () => true,
+      getScriptIdVersion: () => null,
+    };
+    const open = async (modules: Record<string, unknown>) =>
+      (await libResultOf(openPineEditor, [100], withModules(modules))).result;
+
+    await expect(
+      open(registry({ dialog: { getFacade: () => facade } }, true)),
+    ).resolves.toMatchObject({ state: { modified: true }, unreadable: [] });
+    await expect(
+      open({
+        ...registry({ dialog: { getFacade: () => facade } }),
+        getPersistedValue: () => {
+          throw new Error('no storage');
+        },
+      }),
+    ).resolves.toMatchObject({ state: { modified: true }, unreadable: ['unsavedChanges'] });
   });
 
   test('reports what it can of a facade whose members cannot be read, unsaved changes assumed', async () => {
@@ -441,6 +523,7 @@ describe('openPineEditor', () => {
         },
         webpackChunktradingview: createFakeWebpack({
           1: {
+            ...registry({}),
             getOpenPineEditor: (placement: string) =>
               opened && placement === 'dialog' ? { getFacade: facade } : null,
           },

@@ -11,7 +11,9 @@ export type { PineEditorState } from './page.js';
 //
 // A member of the editor that could not be read is reported as a warning in `warnings`, which the
 // caller passes in to collect the warnings of its tool, and the state carries the safe default:
-// modified for an unknown isModified.
+// modified for an unknown isModified, and for an unknown flag of unsaved changes TradingView keeps
+// (unsaved text of an editor whose side panel closed, which it shows again when the editor opens,
+// with isModified() false).
 
 // What each member that could not be read means for the state.
 const UNREADABLE_WARNINGS: Record<string, string> = {
@@ -24,6 +26,10 @@ const UNREADABLE_WARNINGS: Record<string, string> = {
   isModified:
     'Whether the Pine Editor holds unsaved changes could not be read, so it is reported as ' +
     'modified: true, so that its text is not replaced without confirm.',
+  unsavedChanges:
+    'Whether TradingView keeps unsaved changes of the Pine Editor, whose text it shows again when ' +
+    'the editor opens, could not be read, so it is reported as modified: true, so that its text ' +
+    'is not replaced without confirm.',
   isDraft:
     'Whether the script in the Pine Editor is a draft could not be read, so draft is taken from ' +
     'whether it has a script id and version.',
