@@ -712,7 +712,7 @@ describe('createFakeTvWindow', () => {
       expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
     });
 
-    test('puts the plan feature, quote cache and indicator catalog modules of the fixture in the webpack cache by default', () => {
+    test('puts the plan feature, quote cache, indicator catalog and Pine Editor modules of the fixture in the webpack cache by default', () => {
       const win = createFakeTvWindow(fixture);
       let handed: FakeWebpackRequire | undefined;
 
@@ -732,6 +732,16 @@ describe('createFakeTvWindow', () => {
         ['studyMetaInfoRepository'],
         ['QUOTE_FIELDS_CACHE', 'snapshoter'],
         ['canUpgradePlan', 'enabled', 'getConfig', 'getProductFeaturesConfig'],
+        ['getOpenPineEditor', 'registerOpenPineEditor', 'unregisterOpenPineEditor'],
+        [
+          'hasService',
+          'registerService',
+          'service',
+          'serviceOrNull',
+          'unregisterService',
+          'waitServiceRegistered',
+        ],
+        ['PAGE_LAYOUT_SERVICE'],
         ['requestBuiltinScripts'],
         ['getQuoteSessionInstance', 'getQuoteSessionNoEnsure'],
       ]);

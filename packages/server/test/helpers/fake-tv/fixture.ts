@@ -63,6 +63,21 @@ export interface TvStateFixture {
       inputs?: FixtureStudyInput[] | undefined;
     }[];
   };
+  // The Pine Editor of the fake app (pine-editor.ts): open is the placement it is registered under
+  // when the window is built (null when closed) and opensAt the one pineEditorApi().open() gives
+  // it ("dialog" stands for the side panel of the current layout). script is the saved script the
+  // editor holds (null for a new script without an id), savedSource its text as opened or saved and
+  // source the text in the editor, which differs from savedSource for unsaved changes. templates
+  // are the texts of new scripts by type. Sources are synthetic, and the templates name an
+  // invented author.
+  pineEditor: {
+    open: 'dialog' | 'bottom' | null;
+    opensAt: 'dialog' | 'bottom';
+    script: { scriptIdPart: string; version: string } | null;
+    savedSource: string;
+    source: string;
+    templates: { indicator: string; strategy: string; library: string };
+  };
 }
 
 // A study on the chart (studies.ts). Optional fields admit undefined, which is what the schema
@@ -205,6 +220,14 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
         inputs: z.array(fixtureStudyInputSchema).optional(),
       }),
     ),
+  }),
+  pineEditor: z.strictObject({
+    open: z.enum(['dialog', 'bottom']).nullable(),
+    opensAt: z.enum(['dialog', 'bottom']),
+    script: z.strictObject({ scriptIdPart: z.string(), version: z.string() }).nullable(),
+    savedSource: z.string(),
+    source: z.string(),
+    templates: z.strictObject({ indicator: z.string(), strategy: z.string(), library: z.string() }),
   }),
 });
 

@@ -380,5 +380,17 @@
         "kind": "library"
       }
     ]
+  },
+  "pineEditor": {
+    "open": null,
+    "opensAt": "dialog",
+    "script": { "scriptIdPart": "USER;0f1e2d3c4b5a69788796a5b4c3d2e1f0", "version": "2.0" },
+    "savedSource": "//@version=6\nindicator(\"Fixture Script\")\nplot(close)\n",
+    "source": "//@version=6\nindicator(\"Fixture Script\")\nplot(close)\n",
+    "templates": {
+      "indicator": "// © fixture_author\n\n//@version=6\nindicator(\"My script\")\nplot(close)\n",
+      "strategy": "// © fixture_author\n\n//@version=6\nstrategy(\"My strategy\", overlay=true)\n",
+      "library": "// © fixture_author\n\n//@version=6\n// @description A library\nlibrary(\"MyLibrary\")\n"
+    }
   }
 }

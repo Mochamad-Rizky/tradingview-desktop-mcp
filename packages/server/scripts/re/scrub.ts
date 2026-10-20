@@ -397,9 +397,10 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
         'scrubFixture first.',
     );
   }
-  // A recording holds no older history, quote caches, search results or indicator catalog, so the
-  // fixture gets none: the history ends at the recorded bars, and the caches, the search and the
-  // catalog are empty.
+  // A recording holds no older history, quote caches, search results, indicator catalog or Pine
+  // Editor, so the fixture gets none: the history ends at the recorded bars, the caches, the search
+  // and the catalog are empty, and the editor is closed with empty texts. A recorded editor would
+  // carry Pine sources and the name of the account in its templates.
   return parseTvStateFixture({
     ...scrubbed,
     knownSymbols: KNOWN_SYMBOLS,
@@ -409,6 +410,14 @@ export function toStateFixture(scrubbed: JsonObject): TvStateFixture {
     quoteCache: { fields: {}, full: {}, watchlist: {} },
     search: { remaining: 0, symbols: [] },
     studyCatalog: { builtins: [], standardScripts: [] },
+    pineEditor: {
+      open: null,
+      opensAt: 'dialog',
+      script: null,
+      savedSource: '',
+      source: '',
+      templates: { indicator: '', strategy: '', library: '' },
+    },
   });
 }
 

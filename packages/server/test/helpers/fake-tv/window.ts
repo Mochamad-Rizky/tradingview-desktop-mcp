@@ -1,6 +1,12 @@
 import type { JsonValue } from '../../../src/utils/json.js';
 import type { TvStateFixture } from './fixture.js';
 import { createFakeHistory } from './history.js';
+import {
+  createFakePineEditor,
+  type FakeBottomWidgetBar,
+  type FakePineEditorApi,
+  type FakePineEditorState,
+} from './pine-editor.js';
 import { createPlanLimitModules } from './plan-limits.js';
 import { createQuoteModules } from './quotes.js';
 import { createFakeSearch, type FakeSearchOptions, type FakeSearchResponse } from './search.js';
@@ -39,6 +45,11 @@ import { createFakeWebpack } from './webpack.js';
 // with canCreateStudy, which a test can replace or delete on the model (studies.ts). A plain empty list, as before the webpack
 // runtime has loaded, is what withoutWebpackRuntime asks for. TradingViewApi.searchSymbols answers
 // from the search items of the fixture (search.ts).
+//
+// The Pine Editor comes from the pineEditor of the fixture (pine-editor.ts): its registry, the
+// service locator with the page layout service and the descriptor of that service are in the
+// default webpack cache, TradingViewApi.pineEditorApi() opens it, and TradingView.bottomWidgetBar
+// closes it at the bottom placement. Its live state is state.pineEditor.
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -88,6 +99,15 @@ export interface FakeTvOverrides {
   studyRepositoryReady?: boolean;
   // The message requestBuiltinScripts rejects with. Default: it answers (studies.ts).
   builtinScriptsError?: string;
+  // How long after pineEditorApi().open() the Pine Editor is mounted, so that getSource answers.
+  // Infinity: never. Default 20 ms (pine-editor.ts).
+  pineEditorReadyMs?: number;
+  // The message pineEditorApi().open() rejects with. Default: it opens the editor.
+  pineEditorOpenError?: string;
+  // Leaves the page layout service out of the service locator, so the side panel cannot be closed.
+  withoutPageLayoutService?: boolean;
+  // Leaves TradingView.bottomWidgetBar out.
+  withoutBottomWidgetBar?: boolean;
 }
 
 export interface FakeBars {
@@ -164,6 +184,7 @@ export interface FakeTradingViewApi {
   isConnected(): boolean;
   getIntervals(): string[];
   searchSymbols(options: FakeSearchOptions): Promise<FakeSearchResponse>;
+  pineEditorApi(): FakePineEditorApi;
 }
 
 export interface FakeLocation {
@@ -179,6 +200,8 @@ export interface FakeLocation {
 
 export interface FakeTvWindow {
   TradingViewApi?: FakeTradingViewApi;
+  // The global of the app that holds its widgets; left out with TradingViewApi.
+  TradingView?: { bottomWidgetBar?: FakeBottomWidgetBar };
   TVD: { reloadTab(): void };
   BUILD_TIME: string;
   webpackChunktradingview: unknown[];
@@ -194,7 +217,9 @@ export interface FakeTvWindow {
 // requestBuiltinScripts and studyMetaInfoRepository.requestMetaInfo (studies.ts). So are the changes
 // to studies, chart.createStudy, chart.removeEntity, study.setInputValues and study.setVisible
 // (each with the study id first), and the dialogs the app would open on the way, as dialog.paywall,
-// dialog.tooManyStudies and dialog.studyInputs (studies.ts). A call is
+// dialog.tooManyStudies and dialog.studyInputs (studies.ts). So are the calls of the Pine Editor
+// that change it, send a request or open or close a panel: pineEditorApi.*, pineFacade.*,
+// pageLayout.* and bottomWidgetBar.close (pine-editor.ts). A call is
 // recorded before it is validated, so refused and throwing calls show up too. Reads are not
 // recorded.
 export interface FakeCall {
@@ -216,6 +241,8 @@ export interface FakeTvState {
   visibilityState: VisibilityState;
   // Every study removeEntity removed, in order, and whether the removal can be undone.
   removedStudies: { id: string; undoable: boolean }[];
+  // The Pine Editor (pine-editor.ts).
+  pineEditor: FakePineEditorState;
 }
 
 export interface FakeTvInspector {
@@ -267,6 +294,15 @@ export function createFakeTvWindow(
     ...(overrides.feeds ? Object.values(overrides.feeds) : []),
   ]);
   const calls: FakeCall[] = [];
+  const record = (name: string, args: readonly unknown[]): void => {
+    calls.push({ name, args });
+  };
+  const pine = createFakePineEditor(fixture.pineEditor, {
+    readyMs: overrides.pineEditorReadyMs ?? 20,
+    openError: overrides.pineEditorOpenError,
+    withoutPageLayoutService: overrides.withoutPageLayoutService,
+    record,
+  });
   const state: FakeTvState = {
     symbol: feeds.get(fixture.symbol) ?? fixture.symbol,
     resolution: fixture.resolution,
@@ -280,10 +316,7 @@ export function createFakeTvWindow(
     connected: true,
     visibilityState: overrides.visibilityState ?? 'visible',
     removedStudies: [],
-  };
-
-  const record = (name: string, args: readonly unknown[]): void => {
-    calls.push({ name, args });
+    pineEditor: pine.state,
   };
 
   // The bars of the series, which grow at the front as older history loads. A request needs bars
@@ -541,6 +574,7 @@ export function createFakeTvWindow(
     isConnected: () => state.connected,
     getIntervals: () => [...fixture.intervals],
     searchSymbols: createFakeSearch(fixture.search, record),
+    pineEditorApi: () => pine.api,
   };
 
   const win: FakeTvWindow = {
@@ -562,6 +596,7 @@ export function createFakeTvWindow(
                 builtinScriptsError: overrides.builtinScriptsError,
                 record,
               }),
+              ...pine.modules,
             },
           ),
     document: {
@@ -575,6 +610,8 @@ export function createFakeTvWindow(
   };
   if (overrides.withoutApi !== true) {
     win.TradingViewApi = api;
+    win.TradingView =
+      overrides.withoutBottomWidgetBar === true ? {} : { bottomWidgetBar: pine.bottomWidgetBar };
   }
 
   inspectors.set(win, {

@@ -59,9 +59,9 @@ describe('probeCapabilities', () => {
       tradingViewApi: true,
       activeChart: true,
       chartModel: true,
-      // The fake models the chart API, and neither the replay nor the Pine editor API.
+      // The fake models the chart API and the Pine editor API, not the replay API.
       replayApi: false,
-      pineEditorApi: false,
+      pineEditorApi: true,
       webpackRegistry: true,
       tvd: true,
       buildTime: fixture.buildTime,
@@ -388,7 +388,7 @@ describe('readCapabilities', () => {
       activeChart: true,
       chartModel: true,
       replayApi: false,
-      pineEditorApi: false,
+      pineEditorApi: true,
       webpackRegistry: true,
       tvd: true,
       buildTime: fixture.buildTime,
