@@ -19,6 +19,7 @@ import {
   findLastEditedScript,
   observe,
   openEditor,
+  optedIn,
   planLimitSkipReason,
   prepareChartChange,
   readChartState,
@@ -39,11 +40,14 @@ import {
 //   unchanged); pine_list_scripts is checked for its shape, without printing a name.
 // - The editor: only while it holds no unsaved changes, and only when the script it shows can be
 //   shown again (setup.ts, restoreEditor). A closed editor is opened to see what it shows and closed
-//   again after the last test. Nothing is saved: pine_save is never called.
-// - Scripts added to the chart (drawings, a strategy) need a free indicator slot: on a full chart
-//   these tests are skipped with the INDICATORS_ON_CHART limit, before anything is changed. With a
-//   free slot TradingView saves the added script as a server draft (version 0.x) of the account,
-//   as its own Add to chart button does; the test removes the study it added and deletes no script.
+//   again after the last test. Nothing is saved: pine_save is never called. The test that closes
+//   the editor on unsaved text of its own runs only with TV_E2E_ALLOW_EDITOR_TEXT=1, because
+//   TradingView keeps that text for the next open.
+// - Scripts added to the chart (drawings, a strategy): TradingView saves an added script as a
+//   server draft (version 0.x) of the account, as its own Add to chart button does, and no tool
+//   deletes it, so these tests run only with TV_E2E_ALLOW_DRAFTS=1. They need a free indicator slot
+//   too: on a full chart they are skipped with the INDICATORS_ON_CHART limit, before anything is
+//   changed. They remove the study they added and delete no script.
 // - The scripts on the chart are only read: their drawings, and the report of a strategy.
 //
 // The text of the editor is the user's, and the template of a new script names the account, so no
@@ -89,6 +93,16 @@ const POSITIONS = [
     endColumn: 23,
   },
 ];
+
+// Why the tests that would leave something in the account or the app do not run without the
+// opt-in of the person running them (setup.ts, optedIn).
+const DRAFTS_NOT_ALLOWED =
+  'Adding a script from the Pine Editor makes TradingView keep it in the account as a server ' +
+  'draft (version 0.x), which no tool deletes; set TV_E2E_ALLOW_DRAFTS=1 to allow it';
+const EDITOR_TEXT_NOT_ALLOWED =
+  'Closing the Pine Editor on unsaved test text makes TradingView keep that text for the next ' +
+  'open, so a run cut short would leave the editor reopening on it; set ' +
+  'TV_E2E_ALLOW_EDITOR_TEXT=1 to allow it';
 
 // The text the editor test writes into the editor, never saved, and discarded again.
 const EDITOR_SOURCE =
@@ -774,7 +788,56 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
     });
   });
 
+  test('closes an unmodified editor without typing anything, opens it again, and compares its text', async (context) => {
+    if (editorSkip !== undefined) {
+      return context.skip(editorSkip);
+    }
+    const { e2e: server } = started();
+
+    await editThenRestore(async () => {
+      // As after every test, the editor shows the script the suite puts back, without changes.
+      const shown = await snapshotEditor(server.ctx);
+      expect(shown.state.open).toBe(true);
+      expect(shown.ownModified ?? shown.state.modified).toBe(false);
+
+      const closed = await closeEditor(server.ctx);
+      const hidden = await snapshotEditor(server.ctx);
+      const kept = await findLastEditedScript(server.ctx);
+      // What a tool does when it needs the editor: ensureEditorOpen.
+      await openEditor(server.ctx);
+      const reopened = await snapshotEditor(server.ctx);
+
+      const keptScript = kept?.script ?? null;
+      const shownScript = shown.state.script;
+      observe('pine editor closed and opened again without a change', {
+        closed: closed.closed,
+        registeredAfterClose: hidden.state.open,
+        visibleAfterClose: hidden.visible,
+        keptTheScriptItShowed:
+          keptScript === null || shownScript === null
+            ? keptScript === shownScript
+            : keptScript.id === shownScript.id && keptScript.version === shownScript.version,
+        unsavedKept: kept?.unsaved ?? null,
+        visibleAgain: reopened.visible,
+        textSame: reopened.source === shown.source,
+        shows: reopened.state.script === null ? 'a new script' : 'a saved script',
+        modifiedAgain: reopened.state.modified,
+      });
+      expect(closed.closed).toBe(true);
+      expect(hidden.state.open).toBe(false);
+      expect(hidden.visible).not.toBe(true);
+      expect(kept?.unsaved).toBe(false);
+      expect(reopened.state).toMatchObject({ open: true, modified: false });
+      // Seen on the app: once the editor was open in a session, an open after a close shows a new
+      // script, not the one it held, unless unsaved changes were kept.
+      expect(reopened.state.script).toBeNull();
+    });
+  });
+
   test('a closed editor shows its unsaved text again when it is opened', async (context) => {
+    if (!optedIn('TV_E2E_ALLOW_EDITOR_TEXT')) {
+      return context.skip(EDITOR_TEXT_NOT_ALLOWED);
+    }
     if (editorSkip !== undefined) {
       return context.skip(editorSkip);
     }
@@ -825,6 +888,9 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
   });
 
   test('adds a script that draws, reads its lines, labels, boxes and tables, and removes it', async (context) => {
+    if (!optedIn('TV_E2E_ALLOW_DRAFTS')) {
+      return context.skip(DRAFTS_NOT_ALLOWED);
+    }
     const full = await planLimitSkipReason(
       started().e2e.client,
       'INDICATORS_ON_CHART',
@@ -874,6 +940,9 @@ describe.skipIf(!e2eEnabled())('the Pine Editor against TradingView Desktop', ()
   });
 
   test('adds a strategy, reads its results, trades and equity, and removes it', async (context) => {
+    if (!optedIn('TV_E2E_ALLOW_DRAFTS')) {
+      return context.skip(DRAFTS_NOT_ALLOWED);
+    }
     const full = await planLimitSkipReason(
       started().e2e.client,
       'INDICATORS_ON_CHART',

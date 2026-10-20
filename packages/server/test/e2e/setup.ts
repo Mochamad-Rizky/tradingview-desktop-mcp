@@ -63,6 +63,19 @@ export function e2eEnabled(): boolean {
   return process.env.TV_E2E === '1';
 }
 
+// What a run may leave behind only when the person running it allows it, each by setting its
+// variable to 1 (docs/testing.md):
+// - TV_E2E_ALLOW_DRAFTS: the tests that add a script from the Pine Editor to the chart, which
+//   TradingView keeps in the account as a server draft (version 0.x) that no tool deletes;
+// - TV_E2E_ALLOW_EDITOR_TEXT: the test that closes the Pine Editor on unsaved text of its own,
+//   which TradingView keeps for the next open, so that a run cut short leaves the editor reopening
+//   on that text.
+export type E2eOptIn = 'TV_E2E_ALLOW_DRAFTS' | 'TV_E2E_ALLOW_EDITOR_TEXT';
+
+export function optedIn(name: E2eOptIn): boolean {
+  return process.env[name] === '1';
+}
+
 export interface ChartSnapshot {
   // The symbol as the chart shows it, to compare with.
   symbol: string;

@@ -18,6 +18,7 @@ import {
   HarnessError,
   missingChartMembers,
   openEditor,
+  optedIn,
   planLimitSkipReason,
   prepareChartChange,
   readLastEditedScript,
@@ -543,6 +544,23 @@ describe('the steps of a suite that changes the chart', () => {
     expect(plan.snapshot).toBeUndefined();
     expect(plan.skipReason).toMatch(/activeChart\(\)\.setResolution.*nothing was changed/);
     expect(await restoreChartAndView(server, plan)).toEqual([]);
+  });
+});
+
+describe('optedIn', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test('allows what a test leaves behind only when its variable is 1', () => {
+    vi.stubEnv('TV_E2E_ALLOW_DRAFTS', '1');
+    vi.stubEnv('TV_E2E_ALLOW_EDITOR_TEXT', 'true');
+
+    expect(optedIn('TV_E2E_ALLOW_DRAFTS')).toBe(true);
+    expect(optedIn('TV_E2E_ALLOW_EDITOR_TEXT')).toBe(false);
+
+    vi.stubEnv('TV_E2E_ALLOW_DRAFTS', '');
+    expect(optedIn('TV_E2E_ALLOW_DRAFTS')).toBe(false);
   });
 });
 
