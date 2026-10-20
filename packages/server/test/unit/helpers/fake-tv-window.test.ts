@@ -732,6 +732,7 @@ describe('createFakeTvWindow', () => {
         ['quoteSessionAdapters'],
         ['studyMetaInfoRepository'],
         ['QUOTE_FIELDS_CACHE', 'snapshoter'],
+        ['consoleMessagesKey', 'hasScriptModificationsKey', 'lastEditedScriptKey'],
         ['canUpgradePlan', 'enabled', 'getConfig', 'getProductFeaturesConfig'],
         ['isFeatureEnabled', 'onFeaturesStateChanged'],
         ['getOpenPineEditor', 'registerOpenPineEditor', 'unregisterOpenPineEditor'],
@@ -745,6 +746,7 @@ describe('createFakeTvWindow', () => {
         ],
         ['PAGE_LAYOUT_SERVICE'],
         ['requestBuiltinScripts'],
+        ['getPersistedValue', 'getPersistenceKey'],
         ['getQuoteSessionInstance', 'getQuoteSessionNoEnsure'],
       ]);
     });

@@ -6,7 +6,7 @@ import type { TvStateFixture } from './fixture.js';
 // - The registry module exports getOpenPineEditor(placement), which answers { getFacade } for the
 //   placement an editor is registered under ("dialog" or "bottom") and null otherwise, with
 //   registerOpenPineEditor and unregisterOpenPineEditor next to it. The current layout opens the
-//   editor as the right side panel, which the fake registers as "dialog", as the notes infer.
+//   editor as the right side panel, which registers as "dialog" (seen on the app).
 // - The facade has placement, awaitEditorReady, isModified (the text differs from the saved text),
 //   isDraft (no script id, no version, or a version whose major part is 0), getScriptIdVersion
 //   ({ scriptIdPart, version } or null; the version is undefined when the script has none),
@@ -32,8 +32,11 @@ import type { TvStateFixture } from './fixture.js';
 //   text does not compile, as the app keeps a study that failed) and writes the compile messages
 //   and diagnostics to the console. It resolves either way, as the app does.
 // - TradingViewApi.pineEditorApi() answers the same object on every call: open(options), which
-//   registers the editor at the opensAt placement of the fixture on the next turn of the event loop,
-//   restoring the script the editor last held, and mounts it readyMs after the call;
+//   registers the editor at the opensAt placement of the fixture on the next turn of the event loop
+//   and mounts it readyMs after the call. As on the app, the first open shows the script the
+//   editor last held; an open after the side panel closed shows a new script, unless unsaved
+//   changes were kept (state.unsavedKept), whose text it shows again as the text of the script, so
+//   that isModified() reads false;
 //   getDialogFacade and getBottomFacade; listSavedScripts, the same request as requestUserScripts;
 //   saveNewScript, which checks the saved-script limit the way the app does, opening its paywall
 //   (dialog.paywall) and throwing when the limit is reached, and else saves a new script; and
@@ -49,8 +52,12 @@ import type { TvStateFixture } from './fixture.js';
 // - The service locator module exports hasService, service, serviceOrNull, registerService,
 //   unregisterService and waitServiceRegistered, keyed by service descriptors. The page layout
 //   service, whose descriptor is the export PAGE_LAYOUT_SERVICE of another module, has
-//   hasSidePanel, sidePanel, showSidePanel and closeSidePanel; closeSidePanel("pine") hides the
-//   side panel and leaves the editor registered with its text.
+//   hasSidePanel, sidePanel, showSidePanel and closeSidePanel; closeSidePanel("pine") closes the
+//   side panel and takes the editor out of the registry, keeping the script it held and whether
+//   its text had unsaved changes (seen on the app).
+// - Two more modules hold the keys (hasScriptModificationsKey, ...) and the helpers
+//   (getPersistedValue, getPersistenceKey) the editor keeps its state between opens with;
+//   getPersistedValue(key, perUser) answers the kept unsaved-changes flag.
 // - TradingView.bottomWidgetBar.close() minimizes the bottom bar, which hides an editor at the
 //   bottom placement and leaves it registered with its text, as the notes record.
 //
@@ -285,6 +292,15 @@ export interface FakePineEditorState {
   // Whether the compiler stops at its first error and reports only that one, as one can when the
   // later errors depend on the first. The warnings are all reported. Default false.
   compileFirstErrorOnly: boolean;
+  // What the app keeps for the editor between opens (has_unsaved_modifications, which its helper
+  // getPersistedValue reads): whether the text has unsaved changes. Seen on the app: kept when the
+  // side panel closes, not at once when the text changes, and cleared when a script is opened,
+  // started or saved.
+  unsavedKept: boolean;
+  // Whether the editor was opened before in this session. Seen on the app: once it was, an open
+  // after the side panel closed shows a new script, unless unsaved changes are kept, whose text it
+  // shows again as the text of the script, so that isModified() reads false.
+  openedBefore: boolean;
 }
 
 export interface FakePineEditorOptions {
@@ -422,6 +438,8 @@ export function createFakePineEditor(
     consoleMessages: [],
     compileHttpError: null,
     compileFirstErrorOnly: false,
+    unsavedKept: false,
+    openedBefore: config.open !== null,
   };
   // How many scripts saveNewScript has created, for their ids.
   let created = 0;
@@ -480,6 +498,7 @@ export function createFakePineEditor(
     state.source = template;
     state.savedSource = template;
     state.script = null;
+    state.unsavedKept = false;
   };
 
   // What releaseScript and destroy do: the script is reset and the editor unregistered.
@@ -526,6 +545,7 @@ export function createFakePineEditor(
         state.script = { scriptIdPart, version: opened };
         state.source = source;
         state.savedSource = source;
+        state.unsavedKept = false;
       } else {
         // The app opens a new script whenever opening one fails.
         openNew();
@@ -560,6 +580,7 @@ export function createFakePineEditor(
         };
       }
       state.savedSource = state.source;
+      state.unsavedKept = false;
       const { errors, warnings } = compile(state.source);
       const title = /(?:indicator|strategy|library)\(\s*"([^"]*)"/.exec(state.source)?.[1];
       options.addStudy({
@@ -620,6 +641,7 @@ export function createFakePineEditor(
       }
       state.script = { scriptIdPart: script.scriptIdPart, version };
       state.savedSource = state.source;
+      state.unsavedKept = false;
       return Promise.resolve({
         script: {
           scriptIdPart: script.scriptIdPart,
@@ -665,6 +687,16 @@ export function createFakePineEditor(
         setTimeout(() => {
           state.placement = config.opensAt;
           state.visible = true;
+          // After a close, the app shows a new script, or the unsaved text it kept as the text of
+          // the script (seen on the app); the first open shows the script the editor last held.
+          if (state.openedBefore) {
+            if (state.unsavedKept) {
+              state.savedSource = state.source;
+            } else {
+              openNew();
+            }
+          }
+          state.openedBefore = true;
           const left = options.readyMs - (Date.now() - openedAt);
           if (left <= 0) {
             state.ready = true;
@@ -733,8 +765,13 @@ export function createFakePineEditor(
     },
     closeSidePanel(id: string) {
       record('pageLayout.closeSidePanel', [id]);
+      // The side panel goes, and the editor leaves the registry; the app keeps the script it held
+      // and whether its text had unsaved changes (seen on the app).
       if (id === 'pine' && state.placement === 'dialog') {
+        state.unsavedKept = state.source !== state.savedSource;
+        state.placement = null;
         state.visible = false;
+        state.ready = false;
       }
     },
   };
@@ -790,6 +827,29 @@ export function createFakePineEditor(
         waitServiceRegistered: (descriptor: unknown) => Promise.resolve(services.get(descriptor)),
       },
       '82931': { PAGE_LAYOUT_SERVICE },
+      // The keys and the helpers the editor of the app keeps its state between opens with, per
+      // account (the fake has one); getPersistedValue answers the kept unsaved-changes flag, and with
+      // its third argument the app would clear the key, which is recorded.
+      '57519': {
+        hasScriptModificationsKey: 'has_unsaved_modifications',
+        lastEditedScriptKey: 'last_edited_script',
+        consoleMessagesKey: 'console_messages_key',
+      },
+      '98521': {
+        getPersistenceKey: (key: string, placement: string) =>
+          `${placement === 'bottom' ? 'bottom_' : ''}${key}`,
+        getPersistedValue(key: unknown, perUser = false, clear = false) {
+          if (clear) {
+            record('clearPersistedValue', [key]);
+          }
+          const at = state.placement ?? config.opensAt;
+          const flagKey = `${at === 'bottom' ? 'bottom_' : ''}has_unsaved_modifications`;
+          if (key !== flagKey) {
+            return null;
+          }
+          return perUser ? state.unsavedKept : { fixture_author: state.unsavedKept };
+        },
+      },
       // The client of the pine facade, as far as the fake models it.
       '36017': {
         requestUserScripts() {

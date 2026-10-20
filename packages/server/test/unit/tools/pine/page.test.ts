@@ -501,7 +501,7 @@ describe('openPineEditor', () => {
 });
 
 describe('closePineEditor', () => {
-  test('closes the side panel and keeps the editor with its text', async () => {
+  test('closes the side panel, whose script the app keeps', async () => {
     const { result, win } = await libResultOf(closePineEditor, [], chart(withEditor('dialog')));
 
     expect(result).toStrictEqual({ closed: true, placement: 'dialog' });
@@ -510,7 +510,7 @@ describe('closePineEditor', () => {
     expect(callNames(win)).toEqual(['pageLayout.closeSidePanel']);
     expect(inspector.callsTo('pageLayout.closeSidePanel')).toEqual([['pine']]);
     expect(inspector.state.pineEditor).toMatchObject({
-      placement: 'dialog',
+      placement: null,
       visible: false,
       source: fixture.pineEditor.source,
       script: fixture.pineEditor.script,

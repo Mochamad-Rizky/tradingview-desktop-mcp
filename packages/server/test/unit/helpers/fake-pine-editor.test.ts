@@ -62,6 +62,8 @@ test('the editor starts closed, holding the script of the fixture', () => {
     consoleMessages: [],
     compileHttpError: null,
     compileFirstErrorOnly: false,
+    unsavedKept: false,
+    openedBefore: false,
   });
 });
 
@@ -123,19 +125,23 @@ test('the facade reports modified, draft and the script id, and a new script tak
   expect(inspector.callsTo('pineFacade.openNewScript')).toEqual([['strategy'], ['unknown']]);
 });
 
-test('closing the side panel or the bottom bar hides the editor and keeps it with its text', () => {
+test('closing the side panel takes the editor out of the registry and keeps its script; the bottom bar only hides it', () => {
   const side = editorOf(withEditor('dialog'));
   const layout = (side.exports.service as (descriptor: unknown) => Record<string, unknown>)(
     side.exports.PAGE_LAYOUT_SERVICE,
   );
+  side.inspector.state.pineEditor.source = 'unsaved text';
   (layout.closeSidePanel as (id: string) => void)('pine');
 
   expect(side.inspector.state.pineEditor).toMatchObject({
-    placement: 'dialog',
+    placement: null,
     visible: false,
-    source: fixture.pineEditor.source,
+    ready: false,
+    source: 'unsaved text',
+    script: fixture.pineEditor.script,
+    unsavedKept: true,
   });
-  expect(side.getOpen('dialog')).not.toBeNull();
+  expect(side.getOpen('dialog')).toBeNull();
   expect(side.inspector.callsTo('pageLayout.closeSidePanel')).toEqual([['pine']]);
 
   const bottom = editorOf(withEditor('bottom'));
@@ -144,6 +150,52 @@ test('closing the side panel or the bottom bar hides the editor and keeps it wit
   expect(bottom.inspector.state.pineEditor).toMatchObject({ placement: 'bottom', visible: false });
   expect(bottom.getOpen('bottom')).not.toBeNull();
   expect(bottom.inspector.callsTo('bottomWidgetBar.close')).toEqual([[]]);
+});
+
+test('an open after the side panel closed shows a new script, or the unsaved text it kept as the text of the script', async () => {
+  const { exports, api, inspector } = editorOf(withEditor('dialog'), { pineEditorReadyMs: 0 });
+  const editor = inspector.state.pineEditor;
+  const layout = (exports.service as (descriptor: unknown) => Record<string, unknown>)(
+    exports.PAGE_LAYOUT_SERVICE,
+  );
+  const close = layout.closeSidePanel as (id: string) => void;
+  const flag = () =>
+    (exports.getPersistedValue as (key: string, perUser: boolean) => unknown)(
+      (exports.getPersistenceKey as (key: string, placement: string) => string)(
+        exports.hasScriptModificationsKey as string,
+        'dialog',
+      ),
+      true,
+    );
+
+  // Without unsaved changes: a new script.
+  close('pine');
+  expect(flag()).toBe(false);
+  await api.open();
+  expect(editor).toMatchObject({ placement: 'dialog', script: null });
+  expect(editor.source).toBe(fixture.pineEditor.templates.indicator);
+
+  // With unsaved changes: they are kept, and come back as the text of the script.
+  editor.source = 'unsaved text';
+  expect(flag()).toBe(false);
+  close('pine');
+  expect(flag()).toBe(true);
+  await api.open();
+  expect(editor).toMatchObject({ source: 'unsaved text', savedSource: 'unsaved text' });
+  expect(api.getDialogFacade()?.isModified()).toBe(false);
+  expect(flag()).toBe(true);
+  // Whole by account, as the app keeps it, and recorded when the app would clear it.
+  expect(
+    (exports.getPersistedValue as (key: string, perUser?: boolean, clear?: boolean) => unknown)(
+      'has_unsaved_modifications',
+      false,
+      true,
+    ),
+  ).toEqual({ fixture_author: true });
+  expect(inspector.callsTo('clearPersistedValue')).toEqual([['has_unsaved_modifications']]);
+  // Starting a script clears it.
+  await api.getDialogFacade()?.openNewScript();
+  expect(flag()).toBe(false);
 });
 
 test('releaseScript discards the text and unregisters the editor', () => {
