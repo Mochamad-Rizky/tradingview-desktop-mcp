@@ -50,9 +50,23 @@ const TA_NAMES = [
   'change',
 ];
 
+// Whether code[i] starts a line at column 1, optionally after export or method. Functions are
+// declared at the top level; an indented `name(…) =>` is a switch case.
+function startsLine(code: Token[], i: number): boolean {
+  let j = i;
+  const line = code[i]?.line;
+  while (
+    code[j - 1]?.line === line &&
+    (code[j - 1]?.text === 'export' || code[j - 1]?.text === 'method')
+  ) {
+    j -= 1;
+  }
+  return code[j - 1]?.line !== line && code[j]?.column === 1;
+}
+
 // The names declared by the script: `name = …` (also with a type or var before it) and
-// `name(…) =>`. Tuple outputs are not counted: v4 scripts name an output after the built-in
-// they call, as in `[macd, signal, hist] = macd(…)`.
+// `name(…) =>` at the start of a top-level line. Tuple outputs are not counted: v4 scripts name an output
+// after the built-in they call, as in `[macd, signal, hist] = macd(…)`.
 export function declaredNames(code: Token[]): Set<string> {
   const names = new Set<string>();
   code.forEach((token, i) => {
@@ -68,7 +82,7 @@ export function declaredNames(code: Token[]): Set<string> {
         const text = code[j]?.text;
         depth += text === '(' ? 1 : text === ')' ? -1 : 0;
         if (depth === 0) {
-          if (code[j + 1]?.text === '=>') {
+          if (code[j + 1]?.text === '=>' && startsLine(code, i)) {
             names.add(token.text);
           }
           break;
@@ -202,7 +216,7 @@ export const RULES: Rule[] = [
             'error',
             first,
             `strategy.* calls (${String(calls.length)}) need a strategy() declaration, but the ` +
-              `script is an ${kind}`,
+              `script is ${kind === 'study' ? 'a' : 'an'} ${kind}`,
           ),
         ];
   },
@@ -254,6 +268,7 @@ export function versionOf(comments: Token[]): { version: number; token: Token } 
 
 export function versionDiagnostics(
   found: { version: number; token: Token } | null,
+  eol = '\n',
 ): PineDiagnostic[] {
   if (found === null) {
     return [
@@ -269,7 +284,7 @@ export function versionDiagnostics(
               line: 1,
               column: 1,
               endColumn: 1,
-              replacement: `//@version=${String(TARGET_VERSION)}\n`,
+              replacement: `//@version=${String(TARGET_VERSION)}${eol}`,
             },
           ],
         },

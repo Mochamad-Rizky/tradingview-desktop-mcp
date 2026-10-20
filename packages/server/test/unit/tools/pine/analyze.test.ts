@@ -200,7 +200,35 @@ describe('analyzePine', () => {
     }
   });
 
-  test('fixing a v4 script leaves nothing to report but the version note', () => {
+  test('every fix applies together on a headerless script whose line one is study(', () => {
+    expect(fixed('study("T")\nplot(sma(close, 3))\n')).toBe(
+      '//@version=6\nindicator("T")\nplot(ta.sma(close, 3))\n',
+    );
+  });
+
+  test('a switch case named like a built-in does not hide its calls', () => {
+    const source = `${HEAD}x = switch y\n    1 => crossover(a, b)\n    crossover(a, b) => 1\n`;
+    expect(find(source, 'ta-namespace')).toHaveLength(2);
+    const defined = `${HEAD}export crossover(a, b) =>\n    1\nz = crossover(a, b)\n`;
+    expect(ids(defined)).not.toContain('ta-namespace');
+  });
+
+  test('the version fix uses the first line break of the source', () => {
+    expect(fixed('indicator("T")\r\nplot(close)\r\n')).toBe(
+      '//@version=6\r\nindicator("T")\r\nplot(close)\r\n',
+    );
+    expect(fixed('indicator("T")')).toBe('//@version=6\nindicator("T")');
+  });
+
+  test('the strategy message names a study with the right article', () => {
+    const source = '//@version=5\nstudy("T")\nstrategy.entry("L")\n';
+    expect(find(source, 'strategy-calls-without-strategy')[0]?.message).toContain('a study');
+    expect(
+      find(`${HEAD}strategy.entry("L")\n`, 'strategy-calls-without-strategy')[0]?.message,
+    ).toContain('an indicator');
+  });
+
+  test('fixing a v5 script with old names leaves nothing to report', () => {
     const source =
       '//@version=5\nstudy("T")\nx = security(syminfo.tickerid, "D", sma(close, 3))\nplot(tostring(x))\n';
     const result = fixed(source);
@@ -254,6 +282,12 @@ describe('applyFixes', () => {
     const result = applyFixes('ab\n', [edit(1, 1, 'X'), edit(1, 1, 'Y'), edit(1, 1, 'Q', 9)]);
     expect(result.applied).toHaveLength(1);
     expect(result.source).toHaveLength(4);
+  });
+
+  test('applyFixes puts an insertion in front of a replacement at the same column', () => {
+    const result = applyFixes('abc\n', [edit(1, 3, 'XY'), edit(1, 1, '>>')]);
+    expect(result.source).toBe('>>XYc\n');
+    expect(result.applied).toHaveLength(2);
   });
 
   test('applyFixes with no fixes returns the source', () => {

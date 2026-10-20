@@ -2,13 +2,17 @@ import type { PineFix } from './rules.js';
 
 type Edit = PineFix['edits'][number];
 
-// Whether two edits of the same line touch the same columns. Two insertions at one column also
-// conflict, as their order would be arbitrary.
+// Whether two edits of the same line touch the same columns. An insertion at the first column of a
+// replacement does not (it goes in front of it); two insertions at one column do, as their order
+// would be arbitrary.
 function overlaps(a: Edit, b: Edit): boolean {
-  return (
-    a.line === b.line &&
-    (a.column === b.column || (a.column < b.endColumn && b.column < a.endColumn))
-  );
+  if (a.line !== b.line) {
+    return false;
+  }
+  if (a.column === a.endColumn && b.column === b.endColumn) {
+    return a.column === b.column;
+  }
+  return a.column < b.endColumn && b.column < a.endColumn;
 }
 
 // The offset where each line starts; a CRLF counts as one line break.
@@ -20,7 +24,11 @@ function lineStarts(source: string): number[] {
   return starts;
 }
 
-const later = (a: Edit, b: Edit): number => b.line - a.line || b.column - a.column;
+// Orders edits from the bottom up; at one column the wider edit goes first, so an insertion in
+// front of a replacement is applied after it and the columns of the replacement stay valid.
+const width = (edit: Edit): number => edit.endColumn - edit.column;
+const later = (a: Edit, b: Edit): number =>
+  b.line - a.line || b.column - a.column || width(b) - width(a);
 
 // Applies the fixes to the source: the edits go in from the bottom of the file up, so earlier
 // positions stay valid. A fix with an edit that overlaps an edit of a fix already taken is

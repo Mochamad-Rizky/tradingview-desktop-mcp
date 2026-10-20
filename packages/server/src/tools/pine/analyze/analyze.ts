@@ -22,7 +22,10 @@ export function analyzePine(source: string): PineDiagnostic[] {
   const found = versionOf(tokens.filter(({ kind }) => kind === 'comment'));
   const code = tokens.filter(({ kind }) => kind !== 'comment');
   const ctx = { code, version: found?.version ?? null, declared: declaredNames(code) };
-  const diagnostics = [...versionDiagnostics(found), ...RULES.flatMap((rule) => rule(ctx))];
+  const diagnostics = [
+    ...versionDiagnostics(found, /\r\n|\r|\n/.exec(source)?.[0]),
+    ...RULES.flatMap((rule) => rule(ctx)),
+  ];
   return diagnostics
     .map((entry, order) => ({ entry, order }))
     .sort(
