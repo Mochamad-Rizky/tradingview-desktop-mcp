@@ -293,9 +293,10 @@ export interface FakePineEditorState {
   // later errors depend on the first. The warnings are all reported. Default false.
   compileFirstErrorOnly: boolean;
   // What the app keeps for the editor between opens (has_unsaved_modifications, which its helper
-  // getPersistedValue reads): whether the text has unsaved changes. Seen on the app: kept when the
-  // side panel closes, not at once when the text changes, and cleared when a script is opened,
-  // started or saved.
+  // getPersistedValue reads): whether the text has unsaved changes. Seen on the app: written when
+  // the side panel closes, from whether the text then differs from that of its script, and left as
+  // it is while the editor is open, however the text changes: starting, opening, saving or adding
+  // a script does not clear it.
   unsavedKept: boolean;
   // Whether the editor was opened before in this session. Seen on the app: once it was, an open
   // after the side panel closed shows a new script, unless unsaved changes are kept, whose text it
@@ -498,7 +499,6 @@ export function createFakePineEditor(
     state.source = template;
     state.savedSource = template;
     state.script = null;
-    state.unsavedKept = false;
   };
 
   // What releaseScript and destroy do: the script is reset and the editor unregistered.
@@ -545,7 +545,6 @@ export function createFakePineEditor(
         state.script = { scriptIdPart, version: opened };
         state.source = source;
         state.savedSource = source;
-        state.unsavedKept = false;
       } else {
         // The app opens a new script whenever opening one fails.
         openNew();
@@ -580,7 +579,6 @@ export function createFakePineEditor(
         };
       }
       state.savedSource = state.source;
-      state.unsavedKept = false;
       const { errors, warnings } = compile(state.source);
       const title = /(?:indicator|strategy|library)\(\s*"([^"]*)"/.exec(state.source)?.[1];
       options.addStudy({
@@ -641,7 +639,6 @@ export function createFakePineEditor(
       }
       state.script = { scriptIdPart: script.scriptIdPart, version };
       state.savedSource = state.source;
-      state.unsavedKept = false;
       return Promise.resolve({
         script: {
           scriptIdPart: script.scriptIdPart,

@@ -203,10 +203,30 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
       source: UNSAVED,
       modified: true,
     });
+    // TradingView flags the unsaved changes until the editor closes (seen on the app), so the
+    // editor still counts as modified after the text was replaced.
     expect(dataOf(await callTool(client, 'pine_new', { confirm: true }))).toMatchObject({
-      modified: false,
+      modified: true,
     });
     expect(editorOf(win).source).toBe(fixture.pineEditor.templates.indicator);
+  });
+
+  test('after confirm replaced it, changes need confirm until the editor closes', async () => {
+    const { client, ctx, win } = await closedWithUnsavedText();
+    await callTool(client, 'pine_new', { confirm: true });
+
+    const again = await callTool(client, 'pine_set_source', { source: NEW_SOURCE });
+    expect(errorOf(again)?.code).toBe('CONFIRMATION_REQUIRED');
+    expect(editorOf(win).source).toBe(fixture.pineEditor.templates.indicator);
+
+    // The close writes the flag from the text then, a new script without changes: none kept.
+    const page = await ctx.connection.chartPage();
+    await page.bridge.evaluateWithLib(closePineEditor, []);
+    expect(editorOf(win)).toMatchObject({ placement: null, unsavedKept: false });
+    expect(dataOf(await callTool(client, 'pine_set_source', { source: NEW_SOURCE }))).toMatchObject(
+      { modified: true },
+    );
+    expect(editorOf(win).source).toBe(NEW_SOURCE);
   });
 });
 

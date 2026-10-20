@@ -193,8 +193,42 @@ test('an open after the side panel closed shows a new script, or the unsaved tex
     ),
   ).toEqual({ fixture_author: true });
   expect(inspector.callsTo('clearPersistedValue')).toEqual([['has_unsaved_modifications']]);
-  // Starting a script clears it.
-  await api.getDialogFacade()?.openNewScript();
+});
+
+test('the flag of unsaved changes stays as it is while the editor is open, and the close writes it', async () => {
+  const { exports, api, inspector } = editorOf(withEditor('dialog'), { pineEditorReadyMs: 0 });
+  const editor = inspector.state.pineEditor;
+  const layout = (exports.service as (descriptor: unknown) => Record<string, unknown>)(
+    exports.PAGE_LAYOUT_SERVICE,
+  );
+  const close = layout.closeSidePanel as (id: string) => void;
+  const flag = () =>
+    (exports.getPersistedValue as (key: string, perUser: boolean) => unknown)(
+      exports.hasScriptModificationsKey as string,
+      true,
+    );
+  editor.source = 'unsaved text';
+  close('pine');
+  await api.open();
+  const facade = api.getDialogFacade();
+  expect(flag()).toBe(true);
+
+  // Seen on the app: replacing the text the app kept leaves the flag set until the side panel
+  // closes, whether a script is started, opened, saved or added to the chart.
+  await facade?.openNewScript();
+  expect(flag()).toBe(true);
+  await facade?.openScript({ scriptIdPart: SAVED[0]?.scriptIdPart ?? '' });
+  expect(editor.source).toBe(SAVED[0]?.source);
+  expect(flag()).toBe(true);
+  await facade?.setScript('//@version=6\nindicator("Saved again")\nplot(close)\n');
+  await facade?.saveScript();
+  expect(flag()).toBe(true);
+  await facade?.openNewScript();
+  await facade?.addToChart();
+  expect(flag()).toBe(true);
+
+  // The close writes it from the text the editor holds then: here a script without changes.
+  close('pine');
   expect(flag()).toBe(false);
 });
 
