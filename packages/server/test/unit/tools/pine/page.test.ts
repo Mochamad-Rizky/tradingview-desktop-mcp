@@ -11,6 +11,7 @@ import {
   closePineEditor,
   openPineEditor,
   readPineEditorState,
+  readPineOwnEdit,
 } from '../../../../src/tools/pine/page.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
@@ -245,55 +246,6 @@ describe('readPineEditorState', () => {
     });
   });
 
-  test('takes the kept flag for nothing while isModified() says none and the editor holds exactly the text this session wrote', async () => {
-    const facade = (overrides: Record<string, unknown>) => ({
-      isModified: () => false,
-      isDraft: () => false,
-      getScriptIdVersion: () => ({ scriptIdPart: 'USER;s', version: '1.0' }),
-      getSource: () => Promise.resolve('own text'),
-      ...overrides,
-    });
-    const modified = async (
-      written: string | null,
-      kept: unknown,
-      overrides: Record<string, unknown> = {},
-    ) =>
-      (
-        await libResultOf(
-          readPineEditorState,
-          [written],
-          withModules(registry({ dialog: { getFacade: () => facade(overrides) } }, kept)),
-        )
-      ).result.state.modified;
-
-    expect(await modified('own text', true)).toBe(false);
-    expect(await modified('other text', true)).toBe(true);
-    expect(await modified(null, true)).toBe(true);
-    // Unsaved changes of the text itself still count, and without the flag nothing changes.
-    expect(await modified('own text', true, { isModified: () => true })).toBe(true);
-    expect(await modified('own text', false)).toBe(false);
-    // A flag or a text that cannot be read, or no way to read the text: unsaved changes assumed.
-    expect(await modified('own text', 'yes')).toBe(true);
-    expect(
-      await modified('own text', true, {
-        getSource: () => Promise.reject(new Error('Value is null')),
-      }),
-    ).toBe(true);
-    expect(await modified('own text', true, { getSource: undefined })).toBe(true);
-    const unreachable = {
-      ...facade({}),
-      get getSource(): never {
-        throw new Error('private');
-      },
-    };
-    const { result } = await libResultOf(
-      readPineEditorState,
-      ['own text'],
-      withModules(registry({ dialog: { getFacade: () => unreachable } }, true)),
-    );
-    expect(result.state.modified).toBe(true);
-  });
-
   test('reads the flag under the key the app keeps it under, for either placement', async () => {
     const facade = { isModified: () => false, isDraft: () => true, getScriptIdVersion: () => null };
     // The app writes and reads the flag under the bare key, whatever the placement of the editor.
@@ -432,6 +384,87 @@ describe('readPineEditorState', () => {
 
     expect(error.code).toBe('CAPABILITY_UNAVAILABLE');
     expect(error.hint).toContain('app_health');
+  });
+});
+
+describe('readPineOwnEdit', () => {
+  // An open editor whose facade answers `members`, under the flag of unsaved changes `kept`.
+  const editing = (members: Record<string, unknown>, kept: unknown = true) =>
+    withModules(registry({ dialog: { getFacade: () => members } }, kept));
+  const own = (written: string | null, make: Make) =>
+    libResultOf(readPineOwnEdit, [written], make).then(({ result }) => result);
+  const edit = { isModified: () => true, getSource: () => Promise.resolve('own text') };
+
+  test('tells an unsaved edit of exactly the text this session wrote, whatever the flag', async () => {
+    expect(await own('own text', editing(edit))).toBe(true);
+    expect(await own('own text', editing(edit, false))).toBe(true);
+    // Another text, or no text written.
+    expect(await own('own text!', editing(edit))).toBe(false);
+    expect(await own(null, editing(edit))).toBe(false);
+  });
+
+  test('takes no text that isModified() does not call an edit for the session', async () => {
+    // Kept across a close: unmodified, flagged, and maybe the text this session wrote.
+    expect(await own('own text', editing({ ...edit, isModified: () => false }))).toBe(false);
+    expect(
+      await own(
+        'own text',
+        editing({
+          ...edit,
+          isModified: () => {
+            throw new Error('no store');
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  test('answers false when the editor, its facade or its text cannot be read', async () => {
+    expect(await own('own text', chart())).toBe(false);
+    expect(await own('own text', withModules({}))).toBe(false);
+    expect(
+      await own(
+        'own text',
+        withModules({
+          getOpenPineEditor: () => {
+            throw new Error('boom');
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      await own(
+        'own text',
+        withModules(
+          registry({
+            dialog: {
+              getFacade: () => {
+                throw new Error('gone');
+              },
+            },
+          }),
+        ),
+      ),
+    ).toBe(false);
+    expect(await own('own text', editing({ ...edit, getSource: undefined }))).toBe(false);
+    expect(
+      await own(
+        'own text',
+        editing({ ...edit, getSource: () => Promise.reject(new Error('Value is null')) }),
+      ),
+    ).toBe(false);
+  });
+
+  test('reads the text of the fake app and changes nothing', async () => {
+    const OWN = '//@version=6\nindicator("Own")\nplot(close)\n';
+    const { result, win } = await libResultOf(
+      readPineOwnEdit,
+      [OWN],
+      chart(withEditor('dialog', { source: OWN })),
+    );
+
+    expect(result).toBe(true);
+    expect(callNames(win)).toEqual([]);
   });
 });
 

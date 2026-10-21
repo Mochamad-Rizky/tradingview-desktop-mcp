@@ -3,7 +3,7 @@ import { TvMcpError } from '../../core/errors.js';
 import {
   openPineEditor,
   readPineEditorState,
-  readPineSource,
+  readPineOwnEdit,
   type PineEditorState,
 } from './page.js';
 
@@ -11,9 +11,9 @@ export type { PineEditorState } from './page.js';
 
 // The Node side of the Pine Editor access layer, which the Pine tools build on. It reads the state
 // of the editor, opens it when it is closed, and guards its unsaved text: nothing may replace that
-// text without confirm: true (design spec 5.3), unless it is exactly the text this session wrote
-// last. The text itself is read here only to compare it with that one, and never returned or
-// logged.
+// text without confirm: true (design spec 5.3), unless it is an unsaved edit of exactly the text
+// this session wrote last. The text itself is never read here, returned or logged: the page
+// compares it.
 //
 // A member of the editor that could not be read is reported as a warning in `warnings`, which the
 // caller passes in to collect the warnings of its tool, and the state carries the safe default:
@@ -50,17 +50,13 @@ function warnAbout(unreadable: readonly string[], warnings: string[]): void {
   }
 }
 
-// The state of the editor, read without changing anything. With `written`, the text this session
-// wrote last into the editor, the flag of unsaved changes TradingView keeps counts for nothing while
-// isModified() says none and the editor holds exactly that text (see readPineEditorState): the
-// state tools that save or add the script go by. Fails CAPABILITY_UNAVAILABLE when the page has no
-// registry of open editors.
+// The state of the editor, read without changing anything. Fails CAPABILITY_UNAVAILABLE when the
+// page has no registry of open editors.
 export async function readEditorState(
   page: PageHandle,
   warnings: string[] = [],
-  written: string | null = null,
 ): Promise<PineEditorState> {
-  const { state, unreadable } = await page.bridge.evaluateWithLib(readPineEditorState, [written]);
+  const { state, unreadable } = await page.bridge.evaluateWithLib(readPineEditorState, []);
   warnAbout(unreadable, warnings);
   return state;
 }
@@ -85,22 +81,32 @@ export function notOpenError(): TvMcpError {
   });
 }
 
-// What clears the flag of unsaved changes TradingView keeps for the editor, which outlives the
-// changes, for the hints of the refusals it causes.
+// What the flag of unsaved changes TradingView keeps for the editor does, and what closing the
+// editor does to it: the close writes the flag anew from the text the editor holds then.
 export const CLOSE_EDITOR_HINT =
   'TradingView flags unsaved changes until the Pine Editor closes, also after a call replaced ' +
-  'them: once nothing in the editor needs keeping, closing the Pine Editor in TradingView clears ' +
-  'that flag.';
+  'them. Closing the Pine Editor in TradingView clears the flag only when the editor holds no ' +
+  'unsaved changes at that moment; else TradingView keeps the text and shows it again on the next ' +
+  'open.';
+
+// The hint of a refusal to replace unsaved text of the editor. The page says it in its own words
+// (changePineEditor), which a test holds to these.
+export const UNSAVED_TEXT_HINT = `Pass confirm: true to replace it, or save it first with pine_save. ${CLOSE_EDITOR_HINT}`;
+
+// The hint of a refusal to add a saved script with unsaved changes to the chart, which TradingView
+// would ask about in a dialog. The page says it in its own words (addPineScriptToChart), which a
+// test holds to these.
+export const SAVED_CHANGES_HINT =
+  'Save the changes first with pine_save, or start a new script with pine_new and the source, ' +
+  'then add that. The changes include those TradingView only flags, as for text it kept across a ' +
+  'close of the Pine Editor.';
 
 // The error of `action`, which would replace unsaved text of the editor without confirm.
 export function unsavedTextError(action: string): TvMcpError {
   return new TvMcpError(
     'CONFIRMATION_REQUIRED',
     `${action} would replace the unsaved text in the Pine Editor`,
-    {
-      hint: `Pass confirm: true to replace it, or save it first with pine_save. ${CLOSE_EDITOR_HINT}`,
-      details: { action },
-    },
+    { hint: UNSAVED_TEXT_HINT, details: { action } },
   );
 }
 
@@ -116,12 +122,12 @@ export function requireUnmodifiedOrConfirmed(
   }
 }
 
-// requireUnmodifiedOrConfirmed, except that unsaved changes are no reason to refuse while the
-// editor holds exactly `written`, the text this session wrote last into it (null for none): they,
-// and the flag of them TradingView keeps until the editor closes, are then the session's own. The
-// text of the editor is read only for that, and a text that cannot be read is not that text. An
-// early check, before a tool spends time on what it would write: the page checks again right
-// before it writes (changePineEditor).
+// requireUnmodifiedOrConfirmed, except that unsaved changes are no reason to refuse while they are
+// an unsaved edit of exactly `written`, the text this session wrote last into the editor (null for
+// none; see readPineOwnEdit): they, and the flag of them TradingView keeps until the editor closes,
+// are then the session's own. A failure to read the editor is passed on as it is. An early check,
+// before a tool spends time on what it would write: the page checks again right before it writes
+// (changePineEditor).
 export async function requireReplaceable(
   page: PageHandle,
   state: PineEditorState,
@@ -132,14 +138,8 @@ export async function requireReplaceable(
   if (!state.modified || confirm === true) {
     return;
   }
-  if (written !== null) {
-    try {
-      if ((await page.bridge.evaluateWithLib(readPineSource, [])).source === written) {
-        return;
-      }
-    } catch {
-      // Not the text this session wrote, as far as can be told.
-    }
+  if (written !== null && (await page.bridge.evaluateWithLib(readPineOwnEdit, [written]))) {
+    return;
   }
   throw unsavedTextError(action);
 }

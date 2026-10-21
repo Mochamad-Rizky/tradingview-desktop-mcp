@@ -46,16 +46,9 @@ import type {
 // isModified, unsavedChanges (the flag) and isDraft. An unreadable isModified or flag counts as
 // modified, so that the text is not replaced without confirm, and an unreadable isDraft as a draft
 // when there is no script or no version.
-//
-// written is the text this session wrote last into the editor, or null. The flag stays set after a
-// call replaced the text, until the editor closes, so while isModified() reads false and the editor
-// holds exactly that text, the flag is a leftover of the session's own change and counts for
-// nothing. Telling that needs the text, which is read then and dropped, and the answer comes as a
-// promise.
 export function readPineEditorState(
   _win: TvWindow,
   lib: PageLib,
-  written?: string | null,
 ):
   | {
       state: {
@@ -67,16 +60,6 @@ export function readPineEditorState(
       };
       unreadable: string[];
     }
-  | Promise<{
-      state: {
-        open: boolean;
-        placement: 'dialog' | 'bottom' | null;
-        modified: boolean;
-        draft: boolean;
-        script: { id: string; version: string | null } | null;
-      };
-      unreadable: string[];
-    }>
   | PageErrorSentinel {
   const getOpenPineEditor = lib.findExport('getOpenPineEditor');
   if (typeof getOpenPineEditor !== 'function') {
@@ -194,35 +177,11 @@ export function readPineEditorState(
   } else {
     unreadable.push('isDraft');
   }
-  const reading = { state: { open: true, placement: at, modified, draft, script }, unreadable };
-  let getSource: unknown;
-  try {
-    getSource = members.getSource;
-  } catch {
-    getSource = undefined;
-  }
-  if (
-    typeof written !== 'string' ||
-    changed?.value !== false ||
-    kept !== true ||
-    typeof getSource !== 'function'
-  ) {
-    return reading;
-  }
-  return Promise.resolve()
-    .then(() => (getSource as () => unknown).call(facade))
-    .then(
-      (text: unknown) =>
-        text === written ? { state: { ...reading.state, modified: false }, unreadable } : reading,
-      () => reading,
-    );
+  return { state: { open: true, placement: at, modified, draft, script }, unreadable };
 }
 
 // What readPineEditorState answers, and the parts of it the other functions and the tools use.
-export type PineEditorReading = Exclude<
-  Awaited<ReturnType<typeof readPineEditorState>>,
-  PageErrorSentinel
->;
+export type PineEditorReading = Exclude<ReturnType<typeof readPineEditorState>, PageErrorSentinel>;
 export type PineEditorState = PineEditorReading['state'];
 export type PineEditorPlacement = NonNullable<PineEditorState['placement']>;
 
@@ -813,12 +772,66 @@ export function readPineSource(
     );
 }
 
+// Whether the open editor holds an unsaved edit of the session's own: isModified() reports an edit,
+// and the text is exactly `written`, the text the session wrote last into the editor. The flag of
+// unsaved changes TradingView keeps does not tell: it stays set after such an edit until the editor
+// closes, and text TradingView kept across a close reads as unmodified, so it is never taken for
+// one. False without such a text or an open editor, and when the editor, isModified() or the text
+// cannot be read. The text is compared here and dropped. Changes nothing.
+export function readPineOwnEdit(
+  _win: TvWindow,
+  lib: PageLib,
+  written: string | null,
+): Promise<boolean> | boolean {
+  const getOpenPineEditor = lib.findExport('getOpenPineEditor');
+  if (typeof written !== 'string' || typeof getOpenPineEditor !== 'function') {
+    return false;
+  }
+  let entry: Partial<OpenPineEditorLike> | null = null;
+  for (const candidate of ['dialog', 'bottom'] as const) {
+    let found: unknown;
+    try {
+      found = (getOpenPineEditor as (at: string) => unknown)(candidate);
+    } catch {
+      found = null;
+    }
+    if (found !== null && found !== undefined) {
+      entry = found;
+      break;
+    }
+  }
+  let facade: Partial<PineEditorFacadeLike> | null | undefined;
+  try {
+    facade = entry?.getFacade?.();
+  } catch {
+    facade = null;
+  }
+  let modified: unknown;
+  try {
+    modified = facade?.isModified?.();
+  } catch {
+    modified = undefined;
+  }
+  const getSource = facade?.getSource;
+  if (modified !== true || typeof getSource !== 'function') {
+    return false;
+  }
+  return Promise.resolve()
+    .then(() => getSource.call(facade))
+    .then(
+      (text: unknown) => text === written,
+      () => false,
+    );
+}
+
 // What changePineEditor does to the text of the open editor. allowModified: false makes it check
 // right before it acts that the editor holds no unsaved changes, and refuse with
 // CONFIRMATION_REQUIRED when it does; the tools pass true only with confirm: true. written is the
 // text the session wrote last into the editor (null, or left out, for none): unsaved changes are no
-// reason to refuse while the editor holds exactly that text, which makes them, and the flag of them
-// TradingView keeps until the editor closes, the session's own.
+// reason to refuse while they are an edit of exactly that text, which isModified() still reports,
+// and which makes them, and the flag of them TradingView keeps until the editor closes, the
+// session's own. Text TradingView kept across a close reads as unmodified, and is never the
+// session's: only the flag says it is unsaved.
 // - new: opens a new script of the type, the template of the app, and with a source puts that in
 //   place of the template.
 // - source: replaces the text, keeping the script. With expect, only if the editor holds that script
@@ -1010,10 +1023,14 @@ export function changePineEditor(
       } catch {
         kept = null;
       }
-      // An answer that is not false, of either, counts as unsaved changes, unless the editor holds
-      // exactly the text the session wrote last: the changes are then its own, whatever the flag
-      // says, which stays set after a change until the editor closes.
-      if ((modified !== false || kept !== false) && !(await holdsWritten())) {
+      // An answer that is not false, of either, counts as unsaved changes, unless they are an edit
+      // of the session's own: isModified() reports an edit, and the text is exactly the one the
+      // session wrote last. The flag stays set after such an edit until the editor closes, which
+      // then does not tell it from unsaved text of the user.
+      if (
+        (modified !== false || kept !== false) &&
+        !(modified === true && (await holdsWritten()))
+      ) {
         return {
           __tvmcpError: {
             code: 'CONFIRMATION_REQUIRED',
@@ -1021,8 +1038,9 @@ export function changePineEditor(
             hint:
               'Pass confirm: true to replace it, or save it first with pine_save. TradingView ' +
               'flags unsaved changes until the Pine Editor closes, also after a call replaced ' +
-              'them: once nothing in the editor needs keeping, closing the Pine Editor in ' +
-              'TradingView clears that flag.',
+              'them. Closing the Pine Editor in TradingView clears the flag only when the editor ' +
+              'holds no unsaved changes at that moment; else TradingView keeps the text and shows ' +
+              'it again on the next open.',
           },
         };
       }
@@ -1542,15 +1560,14 @@ export type PineRawDiagnostic = Exclude<
 // right before it acts and refuse before anything is added: AUTH_REQUIRED while signed out (the app
 // would ask the user to sign in), NOT_AVAILABLE for a saved script with unsaved changes or whose
 // state cannot be read (the app would ask in a modal dialog whether to save a new version). Unsaved
-// changes are what isModified() says and what the flag TradingView keeps for them says, except that
-// the flag counts for nothing while the editor holds exactly written, the text the session wrote
-// last (null for none), over which it is a leftover of the session's own change. The
-// indicator limit of the plan is the caller's to check first, as the app opens its paywall on a
-// full chart. chartIndex is the chart whose room the caller checked, by the index the check
-// resolved the active chart to (null when the page did not say which chart was active): the editor
-// adds to the active chart only, so right before it acts this checks that the active chart is
-// still that one, and refuses with NOT_AVAILABLE when it is not, and it reads the studies before on
-// that chart. Other failures: CAPABILITY_UNAVAILABLE without the registry, a facade with
+// changes are what isModified() says and what the flag TradingView keeps for them says: text it
+// kept across a close reads as unmodified, and only the flag says it differs from the saved
+// version. The indicator limit of the plan is the caller's to check first, as the app opens its
+// paywall on a full chart. chartIndex is the chart whose room the caller checked, by the index the
+// check resolved the active chart to (null when the page did not say which chart was active): the
+// editor adds to the active chart only, so right before it acts this checks that the active chart
+// is still that one, and refuses with NOT_AVAILABLE when it is not, and it reads the studies before
+// on that chart. Other failures: CAPABILITY_UNAVAILABLE without the registry, a facade with
 // addToChart or the chart API, NOT_AVAILABLE when no editor is open or addToChart rejects (with
 // the reason).
 export function addPineScriptToChart(
@@ -1558,7 +1575,6 @@ export function addPineScriptToChart(
   lib: PageLib,
   waitMs: number,
   chartIndex: number | null,
-  written: string | null,
 ):
   | Promise<
       { before: string[]; consoleFrom: number | null; scriptId: string | null } | PageErrorSentinel
@@ -1649,32 +1665,8 @@ export function addPineScriptToChart(
       return undefined;
     }
   };
-  const draft = ask('isDraft') === true;
-  // The refusal of a saved script with unsaved changes, which the app would ask about in a dialog.
-  const withDialog = (): PageErrorSentinel => ({
-    __tvmcpError: {
-      code: 'NOT_AVAILABLE',
-      message:
-        'The Pine Editor holds a saved script with unsaved changes, which TradingView adds only ' +
-        'after asking in a dialog whether to save a new version',
-      hint:
-        'Save the changes first with pine_save, or start a new script with pine_new and the ' +
-        'source, then add that. TradingView flags unsaved changes until the Pine Editor closes, ' +
-        'also after a call replaced them: once nothing in the editor needs keeping, closing the ' +
-        'Pine Editor in TradingView clears that flag, and the script can be opened with ' +
-        'pine_open and added then.',
-    },
-  });
-  // Only a draft, or a saved script without unsaved changes, is added without a dialog; an answer
-  // that cannot be read counts as the case with the dialog.
-  if (!draft && ask('isModified') !== false) {
-    return withDialog();
-  }
   // Whether the app keeps unsaved changes for the editor (has_unsaved_modifications, under that bare
-  // key, read with its own helper, which keeps it per account), null when that cannot be read. It
-  // counts as unsaved changes too, unless the editor holds exactly the text the session wrote last
-  // (written): the flag stays set after a change until the editor closes, and over that text it is
-  // a leftover of the session's own change.
+  // key, read with its own helper, which keeps it per account), null when that cannot be read.
   let kept: unknown = null;
   try {
     const read = lib.findExport('getPersistedValue');
@@ -1686,17 +1678,48 @@ export function addPineScriptToChart(
   } catch {
     kept = null;
   }
-  const holdsWritten = async (): Promise<boolean> => {
-    const getSource = facade.getSource;
-    if (typeof written !== 'string' || typeof getSource !== 'function') {
-      return false;
-    }
+  // Only a draft, or a saved script without unsaved changes, is added without a dialog. An answer
+  // that cannot be read counts as the case with the dialog, and so does the flag: text TradingView
+  // kept across a close reads as unmodified, although it differs from the saved version.
+  if (ask('isDraft') !== true && (ask('isModified') !== false || kept !== false)) {
+    return {
+      __tvmcpError: {
+        code: 'NOT_AVAILABLE',
+        message:
+          'The Pine Editor holds a saved script with unsaved changes, which TradingView adds only ' +
+          'after asking in a dialog whether to save a new version',
+        hint:
+          'Save the changes first with pine_save, or start a new script with pine_new and the ' +
+          'source, then add that. The changes include those TradingView only flags, as for text ' +
+          'it kept across a close of the Pine Editor.',
+      },
+    };
+  }
+  if (index !== null) {
+    let active: unknown;
     try {
-      return (await getSource.call(facade)) === written;
+      active = api?.activeChartIndex?.();
     } catch {
-      return false;
+      active = undefined;
     }
-  };
+    if (active !== index) {
+      return {
+        __tvmcpError: {
+          code: 'NOT_AVAILABLE',
+          message:
+            'Another chart became the active one after the room for the script was checked, so ' +
+            'the script was not added',
+          hint:
+            'The Pine Editor adds a script to the active chart. Call pine_compile with ' +
+            'addToChart: true again to add it to the chart that is active now.',
+          details: {
+            chartIndex: index,
+            activeChartIndex: typeof active === 'number' ? active : null,
+          },
+        },
+      };
+    }
+  }
   const idsNow = (): string[] => {
     let listed: unknown;
     try {
@@ -1709,59 +1732,28 @@ export function addPineScriptToChart(
       return typeof id === 'string' ? [id] : typeof id === 'number' ? [String(id)] : [];
     });
   };
-  const act = async (): Promise<
-    { before: string[]; consoleFrom: number | null; scriptId: string | null } | PageErrorSentinel
-  > => {
-    if (!draft && kept !== false && !(kept === true && (await holdsWritten()))) {
-      return withDialog();
-    }
-    if (index !== null) {
-      let active: unknown;
-      try {
-        active = api?.activeChartIndex?.();
-      } catch {
-        active = undefined;
-      }
-      if (active !== index) {
-        return {
-          __tvmcpError: {
-            code: 'NOT_AVAILABLE',
-            message:
-              'Another chart became the active one after the room for the script was checked, ' +
-              'so the script was not added',
-            hint:
-              'The Pine Editor adds a script to the active chart. Call pine_compile with ' +
-              'addToChart: true again to add it to the chart that is active now.',
-            details: {
-              chartIndex: index,
-              activeChartIndex: typeof active === 'number' ? active : null,
-            },
-          },
-        };
-      }
-    }
-    let consoleFrom: number | null;
-    try {
-      const messages = facade._editorStore?.getStore().getState().console?.messages;
-      consoleFrom = Array.isArray(messages) ? messages.length : null;
-    } catch {
-      consoleFrom = null;
-    }
-    const before = idsNow();
-    const editor = facade as Required<Pick<PineEditorFacadeLike, 'addToChart'>>;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<{ late: true }>((resolve) => {
-      timer = setTimeout(() => {
-        resolve({ late: true });
-      }, waitMs);
-    });
-    const added = Promise.resolve()
-      .then(() => editor.addToChart())
-      .then(
-        () => ({ done: true }) as const,
-        (error: unknown) => ({ error }),
-      );
-    const outcome = await Promise.race([added, late]);
+  let consoleFrom: number | null = null;
+  try {
+    const messages = facade._editorStore?.getStore().getState().console?.messages;
+    consoleFrom = Array.isArray(messages) ? messages.length : null;
+  } catch {
+    consoleFrom = null;
+  }
+  const before = idsNow();
+  const editor = facade as Required<Pick<PineEditorFacadeLike, 'addToChart'>>;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<{ late: true }>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ late: true });
+    }, waitMs);
+  });
+  const added = Promise.resolve()
+    .then(() => editor.addToChart())
+    .then(
+      () => ({ done: true }) as const,
+      (error: unknown) => ({ error }),
+    );
+  return Promise.race([added, late]).then((outcome) => {
     clearTimeout(timer);
     if ('late' in outcome) {
       return {
@@ -1799,8 +1791,7 @@ export function addPineScriptToChart(
       scriptId = null;
     }
     return { before, consoleFrom, scriptId };
-  };
-  return act();
+  });
 }
 
 // The study on the chart of chartIndex (the active chart for null) whose id is not in `before`,

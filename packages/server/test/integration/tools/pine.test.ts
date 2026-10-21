@@ -3,6 +3,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Logger } from '../../../src/core/logger.js';
 import { createMcpServer } from '../../../src/server.js';
+import { ensureEditorOpen } from '../../../src/tools/pine/editor.js';
 import { closePineEditor } from '../../../src/tools/pine/page.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
@@ -224,14 +225,16 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
 
     for (const name of ['pine_new', 'pine_open', 'pine_set_source', 'pine_smart_compile']) {
       const tool = tools.find((candidate) => candidate.name === name);
-      expect(tool?.description, name).toContain('text this session last wrote');
+      expect(tool?.description, name).toContain('the text it last wrote into the editor');
       expect(tool?.description, name).toContain('needs no confirm: true');
+      expect(tool?.description, name).toContain('once TradingView kept it across a close');
       expect(tool?.description, name).toContain(
-        'TradingView flags unsaved changes, which it does until the editor is closed',
+        'TradingView flags unsaved changes until the editor is closed',
       );
       const confirm = (tool?.inputSchema.properties?.confirm ?? {}) as { description?: string };
       expect(confirm.description, name).toContain('until the editor is closed');
       expect(confirm.description, name).toContain('text this session last wrote');
+      expect(confirm.description, name).toContain('as an unsaved edit');
     }
   });
 
@@ -302,13 +305,19 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     expect(errorOf(replaced)?.code).toBe('CONFIRMATION_REQUIRED');
     expect(errorOf(added)?.code).toBe('NOT_AVAILABLE');
     expect(errorOf(saved)?.code).toBe('CONFIRMATION_REQUIRED');
-    for (const result of [replaced, added, saved]) {
-      expect(errorOf(result)?.hint).toContain('closing the Pine Editor in TradingView');
+    // Closing clears the flag only over text without unsaved changes, so only a refusal to replace
+    // the text names it; adding and saving point to saving.
+    expect(errorOf(replaced)?.hint).toContain('Closing the Pine Editor in TradingView');
+    expect(errorOf(replaced)?.hint).toContain('only when the editor holds no unsaved changes');
+    expect(errorOf(added)?.hint).toContain('Save the changes first with pine_save');
+    expect(errorOf(saved)?.hint).toContain('call pine_save again with confirm: true');
+    for (const result of [added, saved]) {
+      expect(errorOf(result)?.hint).not.toMatch(/closing/i);
     }
   });
 
-  test('pine_save and pine_compile with addToChart take a saved script whose only flagged changes are over the text this session wrote as unchanged', async () => {
-    const { client, ctx, win } = await closedWithUnsavedText(withStudyRoom(3, withEditor()));
+  test('pine_save and pine_compile with addToChart count the flag TradingView keeps as unsaved changes, also over the text this session wrote', async () => {
+    const { client, win } = await closedWithUnsavedText(withStudyRoom(3, withEditor()));
     await callTool(client, 'pine_open', { scriptId: SCRIPT.scriptIdPart, confirm: true });
     // The script is the user's, and the flag of the replaced text is still set: confirm, twice.
     await callTool(client, 'pine_set_source', { source: EDITED, confirm: true });
@@ -319,13 +328,44 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     const again = await callTool(client, 'pine_save', {});
     const added = await callTool(client, 'pine_compile', { addToChart: true });
 
-    // Nothing is left to save, and nothing to ask about before the add.
-    expect(dataOf(again)).toMatchObject({ created: false });
-    expect(warningsOf(again)).toEqual([expect.stringMatching(/no unsaved changes/)]);
+    expect(errorOf(again)?.code).toBe('CONFIRMATION_REQUIRED');
+    expect(errorOf(added)?.code).toBe('NOT_AVAILABLE');
     expect(callsOf(win, 'pineFacade.saveScript')).toHaveLength(1);
-    expect(dataOf(added)).toMatchObject({ addedToChart: true, studyId: 'NEW001' });
-    expect(ctx.session.createdStudyIds).toEqual(new Set(['NEW001']));
-    expect(callsOf(win, 'dialog.confirmSaveChanges')).toEqual([]);
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+  });
+
+  test('the text this session wrote counts as unsaved for saving, adding and replacing once TradingView kept it across a close', async () => {
+    const { client, ctx, win } = await startHarness(withLimit(5, withStudyRoom(3, withEditor())));
+    await callTool(client, 'pine_open', { scriptId: SCRIPT.scriptIdPart });
+    const set = await callTool(client, 'pine_set_source', { source: EDITED });
+    expect(set.isError).toBeFalsy();
+    // The user closes the editor and opens it again: TradingView keeps the text, shows it as the
+    // text of the script and flags it, while isModified() reads false.
+    const page = await ctx.connection.chartPage();
+    await page.bridge.evaluateWithLib(closePineEditor, []);
+    await ensureEditorOpen(page, 3000);
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    expect(facade?.isModified()).toBe(false);
+    expect(editorOf(win)).toMatchObject({ source: EDITED, unsavedKept: true });
+    expect(editorOf(win).savedScripts[0]?.source).not.toBe(EDITED);
+
+    const added = await callTool(client, 'pine_compile', { addToChart: true });
+    const saved = await callTool(client, 'pine_save', {});
+    const opened = await callTool(client, 'pine_open', { scriptId: STRATEGY.scriptIdPart });
+
+    expect(errorOf(added)?.code).toBe('NOT_AVAILABLE');
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(errorOf(saved)?.code).toBe('CONFIRMATION_REQUIRED');
+    expect(warningsOf(saved)).toEqual([]);
+    expect(errorOf(opened)).toMatchObject({
+      code: 'CONFIRMATION_REQUIRED',
+      details: { action: 'pine_open' },
+    });
+    expect(editorOf(win).source).toBe(EDITED);
+    // With confirm, the save writes the kept text as a new version: it was not saved yet.
+    const version = await callTool(client, 'pine_save', { confirm: true });
+    expect(dataOf(version)).toMatchObject({ created: false });
+    expect(editorOf(win).savedScripts[0]?.source).toBe(EDITED);
   });
 
   test('smart compile writeBack and pine_open need no confirm over the text this session wrote', async () => {

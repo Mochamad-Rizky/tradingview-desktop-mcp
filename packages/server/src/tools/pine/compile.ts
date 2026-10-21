@@ -8,7 +8,7 @@ import { pageWaitMs } from '../chart/strategies.js';
 import { requireStudyRoom } from '../indicator/index.js';
 import { readStudyInsertContext } from '../indicator/page.js';
 import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.js';
-import { CLOSE_EDITOR_HINT, notOpenError, readEditorState } from './editor.js';
+import { notOpenError, readEditorState, SAVED_CHANGES_HINT } from './editor.js';
 import {
   declaredTitle,
   mergeConsoleMessages,
@@ -105,10 +105,9 @@ async function addEditorScript(
   const context = await page.bridge.evaluateWithLib(readStudyInsertContext, [null, '']);
   await requireStudyRoom(page, context.check, context.count);
 
-  // Over the text this session wrote last, the flag of unsaved changes TradingView keeps is a
-  // leftover of its own change, which asks for no dialog; the page checks that again.
-  const written = ctx.session.lastWrittenPineText;
-  const state = await readEditorState(page, warnings, written);
+  // Unsaved changes are also those only the flag TradingView keeps says: text it kept across a close
+  // reads as unmodified, and adding it would ask in a dialog all the same.
+  const state = await readEditorState(page, warnings);
   if (!state.open) {
     throw notOpenError();
   }
@@ -118,10 +117,7 @@ async function addEditorScript(
       'The Pine Editor holds a saved script with unsaved changes, which TradingView adds only ' +
         'after asking in a dialog whether to save a new version',
       {
-        hint:
-          'Save the changes first with pine_save, or start a new script with pine_new and the ' +
-          `source, then add that. ${CLOSE_EDITOR_HINT} The script can then be opened with ` +
-          'pine_open and added.',
+        hint: SAVED_CHANGES_HINT,
         details: { id: state.script.id },
       },
     );
@@ -132,7 +128,7 @@ async function addEditorScript(
   // function, with its hint, within the time of the call.
   const { before, consoleFrom, scriptId } = await page.bridge.evaluateWithLib(
     addPineScriptToChart,
-    [Math.max(deadline - Date.now(), 0), context.chartIndex, written],
+    [Math.max(deadline - Date.now(), 0), context.chartIndex],
   );
   const script = { id: scriptId, title: declaredTitle(source) };
   const found = await pollUntil(

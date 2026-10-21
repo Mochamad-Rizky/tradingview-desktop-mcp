@@ -8,6 +8,7 @@ import {
 } from '../../../../src/core/tv/page-bridge.js';
 import { createPageLib } from '../../../../src/core/tv/page-lib.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
+import { SAVED_CHANGES_HINT } from '../../../../src/tools/pine/editor.js';
 import {
   addPineScriptToChart,
   compilePineSource,
@@ -276,7 +277,7 @@ describe('addPineScriptToChart', () => {
   test('adds the script of the editor and answers the studies before and the console length', async () => {
     const { result, win } = await libResultOf(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       chart(withRoom(withEditor()), (win) => {
         editorOf(win).consoleMessages.push({ level: 'info', text: 'old', time: '09:00:00' });
       }),
@@ -295,11 +296,7 @@ describe('addPineScriptToChart', () => {
 
   test('adds to the chart whose room was checked, and refuses once another chart is the active one', async () => {
     const twoCharts = withRoom({ ...withEditor(), layout: { ...fixture.layout, chartsCount: 2 } });
-    const { result, win } = await libResultOf(
-      addPineScriptToChart,
-      [1000, 0, null],
-      chart(twoCharts),
-    );
+    const { result, win } = await libResultOf(addPineScriptToChart, [1000, 0], chart(twoCharts));
 
     expect(result).toEqual({
       before: ['STUDY01', 'STUDY02'],
@@ -310,7 +307,7 @@ describe('addPineScriptToChart', () => {
 
     const moved = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, 0, null],
+      [1000, 0],
       chart(twoCharts, (page) => {
         inspectFakeWindow(page).state.activeChartIndex = 1;
       }),
@@ -325,7 +322,7 @@ describe('addPineScriptToChart', () => {
     // An active chart that cannot be told is not taken for the one that was checked.
     const unknown = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, 0, null],
+      [1000, 0],
       chart(twoCharts, (page) => {
         const api = (page as ReturnType<typeof createFakeTvWindow>).TradingViewApi;
         if (api !== undefined) {
@@ -345,7 +342,7 @@ describe('addPineScriptToChart', () => {
   test('answers the script the editor holds after the add: a new script under the id of its draft', async () => {
     const { result } = await libResultOf(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       chart(withRoom(withEditor({ script: null, source: 'plot(close)' }))),
     );
     expect(result).toMatchObject({ scriptId: `USER;${(0xd4b0).toString(16).padStart(32, '0')}` });
@@ -354,7 +351,7 @@ describe('addPineScriptToChart', () => {
       (
         await libResultOf(
           addPineScriptToChart,
-          [1000, null, null],
+          [1000, null],
           withFacade(
             () => ({
               addToChart: () => Promise.resolve(),
@@ -374,71 +371,48 @@ describe('addPineScriptToChart', () => {
     ).resolves.toBeNull();
   });
 
-  test('adds a saved script whose only flagged changes are over the text this session wrote', async () => {
+  test('refuses a saved script that TradingView flags as changed, whatever text it holds', async () => {
     const OWN = '//@version=6\nindicator("Own")\nplot(close)\n';
-    // A saved script without changes of its own, which TradingView still flags.
+    // A saved script whose text isModified() takes for saved, which TradingView flags: text it kept
+    // across a close, or a flag left from a change.
     const flagged = chart(withRoom(withEditor({ source: OWN, savedSource: OWN })), (win) => {
       editorOf(win).unsavedKept = true;
     });
 
-    const { result, win } = await libResultOf(addPineScriptToChart, [1000, null, OWN], flagged);
-    expect(result).toMatchObject({ before: ['STUDY01', 'STUDY02'] });
-    expect(inspectFakeWindow(win).callsTo('pineFacade.addToChart')).toEqual([[]]);
+    const refused = await libFailureOfBoth(addPineScriptToChart, [1000, null], flagged);
+    expect(refused.error.code).toBe('NOT_AVAILABLE');
+    expect(refused.error.hint).toBe(SAVED_CHANGES_HINT);
+    expect(inspectFakeWindow(refused.win).callsTo('pineFacade.addToChart')).toEqual([]);
+    expect(inspectFakeWindow(refused.win).callsTo('dialog.confirmSaveChanges')).toEqual([]);
 
-    for (const written of [`${OWN}x`, null]) {
-      const refused = await libFailureOfBoth(addPineScriptToChart, [1000, null, written], flagged);
-      expect(refused.error.code).toBe('NOT_AVAILABLE');
-      expect(refused.error.hint).toContain('closing the Pine Editor in TradingView');
-      expect(inspectFakeWindow(refused.win).callsTo('pineFacade.addToChart')).toEqual([]);
-      expect(inspectFakeWindow(refused.win).callsTo('dialog.confirmSaveChanges')).toEqual([]);
-    }
-
-    // A flag that cannot be read, and a text that cannot be read, refuse a saved script too.
-    const facade = (getSource: () => unknown) => () => ({
+    // A flag that cannot be read, or whose helper throws, refuses a saved script too; a flag that
+    // is down lets it be added.
+    const facade = () => ({
       addToChart: () => Promise.resolve(),
       isDraft: () => false,
       isModified: () => false,
-      getSource,
     });
     const chartApi = () => ({ getAllStudies: () => [] });
-    const kept = {
+    const flag = (value: () => unknown) => ({
       hasScriptModificationsKey: 'has_unsaved_modifications',
-      getPersistedValue: () => true,
-    };
-    const throwing = {
-      hasScriptModificationsKey: 'has_unsaved_modifications',
-      getPersistedValue: () => {
-        throw new Error('no storage');
-      },
-    };
+      getPersistedValue: value,
+    });
     for (const make of [
-      withFacade(
-        facade(() => Promise.resolve(OWN)),
-        { chartApi },
-      ),
-      withFacade(
-        facade(() => Promise.resolve(OWN)),
-        { chartApi, modules: throwing },
-      ),
-      withFacade(
-        facade(() => Promise.reject(new Error('Value is null'))),
-        {
-          chartApi,
-          modules: kept,
-        },
-      ),
+      withFacade(facade, { chartApi }),
+      withFacade(facade, {
+        chartApi,
+        modules: flag(() => {
+          throw new Error('no storage');
+        }),
+      }),
     ]) {
-      const { error } = await libFailureOfBoth(addPineScriptToChart, [1000, null, OWN], make);
+      const { error } = await libFailureOfBoth(addPineScriptToChart, [1000, null], make);
       expect(error.code).toBe('NOT_AVAILABLE');
     }
-    // The same flag over the text this session wrote lets the script be added.
     const added = await libResultOf(
       addPineScriptToChart,
-      [1000, null, OWN],
-      withFacade(
-        facade(() => Promise.resolve(OWN)),
-        { chartApi, modules: kept },
-      ),
+      [1000, null],
+      withFacade(facade, { chartApi, modules: flag(() => false) }),
     );
     expect(added.result).toEqual({ before: [], consoleFrom: null, scriptId: null });
   });
@@ -446,7 +420,7 @@ describe('addPineScriptToChart', () => {
   test('refuses before acting: signed out, a changed saved script, no editor', async () => {
     const signedOut = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       chart(withRoom(withEditor()), (win) => {
         editorOf(win).signedIn = false;
       }),
@@ -456,7 +430,7 @@ describe('addPineScriptToChart', () => {
 
     const changed = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       chart(withRoom(withEditor({ source: '//@version=6\nindicator("Changed")\n' }))),
     );
     expect(changed.error.code).toBe('NOT_AVAILABLE');
@@ -465,16 +439,12 @@ describe('addPineScriptToChart', () => {
 
     const closed = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       chart(withRoom(fixture)),
     );
     expect(closed.error.code).toBe('NOT_AVAILABLE');
 
-    const noRegistry = await libFailureOfBoth(
-      addPineScriptToChart,
-      [1000, null, null],
-      withModules({}),
-    );
+    const noRegistry = await libFailureOfBoth(addPineScriptToChart, [1000, null], withModules({}));
     expect(noRegistry.error.code).toBe('CAPABILITY_UNAVAILABLE');
   });
 
@@ -482,7 +452,7 @@ describe('addPineScriptToChart', () => {
     const studies = () => ({ getAllStudies: () => [] });
     const unknownModified = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       withFacade(
         () => ({
           addToChart: () => Promise.resolve(),
@@ -498,14 +468,14 @@ describe('addPineScriptToChart', () => {
 
     const noAdd = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       withFacade(() => ({ isDraft: () => true, isModified: () => false }), { chartApi: studies }),
     );
     expect(noAdd.error.code).toBe('CAPABILITY_UNAVAILABLE');
 
     const noChart = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       withFacade(() => ({
         addToChart: () => Promise.resolve(),
         isDraft: () => true,
@@ -516,7 +486,7 @@ describe('addPineScriptToChart', () => {
 
     const noFacade = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       withFacade(() => null, { chartApi: studies }),
     );
     expect(noFacade.error.code).toBe('CAPABILITY_UNAVAILABLE');
@@ -526,7 +496,7 @@ describe('addPineScriptToChart', () => {
     const added: string[] = [];
     const { result } = await libResultOf(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       withFacade(
         () => ({
           addToChart: () => {
@@ -548,7 +518,7 @@ describe('addPineScriptToChart', () => {
     const chartApi = () => ({ getAllStudies: () => [] });
     const rejected = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       withFacade(
         () => ({
           addToChart: () => Promise.reject(new Error('Compilation request failed')),
@@ -565,7 +535,7 @@ describe('addPineScriptToChart', () => {
 
     const hanging = await libFailureOfBoth(
       addPineScriptToChart,
-      [20, null, null],
+      [20, null],
       withFacade(
         () => ({
           addToChart: () => new Promise(() => undefined),
@@ -619,18 +589,18 @@ describe('page members that throw', () => {
       }),
     });
 
-    const { result } = await libResultOf(addPineScriptToChart, [1000, null, null], make);
+    const { result } = await libResultOf(addPineScriptToChart, [1000, null], make);
     expect(result).toEqual({ before: [], consoleFrom: null, scriptId: null });
 
     const brokenFacade = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       withModules({ getOpenPineEditor: () => ({ getFacade: throwing }) }),
     );
     expect(brokenFacade.error.code).toBe('CAPABILITY_UNAVAILABLE');
     const brokenChart = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000, null, null],
+      [1000, null],
       withModules(
         { getOpenPineEditor: () => ({ getFacade: () => ({ addToChart: () => undefined }) }) },
         { TradingViewApi: { activeChart: throwing } },

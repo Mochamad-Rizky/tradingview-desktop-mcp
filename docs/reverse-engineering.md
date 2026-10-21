@@ -470,8 +470,10 @@ Seen on the app (probe scripts and the end-to-end suites; ids, flags and shapes 
   is written when the editor unmounts or closes, under its bare key and the account name, and the app reads it with
   `getPersistedValue(hasScriptModificationsKey, true)`. While the editor is open it lags: after `pine_open` replaced
   unsaved text, it stays set until the editor closes. The tools count the editor as modified when `isModified()` or
-  the flag says so, except while it holds exactly the text the session wrote last, over which the flag is a leftover
-  of the session's own change.
+  the flag says so. Only replacing the text needs no `confirm` over an unsaved edit of the session's own, which
+  `isModified()` still reports and whose text is exactly the one the session wrote last. Saving and adding the script
+  count the flag as ever: kept text the session wrote reads as unmodified too, and still differs from the saved
+  version.
 - **Persisted keys.** `last_edited_script` (the id, version, name, title and text of the script),
   `has_unsaved_modifications`, `last_edited_script_position`, `last_edited_script_view_state` and
   `console_messages_key`, each a JSON object keyed by the account name, under bare keys for the side panel (the bottom
@@ -780,7 +782,7 @@ to work around a limit.
 | Overlays (ads, upsell toasts, paywall dialogs) intercepting clicks                                                               | Observed              | Prefer T1/T2; T3 dismisses known overlays first                                                                              |
 | Single-instance lock swallows the debug flag                                                                                     | Observed (static)     | Detect and require explicit restart consent                                                                                  |
 | Layout autosave persists every chart change                                                                                      | High                  | Tools change only what they are asked to; E2E tests clean up exactly what they create                                        |
-| The Pine Editor keeps unsaved text across a close and shows it as the text of the script, with a flag that lags while it is open | Observed              | The tools count the flag as unsaved changes (not over the text the session wrote) and need `confirm` to replace them         |
+| The Pine Editor keeps unsaved text across a close and shows it as the text of the script, with a flag that lags while it is open | Observed              | The tools count the flag as unsaved changes and need `confirm` to replace them, save for an unsaved edit of the session      |
 | Adding a study on a full chart opens a dialog of the app (a warning, or the paywall on the descriptor path)                      | Observed (static)     | Check `canCreateStudy` and the plan limit first and fail with `PLAN_LIMIT`                                                   |
 | Hashed CSS classes                                                                                                               | Certain               | Never used as selectors                                                                                                      |
 | Windows MSIX packaging blocks launching with flags                                                                               | Reported by prior art | Platform-specific launcher, `TV_APP_PATH` override, documented manual launch                                                 |

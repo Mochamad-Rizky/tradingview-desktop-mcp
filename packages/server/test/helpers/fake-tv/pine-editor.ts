@@ -7,7 +7,8 @@ import type { TvStateFixture } from './fixture.js';
 //   placement an editor is registered under ("dialog" or "bottom") and null otherwise, with
 //   registerOpenPineEditor and unregisterOpenPineEditor next to it. The current layout opens the
 //   editor as the right side panel, which registers as "dialog" (seen on the app).
-// - The facade has placement, awaitEditorReady, isModified (the text differs from the saved text),
+// - The facade has placement, awaitEditorReady, isModified (the text differs from the text it was
+//   opened or saved with, which an open that showed kept unsaved text again takes as that text),
 //   isDraft (no script id, no version, or a version whose major part is 0), getScriptIdVersion
 //   ({ scriptIdPart, version } or null; the version is undefined when the script has none),
 //   getSource (rejects while the editor is not mounted, like the ensureNotNull of the app),
@@ -20,25 +21,28 @@ import type { TvStateFixture } from './fixture.js';
 //   releaseScript and destroy reset the script, which discards the text, and unregister the editor,
 //   as on the app. openScript with a source opens it as that script; without one it loads the
 //   saved script of that id, and on any failure it opens a new script, as the app does.
-//   saveScript saves a new version of a saved script under its name. For a draft it would ask the
-//   user for a name in a dialog (dialog.renameScript), and signed out it would ask the user to sign
-//   in (dialog.signIn); either way it rejects, as the app does when the dialog is cancelled. For a
-//   saved script outside the newest the saved-script limit lets be updated it opens the paywall
-//   (dialog.paywall) and rejects, as isScriptUpdateBlockedByPaywall of the app does.
+//   saveScript saves a new version of a saved script under its name, when its text differs from
+//   the saved version (state.versionSource) or its version is no whole one. For a draft it would
+//   ask the user for a name in a dialog (dialog.renameScript), and signed out it would ask the user
+//   to sign in (dialog.signIn); either way it rejects, as the app does when the dialog is
+//   cancelled. For a saved script outside the newest the saved-script limit lets be updated it
+//   opens the paywall (dialog.paywall) and rejects, as isScriptUpdateBlockedByPaywall of the app
+//   does.
 //   addToChart adds the script the editor holds to the chart. Signed out it asks the user to sign
-//   in (dialog.signIn); for a saved script with unsaved changes it asks in the modal dialog
-//   confirmSaveChanges whether to save a new version first (dialog.confirmSaveChanges), which no
-//   one answers here, so nothing is added; on a chart without room for a study it opens the paywall
-//   (dialog.paywall). Otherwise it saves a new script as a server draft (version 0.1), compiles the
-//   text with the fake compiler, adds a study of the script (with hasCompileError() true when the
-//   text does not compile, as the app keeps a study that failed) and writes the compile messages
-//   and diagnostics to the console. It resolves either way, as the app does.
+//   in (dialog.signIn); for a saved script whose text differs from the saved version (unsaved
+//   changes, whatever isModified() says) it asks in the modal dialog confirmSaveChanges whether to
+//   save a new version first (dialog.confirmSaveChanges), which no one answers here, so nothing is
+//   added; on a chart without room for a study it opens the paywall (dialog.paywall). Otherwise
+//   it saves a new script as a server draft (version 0.1), compiles the text with the fake
+//   compiler, adds a study of the script (with hasCompileError() true when the text does not
+//   compile, as the app keeps a study that failed) and writes the compile messages and diagnostics
+//   to the console. It resolves either way, as the app does.
 // - TradingViewApi.pineEditorApi() answers the same object on every call: open(options), which
 //   registers the editor at the opensAt placement of the fixture on the next turn of the event loop
 //   and mounts it readyMs after the call. As on the app, the first open shows the script the
 //   editor last held; an open after the side panel closed shows a new script, unless unsaved
 //   changes were kept (state.unsavedKept), whose text it shows again as the text of the script, so
-//   that isModified() reads false;
+//   that isModified() reads false although the text still differs from the saved version;
 //   getDialogFacade and getBottomFacade; listSavedScripts, the same request as requestUserScripts;
 //   saveNewScript, which checks the saved-script limit the way the app does, opening its paywall
 //   (dialog.paywall) and throwing when the limit is reached, and else saves a new script; and
@@ -275,9 +279,15 @@ export interface FakePineEditorState {
   visible: boolean;
   // Whether the code editor is mounted, so that getSource answers.
   ready: boolean;
-  // The text in the editor, and the text of the script as it was opened or saved.
+  // The text in the editor, and the text isModified() compares it with: the text of the script as
+  // it was opened or saved, or the unsaved text an open showed again, which then reads as
+  // unmodified (seen on the app).
   source: string;
   savedSource: string;
+  // The text of the saved version of the script (the template for a new one): what the text has
+  // unsaved changes against, whatever isModified() says. An open that shows kept unsaved text again
+  // leaves it as it was.
+  versionSource: string;
   // The saved script the editor holds, or null for a new script that has no id yet.
   script: FakePineScriptId | null;
   // window.is_authenticated, which the editor and the script list read.
@@ -296,7 +306,8 @@ export interface FakePineEditorState {
   compileFirstErrorOnly: boolean;
   // What the app keeps for the editor between opens (has_unsaved_modifications, which its helper
   // getPersistedValue reads): whether the text has unsaved changes. Seen on the app: written when
-  // the side panel closes, from whether the text then differs from that of its script, and left as
+  // the side panel closes, from whether the text then differs from that of its script (its saved
+  // version), and left as
   // it is while the editor is open, however the text changes: starting, opening, saving or adding
   // a script does not clear it.
   unsavedKept: boolean;
@@ -434,6 +445,7 @@ export function createFakePineEditor(
     ready: config.open !== null,
     source: config.source,
     savedSource: config.savedSource,
+    versionSource: config.savedSource,
     script: config.script === null ? null : { ...config.script },
     signedIn: true,
     savedScripts: config.savedScripts.map((script) => ({ ...script })),
@@ -524,6 +536,7 @@ export function createFakePineEditor(
     const template = templateOf(type);
     state.source = template;
     state.savedSource = template;
+    state.versionSource = template;
     state.script = null;
   };
 
@@ -531,6 +544,7 @@ export function createFakePineEditor(
   const reset = (): void => {
     state.source = '';
     state.savedSource = '';
+    state.versionSource = '';
     state.script = null;
     state.placement = null;
     state.visible = false;
@@ -571,6 +585,7 @@ export function createFakePineEditor(
         state.script = { scriptIdPart, version: opened };
         state.source = source;
         state.savedSource = source;
+        state.versionSource = source;
       } else {
         // The app opens a new script whenever opening one fails.
         openNew();
@@ -583,7 +598,7 @@ export function createFakePineEditor(
         record('dialog.signIn', []);
         return Promise.resolve();
       }
-      if (state.script !== null && !facade.isDraft() && facade.isModified()) {
+      if (state.script !== null && !facade.isDraft() && state.source !== state.versionSource) {
         // The modal dialog waits for the user, who never answers here: nothing is added.
         record('dialog.confirmSaveChanges', []);
         return Promise.resolve();
@@ -605,6 +620,7 @@ export function createFakePineEditor(
         };
       }
       state.savedSource = state.source;
+      state.versionSource = state.source;
       const { errors, warnings } = compile(state.source);
       const title = /(?:indicator|strategy|library)\(\s*"([^"]*)"/.exec(state.source)?.[1];
       options.addStudy({
@@ -650,7 +666,10 @@ export function createFakePineEditor(
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
         return Promise.reject(undefined);
       }
-      if ((!facade.isModified() && minorOf(script.version) === 0) || state.saveErrors !== null) {
+      if (
+        (state.source === state.versionSource && minorOf(script.version) === 0) ||
+        state.saveErrors !== null
+      ) {
         // Nothing to save, or a save that fails: the app says so in its console and rejects with
         // undefined.
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
@@ -670,6 +689,7 @@ export function createFakePineEditor(
       }
       state.script = { scriptIdPart: script.scriptIdPart, version };
       state.savedSource = state.source;
+      state.versionSource = state.source;
       return Promise.resolve({
         script: {
           scriptIdPart: script.scriptIdPart,
@@ -794,9 +814,9 @@ export function createFakePineEditor(
     closeSidePanel(id: string) {
       record('pageLayout.closeSidePanel', [id]);
       // The side panel goes, and the editor leaves the registry; the app keeps the script it held
-      // and whether its text had unsaved changes (seen on the app).
+      // and whether its text had unsaved changes against its saved version (seen on the app).
       if (id === 'pine' && state.placement === 'dialog') {
-        state.unsavedKept = state.source !== state.savedSource;
+        state.unsavedKept = state.source !== state.versionSource;
         state.placement = null;
         state.visible = false;
         state.ready = false;

@@ -55,6 +55,7 @@ test('the editor starts closed, holding the script of the fixture', () => {
     ready: false,
     source: fixture.pineEditor.source,
     savedSource: fixture.pineEditor.savedSource,
+    versionSource: fixture.pineEditor.savedSource,
     script: fixture.pineEditor.script,
     signedIn: true,
     savedScripts: fixture.pineEditor.savedScripts,
@@ -183,6 +184,8 @@ test('an open after the side panel closed shows a new script, or the unsaved tex
   await api.open();
   expect(editor).toMatchObject({ source: 'unsaved text', savedSource: 'unsaved text' });
   expect(api.getDialogFacade()?.isModified()).toBe(false);
+  // The saved version is still the template of the new script.
+  expect(editor.versionSource).toBe(fixture.pineEditor.templates.indicator);
   expect(flag()).toBe(true);
   // Whole by account, as the app keeps it, and recorded when the app would clear it.
   expect(
@@ -193,6 +196,43 @@ test('an open after the side panel closed shows a new script, or the unsaved tex
     ),
   ).toEqual({ fixture_author: true });
   expect(inspector.callsTo('clearPersistedValue')).toEqual([['has_unsaved_modifications']]);
+});
+
+test('text kept across a close stays unsaved though isModified() reads false: addToChart asks, saveScript saves it, a close keeps it', async () => {
+  const room = {
+    ...withEditor('dialog'),
+    planLimits: { ...fixture.planLimits, INDICATORS_ON_CHART: 5 },
+  };
+  const { exports, api, inspector } = editorOf(room, { pineEditorReadyMs: 0 });
+  const editor = inspector.state.pineEditor;
+  const layout = (exports.service as (descriptor: unknown) => Record<string, unknown>)(
+    exports.PAGE_LAYOUT_SERVICE,
+  );
+  const close = layout.closeSidePanel as (id: string) => void;
+  const edited = '//@version=6\nindicator("Fixture Script")\nplot(open)\n';
+
+  // The saved script of the fixture with an edit, closed and opened again, twice.
+  editor.source = edited;
+  close('pine');
+  await api.open();
+  close('pine');
+  expect(editor.unsavedKept).toBe(true);
+  await api.open();
+  const facade = api.getDialogFacade();
+  expect(editor).toMatchObject({ source: edited, savedSource: edited, unsavedKept: true });
+  expect(facade?.isModified()).toBe(false);
+  expect(editor.versionSource).toBe(fixture.pineEditor.savedSource);
+
+  // Adding asks in the dialog, as for any saved script with unsaved changes, and adds nothing.
+  await facade?.addToChart();
+  expect(inspector.callsTo('dialog.confirmSaveChanges')).toEqual([[]]);
+  expect(editor.consoleMessages).toEqual([]);
+  // Saving saves the kept text as a new version.
+  await expect(facade?.saveScript()).resolves.toMatchObject({
+    script: { scriptIdPart: SAVED[0]?.scriptIdPart },
+  });
+  expect(editor.savedScripts[0]?.source).toBe(edited);
+  expect(editor.versionSource).toBe(edited);
 });
 
 test('the flag of unsaved changes stays as it is while the editor is open, and the close writes it', async () => {

@@ -13,7 +13,6 @@ import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput }
 import { analyzePine, pineVersion } from './analyze/analyze.js';
 import { compileSource, pineCompileTools } from './compile.js';
 import {
-  CLOSE_EDITOR_HINT,
   ensureEditorOpen,
   notOpenError,
   readEditorState,
@@ -48,8 +47,8 @@ import { smartCompile } from './smart-compile.js';
 //
 // They touch the user's saved scripts and the unsaved text of the editor, so they keep to these
 // rules (design spec 5.3): no text in the editor is replaced while it has unsaved changes unless
-// the call passes confirm: true or the text is exactly the one this session wrote last (which the
-// session keeps in memory only); a new version of a saved script this session did not create
+// the call passes confirm: true or they are an unsaved edit of exactly the text this session wrote
+// last (which it keeps in memory only); a new version of a saved script this session did not create
 // needs confirm: true; nothing deletes or renames a script; the saved-script limit of the plan is
 // checked with read-only replicas of the checks of the app before anything could open its paywall,
 // and a limit that cannot be read stops a save; and nothing calls what would open a dialog of
@@ -72,16 +71,17 @@ const LIMIT_HINT =
   'plan; this server deletes no script.';
 
 // TradingView keeps flagging unsaved changes of the editor until it is closed, also after a call
-// replaced them (seen on the app), and the tools count that flag as unsaved changes, except over the
-// text this session wrote last: while the editor holds exactly that text, the changes and the flag
-// are the session's own. Any other text needs confirm until the editor closes, also after a call
-// with confirm: true. The tools that replace the text say so.
+// replaced them (seen on the app), and the tools count that flag as unsaved changes, except over an
+// unsaved edit of the text this session wrote last, which isModified() still reports: the edit and
+// the flag are then the session's own. Any other text needs confirm, the session's own too once
+// TradingView kept it across a close, which makes it read as unmodified. The tools that replace the
+// text say so.
 const KEPT_FLAG =
-  'The text this session last wrote into the editor (with pine_new and a source, pine_set_source ' +
-  'or the writeBack of pine_smart_compile) is its own: while the editor holds exactly that text, ' +
-  'changing it needs no confirm: true. Any other text counts as unsaved while TradingView flags ' +
-  'unsaved changes, which it does until the editor is closed, also after a call with confirm: ' +
-  'true replaced them.';
+  'An unsaved edit this session made, the text it last wrote into the editor (with pine_new and a ' +
+  'source, pine_set_source or the writeBack of pine_smart_compile), needs no confirm: true to be ' +
+  "changed while the editor holds it exactly. Any other unsaved text needs it, the session's own " +
+  'too once TradingView kept it across a close of the editor. TradingView flags unsaved changes ' +
+  'until the editor is closed, also after a call with confirm: true replaced them.';
 
 const CONFIRM_RULE =
   'When the editor holds unsaved changes the call fails with CONFIRMATION_REQUIRED and changes ' +
@@ -95,7 +95,7 @@ const confirmInput = (what: string) =>
       `Must be true to ${what} while the Pine Editor holds unsaved changes, which are then lost. ` +
         'TradingView counts them as unsaved until the editor is closed, also after a call with ' +
         'confirm: true replaced them. Not needed while the editor holds exactly the text this ' +
-        'session last wrote into it.',
+        'session last wrote into it as an unsaved edit.',
     );
 
 const sourceInput = () =>
@@ -111,7 +111,8 @@ function editorData(state: PineEditorState) {
 // what the editor holds, where it looks at that first: for a text change that says what the editor
 // must hold (expect), so that an editor that has changed is told from unsaved text this call may
 // not replace, and whenever this session has written a text, since unsaved changes are its own
-// while the editor holds exactly that text. Either refusal is the same CONFIRMATION_REQUIRED. A
+// while they are an unsaved edit of exactly that text. Either refusal is the same
+// CONFIRMATION_REQUIRED. A
 // text the change writes is remembered as the one this session wrote last. Answers the state
 // afterwards; when nothing was changed because the editor did not hold what was expected, which
 // part it did not hold (null when the change was made); and whether the editor held unsaved
@@ -506,9 +507,7 @@ async function saveEditorScript(
 ): Promise<SaveOutput> {
   const page = await ctx.connection.chartPage();
   const warnings: string[] = [];
-  // Over the text this session wrote last, the flag of unsaved changes TradingView keeps is a
-  // leftover, which leaves nothing to save while isModified() says none.
-  const state = await readEditorState(page, warnings, ctx.session.lastWrittenPineText);
+  const state = await readEditorState(page, warnings);
   if (!state.open) {
     throw notOpenError();
   }
@@ -579,8 +578,8 @@ async function saveEditorScript(
       {
         hint:
           "The script is the user's. Make sure the user wants a new version saved, then call " +
-          'pine_save again with confirm: true. When the script has no changes of its own and ' +
-          `only TradingView still flags some, there is nothing to save. ${CLOSE_EDITOR_HINT}`,
+          'pine_save again with confirm: true. The changes include those TradingView only flags, ' +
+          'as for text it kept across a close of the Pine Editor.',
         details: { id },
       },
     );
@@ -800,7 +799,8 @@ export const pineSmartCompile = defineTool({
         'Must be true for writeBack while the Pine Editor holds unsaved changes, which the ' +
           'written text then replaces. TradingView counts them as unsaved until the editor is ' +
           'closed, also after a call with confirm: true replaced them. Not needed while the ' +
-          'editor holds exactly the text this session last wrote into it. Default: false.',
+          'editor holds exactly the text this session last wrote into it as an unsaved edit. ' +
+          'Default: false.',
       ),
   },
   // Only writeBack changes anything, by replacing the text of the editor, which with confirm: true

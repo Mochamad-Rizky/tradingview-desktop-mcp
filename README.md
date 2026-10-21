@@ -169,10 +169,10 @@ report back.
 ### Safety
 
 The tools that change your chart or your scripts are careful with what is already yours. Replacing
-unsaved text in the Pine Editor (other than the text this session of the server wrote there itself),
-saving a new version of a script that this session did not create, and removing an indicator that
-was already on your chart all need `confirm: true`, which the assistant should pass only after you
-agree. A plan limit, such as the number of
+unsaved text in the Pine Editor (other than an unsaved edit this session of the server made there
+itself), saving a new version of a script that this session did not create, and removing an
+indicator that was already on your chart all need `confirm: true`, which the assistant should pass
+only after you agree. A plan limit, such as the number of
 indicators on a chart or of saved scripts, is checked before anything is added and reported as a
 `PLAN_LIMIT` error with the limit; when the limit cannot be read on your TradingView build, the
 tool does nothing and says so. The server does not work around a limit and does not let TradingView

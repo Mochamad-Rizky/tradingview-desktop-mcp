@@ -15,6 +15,7 @@ import {
   type PineEditorChange,
   type PineSaveRequest,
 } from '../../../../src/tools/pine/page.js';
+import { UNSAVED_TEXT_HINT } from '../../../../src/tools/pine/editor.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
@@ -507,7 +508,7 @@ describe('changePineEditor', () => {
     expect(throwing.error).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
   });
 
-  test('replaces unsaved changes while the editor holds exactly the text this session wrote', async () => {
+  test('replaces unsaved changes while they are an edit of exactly the text this session wrote', async () => {
     const setScript = vi.fn(() => Promise.resolve());
     // An editor with unsaved changes, flagged by TradingView too, whose text getSource reads.
     const holding = (getSource: unknown) =>
@@ -539,11 +540,26 @@ describe('changePineEditor', () => {
         holding(() => Promise.reject(new Error('Value is null'))),
       ],
       ['a facade that cannot tell its text', replacing('own text'), holding(undefined)],
+      // The text this session wrote, which TradingView kept across a close and shows as the text
+      // of the script: isModified() says no edit, and only the flag says it is unsaved.
+      [
+        'the text kept across a close',
+        replacing('own text'),
+        withFacade(
+          () => ({
+            isModified: () => false,
+            setScript,
+            getSource: () => Promise.resolve('own text'),
+          }),
+          { kept: true },
+        ),
+      ],
     ];
     for (const [what, args, make] of refused) {
       const { error } = await libFailureOfBoth(changePineEditor, args, make);
       expect(error, what).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
-      expect(error.hint, what).toContain('closing the Pine Editor in TradingView');
+      // Word for word as the server says it.
+      expect(error.hint, what).toBe(UNSAVED_TEXT_HINT);
     }
     expect(setScript).toHaveBeenCalledTimes(2);
   });
