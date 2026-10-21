@@ -825,6 +825,8 @@ describe('app_get_ui_state', () => {
       }),
       button(SELECTORS.header.replay, true),
       button(SELECTORS.header.fullscreen, false),
+      button(SELECTORS.buttons.watchlist, true),
+      button(SELECTORS.buttons.alerts, false),
     ]);
   }
 
@@ -837,6 +839,13 @@ describe('app_get_ui_state', () => {
       ok: true,
       data: {
         rightPanel: { open: true, activeWidget: 'watchlist' },
+        panels: {
+          watchlist: true,
+          alerts: false,
+          object_tree: false,
+          data_window: false,
+          pine_editor: false,
+        },
         bottomPanelOpen: false,
         dialogs: ['indicators-dialog'],
         fullscreen: false,
@@ -844,6 +853,40 @@ describe('app_get_ui_state', () => {
         pineEditorOpen: false,
       },
       meta: { via: 'dom', durationMs: expect.any(Number) as number, warnings: [] },
+    });
+  });
+
+  test("app_get_ui_state reads TradingView's own fullscreen mode from the app, and the data window from its tab", async () => {
+    // The page of a chart in TradingView's fullscreen mode, with the API of the shared fake window:
+    // the fullscreen element of the browser stays null in that mode (notes of Plan 3, section 6.2).
+    const app = createFakeTvWindow(fixture, { fullscreen: { on: true } });
+    const win = Object.assign(
+      createFakeDomWindow([
+        button(SELECTORS.buttons.objectTree, true),
+        fakeElement({
+          tag: 'button',
+          matches: [SELECTORS.widgets.dataWindowTab],
+          attributes: { role: 'tab', 'aria-selected': 'true' },
+        }),
+      ]),
+      { TradingViewApi: app.TradingViewApi },
+    );
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'app_get_ui_state');
+
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      data: {
+        panels: {
+          watchlist: false,
+          alerts: false,
+          object_tree: false,
+          data_window: true,
+          pine_editor: false,
+        },
+        fullscreen: true,
+      },
     });
   });
 

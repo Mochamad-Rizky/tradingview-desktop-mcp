@@ -55,6 +55,9 @@ export function readAppInfo(win: TvWindow): {
 //   watchlist, which is the one to report when both are there.
 // - labelAttributes: the attributes that name a dialog, most telling first. The text of a dialog
 //   is never read: it can hold the name of a layout or of a script.
+// - panelButtons, dataWindowTab: the buttons of the right toolbar that say with aria-pressed which
+//   panel is shown, and the tab of the panel of the object tree that shows the data window when it
+//   is selected (notes of Plan 3, section 6.1).
 export const UI_STATE_SELECTORS = {
   widgetBar: SELECTORS.widgets.widgetBar,
   widgetPages: SELECTORS.widgets.widgetBarTabs,
@@ -72,6 +75,13 @@ export const UI_STATE_SELECTORS = {
   fullscreenButton: SELECTORS.header.fullscreen,
   replayButton: SELECTORS.header.replay,
   pineEditorButton: SELECTORS.buttons.pineEditor,
+  panelButtons: {
+    watchlist: SELECTORS.buttons.watchlist,
+    alerts: SELECTORS.buttons.alerts,
+    object_tree: SELECTORS.buttons.objectTree,
+    pine_editor: SELECTORS.buttons.pineEditor,
+  },
+  dataWindowTab: SELECTORS.widgets.dataWindowTab,
 };
 
 // Which parts of the interface are open, read from the DOM of the chart tab (design spec 7). It is
@@ -81,13 +91,19 @@ export const UI_STATE_SELECTORS = {
 //   visibility: hidden. A page without getComputedStyle is judged by the box alone. The right panel
 //   is open when the widget bar is and its pages are at least minPanelWidth wide (a page without
 //   such pages is judged by the bar alone), and a widget is reported only while it is open.
-// - Fullscreen is on when the browser's own fullscreen mode is, or when the fullscreen button is
-//   pressed. The replay toolbar and the Pine Editor are on when their buttons are pressed. A
-//   button is pressed when it says so through aria-pressed or aria-selected, whether or not the
-//   page shows it, since fullscreen mode hides the toolbars and their buttons still tell what is on.
-//   The fullscreen button of the app says neither (seen on the app), and whether the app's own
-//   fullscreen mode goes through the browser's was not seen, so that mode can go unseen, and
-//   fullscreen is false then.
+// - A panel of the right toolbar (panels) is shown while its button says so with aria-pressed,
+//   whether or not the page shows the button, which is all TradingView keeps that state in (notes
+//   of Plan 3, section 6.1). The panel of the object tree shows the data window while the tab of
+//   the data window is selected in it, and the object tree otherwise, so that object_tree and
+//   data_window are never both true.
+// - Fullscreen is on when TradingView's own fullscreen mode is, which the collection of the charts
+//   reports as a watched value (notes of Plan 3, section 6.2): that mode lives inside the page, so
+//   the browser's fullscreen element stays null in it. It is on as well when the browser's own
+//   fullscreen mode is, or when the fullscreen button is pressed, which the button of the app was
+//   not seen to say; a mode the app does not report is read from those alone. The replay toolbar
+//   and the Pine Editor are on when their buttons are pressed. A button is pressed when it says so
+//   through aria-pressed or aria-selected, whether or not the page shows it, since fullscreen mode
+//   hides the toolbars and their buttons still tell what is on.
 // - Each layer that #overlap-manager-root holds is a dialog, a menu or a popup, and is listed
 //   while it is shown, by the first of data-name, aria-label and role that it or the first named
 //   element inside it has, cut to one short line. A layer with nothing to name it by is listed as
@@ -107,10 +123,19 @@ export function readUiState(
     fullscreenButton: string;
     replayButton: string;
     pineEditorButton: string;
+    panelButtons: { watchlist: string; alerts: string; object_tree: string; pine_editor: string };
+    dataWindowTab: string;
   },
 ):
   | {
       rightPanel: { open: boolean; activeWidget: string | null };
+      panels: {
+        watchlist: boolean;
+        alerts: boolean;
+        object_tree: boolean;
+        data_window: boolean;
+        pine_editor: boolean;
+      };
       bottomPanelOpen: boolean;
       dialogs: string[];
       fullscreen: boolean;
@@ -202,11 +227,35 @@ export function readUiState(
     }
   }
 
+  const shows = (selector: string): boolean =>
+    find(selector)?.getAttribute('aria-pressed') === 'true';
+  const treePanel = shows(selectors.panelButtons.object_tree);
+  const dataWindow = find(selectors.dataWindowTab)?.getAttribute('aria-selected') === 'true';
+  const panels = {
+    watchlist: shows(selectors.panelButtons.watchlist),
+    alerts: shows(selectors.panelButtons.alerts),
+    object_tree: treePanel && !dataWindow,
+    data_window: treePanel && dataWindow,
+    pine_editor: shows(selectors.panelButtons.pine_editor),
+  };
+
+  // A collection that throws, or a watched value of anything but true, says nothing.
+  let appFullscreen: boolean;
+  try {
+    appFullscreen = win.TradingViewApi?._chartWidgetCollection?.fullscreen?.().value() === true;
+  } catch {
+    appFullscreen = false;
+  }
+
   return {
     rightPanel: { open: rightPanelOpen, activeWidget },
+    panels,
     bottomPanelOpen: isOpen(selectors.bottomArea),
     dialogs,
-    fullscreen: (doc.fullscreenElement ?? null) !== null || isPressed(selectors.fullscreenButton),
+    fullscreen:
+      appFullscreen ||
+      (doc.fullscreenElement ?? null) !== null ||
+      isPressed(selectors.fullscreenButton),
     replayToolbarVisible: isPressed(selectors.replayButton),
     pineEditorOpen: isPressed(selectors.pineEditorButton),
   };

@@ -292,6 +292,13 @@ describe('readUiState', () => {
 
     expect(state).toEqual({
       rightPanel: { open: false, activeWidget: null },
+      panels: {
+        watchlist: false,
+        alerts: false,
+        object_tree: false,
+        data_window: false,
+        pine_editor: false,
+      },
       bottomPanelOpen: false,
       dialogs: [],
       fullscreen: false,
@@ -585,6 +592,96 @@ describe('readUiState', () => {
     expect(others.some(([, value]) => value === true)).toBe(false);
   });
 
+  test.each([
+    ['watchlist', '[data-name="base"]'],
+    ['alerts', '[data-name="alerts"]'],
+    ['object_tree', '[data-name="object_tree"]'],
+    ['pine_editor', '[data-name="pine-dialog-button"]'],
+  ] as const)(
+    'readUiState reads the %s panel from aria-pressed of its button in the right toolbar',
+    async (panel, selector) => {
+      const pressed = await stateOfPage([toggle(selector, { 'aria-pressed': 'true' })]);
+      const released = await stateOfPage([toggle(selector, { 'aria-pressed': 'false' })]);
+      // aria-selected is not what a button of the right toolbar says.
+      const selected = await stateOfPage([toggle(selector, { 'aria-selected': 'true' })]);
+      const hidden = await stateOfPage([
+        fakeElement({
+          tag: 'button',
+          matches: [selector],
+          attributes: { 'aria-pressed': 'true' },
+          display: 'none',
+        }),
+      ]);
+      const missing = await stateOfPage([fakeElement()]);
+
+      expect(pressed.panels).toEqual({
+        watchlist: false,
+        alerts: false,
+        object_tree: false,
+        data_window: false,
+        pine_editor: false,
+        [panel]: true,
+      });
+      expect(hidden.panels[panel]).toBe(true);
+      for (const state of [released, selected, missing]) {
+        expect(Object.values(state.panels).some((open) => open)).toBe(false);
+      }
+    },
+  );
+
+  test('readUiState tells the object tree from the data window by the tab selected in its panel', async () => {
+    const objectTree = (pressed: boolean) =>
+      toggle(UI_STATE_SELECTORS.panelButtons.object_tree, { 'aria-pressed': String(pressed) });
+    const dataWindowTab = (selected: boolean) =>
+      fakeElement({
+        tag: 'button',
+        matches: [UI_STATE_SELECTORS.dataWindowTab],
+        attributes: { role: 'tab', 'aria-selected': String(selected) },
+      });
+
+    const dataWindow = await stateOfPage([objectTree(true), dataWindowTab(true)]);
+    const tree = await stateOfPage([objectTree(true), dataWindowTab(false)]);
+    const collapsed = await stateOfPage([objectTree(false), dataWindowTab(true)]);
+
+    expect(dataWindow.panels).toMatchObject({ object_tree: false, data_window: true });
+    expect(tree.panels).toMatchObject({ object_tree: true, data_window: false });
+    expect(collapsed.panels).toMatchObject({ object_tree: false, data_window: false });
+  });
+
+  // TradingView's own fullscreen mode, as the collection of the charts reports it (notes of Plan 3,
+  // section 6.2): the fullscreen element of the browser stays null in it.
+  const withAppFullscreen = (elements: FakeElement[], fullscreen: () => unknown): TvWindow =>
+    Object.assign(createFakeDomWindow(elements), {
+      TradingViewApi: { _chartWidgetCollection: { _chartWidgetsDefs: [], fullscreen } },
+    });
+
+  test("readUiState reads TradingView's own fullscreen mode from the app", async () => {
+    const button = () => [toggle(SELECTORS.header.fullscreen, {})];
+
+    const on = await stateOf(withAppFullscreen(button(), () => ({ value: () => true })));
+    const off = await stateOf(withAppFullscreen(button(), () => ({ value: () => false })));
+
+    expect(on.fullscreen).toBe(true);
+    expect(off.fullscreen).toBe(false);
+  });
+
+  test('readUiState falls back to the page when the app cannot say whether it is in fullscreen', async () => {
+    const chart = fakeElement({ matches: [SELECTORS.regions.chartContainer] });
+    const throwing = withAppFullscreen([], () => {
+      throw new Error('No collection yet');
+    });
+    const notBoolean = withAppFullscreen([], () => ({ value: () => 'yes' }));
+    const browserFullscreen = Object.assign(createFakeDomWindow([chart], { fullscreen: chart }), {
+      TradingViewApi: {
+        _chartWidgetCollection: { _chartWidgetsDefs: [], fullscreen: () => ({ value: () => 1 }) },
+      },
+    });
+
+    expect((await stateOf(throwing)).fullscreen).toBe(false);
+    expect((await stateOf(notBoolean)).fullscreen).toBe(false);
+    expect((await stateOf(browserFullscreen)).fullscreen).toBe(true);
+  });
+
   test('readUiState reads a button that is on even while the page hides it', async () => {
     // Fullscreen mode hides the toolbars, and their buttons still tell what is on.
     const state = await stateOfPage([
@@ -663,6 +760,15 @@ describe('UI_STATE_SELECTORS', () => {
       fullscreenButton: '#header-toolbar-fullscreen',
       replayButton: '#header-toolbar-replay',
       pineEditorButton: '[data-name="pine-dialog-button"]',
+      // The buttons of the right toolbar and the tab of the data window (notes of Plan 3, 6.1).
+      panelButtons: {
+        watchlist: '[data-name="base"]',
+        alerts: '[data-name="alerts"]',
+        object_tree: '[data-name="object_tree"]',
+        pine_editor: '[data-name="pine-dialog-button"]',
+      },
+      dataWindowTab:
+        '[data-qa-id="union-object-tree-widget-switcher"] button#data-window[role="tab"]',
     });
   });
 

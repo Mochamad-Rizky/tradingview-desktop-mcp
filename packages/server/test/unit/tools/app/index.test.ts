@@ -128,12 +128,17 @@ test('app_discover counts a page that is not a chart, such as the home page, as 
   expect(description).toMatch(/other \([^)]*not a chart[^)]*home page[^)]*\)/);
 });
 
-// The fullscreen button of the app does not say whether it is pressed (seen on the app).
-test("app_get_ui_state warns that fullscreen can miss TradingView's own fullscreen mode", () => {
+// TradingView's own fullscreen mode is a watched value of the app, which the page function reads
+// (notes of Plan 3, section 6.2), and the buttons of the right toolbar say which panel is shown.
+test("app_get_ui_state reads TradingView's own fullscreen mode and the panels of the right toolbar", () => {
   const { description } = toolNamed('app_get_ui_state');
 
-  expect(description).toMatch(/TradingView's own fullscreen mode/);
-  expect(description).toMatch(/fullscreen (then )?reads false/);
+  expect(description).toMatch(/TradingView's own fullscreen mode, as the app reports it/);
+  expect(description).not.toMatch(/unseen/);
+  expect(description).toMatch(
+    /panels \(watchlist, alerts, object_tree, data_window and pine_editor/,
+  );
+  expect(description).toMatch(/never both true/);
 });
 
 test('the tools that take nothing have an empty input', () => {

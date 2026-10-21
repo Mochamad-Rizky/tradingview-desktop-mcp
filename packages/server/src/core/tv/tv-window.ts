@@ -76,6 +76,11 @@ export interface TradingViewApiLike {
   getIntervals(): string[];
   // The collection of the chart widgets of the layout. It is internal, so a build may not have it.
   readonly _chartWidgetCollection?: ChartWidgetCollectionLike;
+  // TradingView's own fullscreen mode of the charts, which its fullscreen button turns on: inside
+  // the page, so the browser's fullscreen element stays null and the window does not change
+  // (notes of Plan 3, section 6.2). The collection of the charts reports it (fullscreen).
+  startFullscreen?(): void;
+  exitFullscreen?(): void;
   // The replay API (notes, section 4.5) is not described here, so page code can only check that it
   // is there.
   replayApi?(): Promise<unknown>;
@@ -94,6 +99,9 @@ export interface TradingViewApiLike {
 // with several charts was not seen. Typed loosely, because it is the internals of the app.
 export interface ChartWidgetCollectionLike {
   readonly _chartWidgetsDefs?: readonly ChartWidgetDefLike[];
+  // Whether TradingView's own fullscreen mode is on, as a watched value of a boolean (notes of
+  // Plan 3, section 6.2).
+  fullscreen?(): { value(): unknown };
 }
 
 export interface ChartWidgetDefLike {

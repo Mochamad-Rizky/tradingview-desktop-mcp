@@ -107,6 +107,18 @@ describe('the TvWindow contract', () => {
     });
   });
 
+  test("is satisfied by the shared fake window for TradingView's own fullscreen mode", () => {
+    const win: TvWindow = createFakeTvWindow(fixture);
+    const api = win.TradingViewApi;
+    const mode = () => api?._chartWidgetCollection?.fullscreen?.().value();
+
+    expect(mode()).toBe(false);
+    api?.startFullscreen?.();
+    expect(mode()).toBe(true);
+    api?.exitFullscreen?.();
+    expect(mode()).toBe(false);
+  });
+
   test('is satisfied by the shared fake window for a strategy, its report and the active source', () => {
     const win: TvWindow = createFakeTvWindow(
       withStudies(fixture, { ...SAMPLE_STRATEGY, activeStrategy: true }),

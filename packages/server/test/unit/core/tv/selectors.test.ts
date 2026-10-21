@@ -99,6 +99,7 @@ describe('SELECTORS', () => {
     expect(Object.fromEntries(entries.filter(([, value]) => typeof value === 'string'))).toEqual({
       indicatorsDialog: named('open-indicators-dialog'),
       pineEditor: named('pine-dialog-button'),
+      watchlist: named('base'),
       alerts: named('alerts'),
       objectTree: named('object_tree'),
       goToDate: named('go-to-date'),
@@ -188,6 +189,10 @@ describe('SELECTORS', () => {
       alerts: widget('alerts'),
       objectTree: widget('object_tree'),
       pineLogs: widget('pine_logs'),
+      objectTreeTab:
+        '[data-qa-id="union-object-tree-widget-switcher"] button#object_tree[role="tab"]',
+      dataWindowTab:
+        '[data-qa-id="union-object-tree-widget-switcher"] button#data-window[role="tab"]',
     });
   });
 

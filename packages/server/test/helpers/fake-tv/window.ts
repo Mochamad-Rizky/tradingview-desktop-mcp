@@ -1,6 +1,11 @@
 import type { JsonValue } from '../../../src/utils/json.js';
 import type { FakeElement } from './dom.js';
 import type { TvStateFixture } from './fixture.js';
+import {
+  createFakeFullscreen,
+  type FakeFullscreenOptions,
+  type FakeFullscreenState,
+} from './fullscreen.js';
 import { createFakeHistory } from './history.js';
 import {
   createFakePineEditor,
@@ -72,6 +77,10 @@ import { createFakeWebpack } from './webpack.js';
 // lists them in document order, which is all of the DOM the window has. A test moves one with
 // place() on the elements of state.chartContainers.
 //
+// TradingView's own fullscreen mode (fullscreen.ts): TradingViewApi.startFullscreen and
+// exitFullscreen turn it on and off, the collection of the charts reports it, and state.fullscreen
+// holds it.
+//
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
 // `instanceof Error` for them. Arrays and promises it returns are fine for Array.isArray and
@@ -134,6 +143,9 @@ export interface FakeTvOverrides {
   // Leaves the chart widget collection out of TradingViewApi, as a build without it. The containers
   // stay in the page.
   withoutChartCollection?: boolean;
+  // TradingView's own fullscreen mode: whether it is on, and whether the page can read it and turn
+  // it on and off (fullscreen.ts).
+  fullscreen?: FakeFullscreenOptions;
 }
 
 export interface FakeBars {
@@ -221,8 +233,15 @@ export interface FakeTradingViewApi {
   getIntervals(): string[];
   searchSymbols(options: FakeSearchOptions): Promise<FakeSearchResponse>;
   pineEditorApi(): FakePineEditorApi;
-  // One definition for each chart container (screen.ts).
-  _chartWidgetCollection?: { _chartWidgetsDefs: FakeChartWidgetDef[] };
+  // TradingView's own fullscreen mode (fullscreen.ts).
+  startFullscreen?(): void;
+  exitFullscreen?(): void;
+  // One definition for each chart container (screen.ts), and the fullscreen mode as a watched
+  // value (fullscreen.ts).
+  _chartWidgetCollection?: {
+    _chartWidgetsDefs: FakeChartWidgetDef[];
+    fullscreen?(): { value(): boolean };
+  };
 }
 
 export interface FakeLocation {
@@ -264,7 +283,8 @@ export interface FakeTvWindow {
 
 // One mutating call, by the dotted name of the member: TradingViewApi.setActiveChart,
 // chart.setSymbol, chart.setResolution, chart.setChartType, chart.setVisibleRange,
-// timeScale.zoomToBarsRange, timeScale.scrollToBar, series.requestMoreData and TVD.reloadTab.
+// timeScale.zoomToBarsRange, timeScale.scrollToBar, series.requestMoreData, TVD.reloadTab, and
+// TradingViewApi.startFullscreen and TradingViewApi.exitFullscreen.
 // Calls that send a request are recorded too: TradingViewApi.searchSymbols, the members of the
 // quote modules that would create a quote session or send a request (quotes.ts), and
 // requestBuiltinScripts and studyMetaInfoRepository.requestMetaInfo (studies.ts). So are the changes
@@ -300,6 +320,8 @@ export interface FakeTvState {
   pineEditor: FakePineEditorState;
   // The containers of the charts, in layout order (screen.ts).
   chartContainers: FakeElement[];
+  // TradingView's own fullscreen mode (fullscreen.ts).
+  fullscreen: FakeFullscreenState;
 }
 
 export interface FakeTvInspector {
@@ -366,6 +388,7 @@ export function createFakeTvWindow(
     addStudy: (script) => studies.addUserScript(script),
   });
   const screen = createFakeScreen(fixture.layout.chartsCount, overrides.screen);
+  const fullscreen = createFakeFullscreen(overrides.fullscreen, record);
   const state: FakeTvState = {
     symbol: feeds.get(fixture.symbol) ?? fixture.symbol,
     resolution: fixture.resolution,
@@ -381,6 +404,7 @@ export function createFakeTvWindow(
     removedStudies: [],
     pineEditor: pine.state,
     chartContainers: screen.containers,
+    fullscreen: fullscreen.state,
   };
 
   // The bars of the series, which grow at the front as older history loads. A request needs bars
@@ -648,9 +672,10 @@ export function createFakeTvWindow(
     getIntervals: () => [...fixture.intervals],
     searchSymbols: createFakeSearch(fixture.search, record),
     pineEditorApi: () => pine.api,
+    ...fullscreen.api,
     ...(overrides.withoutChartCollection === true
       ? {}
-      : { _chartWidgetCollection: screen.collection }),
+      : { _chartWidgetCollection: { ...screen.collection, ...fullscreen.collection } }),
   };
 
   const win: FakeTvWindow = {

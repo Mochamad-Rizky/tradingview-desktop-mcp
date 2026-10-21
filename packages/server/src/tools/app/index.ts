@@ -280,14 +280,17 @@ export const appGetUiState = defineTool({
   description:
     'Reads which parts of the TradingView interface are open in the chart tab, and changes ' +
     'nothing. Returns rightPanel (open, and activeWidget: watchlist, alerts, object_tree, ' +
-    'pine_logs, detail or null), bottomPanelOpen, dialogs (the dialogs, menus and popups that ' +
-    'are open, each by its data-name, aria-label or role and never by its text, or unnamed when ' +
-    'it has none), fullscreen, replayToolbarVisible and pineEditorOpen. Use it before clicking in ' +
-    'the interface, to see whether a dialog covers the chart. It reads the page, so a part is ' +
-    'reported as closed when the page does not show it. fullscreen is true while an element of ' +
-    'the page is in full screen (the Fullscreen API) or the fullscreen button is marked as ' +
-    "pressed; TradingView does not mark that button, so TradingView's own fullscreen mode can go " +
-    'unseen, and fullscreen then reads false. Fails with NOT_AVAILABLE on a page without a DOM.',
+    'pine_logs, detail or null), panels (watchlist, alerts, object_tree, data_window and ' +
+    'pine_editor, each true while its button in the right toolbar shows its panel; the data ' +
+    'window is a tab of the panel of the object tree, so object_tree and data_window are never ' +
+    'both true), bottomPanelOpen, dialogs (the dialogs, menus and popups that are open, each by ' +
+    'its data-name, aria-label or role and never by its text, or unnamed when it has none), ' +
+    'fullscreen, replayToolbarVisible and pineEditorOpen. Use it before clicking in the ' +
+    'interface, to see whether a dialog covers the chart. It reads the page, so a part is ' +
+    "reported as closed when the page does not show it. fullscreen is TradingView's own " +
+    'fullscreen mode, as the app reports it, which fills the tab with the chart and leaves the ' +
+    'window as it is; it is also true while an element of the page is in the full screen of the ' +
+    'browser. Fails with NOT_AVAILABLE on a page without a DOM.',
   inputSchema: {},
   annotations: {
     readOnlyHint: true,

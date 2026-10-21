@@ -1253,3 +1253,45 @@ describe('the screen of the window', () => {
     ]);
   });
 });
+
+describe("TradingView's own fullscreen mode", () => {
+  const fixture = loadTvFixture();
+  const modeOf = (win: FakeTvWindow) => apiOf(win)._chartWidgetCollection?.fullscreen?.().value();
+
+  test('startFullscreen turns it on and exitFullscreen off, at once, and both are recorded', () => {
+    const win = createFakeTvWindow(fixture);
+    const inspector = inspectFakeWindow(win);
+
+    expect([modeOf(win), inspector.state.fullscreen.on]).toEqual([false, false]);
+    apiOf(win).startFullscreen?.();
+    expect([modeOf(win), inspector.state.fullscreen.on]).toEqual([true, true]);
+    apiOf(win).exitFullscreen?.();
+    expect(modeOf(win)).toBe(false);
+    expect([
+      inspector.callsTo('TradingViewApi.startFullscreen'),
+      inspector.callsTo('TradingViewApi.exitFullscreen'),
+    ]).toEqual([[[]], [[]]]);
+  });
+
+  test('the options start it on, leave it unreadable, or leave out the calls', () => {
+    const on = createFakeTvWindow(fixture, { fullscreen: { on: true } });
+    const unreadable = createFakeTvWindow(fixture, { fullscreen: { unreadable: true } });
+    const withoutCalls = createFakeTvWindow(fixture, { fullscreen: { withoutCalls: true } });
+
+    expect(modeOf(on)).toBe(true);
+    expect('fullscreen' in (apiOf(unreadable)._chartWidgetCollection ?? {})).toBe(false);
+    // The charts of the collection are there all the same.
+    expect(apiOf(unreadable)._chartWidgetCollection?._chartWidgetsDefs).toHaveLength(1);
+    expect(
+      ['startFullscreen', 'exitFullscreen'].filter((name) => name in apiOf(withoutCalls)),
+    ).toEqual([]);
+  });
+
+  test('a test can leave the mode the way Escape does', () => {
+    const win = createFakeTvWindow(fixture, { fullscreen: { on: true } });
+
+    inspectFakeWindow(win).state.fullscreen.on = false;
+
+    expect(modeOf(win)).toBe(false);
+  });
+});

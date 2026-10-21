@@ -41,10 +41,14 @@ export const SELECTORS = {
   },
 
   // The buttons found by data-name (notes, section 5.3). The right toolbar and the widget bar of
-  // the same table are under widgets.
+  // the same table are under widgets. The buttons of the panels of the right toolbar say with
+  // aria-pressed whether their panel is shown (notes of Plan 3, section 6.1): the Pine Editor, the
+  // alerts, the object tree, and the watchlist, whose page, named base, also holds the details of a
+  // symbol and the news.
   buttons: {
     indicatorsDialog: '[data-name="open-indicators-dialog"]',
     pineEditor: '[data-name="pine-dialog-button"]',
+    watchlist: '[data-name="base"]',
     alerts: '[data-name="alerts"]',
     objectTree: '[data-name="object_tree"]',
     goToDate: '[data-name="go-to-date"]',
@@ -124,6 +128,13 @@ export const SELECTORS = {
     alerts: '[data-test-id-widget-type="alerts"]',
     objectTree: '[data-test-id-widget-type="object_tree"]',
     pineLogs: '[data-test-id-widget-type="pine_logs"]',
+    // The tabs of the panel of the object tree, which shows the object tree or the data window by
+    // the one selected (aria-selected); the data window has no button of its own (notes of Plan 3,
+    // section 6.1).
+    objectTreeTab:
+      '[data-qa-id="union-object-tree-widget-switcher"] button#object_tree[role="tab"]',
+    dataWindowTab:
+      '[data-qa-id="union-object-tree-widget-switcher"] button#data-window[role="tab"]',
   },
 
   // The tabs and buttons of the window around the charts (notes, section 5.6). This is another
