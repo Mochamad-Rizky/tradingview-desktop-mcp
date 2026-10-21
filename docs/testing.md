@@ -227,9 +227,11 @@ test ends, it then removes, with `confirm: true` and on that chart only (`chartI
 that was not on the chart before and has the name the test added (Relative Strength Index, or the
 title of the test script), because a call that failed halfway may have added one without answering
 its id; after a failed test it lists the studies again for a few seconds, for a study TradingView
-adds late. It removes nothing, and fails the test with the reason, when the active chart or its
-layout changed during the test, or when more studies have that name than the test could have added.
-A study that was on the chart before is never touched, whatever its name.
+adds late. It reads the active chart and its layout again before every listing and right before
+every removal, because the index of the chart would name a chart of another layout once the user
+switched, and as soon as either changed it removes nothing more and fails the test with the reason.
+It removes nothing either when more studies have that name than the test could have added. A study
+that was on the chart before is never touched, whatever its name.
 
 ### The Pine Editor guard
 

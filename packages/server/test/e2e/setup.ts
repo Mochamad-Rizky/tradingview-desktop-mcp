@@ -758,13 +758,33 @@ export function strayStudies(
 const LATE_STUDY_WAIT_MS = 3000;
 const LATE_STUDY_POLL_MS = 250;
 
+// Whether the active chart and its layout are still those of `scope`.
+async function stillInScope(client: Client, scope: StudyScope): Promise<boolean> {
+  const now = await readStudyScope(client);
+  return now.chartIndex === scope.chartIndex && now.layoutId === scope.layoutId;
+}
+
+// The failure of a cleanup that stopped because the active chart or its layout changed, after it
+// had removed `removed` of the `found` studies.
+function scopeChanged(removed: number, found: number): string {
+  return removed === 0
+    ? 'The active chart or its layout changed during the test, so no study was removed: check ' +
+        'the chart in TradingView'
+    : `The active chart or its layout changed during the cleanup, so ${String(found - removed)} ` +
+        `of the ${String(found)} studies it found were not removed: check the chart in ` +
+        'TradingView';
+}
+
 // Removes the studies strayStudies finds on the chart of `scope`, each with confirm: true, because
-// the session may not have recorded a study that a call added before it failed. It removes nothing,
-// and says why, when the active chart or its layout is no longer the one of `scope`, and when more
-// studies look added than the test could have added (`most`, 1 by default), since one of them would
-// then be the user's. With `waitMs` it lists again, for that long, while it finds none, for a study
-// that comes late. Answers the ids removed and the failures, which name tools, codes and counts
-// only.
+// the session may not have recorded a study that a call added before it failed. The user can
+// switch charts or layouts while it waits, and the chart index of `scope` would then name a chart
+// of another layout, whose studies of the same name are the user's, so it reads the scope again
+// before every listing and right before every removal, and stops, and says why, as soon as the
+// active chart or its layout is no longer the one of `scope`. It removes nothing, and says why, as
+// well when more studies look added than the test could have added (`most`, 1 by default), since
+// one of them would then be the user's. With `waitMs` it lists again, for that long, while it finds
+// none, for a study that comes late. Answers the ids removed and the failures, which name tools,
+// codes and counts only.
 export async function removeStrayStudies(
   client: Client,
   scope: StudyScope,
@@ -773,26 +793,23 @@ export async function removeStrayStudies(
   options: { most?: number; waitMs?: number } = {},
 ): Promise<{ removed: string[]; failures: string[] }> {
   const most = options.most ?? 1;
-  let strays: string[];
+  let strays: string[] | null;
   try {
-    const now = await readStudyScope(client);
-    if (now.chartIndex !== scope.chartIndex || now.layoutId !== scope.layoutId) {
-      return {
-        removed: [],
-        failures: [
-          'The active chart or its layout changed during the test, so no study was removed: ' +
-            'check the chart in TradingView',
-        ],
-      };
-    }
+    // null once the scope has changed, which ends the wait.
     const found = await pollUntil(
-      async () => strayStudies(before, await listScopedStudies(client, scope), isAdded),
-      (ids) => ids.length > 0,
+      async () =>
+        (await stillInScope(client, scope))
+          ? strayStudies(before, await listScopedStudies(client, scope), isAdded)
+          : null,
+      (ids) => ids === null || ids.length > 0,
       { intervalMs: LATE_STUDY_POLL_MS, timeoutMs: options.waitMs ?? 0 },
     );
     strays = found.last;
   } catch (error) {
     return { removed: [], failures: [describeFailure(error)] };
+  }
+  if (strays === null) {
+    return { removed: [], failures: [scopeChanged(0, 0)] };
   }
   if (strays.length > most) {
     return {
@@ -807,6 +824,17 @@ export async function removeStrayStudies(
   const removed: string[] = [];
   const failures: string[] = [];
   for (const id of strays) {
+    let inScope: boolean;
+    try {
+      inScope = await stillInScope(client, scope);
+    } catch (error) {
+      failures.push(describeFailure(error));
+      break;
+    }
+    if (!inScope) {
+      failures.push(scopeChanged(removed.length, strays.length));
+      break;
+    }
     const failure = await callFailureOf(client, 'indicator_remove', {
       id,
       confirm: true,

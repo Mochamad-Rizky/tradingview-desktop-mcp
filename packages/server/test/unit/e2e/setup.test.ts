@@ -638,6 +638,30 @@ describe('the cleanup of a test that adds studies', () => {
       .map(({ tool, args }) => [tool, (args as { chartIndex?: unknown } | undefined)?.chartIndex]);
   }
 
+  // Every tool called after `from` events, in order.
+  function toolsCalled(ctx: ToolContext, from: number): string[] {
+    return ctx.events
+      .recent()
+      .slice(from)
+      .filter(({ phase }) => phase === 'start')
+      .map(({ tool }) => tool);
+  }
+
+  // The layout answers its own id to the first `reads` reads and another id after them, as when
+  // the user switches to another layout of theirs.
+  function switchLayoutAfter(win: FakeTvWindow, reads: number): void {
+    const api = win.TradingViewApi;
+    if (api === undefined) {
+      throw new Error('The fake window has no API');
+    }
+    const layoutId = api.layoutId.bind(api);
+    let count = 0;
+    api.layoutId = () => {
+      count += 1;
+      return count <= reads ? layoutId() : 'OTHER_LAYOUT';
+    };
+  }
+
   test('readStudyScope pins the active chart by its index and its layout', async () => {
     const server = await serverOn();
 
@@ -735,6 +759,124 @@ describe('the cleanup of a test that adds studies', () => {
       expect.stringMatching(/changed during the test.*no study was removed/),
     ]);
     expect(inspectFakeWindow(server.win).callsTo('chart.removeEntity')).toEqual([]);
+  });
+
+  test('removeStrayStudies re-reads the chart scope before each probe and before each removal and removes nothing when it changed', async () => {
+    // A study that comes late, found by a later probe: every probe and the removal come right
+    // after a read of the scope.
+    const late = await serverOn();
+    const lateScope = await readStudyScope(late.client);
+    const lateBefore = await studyIds(late.client);
+    setTimeout(() => {
+      void addBehindTheSession(late.win);
+    }, 300);
+    const from = late.ctx.events.recent().length;
+
+    const removed = await removeStrayStudies(late.client, lateScope, lateBefore, isRsi, {
+      waitMs: 3000,
+    });
+
+    expect(removed).toEqual({ removed: ['NEW001'], failures: [] });
+    const calls = toolsCalled(late.ctx, from);
+    expect(calls.filter((tool) => tool === 'indicator_list').length).toBeGreaterThan(1);
+    expect(calls.at(-1)).toBe('indicator_remove');
+    calls.forEach((tool, index) => {
+      if (tool !== 'chart_get_state') {
+        expect(calls[index - 1], `the call before ${tool} (${String(index)})`).toBe(
+          'chart_get_state',
+        );
+      }
+    });
+
+    // The user switches to another layout while the cleanup waits, and a study of the same name
+    // shows there: the next probe sees the switch first.
+    const waiting = await serverOn();
+    const waitingScope = await readStudyScope(waiting.client);
+    const waitingBefore = await studyIds(waiting.client);
+    switchLayoutAfter(waiting.win, 1);
+    setTimeout(() => {
+      void addBehindTheSession(waiting.win);
+    }, 300);
+
+    const switchedWhileWaiting = await removeStrayStudies(
+      waiting.client,
+      waitingScope,
+      waitingBefore,
+      isRsi,
+      { waitMs: 3000 },
+    );
+
+    // The user switches after the probe found the study, before it is removed.
+    const found = await serverOn();
+    const foundScope = await readStudyScope(found.client);
+    const foundBefore = await studyIds(found.client);
+    await addBehindTheSession(found.win);
+    switchLayoutAfter(found.win, 1);
+
+    const switchedBeforeRemoval = await removeStrayStudies(
+      found.client,
+      foundScope,
+      foundBefore,
+      isRsi,
+    );
+
+    for (const outcome of [switchedWhileWaiting, switchedBeforeRemoval]) {
+      expect(outcome).toEqual({
+        removed: [],
+        failures: [expect.stringMatching(/changed during the test.*no study was removed/)],
+      });
+    }
+    for (const server of [waiting, found]) {
+      expect(inspectFakeWindow(server.win).callsTo('chart.removeEntity')).toEqual([]);
+    }
+  });
+
+  test('removeStrayStudies stops removing when the scope changes or cannot be read between two removals', async () => {
+    // Two studies the test may add, and a switch after the first removal.
+    const switching = await serverOn(EMPTY);
+    const scope = await readStudyScope(switching.client);
+    await addBehindTheSession(switching.win);
+    await addBehindTheSession(switching.win);
+    switchLayoutAfter(switching.win, 2);
+
+    const switched = await removeStrayStudies(switching.client, scope, [], isRsi, { most: 2 });
+
+    expect(switched).toEqual({
+      removed: ['NEW001'],
+      failures: [expect.stringMatching(/changed during the cleanup, so 1 of the 2 studies/)],
+    });
+    expect(inspectFakeWindow(switching.win).callsTo('chart.removeEntity')).toEqual([['NEW001']]);
+
+    // The active chart cannot be read any more after the first removal.
+    const unreadable = await serverOn(EMPTY);
+    const unreadableScope = await readStudyScope(unreadable.client);
+    await addBehindTheSession(unreadable.win);
+    await addBehindTheSession(unreadable.win);
+    const api = unreadable.win.TradingViewApi;
+    if (api === undefined) {
+      throw new Error('The fake window has no API');
+    }
+    const chart = api.activeChart();
+    const removeEntity = chart.removeEntity;
+    let removedOne = false;
+    chart.removeEntity = (id, options) => {
+      removeEntity(id, options);
+      removedOne = true;
+    };
+    const activeChartIndex = api.activeChartIndex.bind(api);
+    api.activeChartIndex = () => {
+      if (removedOne) {
+        throw new Error('No layout');
+      }
+      return activeChartIndex();
+    };
+
+    const stopped = await removeStrayStudies(unreadable.client, unreadableScope, [], isRsi, {
+      most: 2,
+    });
+
+    expect(stopped.removed).toEqual(['NEW001']);
+    expect(stopped.failures).toEqual([expect.stringMatching(/no index for the active chart/)]);
   });
 
   test('removeStrayStudies removes nothing when more studies look added than the test could add', async () => {
