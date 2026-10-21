@@ -87,9 +87,10 @@ export interface TradingViewApiLike {
 }
 
 // _chartWidgetCollection, as far as page code reads it: one definition for each chart of the
-// layout, in layout order. Its container is a watched value of the element that holds the chart,
-// the div.chart-container[data-qa-id="chart-container"] (seen on TradingView Desktop 3.4.1, where
-// it is the element the document lists too). Typed loosely, because it is the internals of the app.
+// layout, taken to be in layout order. Its container is a watched value of the element that holds
+// the chart, the div.chart-container[data-qa-id="chart-container"]. Seen on TradingView Desktop
+// 3.4.1 for the one chart of a layout, where it is the element the document lists too; the order
+// with several charts was not seen. Typed loosely, because it is the internals of the app.
 export interface ChartWidgetCollectionLike {
   readonly _chartWidgetsDefs?: readonly ChartWidgetDefLike[];
 }

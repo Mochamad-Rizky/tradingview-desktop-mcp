@@ -13,13 +13,16 @@ import type { BoxElementLike, TradingViewApiLike, TvWindow } from '../../core/tv
 // The container is the one the chart widget collection of the app names for the chart. A build
 // without that member leaves the position of the chart in the page to go by: the container at the
 // same position among the elements that match `containerSelector`, in document order, which
-// byPosition says. The collection and the document list the charts in the same order (seen on the
-// app). Without a named chart the position is that of the active chart, and when the app cannot
-// say which that is, the only container of the page is the one, and several are no choice to make.
+// byPosition says. That the collection and the document list the charts in the same order is an
+// assumption: with the one chart of a layout, which is all that was seen, they agree. Without a
+// named chart the position is that of the active chart, and when the app cannot say which that is,
+// the only container of the page is the one, and several are no choice to make.
 //
-// NOT_AVAILABLE when the page has no container for the chart, or when it has one without a size,
-// which is how a chart that is not shown looks: another chart of the layout is maximized, or the
-// tab is hidden. A capture of a box without an area would only fail.
+// NOT_AVAILABLE when the tab is hidden, which comes first: a hidden tab is not on the screen, so a
+// capture of it would come out blank or wait for the call timeout. Also when the page has no
+// container for the chart, or when it has one without a size, which is how a chart that is not
+// shown looks: another chart of the layout is maximized. A capture of a box without an area would
+// only fail.
 export function readChartBox(
   win: TvWindow,
   chartIndex: number | null,
@@ -57,6 +60,10 @@ export function readChartBox(
     __tvmcpError: { code: 'NOT_AVAILABLE', message, hint },
   });
 
+  if (attempt(() => win.document.visibilityState) === 'hidden') {
+    return fail('The chart tab is hidden', 'Bring the TradingView tab to the front and try again.');
+  }
+
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
   const active = attempt(() => api?.activeChartIndex?.());
   const index =
@@ -93,8 +100,8 @@ export function readChartBox(
   if (box.width <= 0 || box.height <= 0) {
     return fail(
       `The container of ${what} has no size`,
-      'The chart is not shown: another chart of the layout may be maximized, or the tab may be ' +
-        'hidden. Show the chart and try again.',
+      'The chart is not shown: another chart of the layout may be maximized. Show the chart and ' +
+        'try again.',
     );
   }
   return { box, byPosition };

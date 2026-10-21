@@ -1125,6 +1125,27 @@ describe('the screen of the window', () => {
     expect([win.innerWidth, win.innerHeight, win.devicePixelRatio]).toEqual([1600, 1000, 2]);
   });
 
+  test('a window spans its viewport in DIPs: the outer size is the inner size times the zoom', () => {
+    const plain = createFakeTvWindow(fixture);
+    const zoomed = createFakeTvWindow(fixture, {
+      screen: { width: 1280, height: 800, devicePixelRatio: 2.5, zoom: 1.25 },
+    });
+
+    expect([plain.outerWidth, plain.outerHeight]).toEqual([1280, 720]);
+    expect([zoomed.outerWidth, zoomed.outerHeight]).toEqual([1600, 1000]);
+    // The pixel ratio is the one the page reports, which has the zoom in it.
+    expect(zoomed.devicePixelRatio).toBe(2.5);
+  });
+
+  test('a window is not scrolled, unless the screen says so', () => {
+    const scrolled = createFakeTvWindow(fixture, { screen: { scrollX: 100, scrollY: 200 } });
+
+    expect([createFakeTvWindow(fixture).scrollX, createFakeTvWindow(fixture).scrollY]).toEqual([
+      0, 0,
+    ]);
+    expect([scrolled.scrollX, scrolled.scrollY]).toEqual([100, 200]);
+  });
+
   test('a layout of one chart has one container in a box of its own, with room around it for the toolbars', () => {
     const win = createFakeTvWindow(fixture);
 

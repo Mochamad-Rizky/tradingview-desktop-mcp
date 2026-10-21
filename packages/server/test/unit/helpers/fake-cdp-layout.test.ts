@@ -69,13 +69,47 @@ describe('layoutMetrics', () => {
     expect(metrics.cssLayoutViewport).toMatchObject({ clientWidth: 1303, clientHeight: 713 });
     expect(metrics.layoutViewport).toMatchObject({ clientWidth: 1629, clientHeight: 891 });
   });
+
+  test('layoutMetrics gives the page zoom in both visual viewports, whose pixel ratio is the one of the page', () => {
+    // 125% of a display with two device pixels for each DIP: 2.5 device pixels for each CSS pixel,
+    // and the 1600 by 1000 DIPs of the window are 1280 by 800 CSS pixels.
+    const metrics = layoutMetrics({ width: 1280, height: 800, devicePixelRatio: 2.5, zoom: 1.25 });
+
+    expect(metrics.cssVisualViewport).toMatchObject({
+      clientWidth: 1280,
+      clientHeight: 800,
+      zoom: 1.25,
+    });
+    expect(metrics.visualViewport).toMatchObject({
+      clientWidth: 3200,
+      clientHeight: 2000,
+      zoom: 1.25,
+    });
+  });
+
+  test('layoutMetrics gives where the page is scrolled to, in CSS pixels and in device pixels', () => {
+    const metrics = layoutMetrics({
+      width: 1000,
+      height: 600,
+      devicePixelRatio: 2,
+      pageX: 100,
+      pageY: 200,
+    });
+
+    expect(metrics.cssVisualViewport).toMatchObject({ pageX: 100, pageY: 200 });
+    expect(metrics.cssLayoutViewport).toMatchObject({ pageX: 100, pageY: 200 });
+    expect(metrics.visualViewport).toMatchObject({ pageX: 200, pageY: 400 });
+    expect(metrics.layoutViewport).toMatchObject({ pageX: 200, pageY: 400 });
+  });
 });
 
 describe('layoutSizeOf', () => {
+  const BLANK = { width: 1280, height: 720, devicePixelRatio: 1, zoom: 1, pageX: 0, pageY: 0 };
+
   test('layoutSizeOf reads the size and the pixel ratio a window reports', () => {
     const win = { innerWidth: 1600, innerHeight: 1000, devicePixelRatio: 2 };
 
-    expect(layoutSizeOf(win)).toEqual({ width: 1600, height: 1000, devicePixelRatio: 2 });
+    expect(layoutSizeOf(win)).toEqual({ ...BLANK, width: 1600, height: 1000, devicePixelRatio: 2 });
   });
 
   test('layoutSizeOf reads a getter of the window as well', () => {
@@ -87,16 +121,12 @@ describe('layoutSizeOf', () => {
       devicePixelRatio: 1.5,
     };
 
-    expect(layoutSizeOf(win)).toEqual({ width: 640, height: 480, devicePixelRatio: 1.5 });
+    expect(layoutSizeOf(win)).toEqual({ ...BLANK, width: 640, height: 480, devicePixelRatio: 1.5 });
   });
 
   test('layoutSizeOf gives a blank viewport of 1280 by 720 at ratio 1 for what the window leaves out', () => {
-    expect(layoutSizeOf({})).toEqual({ width: 1280, height: 720, devicePixelRatio: 1 });
-    expect(layoutSizeOf({ innerWidth: 800 })).toEqual({
-      width: 800,
-      height: 720,
-      devicePixelRatio: 1,
-    });
+    expect(layoutSizeOf({})).toEqual(BLANK);
+    expect(layoutSizeOf({ innerWidth: 800 })).toEqual({ ...BLANK, width: 800 });
   });
 
   test.each([
@@ -110,6 +140,53 @@ describe('layoutSizeOf', () => {
   ])('layoutSizeOf ignores a size that is %s', (_case, value) => {
     const win = { innerWidth: value, innerHeight: value, devicePixelRatio: value };
 
-    expect(layoutSizeOf(win)).toEqual({ width: 1280, height: 720, devicePixelRatio: 1 });
+    expect(layoutSizeOf(win)).toEqual(BLANK);
+  });
+
+  test('layoutSizeOf reads the page zoom from the outer width of the window over its inner width', () => {
+    // The window spans 1600 DIPs, and the page lays out 1280 CSS pixels in them.
+    const zoomed = { innerWidth: 1280, innerHeight: 800, outerWidth: 1600, devicePixelRatio: 2.5 };
+    const farOut = { innerWidth: 3200, innerHeight: 2000, outerWidth: 1600, devicePixelRatio: 1 };
+
+    expect(layoutSizeOf(zoomed)).toEqual({
+      ...BLANK,
+      width: 1280,
+      height: 800,
+      devicePixelRatio: 2.5,
+      zoom: 1.25,
+    });
+    expect(layoutSizeOf(farOut)).toMatchObject({ zoom: 0.5 });
+  });
+
+  test('layoutSizeOf rounds the zoom, so that a window the size of a zoom of 1.1 reads as 1.1', () => {
+    const win = {
+      innerWidth: 1303,
+      innerHeight: 700,
+      outerWidth: 1303 * 1.1,
+      devicePixelRatio: 2.2,
+    };
+
+    expect(layoutSizeOf(win).zoom).toBe(1.1);
+  });
+
+  test.each([
+    ['no outer width', undefined],
+    ['an outer width that is text', '1600'],
+    ['an outer width of zero', 0],
+    ['a negative outer width', -1],
+    ['an outer width that is not a number', Number.NaN],
+  ])('layoutSizeOf takes a zoom of 1 for %s', (_case, outerWidth) => {
+    const win = { innerWidth: 1280, innerHeight: 800, outerWidth, devicePixelRatio: 2 };
+
+    expect(layoutSizeOf(win)).toMatchObject({ zoom: 1 });
+  });
+
+  test('layoutSizeOf reads where the window is scrolled to, which may be nothing', () => {
+    expect(layoutSizeOf({ scrollX: 100, scrollY: 200 })).toMatchObject({ pageX: 100, pageY: 200 });
+    expect(layoutSizeOf({ scrollX: 0, scrollY: 0 })).toMatchObject({ pageX: 0, pageY: 0 });
+    expect(layoutSizeOf({ scrollX: '5', scrollY: Number.NaN })).toMatchObject({
+      pageX: 0,
+      pageY: 0,
+    });
   });
 });

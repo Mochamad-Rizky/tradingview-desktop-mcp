@@ -2,12 +2,22 @@ import type { ImageContent } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { PageHandle } from '../../core/connection.js';
 import { TvMcpError } from '../../core/errors.js';
+import { readVisibilityState } from '../../core/tv/probes.js';
 import { SELECTORS } from '../../core/tv/selectors.js';
 import { READ_ONLY } from '../annotations.js';
 import { chartIndexInput } from '../chart/index.js';
 import { resolveChartTarget } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition } from '../types.js';
-import { captureScale, outputSize, viewportOf, type Box, type Viewport } from './mappers.js';
+import {
+  captureScale,
+  clampToViewport,
+  clipOf,
+  imageSizeOf,
+  outputSize,
+  viewportOf,
+  type Box,
+  type Viewport,
+} from './mappers.js';
 import { readChartBox } from './page.js';
 
 // The tool that takes a picture of the app (design spec 7, domain Screenshot). The picture is a
@@ -26,9 +36,18 @@ const JPEG_QUALITY = 80;
 
 const MIN_MAX_WIDTH = 100;
 const MAX_MAX_WIDTH = 4000;
+// How wide an image is at most when the caller gives no maxWidth: a screenshot of a large window on
+// a 2x display is several megabytes at full size.
+const DEFAULT_MAX_WIDTH = 1920;
 
-// The viewport of a page and the device pixels for each of its CSS pixels. The page is asked and
-// not evaluated in: the window chrome has Node integration, and no page code is run in it.
+// The most of an image that is returned. A client gets the image in one message, and batch_run can
+// put the images of twenty steps into one, so the payload has a bound of its own whatever maxWidth
+// allows.
+const BYTES_PER_MB = 1024 * 1024;
+const MAX_IMAGE_BYTES = 8 * BYTES_PER_MB;
+
+// The viewport of a page, its zoom and the device pixels for each of its CSS pixels. The page is
+// asked and not evaluated in: the window chrome has Node integration, and no page code is run in it.
 async function viewportOfPage(page: PageHandle): Promise<Viewport> {
   const metrics: unknown = await page.session.send('Page.getLayoutMetrics');
   const viewport = viewportOf(metrics);
@@ -38,6 +57,33 @@ async function viewportOfPage(page: PageHandle): Promise<Viewport> {
     });
   }
   return viewport;
+}
+
+// The same refusal as readChartBox gives for a chart, for a capture of the page.
+function tabHidden(): TvMcpError {
+  return new TvMcpError('NOT_AVAILABLE', 'The chart tab is hidden', {
+    hint: 'Bring the TradingView tab to the front and try again.',
+  });
+}
+
+function outsideTheViewport(): TvMcpError {
+  return new TvMcpError('NOT_AVAILABLE', 'The chart is outside the visible part of the page', {
+    hint:
+      'The chart may be scrolled out of view, or the window may be too small for the layout. ' +
+      'Get the chart in view and try again.',
+  });
+}
+
+function tooLarge(bytes: number): TvMcpError {
+  const size = (bytes / BYTES_PER_MB).toFixed(1);
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    `The image is ${size} MB, over the ${String(MAX_IMAGE_BYTES / BYTES_PER_MB)} MB the tool returns`,
+    {
+      hint: 'Use jpeg, which is smaller, or a smaller maxWidth.',
+      details: { bytes, maxBytes: MAX_IMAGE_BYTES },
+    },
+  );
 }
 
 export const screenshotCapture = defineTool({
@@ -52,15 +98,17 @@ export const screenshotCapture = defineTool({
     'is the chart tab as it is shown, toolbars, side panels and open dialogs included. target ' +
     'window is the window chrome, the strip with the tabs, which shows the titles of the open ' +
     'tabs (symbols and prices). chartIndex is only used with target chart. Returns target, ' +
-    'format, width and height (the pixels of the image: a 2x display has two for each CSS ' +
-    'pixel, so an image can be wider than the area looks) and bytes (the size of the encoded ' +
-    'image). The image is a png, which keeps every pixel, or a jpeg of quality 80, which is ' +
-    'smaller. maxWidth scales the image down to at most that many pixels wide, keeping its ' +
-    'proportions, and never up; without it the image has the full resolution of the display, ' +
-    'which for a large window on a 2x display is several megabytes, so give maxWidth (1200, ' +
-    'say) or jpeg when the picture is for looking at. NOT_AVAILABLE when the page has no ' +
-    'container for the chart, or the container has no size because the chart is not shown ' +
-    '(another chart is maximized, or the tab is hidden).',
+    'format, width and height (the pixels of the image, read from the image itself: a 2x ' +
+    'display has two for each CSS pixel, so an image can be wider than the area looks) and ' +
+    'bytes (the size of the encoded image). The image is a png, which keeps every pixel, or a ' +
+    'jpeg of quality 80, which is smaller. maxWidth scales the image down to at most that many ' +
+    'pixels wide, keeping its proportions, and never up; without it the limit is 1920 pixels, ' +
+    'and a maxWidth up to 4000 lifts it. An image of more than 8 MB is refused with ' +
+    'NOT_AVAILABLE: use jpeg or a smaller maxWidth. Also NOT_AVAILABLE when the chart tab is ' +
+    'hidden (target chart and page), when the page has no container for the chart, when the ' +
+    'container has no size because the chart is not shown (another chart is maximized), and ' +
+    'when the chart is outside the visible part of the page; a chart that is partly outside it ' +
+    'is cut to the part that is visible, with a warning.',
   inputSchema: {
     target: z
       .enum(TARGETS)
@@ -82,12 +130,12 @@ export const screenshotCapture = defineTool({
       .int()
       .min(MIN_MAX_WIDTH)
       .max(MAX_MAX_WIDTH)
-      .optional()
+      .default(DEFAULT_MAX_WIDTH)
       .describe(
-        'The widest the image may be, in pixels, from 100 to 4000. A wider capture is scaled ' +
-          'down to this width, keeping its proportions, and a narrower one is left alone. ' +
-          'Without it the image has the full resolution of the display, which is twice the CSS ' +
-          'pixels on a 2x display.',
+        'The widest the image may be, in pixels, from 100 to 4000 (default 1920). A wider ' +
+          'capture is scaled down to this width, keeping its proportions, and a narrower one is ' +
+          'left alone. On a 2x display a 1000 pixel wide chart is an image of 2000 pixels, so ' +
+          'raise it to keep that. An image of more than 8 MB is refused whatever this is.',
       ),
     chartIndex: chartIndexInput(),
   },
@@ -104,55 +152,84 @@ export const screenshotCapture = defineTool({
       target === 'window'
         ? await ctx.connection.windowChromePage()
         : await ctx.connection.chartPage();
-    let box: Box | undefined;
+    // What the caller asked for, in CSS pixels from the top left of the viewport: the box of the
+    // chart for a chart, and the whole viewport otherwise (which takes the viewport to know).
+    let chartBox: Box | undefined;
     if (target === 'chart') {
-      // The index is checked against the layout before anything is looked at or captured.
+      // The index is checked against the layout before anything is looked at or captured, and
+      // readChartBox refuses a hidden tab before it looks for the chart.
       const chart = await resolveChartTarget(page, chartIndex);
       const found = await page.bridge.evaluate(readChartBox, [
         chart.index,
         SELECTORS.regions.chartContainer,
       ]);
-      box = found.box;
+      chartBox = found.box;
       if (found.byPosition) {
         warnings.push(
           'The app did not name the container of the chart, so the chart container at the same ' +
             'position in the page was captured. It may not be the chart you meant.',
         );
       }
+    } else if (
+      target === 'page' &&
+      (await page.bridge.evaluate(readVisibilityState, [])) === 'hidden'
+    ) {
+      throw tabHidden();
     }
     const viewport = await viewportOfPage(page);
-    // The box of the chart container for a chart, the whole viewport for the page and the window.
-    const area: Box = box ?? { x: 0, y: 0, width: viewport.width, height: viewport.height };
+
+    // A capture does not go beyond the viewport, so a chart that reaches out of it is cut to it.
+    const wanted = chartBox ?? { x: 0, y: 0, width: viewport.width, height: viewport.height };
+    const visible = clampToViewport(wanted, viewport);
+    if (visible === null) {
+      throw outsideTheViewport();
+    }
+    if (visible.clamped) {
+      warnings.push(
+        'Part of the chart is outside the visible part of the page, so the image shows only the ' +
+          'part that is visible.',
+      );
+    }
+    const area = visible.box;
     const scale = captureScale(area.width, viewport.devicePixelRatio, maxWidth);
 
-    // The clip is in CSS pixels, as the page reports them, and the size of the image is the clip
-    // times the pixel ratio times the scale. That is so at the default page zoom of the app. The
-    // app can zoom a page from 0.2 to 5, which makes the pixel ratio that of the display times the
-    // zoom, and how Chrome reads a clip then has not been checked on the real app.
-    //
     // A clip is how Chrome is told which part to take and how much to scale it. Only a chart is a
     // part. The page and the window are taken as they are shown, unless they have to be scaled
-    // down, and for that a clip of all of the viewport is the only way.
+    // down, and for that a clip of all of the viewport is the only way. The clip is in DIPs and in
+    // the space of the page (see clipOf), which at the default zoom of an unscrolled page are the
+    // CSS pixels of the viewport. That Chrome reads a clip so, and that the zoom of the metrics is
+    // the DIPs in a CSS pixel, is what the protocol and the source of Chrome say; on the real app
+    // only the default zoom, where it makes no difference, has been tried.
     const { data } = await page.session.send('Page.captureScreenshot', {
       format,
       ...(format === 'jpeg' ? { quality: JPEG_QUALITY } : {}),
       captureBeyondViewport: false,
-      ...(box !== undefined || scale < 1 ? { clip: { ...area, scale } } : {}),
+      ...(chartBox !== undefined || scale < 1 ? { clip: clipOf(area, viewport, scale) } : {}),
     });
     if (data === '') {
       throw new TvMcpError('NOT_AVAILABLE', 'The page answered the capture without an image', {
         hint: 'The tab may be hidden. Bring it to the front and try again.',
       });
     }
+    const encoded = Buffer.byteLength(data, 'base64');
+    if (encoded > MAX_IMAGE_BYTES) {
+      throw tooLarge(encoded);
+    }
+
+    // The size of the image is read from the image. What the clip works out to is the fallback, for
+    // an image that does not say.
+    const measured = imageSizeOf(Buffer.from(data, 'base64'), format);
+    if (measured === null) {
+      warnings.push(
+        'The size of the image could not be read from it, so width and height are the size that ' +
+          'was asked of Chrome.',
+      );
+    }
+    const size = measured ?? outputSize(area, viewport.devicePixelRatio, scale);
 
     const image: ImageContent = { type: 'image', data, mimeType: MIME_TYPES[format] };
     return {
-      data: {
-        target,
-        format,
-        ...outputSize(area, viewport.devicePixelRatio, scale),
-        bytes: Buffer.byteLength(data, 'base64'),
-      },
+      data: { target, format, ...size, bytes: encoded },
       via: 'cdp',
       warnings,
       images: [image],

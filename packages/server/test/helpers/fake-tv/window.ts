@@ -64,12 +64,13 @@ import { createFakeWebpack } from './webpack.js';
 // account is signed in, which window.is_authenticated reports. The module of the feature toggles
 // (isFeatureEnabled) is in the default cache too, driven by the featureToggles of the fixture.
 //
-// The screen (screen.ts): the window has an innerWidth, an innerHeight and a devicePixelRatio,
-// which the fake debug port answers Page.getLayoutMetrics from, and the containers that hold the
-// charts of the layout, one for each chart. The chart widget collection of the app hands them out
-// (TradingViewApi._chartWidgetCollection), and document.querySelectorAll lists them in document
-// order, which is all of the DOM the window has. A test moves one with place() on the elements of
-// state.chartContainers.
+// The screen (screen.ts): the window has an innerWidth and an innerHeight, an outerWidth (which is
+// wider than the inner one by the page zoom), a devicePixelRatio and a scroll position, which the
+// fake debug port answers Page.getLayoutMetrics and Page.captureScreenshot from, and the
+// containers that hold the charts of the layout, one for each chart. The chart widget collection of
+// the app hands them out (TradingViewApi._chartWidgetCollection), and document.querySelectorAll
+// lists them in document order, which is all of the DOM the window has. A test moves one with
+// place() on the elements of state.chartContainers.
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -244,10 +245,15 @@ export interface FakeTvWindow {
   TVD: { reloadTab(): void };
   BUILD_TIME: string;
   webpackChunktradingview: unknown[];
-  // The size of the viewport in CSS pixels and the device pixels for each of them.
+  // The size of the viewport in CSS pixels, the size of the window in DIPs (which is the viewport
+  // times the page zoom), the device pixels for each CSS pixel, and how far the page is scrolled.
   readonly innerWidth: number;
   readonly innerHeight: number;
+  readonly outerWidth: number;
+  readonly outerHeight: number;
   readonly devicePixelRatio: number;
+  readonly scrollX: number;
+  readonly scrollY: number;
   document: {
     readonly visibilityState: VisibilityState;
     // The chart containers that match, in document order.
@@ -675,7 +681,11 @@ export function createFakeTvWindow(
           ),
     innerWidth: screen.width,
     innerHeight: screen.height,
+    outerWidth: screen.outerWidth,
+    outerHeight: screen.outerHeight,
     devicePixelRatio: screen.devicePixelRatio,
+    scrollX: screen.scrollX,
+    scrollY: screen.scrollY,
     document: {
       get visibilityState() {
         return state.visibilityState;

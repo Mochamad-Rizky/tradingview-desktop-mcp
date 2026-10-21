@@ -426,6 +426,80 @@ describe('readChartBox, when there is nothing to capture', () => {
   });
 });
 
+describe('readChartBox, when the tab is hidden', () => {
+  test('readChartBox fails NOT_AVAILABLE while the tab is hidden', async () => {
+    const make = tab(fixture, { visibilityState: 'hidden' });
+
+    const error = await failureOfBoth(readChartBox, [null, SELECTOR], make);
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.message).toBe('The chart tab is hidden');
+    expect(error.hint).toMatch(/front/);
+  });
+
+  test('readChartBox says that the tab is hidden before it looks for the chart', async () => {
+    // Neither a page without a container nor a container without a size is why nothing can be
+    // captured, if the tab is hidden.
+    const noContainer = tab(fixture, { visibilityState: 'hidden', screen: { charts: [] } });
+    const noSize = tab(fixture, { visibilityState: 'hidden' }, (win) => {
+      inspectFakeWindow(win).state.chartContainers[0]?.place({ x: 0, y: 0, width: 0, height: 0 });
+    });
+
+    for (const make of [noContainer, noSize]) {
+      const error = await failureOfBoth(readChartBox, [null, SELECTOR], make);
+
+      expect(error.message).toBe('The chart tab is hidden');
+    }
+  });
+
+  test('readChartBox goes on when the tab is shown', async () => {
+    await expect(
+      resultOf(readChartBox, [null, SELECTOR], tab(fixture, { visibilityState: 'visible' })),
+    ).resolves.toMatchObject({ byPosition: false });
+  });
+
+  test('readChartBox reads whether the tab is shown every time', async () => {
+    const win = createFakeTvWindow(fixture);
+    const bridge = bridgeTo(win);
+    await expect(bridge.evaluate(readChartBox, [null, SELECTOR])).resolves.toMatchObject({
+      byPosition: false,
+    });
+
+    inspectFakeWindow(win).state.visibilityState = 'hidden';
+
+    await expect(bridge.evaluate(readChartBox, [null, SELECTOR])).rejects.toMatchObject({
+      code: 'NOT_AVAILABLE',
+    });
+  });
+
+  test.each([
+    [
+      'says nothing',
+      (win: FakeTvWindow) => Reflect.deleteProperty(win.document, 'visibilityState'),
+    ],
+    [
+      'throws when it is read',
+      (win: FakeTvWindow) => {
+        Reflect.defineProperty(win.document, 'visibilityState', {
+          get: () => {
+            throw new Error('no document yet');
+          },
+        });
+      },
+    ],
+    [
+      'says something that is neither state',
+      (win: FakeTvWindow) => {
+        Reflect.defineProperty(win.document, 'visibilityState', { get: () => 'prerender' });
+      },
+    ],
+  ])('readChartBox goes on when the tab %s', async (_case, patch) => {
+    await expect(
+      resultOf(readChartBox, [null, SELECTOR], tab(fixture, {}, patch)),
+    ).resolves.toMatchObject({ byPosition: false });
+  });
+});
+
 test('readChartBox changes nothing on the page', async () => {
   const win = createFakeTvWindow(twoCharts, SIDE_BY_SIDE);
 

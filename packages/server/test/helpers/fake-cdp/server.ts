@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
-import { fixturePath } from '../fixture-path.js';
-import { layoutMetrics, layoutSizeOf } from './layout.js';
+import { solidImage } from './images.js';
+import { layoutMetrics, layoutSizeOf, type LayoutSize } from './layout.js';
 import { CDP_ERROR, FakeCdpError, isRecord } from './protocol.js';
 import { createPageRuntime, type PageRuntime } from './runtime.js';
 
@@ -98,22 +97,6 @@ const PAGE_PATH = /^\/devtools\/page\/([^/]+)$/;
 // reaching the debug port through DNS rebinding.
 const HOST_REFUSAL = 'Host header is specified and is not an IP address or localhost.';
 
-type ImageFormat = 'png' | 'jpeg';
-
-const IMAGE_FIXTURES: Record<ImageFormat, string> = { png: 'png/1x1.png', jpeg: 'jpeg/1x1.jpg' };
-const images = new Map<ImageFormat, string>();
-
-// The picture every screenshot shows, whatever the page: one pixel, base64 encoded as the protocol
-// carries it.
-function imageData(format: ImageFormat): string {
-  let data = images.get(format);
-  if (data === undefined) {
-    data = readFileSync(fixturePath(IMAGE_FIXTURES[format])).toString('base64');
-    images.set(format, data);
-  }
-  return data;
-}
-
 interface Viewport {
   x: number;
   y: number;
@@ -134,9 +117,19 @@ function invalidParams(data: string): FakeCdpError {
 
 // Page.captureScreenshot as Chrome answers it: the parameters are checked before the page is looked
 // at. A clip needs all five numbers of a viewport, scale included, and Chrome refuses one without
-// an area; a scale of 0 or less would leave no pixels, so it is refused here too. The picture is
-// the same one pixel whatever the clip, which the call records, in the format asked for.
-function captureScreenshot(params: Record<string, unknown>): { data: string } {
+// an area; a scale of 0 or less would leave no pixels, so it is refused here too.
+//
+// The picture is a solid one of the size Chrome makes of the clip (page_handler.cc): the clip is in
+// DIPs, the device-independent pixels of the window, which are the CSS pixels of the page times its
+// zoom, and the picture is the clip times the scale of the display times the scale of the clip. The
+// scale of the display is the pixel ratio the page reports over its zoom, since that ratio has the
+// zoom in it. Without a clip it is the viewport as it is shown, which is the window in DIPs. Every
+// side is rounded to whole pixels and is at least one. The page is not looked into: where the clip
+// lies in it does not matter to the size of the picture.
+function captureScreenshot(
+  params: Record<string, unknown>,
+  layout: Required<LayoutSize>,
+): { data: string } {
   const format = params.format ?? 'png';
   if (format !== 'png' && format !== 'jpeg') {
     throw invalidParams('format: png or jpeg expected');
@@ -156,7 +149,14 @@ function captureScreenshot(params: Record<string, unknown>): { data: string } {
       throw invalidParams('clip.scale: positive number expected');
     }
   }
-  return { data: imageData(format) };
+  const displayScale = layout.devicePixelRatio / layout.zoom;
+  const shown = clip ?? {
+    width: layout.width * layout.zoom,
+    height: layout.height * layout.zoom,
+    scale: 1,
+  };
+  const side = (dips: number): number => Math.max(1, Math.round(dips * displayScale * shown.scale));
+  return { data: solidImage(format, side(shown.width), side(shown.height)) };
 }
 
 // The host name of a Host header, without its port. An IPv6 literal is bracketed, so the port is
@@ -321,7 +321,7 @@ export async function startFakeCdpServer(options: FakeCdpServerOptions): Promise
       return runtimeFor(target).evaluate(params);
     }
     if (method === 'Page.captureScreenshot') {
-      return captureScreenshot(params);
+      return captureScreenshot(params, layoutSizeOf(windowFor(target)));
     }
     if (method === 'Page.getLayoutMetrics') {
       return layoutMetrics(layoutSizeOf(windowFor(target)));

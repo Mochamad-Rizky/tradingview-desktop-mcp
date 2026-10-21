@@ -951,7 +951,36 @@ test('acknowledges the enable and disable commands of the domains the app uses',
   expect(replies.map((reply) => reply.result)).toEqual([{}, {}, {}]);
 });
 
-test('captures the 1x1 PNG fixture as a base64 screenshot', async () => {
+// The size in the header of a png or a jpeg, read here and not with the code under test.
+function sizeOfPicture(data: string): { width: number; height: number } {
+  const bytes = Buffer.from(data, 'base64');
+  if (bytes.subarray(1, 4).toString('latin1') === 'PNG') {
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  }
+  // The frame header of a baseline jpeg: marker, length, precision, then the height and the width.
+  const frame = bytes.indexOf(Buffer.from([0xff, 0xc0]));
+  return { width: bytes.readUInt16BE(frame + 7), height: bytes.readUInt16BE(frame + 5) };
+}
+
+async function pictureOf(
+  server: FakeCdpServer,
+  params?: unknown,
+): Promise<{ width: number; height: number }> {
+  const client = await connect(server, 'PAGE1');
+  const reply = await client.send('Page.captureScreenshot', params);
+  expect(reply.error).toBeUndefined();
+  return sizeOfPicture((reply.result as { data: string }).data);
+}
+
+// A page of the given size: innerWidth and innerHeight in CSS pixels, outerWidth in DIPs (which is
+// how a page shows its zoom), and the pixel ratio the page reports.
+function pageSized(width: number, height: number, devicePixelRatio: number, outerWidth = width) {
+  return pageTarget({
+    window: () => ({ innerWidth: width, innerHeight: height, outerWidth, devicePixelRatio }),
+  });
+}
+
+test('captures a PNG as big as the viewport of the page when there is no clip', async () => {
   const server = await start([pageTarget()]);
   const client = await connect(server, 'PAGE1');
 
@@ -960,8 +989,8 @@ test('captures the 1x1 PNG fixture as a base64 screenshot', async () => {
   const { data } = reply.result as { data: string };
   const png = Buffer.from(data, 'base64');
   expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  expect(png.readUInt32BE(16)).toBe(1);
-  expect(png.readUInt32BE(20)).toBe(1);
+  // A page with no window of its own is a blank one of 1280 by 720 at a pixel ratio of 1.
+  expect(sizeOfPicture(data)).toEqual({ width: 1280, height: 720 });
 });
 
 test('captures a PNG when no format is asked for, as Chrome does', async () => {
@@ -974,7 +1003,7 @@ test('captures a PNG when no format is asked for, as Chrome does', async () => {
   expect(Buffer.from(data, 'base64').subarray(1, 4).toString('latin1')).toBe('PNG');
 });
 
-test('captures the 1x1 JPEG fixture as a base64 screenshot when a jpeg is asked for', async () => {
+test('captures a JPEG of the same size when a jpeg is asked for', async () => {
   const server = await start([pageTarget()]);
   const client = await connect(server, 'PAGE1');
 
@@ -985,10 +1014,71 @@ test('captures the 1x1 JPEG fixture as a base64 screenshot when a jpeg is asked 
   // From the start-of-image marker to the end-of-image marker.
   expect(jpeg.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
   expect(jpeg.subarray(-2)).toEqual(Buffer.from([0xff, 0xd9]));
-  // The frame header (SOF0) holds the height and the width, 1 each, after the precision byte.
-  const frame = jpeg.indexOf(Buffer.from([0xff, 0xc0]));
-  expect(frame).toBeGreaterThan(0);
-  expect([jpeg.readUInt16BE(frame + 5), jpeg.readUInt16BE(frame + 7)]).toEqual([1, 1]);
+  expect(sizeOfPicture(data)).toEqual({ width: 1280, height: 720 });
+});
+
+test('makes the picture of a page without a clip as big as its viewport in device pixels', async () => {
+  const server = await start([pageSized(1600, 1000, 2)]);
+
+  await expect(pictureOf(server)).resolves.toEqual({ width: 3200, height: 2000 });
+});
+
+test('makes the picture of a clip as big as the clip times the pixel ratio of the page times the scale', async () => {
+  const server = await start([pageSized(1600, 1000, 2)]);
+
+  const clip = { x: 0, y: 0, width: 1600, height: 1000, scale: 0.25 };
+
+  await expect(pictureOf(server, { clip })).resolves.toEqual({ width: 800, height: 500 });
+  await expect(pictureOf(server, { clip: { ...clip, scale: 1 } })).resolves.toEqual({
+    width: 3200,
+    height: 2000,
+  });
+  // Rounded to whole pixels, and never under one.
+  await expect(pictureOf(server, { clip: { ...clip, width: 33.3, scale: 0.5 } })).resolves.toEqual({
+    width: 33,
+    height: 1000,
+  });
+  await expect(pictureOf(server, { clip: { ...clip, height: 0.1, scale: 0.01 } })).resolves.toEqual(
+    {
+      width: 32,
+      height: 1,
+    },
+  );
+});
+
+test('reads the clip in DIPs: at a page zoom of 125% a CSS pixel is 1.25 of them', async () => {
+  // A window of 1600 by 1000 DIPs on a display with two device pixels for each, at a zoom of 125%:
+  // the page lays out 1280 by 800 CSS pixels and reports a pixel ratio of 2.5.
+  const server = await start([pageSized(1280, 800, 2.5, 1600)]);
+
+  // The whole window, as the page is shown.
+  await expect(pictureOf(server)).resolves.toEqual({ width: 3200, height: 2000 });
+  // The clip of the whole window in DIPs, scaled to a quarter.
+  const wholeWindow = { x: 0, y: 0, width: 1600, height: 1000, scale: 0.25 };
+  await expect(pictureOf(server, { clip: wholeWindow })).resolves.toEqual({
+    width: 800,
+    height: 500,
+  });
+  // The same numbers taken for CSS pixels would be a clip of four fifths of the window.
+  await expect(
+    pictureOf(server, { clip: { ...wholeWindow, width: 1280, height: 800 } }),
+  ).resolves.toEqual({ width: 640, height: 400 });
+});
+
+test('reads the clip in DIPs: at a page zoom of 50% a CSS pixel is half of one', async () => {
+  // The same window and display at a zoom of 50%: 3200 by 2000 CSS pixels and a pixel ratio of 1.
+  const server = await start([pageSized(3200, 2000, 1, 1600)]);
+
+  await expect(pictureOf(server)).resolves.toEqual({ width: 3200, height: 2000 });
+  const wholeWindow = { x: 0, y: 0, width: 1600, height: 1000, scale: 0.25 };
+  await expect(pictureOf(server, { clip: wholeWindow })).resolves.toEqual({
+    width: 800,
+    height: 500,
+  });
+  // Taken for CSS pixels, the clip would be twice as wide as the window and the picture too.
+  await expect(
+    pictureOf(server, { clip: { ...wholeWindow, width: 3200, height: 2000 } }),
+  ).resolves.toEqual({ width: 1600, height: 1000 });
 });
 
 test('records the parameters of a screenshot, so a test can look at the clip and the scale', async () => {
@@ -1086,6 +1176,34 @@ test('answers Page.getLayoutMetrics from the viewport of the window of the targe
   expect(server.calls).toEqual([
     { targetId: 'PAGE1', method: 'Page.getLayoutMetrics', params: {} },
   ]);
+});
+
+test('answers Page.getLayoutMetrics with the zoom and the scroll position of the window', async () => {
+  const win = createFakeTvWindow(loadTvFixture(), {
+    screen: {
+      width: 1280,
+      height: 800,
+      devicePixelRatio: 2.5,
+      zoom: 1.25,
+      scrollX: 100,
+      scrollY: 200,
+    },
+  });
+  const server = await start([pageTarget({ window: () => win })]);
+  const client = await connect(server, 'PAGE1');
+
+  const reply = await client.send('Page.getLayoutMetrics');
+
+  expect(reply.result).toEqual(
+    layoutMetrics({
+      width: 1280,
+      height: 800,
+      devicePixelRatio: 2.5,
+      zoom: 1.25,
+      pageX: 100,
+      pageY: 200,
+    }),
+  );
 });
 
 test('answers Page.getLayoutMetrics of a page with no window of its own as a blank viewport', async () => {

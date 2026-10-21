@@ -1,8 +1,9 @@
-import { readFileSync } from 'node:fs';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Logger } from '../../../src/core/logger.js';
 import { createMcpServer } from '../../../src/server.js';
+import { solidImage } from '../../helpers/fake-cdp/images.js';
 import { CDP_ERROR } from '../../helpers/fake-cdp/protocol.js';
 import {
   FakeCdpError,
@@ -10,7 +11,6 @@ import {
   type FakeCdpServer,
 } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
-import { fixturePath } from '../../helpers/fixture-path.js';
 import type { FakeRect } from '../../helpers/fake-tv/dom.js';
 import { loadTvFixture, type TvStateFixture } from '../../helpers/fake-tv/fixture.js';
 import type { FakeScreenOptions } from '../../helpers/fake-tv/screen.js';
@@ -26,7 +26,9 @@ import {
 // The screenshot tool through the whole server: an SDK client over the in-memory transport, the real
 // registry, connection manager, discovery and CDP adapter, and the fake debug port of the app with
 // a fake chart tab and a fake window chrome behind it. What the tool asks of the page is what the
-// fake debug port recorded, so the tests read the parameters of the capture there.
+// fake debug port recorded, so the tests read the parameters of the capture there. The picture the
+// fake makes of a capture has the size Chrome would make of the clip, so the size the tool reports
+// is checked against the header of the image it returns.
 
 // Nothing in this file may run a real program or start TradingView: the machine this suite runs on
 // may have one open. No launcher here starts anything, and this is the second lock.
@@ -42,10 +44,9 @@ vi.mock('node:child_process', () => ({
 const fixture = loadTvFixture();
 const CHART_ID = 'BBB144A7827AE55CBA0E74986FC9574C';
 const CHROME_ID = 'EE67363DAA56C9940A709061CFAA2FFF';
-const PNG = readFileSync(fixturePath('png/1x1.png'));
-const JPEG = readFileSync(fixturePath('jpeg/1x1.jpg'));
-const PNG_BASE64 = PNG.toString('base64');
-const JPEG_BASE64 = JPEG.toString('base64');
+// The most the tool returns of an image, and the most it makes of one when maxWidth is left out.
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const DEFAULT_MAX_WIDTH = 1920;
 
 const twoCharts: TvStateFixture = {
   ...fixture,
@@ -140,6 +141,35 @@ const dataOf = (result: { structuredContent?: unknown }): unknown => envelopeOf(
 const errorOf = (result: { structuredContent?: unknown }) => envelopeOf(result).error;
 const warningsOf = (result: { structuredContent?: unknown }) => envelopeOf(result).meta.warnings;
 
+// The image block of a result, which comes first.
+function imageOf(result: CallToolResult) {
+  const [block] = result.content;
+  if (block?.type !== 'image') {
+    throw new Error('The result has no image in front of the JSON');
+  }
+  return block;
+}
+
+const bytesOf = (result: CallToolResult): Buffer => Buffer.from(imageOf(result).data, 'base64');
+
+// The size in the header of a picture, read here and not with the code under test: a png keeps it
+// in its first chunk, a baseline jpeg in its frame header.
+function headerSizeOf(bytes: Buffer): { width: number; height: number } {
+  if (bytes.subarray(1, 4).toString('latin1') === 'PNG') {
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  }
+  const frame = bytes.indexOf(Buffer.from([0xff, 0xc0]));
+  return { width: bytes.readUInt16BE(frame + 7), height: bytes.readUInt16BE(frame + 5) };
+}
+
+// The image has the size asked for, in its header as well as in the JSON, and bytes is its length.
+function expectImage(result: CallToolResult, size: { width: number; height: number }): void {
+  expect(result.isError).not.toBe(true);
+  const bytes = bytesOf(result);
+  expect(headerSizeOf(bytes)).toEqual(size);
+  expect(dataOf(result)).toMatchObject({ ...size, bytes: bytes.length });
+}
+
 interface CaptureParams {
   format?: string;
   quality?: number;
@@ -154,13 +184,18 @@ function capturesOf(app: FakeCdpServer, targetId = CHART_ID): CaptureParams[] {
     .map((call) => call.params as CaptureParams);
 }
 
-// How wide Chrome makes the image of a clip: the clip times its scale times the pixel ratio of the
-// display.
-function widthOfClip(capture: CaptureParams | undefined, devicePixelRatio: number): number {
+// How wide Chrome makes the image of a clip: the clip, which is in DIPs, times the scale of the
+// display and the scale of the clip. The scale of the display is the pixel ratio of the page over
+// its zoom.
+function widthOfClip(
+  capture: CaptureParams | undefined,
+  devicePixelRatio: number,
+  zoom = 1,
+): number {
   if (capture?.clip === undefined) {
     throw new Error('The capture has no clip');
   }
-  return capture.clip.width * capture.clip.scale * devicePixelRatio;
+  return capture.clip.width * (devicePixelRatio / zoom) * capture.clip.scale;
 }
 
 // Every command that reached a target, by method.
@@ -172,6 +207,11 @@ function screen(options: FakeScreenOptions, from = fixture) {
   return createFakeTvWindow(from, { screen: options });
 }
 
+// An answer to a capture with a picture of the given size, whatever was asked for.
+function picture(format: 'png' | 'jpeg', width: number, height: number): Handlers {
+  return { 'Page.captureScreenshot': () => ({ data: solidImage(format, width, height) }) };
+}
+
 describe('screenshot_capture', () => {
   test('screenshot_capture returns the chart container as a png, with its size in pixels', async () => {
     const { client, app } = await startHarness();
@@ -181,9 +221,16 @@ describe('screenshot_capture', () => {
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toStrictEqual({
       ok: true,
-      data: { target: 'chart', format: 'png', width: 1180, height: 640, bytes: PNG.length },
+      data: {
+        target: 'chart',
+        format: 'png',
+        width: 1180,
+        height: 640,
+        bytes: bytesOf(result).length,
+      },
       meta: { via: 'cdp', durationMs: expect.any(Number) as number, warnings: [] },
     });
+    expectImage(result, { width: 1180, height: 640 });
     // The default screen of the fake puts the only chart in a box of 1180 by 640 CSS pixels.
     expect(capturesOf(app)).toEqual([
       {
@@ -209,6 +256,7 @@ describe('screenshot_capture', () => {
     expect(widthOfClip(captures[0], 2)).toBeLessThanOrEqual(800);
     // width and height are the size of the image that comes out, not of the clip.
     expect(dataOf(result)).toMatchObject({ target: 'page', width: 800, height: 500 });
+    expectImage(result, { width: 800, height: 500 });
   });
 
   test.each([
@@ -240,11 +288,10 @@ describe('screenshot_capture', () => {
 
       const result = await callTool(client, 'screenshot_capture', { target, maxWidth: 800 });
 
-      expect(result.isError).not.toBe(true);
       expect(capturesOf(app, targetId)).toEqual([
         { format: 'png', captureBeyondViewport: false, clip },
       ]);
-      expect(dataOf(result)).toMatchObject(size);
+      expectImage(result, size);
     },
   );
 
@@ -256,32 +303,7 @@ describe('screenshot_capture', () => {
     const result = await callTool(client, 'screenshot_capture', { target: 'page', maxWidth: 4000 });
 
     expect(capturesOf(app)).toEqual([{ format: 'png', captureBeyondViewport: false }]);
-    expect(dataOf(result)).toMatchObject({ width: 3200, height: 2000 });
-  });
-
-  test('a capture without maxWidth is at the full resolution of the display', async () => {
-    const win = screen({
-      width: 1600,
-      height: 1000,
-      devicePixelRatio: 2,
-      charts: [{ x: 52, y: 44, width: 1403, height: 757 }],
-    });
-    const { client, app } = await startHarness({ win });
-
-    const chart = await callTool(client, 'screenshot_capture', { target: 'chart' });
-    const page = await callTool(client, 'screenshot_capture', { target: 'page' });
-
-    expect(dataOf(chart)).toMatchObject({ width: 2806, height: 1514 });
-    expect(dataOf(page)).toMatchObject({ width: 3200, height: 2000 });
-    // The page is asked for as it is shown, without a clip; the chart needs one for its box.
-    expect(capturesOf(app)).toEqual([
-      {
-        format: 'png',
-        captureBeyondViewport: false,
-        clip: { x: 52, y: 44, width: 1403, height: 757, scale: 1 },
-      },
-      { format: 'png', captureBeyondViewport: false },
-    ]);
+    expectImage(result, { width: 3200, height: 2000 });
   });
 
   test('chart target clips to the chart container of the chosen chart', async () => {
@@ -303,7 +325,7 @@ describe('screenshot_capture', () => {
       { ...LEFT, scale: 1 },
       { ...RIGHT, scale: 1 },
     ]);
-    expect(dataOf(second)).toMatchObject({ width: 600, height: 500 });
+    expectImage(second, { width: 600, height: 500 });
   });
 
   test('a chartIndex that the layout does not have is refused before anything is captured', async () => {
@@ -327,10 +349,10 @@ describe('screenshot_capture', () => {
     const page = await callTool(client, 'screenshot_capture', { target: 'page' });
     const chrome = await callTool(client, 'screenshot_capture', { target: 'window' });
 
-    expect(page.isError).not.toBe(true);
-    expect(chrome.isError).not.toBe(true);
-    expect(dataOf(page)).toMatchObject({ target: 'page', width: 1280, height: 720 });
-    expect(dataOf(chrome)).toMatchObject({ target: 'window', width: 1280, height: 34 });
+    expect(dataOf(page)).toMatchObject({ target: 'page' });
+    expect(dataOf(chrome)).toMatchObject({ target: 'window' });
+    expectImage(page, { width: 1280, height: 720 });
+    expectImage(chrome, { width: 1280, height: 34 });
     // Each is captured in its own target, as the page shows itself.
     expect(capturesOf(app, CHART_ID)).toEqual([{ format: 'png', captureBeyondViewport: false }]);
     expect(capturesOf(app, CHROME_ID)).toEqual([{ format: 'png', captureBeyondViewport: false }]);
@@ -362,11 +384,14 @@ describe('screenshot_capture', () => {
     for (const capture of [captures[1], captures[2]]) {
       expect(capture).not.toHaveProperty('quality');
     }
-    // The image is labelled with the format it was asked in.
-    expect(jpeg.content[0]).toEqual({ type: 'image', data: JPEG_BASE64, mimeType: 'image/jpeg' });
-    expect(png.content[0]).toEqual({ type: 'image', data: PNG_BASE64, mimeType: 'image/png' });
+    // The image is labelled with the format it was asked in, and is one.
+    expect(jpeg.content[0]).toMatchObject({ type: 'image', mimeType: 'image/jpeg' });
+    expect(png.content[0]).toMatchObject({ type: 'image', mimeType: 'image/png' });
     expect(byDefault.content[0]).toMatchObject({ mimeType: 'image/png' });
-    expect(dataOf(jpeg)).toMatchObject({ format: 'jpeg', bytes: JPEG.length });
+    expect(bytesOf(jpeg).subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+    expect(bytesOf(png).subarray(1, 4).toString('latin1')).toBe('PNG');
+    expectImage(jpeg, { width: 1280, height: 720 });
+    expect(dataOf(jpeg)).toMatchObject({ format: 'jpeg' });
     expect(dataOf(chartJpeg)).toMatchObject({ target: 'chart', format: 'jpeg' });
   });
 
@@ -376,17 +401,17 @@ describe('screenshot_capture', () => {
     const result = await callTool(client, 'screenshot_capture', { target: 'page' });
 
     expect(result.content.map((block) => block.type)).toEqual(['image', 'text']);
-    expect(result.content[0]).toEqual({ type: 'image', data: PNG_BASE64, mimeType: 'image/png' });
+    expect(imageOf(result)).toMatchObject({ mimeType: 'image/png' });
     // The text block and the structured content are the same envelope, and neither holds the picture.
     expect(JSON.parse(textOf(result))).toStrictEqual(result.structuredContent);
-    expect(textOf(result)).not.toContain(PNG_BASE64);
-    expect(JSON.stringify(result.structuredContent)).not.toContain(PNG_BASE64);
+    expect(textOf(result)).not.toContain(imageOf(result).data);
+    expect(JSON.stringify(result.structuredContent)).not.toContain(imageOf(result).data);
     expect(dataOf(result)).toStrictEqual({
       target: 'page',
       format: 'png',
       width: 1280,
       height: 720,
-      bytes: 69,
+      bytes: bytesOf(result).length,
     });
   });
 
@@ -437,7 +462,7 @@ describe('screenshot_capture', () => {
   test.each(['page', 'window'])(
     'chartIndex is ignored for the %s target, with a warning',
     async (target) => {
-      const { client, app } = await startHarness({ chromeWindow: chromeOf(1280, 34, 1) });
+      const { client } = await startHarness({ chromeWindow: chromeOf(1280, 34, 1) });
 
       // The layout has one chart, so 5 would be refused for the chart target.
       const result = await callTool(client, 'screenshot_capture', { target, chartIndex: 5 });
@@ -446,7 +471,6 @@ describe('screenshot_capture', () => {
       expect(warningsOf(result)).toEqual([
         `chartIndex only applies to target "chart", so it was ignored for target "${target}".`,
       ]);
-      expect(methodsOf(app)).not.toContain('Runtime.evaluate');
     },
   );
 
@@ -455,11 +479,17 @@ describe('screenshot_capture', () => {
     const { client, app } = await startHarness({ win });
 
     await callTool(client, 'screenshot_capture', { target: 'page' });
-    expect(methodsOf(app)).toEqual(['Page.getLayoutMetrics', 'Page.captureScreenshot']);
+    // Whether the tab is shown, the layout metrics, the capture.
+    expect(methodsOf(app)).toEqual([
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Page.captureScreenshot',
+    ]);
 
     app.calls.length = 0;
     await callTool(client, 'screenshot_capture');
-    // The container of the active chart, the layout metrics, the capture.
+    // The container of the active chart and whether its tab is shown, the layout metrics, the
+    // capture.
     expect(methodsOf(app)).toEqual([
       'Runtime.evaluate',
       'Page.getLayoutMetrics',
@@ -533,6 +563,23 @@ describe('screenshot_capture', () => {
     expect(capturesOf(app)).toEqual([]);
   });
 
+  test('the picture reaches the client and nothing else: it is not logged or put into an event', async () => {
+    const { logger, lines } = capturingLogger();
+    const { client, events } = await startHarness({ logger });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page' });
+    const jpeg = await callTool(client, 'screenshot_capture', { target: 'page', format: 'jpeg' });
+    await callTool(client, 'screenshot_capture', { chartIndex: 4 });
+
+    expect(result.content[0]).toMatchObject({ type: 'image' });
+    expect(lines.length).toBeGreaterThan(0);
+    for (const seen of [JSON.stringify(lines), JSON.stringify(events())]) {
+      expect(seen).not.toContain(imageOf(result).data);
+      expect(seen).not.toContain(imageOf(jpeg).data);
+    }
+    expect(events().map(({ tool }) => tool)).toEqual(Array(6).fill('screenshot_capture'));
+  });
+
   test('batch_run puts the images of its screenshot steps in front of the outcomes', async () => {
     const { client } = await startHarness();
 
@@ -557,24 +604,450 @@ describe('screenshot_capture', () => {
         },
       ],
     });
-    expect(textOf(result)).not.toContain(PNG_BASE64);
-    expect(textOf(result)).not.toContain(JPEG_BASE64);
+    for (const block of result.content.slice(0, 2)) {
+      if (block.type === 'image') {
+        expect(textOf(result)).not.toContain(block.data);
+      }
+    }
+  });
+});
+
+describe('screenshot_capture at a page zoom other than 100%', () => {
+  // The same window of 1600 by 1000 DIPs on a display with two device pixels for each DIP, at three
+  // zooms: the page lays out more or fewer CSS pixels in it and says so with its pixel ratio, which
+  // has the zoom in it. A chart sits at the same place of the window at each of them.
+  const WINDOWS = [
+    {
+      zoom: 0.5,
+      size: { width: 3200, height: 2000, devicePixelRatio: 1, zoom: 0.5 },
+      chart: { x: 160, y: 100, width: 2500, height: 1500 },
+    },
+    {
+      zoom: 1,
+      size: { width: 1600, height: 1000, devicePixelRatio: 2, zoom: 1 },
+      chart: { x: 80, y: 50, width: 1250, height: 750 },
+    },
+    {
+      zoom: 1.25,
+      size: { width: 1280, height: 800, devicePixelRatio: 2.5, zoom: 1.25 },
+      chart: { x: 64, y: 40, width: 1000, height: 600 },
+    },
+  ];
+
+  test.each(WINDOWS)(
+    'at a zoom of $zoom the page is clipped in DIPs, so that the image is as wide as maxWidth',
+    async ({ size }) => {
+      const { client, app } = await startHarness({ win: screen(size) });
+
+      const result = await callTool(client, 'screenshot_capture', {
+        target: 'page',
+        maxWidth: 800,
+      });
+
+      // The window is 1600 by 1000 DIPs whatever the zoom: that is what the clip asks for.
+      expect(capturesOf(app)).toEqual([
+        {
+          format: 'png',
+          captureBeyondViewport: false,
+          clip: { x: 0, y: 0, width: 1600, height: 1000, scale: 0.25 },
+        },
+      ]);
+      expectImage(result, { width: 800, height: 500 });
+    },
+  );
+
+  test.each(WINDOWS)(
+    'at a zoom of $zoom the chart is clipped in DIPs, so that the image is as wide as maxWidth',
+    async ({ size, chart }) => {
+      const { client, app } = await startHarness({ win: screen({ ...size, charts: [chart] }) });
+
+      const result = await callTool(client, 'screenshot_capture', { maxWidth: 800 });
+
+      // The chart is at 80, 50 and 1250 by 750 DIPs of the window at every zoom.
+      expect(capturesOf(app)).toEqual([
+        {
+          format: 'png',
+          captureBeyondViewport: false,
+          clip: { x: 80, y: 50, width: 1250, height: 750, scale: 0.32 },
+        },
+      ]);
+      expectImage(result, { width: 800, height: 480 });
+    },
+  );
+
+  test.each(WINDOWS)(
+    'at a zoom of $zoom the whole page without a clip is as big as the window in device pixels',
+    async ({ size }) => {
+      const { client, app } = await startHarness({ win: screen(size) });
+
+      const result = await callTool(client, 'screenshot_capture', {
+        target: 'page',
+        maxWidth: 4000,
+      });
+
+      expect(capturesOf(app)).toEqual([{ format: 'png', captureBeyondViewport: false }]);
+      expectImage(result, { width: 3200, height: 2000 });
+    },
+  );
+
+  test('a page zoomed out never makes an image wider than maxWidth, which a clip in CSS pixels would', async () => {
+    const win = screen({ width: 3200, height: 2000, devicePixelRatio: 1, zoom: 0.5 });
+    const { client, app } = await startHarness({ win });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page', maxWidth: 800 });
+
+    const [capture] = capturesOf(app);
+    // The 3200 CSS pixels of the page are 1600 DIPs, and that is the width of the clip. Had it been
+    // 3200, the image would have been 1600 pixels wide.
+    expect(capture?.clip?.width).toBe(1600);
+    expect(widthOfClip(capture, 1, 0.5)).toBeLessThanOrEqual(800);
+    expectImage(result, { width: 800, height: 500 });
+  });
+});
+
+describe('screenshot_capture on a page that is scrolled', () => {
+  test('the clip of a chart starts where the chart is in the page, and not in the viewport', async () => {
+    const win = screen({
+      width: 1280,
+      height: 720,
+      devicePixelRatio: 2,
+      scrollX: 100,
+      scrollY: 200,
+      charts: [{ x: 50, y: 40, width: 600, height: 500 }],
+    });
+    const { client, app } = await startHarness({ win });
+
+    const result = await callTool(client, 'screenshot_capture');
+
+    expect(capturesOf(app).map((capture) => capture.clip)).toEqual([
+      { x: 150, y: 240, width: 600, height: 500, scale: 1 },
+    ]);
+    expectImage(result, { width: 1200, height: 1000 });
   });
 
-  test('the picture reaches the client and nothing else: it is not logged or put into an event', async () => {
-    const { logger, lines } = capturingLogger();
-    const { client, events } = await startHarness({ logger });
+  test('the clip of the page starts where the visible part is in the page', async () => {
+    const win = screen({
+      width: 1280,
+      height: 720,
+      devicePixelRatio: 2,
+      scrollX: 100,
+      scrollY: 200,
+    });
+    const { client, app } = await startHarness({ win });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page', maxWidth: 800 });
+
+    expect(capturesOf(app).map((capture) => capture.clip)).toEqual([
+      { x: 100, y: 200, width: 1280, height: 720, scale: 0.3125 },
+    ]);
+    expectImage(result, { width: 800, height: 450 });
+  });
+
+  test('the offset of the page is scaled by the zoom with the rest of the clip', async () => {
+    const win = screen({
+      width: 1280,
+      height: 800,
+      devicePixelRatio: 2.5,
+      zoom: 1.25,
+      scrollX: 100,
+      scrollY: 200,
+      charts: [{ x: 64, y: 40, width: 1000, height: 600 }],
+    });
+    const { client, app } = await startHarness({ win });
+
+    const result = await callTool(client, 'screenshot_capture');
+
+    // 1000 CSS pixels at 2.5 are 2500 device pixels, and the default cap brings them to 1920.
+    expect(capturesOf(app).map((capture) => capture.clip)).toEqual([
+      { x: 205, y: 300, width: 1250, height: 750, scale: 0.768 },
+    ]);
+    expectImage(result, { width: 1920, height: 1152 });
+  });
+});
+
+describe('screenshot_capture on a chart that is not entirely in the viewport', () => {
+  test('a chart that reaches over the right and the bottom is cut to the viewport, and the result says so', async () => {
+    const win = screen({ charts: [{ x: 50, y: 40, width: 1400, height: 800 }] });
+    const { client, app } = await startHarness({ win });
+
+    const result = await callTool(client, 'screenshot_capture');
+
+    expect(capturesOf(app).map((capture) => capture.clip)).toEqual([
+      { x: 50, y: 40, width: 1230, height: 680, scale: 1 },
+    ]);
+    expectImage(result, { width: 1230, height: 680 });
+    expect(warningsOf(result)).toEqual([
+      'Part of the chart is outside the visible part of the page, so the image shows only the part ' +
+        'that is visible.',
+    ]);
+  });
+
+  test('a chart that reaches over the left and the top is cut as well, at a scale and a zoom', async () => {
+    const win = screen({
+      width: 1280,
+      height: 800,
+      devicePixelRatio: 2.5,
+      zoom: 1.25,
+      charts: [{ x: -80, y: -40, width: 1080, height: 800 }],
+    });
+    const { client, app } = await startHarness({ win });
+
+    const result = await callTool(client, 'screenshot_capture', { maxWidth: 800 });
+
+    // 1000 by 760 CSS pixels of it are in the viewport, which are 1250 by 950 DIPs.
+    expect(capturesOf(app).map((capture) => capture.clip)).toEqual([
+      { x: 0, y: 0, width: 1250, height: 950, scale: 0.32 },
+    ]);
+    expectImage(result, { width: 800, height: 608 });
+    expect(warningsOf(result)).toHaveLength(1);
+    expect(warningsOf(result)?.[0]).toMatch(/outside the visible part/);
+  });
+
+  test('a chart that is inside the viewport raises no warning, and neither does one that fills it', async () => {
+    const inside = await startHarness({
+      win: screen({ charts: [{ x: 1, y: 2, width: 30, height: 40 }] }),
+    });
+    const fills = await startHarness({
+      win: screen({ charts: [{ x: 0, y: 0, width: 1280, height: 720 }] }),
+    });
+
+    const first = await callTool(inside.client, 'screenshot_capture');
+    const second = await callTool(fills.client, 'screenshot_capture');
+
+    expect(warningsOf(first)).toEqual([]);
+    expect(warningsOf(second)).toEqual([]);
+    expectImage(second, { width: 1280, height: 720 });
+  });
+
+  test.each([
+    ['right of', { x: 1300, y: 40, width: 100, height: 100 }],
+    ['below', { x: 40, y: 800, width: 100, height: 100 }],
+    ['left of', { x: -300, y: 40, width: 100, height: 100 }],
+    ['above', { x: 40, y: -300, width: 100, height: 100 }],
+  ])(
+    'a chart %s the viewport fails NOT_AVAILABLE, and nothing is captured',
+    async (_where, chart) => {
+      const { client, app } = await startHarness({ win: screen({ charts: [chart] }) });
+
+      const result = await callTool(client, 'screenshot_capture');
+
+      expect(errorOf(result)).toMatchObject({
+        code: 'NOT_AVAILABLE',
+        message: 'The chart is outside the visible part of the page',
+      });
+      expect(errorOf(result)?.hint).toMatch(/in view/);
+      expect(capturesOf(app)).toEqual([]);
+    },
+  );
+});
+
+describe('screenshot_capture on a tab that is hidden', () => {
+  test.each(['chart', 'page'])(
+    'the %s target fails NOT_AVAILABLE before anything is captured',
+    async (target) => {
+      const win = createFakeTvWindow(fixture, { visibilityState: 'hidden' });
+      const { client, app } = await startHarness({ win });
+
+      const result = await callTool(client, 'screenshot_capture', { target });
+
+      expect(result.isError).toBe(true);
+      expect(errorOf(result)).toMatchObject({
+        code: 'NOT_AVAILABLE',
+        message: 'The chart tab is hidden',
+      });
+      expect(errorOf(result)?.hint).toMatch(/front/);
+      // Only the page was asked, whether it is shown: not its layout, and nothing was captured.
+      expect(methodsOf(app)).toEqual(['Runtime.evaluate']);
+      expect(capturesOf(app)).toEqual([]);
+    },
+  );
+
+  test('a tab that turns visible again can be captured', async () => {
+    const win = createFakeTvWindow(fixture, { visibilityState: 'hidden' });
+    const { client } = await startHarness({ win });
+    const hidden = await callTool(client, 'screenshot_capture', { target: 'page' });
+
+    inspectFakeWindow(win).state.visibilityState = 'visible';
+    const shown = await callTool(client, 'screenshot_capture', { target: 'page' });
+
+    expect(hidden.isError).toBe(true);
+    expectImage(shown, { width: 1280, height: 720 });
+  });
+
+  test('the window chrome does not depend on the chart tab being in front', async () => {
+    const win = createFakeTvWindow(fixture, { visibilityState: 'hidden' });
+    const { client, app } = await startHarness({ win, chromeWindow: chromeOf(1280, 34, 1) });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'window' });
+
+    expectImage(result, { width: 1280, height: 34 });
+    expect(methodsOf(app, CHART_ID)).toEqual([]);
+  });
+});
+
+describe('screenshot_capture and the size of the image', () => {
+  test('without maxWidth an image is at most 1920 pixels wide', async () => {
+    const win = screen({
+      width: 1600,
+      height: 1000,
+      devicePixelRatio: 2,
+      charts: [{ x: 52, y: 44, width: 1403, height: 757 }],
+    });
+    const { client, app } = await startHarness({ win });
+
+    const page = await callTool(client, 'screenshot_capture', { target: 'page' });
+    const chart = await callTool(client, 'screenshot_capture', { target: 'chart' });
+
+    // 3200 and 2806 device pixels, brought to 1920.
+    expect(capturesOf(app).map((capture) => capture.clip)).toEqual([
+      { x: 0, y: 0, width: 1600, height: 1000, scale: 0.6 },
+      { x: 52, y: 44, width: 1403, height: 757, scale: 1920 / 2806 },
+    ]);
+    expectImage(page, { width: DEFAULT_MAX_WIDTH, height: 1200 });
+    expectImage(chart, { width: DEFAULT_MAX_WIDTH, height: 1036 });
+  });
+
+  test('a capture under 1920 pixels wide is left as it is when maxWidth is left out', async () => {
+    const { client, app } = await startHarness({ chromeWindow: chromeOf(1280, 34, 1) });
+
+    const page = await callTool(client, 'screenshot_capture', { target: 'page' });
+    const chrome = await callTool(client, 'screenshot_capture', { target: 'window' });
+
+    expectImage(page, { width: 1280, height: 720 });
+    expectImage(chrome, { width: 1280, height: 34 });
+    expect(capturesOf(app).concat(capturesOf(app, CHROME_ID))).toEqual([
+      { format: 'png', captureBeyondViewport: false },
+      { format: 'png', captureBeyondViewport: false },
+    ]);
+  });
+
+  test('a maxWidth over 1920 lifts the cap', async () => {
+    const win = screen({ width: 1600, height: 1000, devicePixelRatio: 2 });
+    const { client } = await startHarness({ win });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page', maxWidth: 3000 });
+
+    expectImage(result, { width: 3000, height: 1875 });
+  });
+
+  // A picture of a size that the fake would not make, with padding after its end to a given length.
+  function paddedPng(length: number): string {
+    const png = Buffer.from(solidImage('png', 1, 1), 'base64');
+    return Buffer.concat([png, Buffer.alloc(length - png.length)]).toString('base64');
+  }
+
+  test('an image of exactly 8 MB is returned', async () => {
+    const data = paddedPng(MAX_IMAGE_BYTES);
+    const { client } = await startHarness({
+      handlers: { [CHART_ID]: { 'Page.captureScreenshot': () => ({ data }) } },
+    });
 
     const result = await callTool(client, 'screenshot_capture', { target: 'page' });
-    await callTool(client, 'screenshot_capture', { target: 'page', format: 'jpeg' });
-    await callTool(client, 'screenshot_capture', { chartIndex: 4 });
 
-    expect(result.content[0]).toMatchObject({ type: 'image' });
-    expect(lines.length).toBeGreaterThan(0);
-    for (const seen of [JSON.stringify(lines), JSON.stringify(events())]) {
-      expect(seen).not.toContain(PNG_BASE64);
-      expect(seen).not.toContain(JPEG_BASE64);
-    }
-    expect(events().map(({ tool }) => tool)).toEqual(Array(6).fill('screenshot_capture'));
+    expect(result.isError).not.toBe(true);
+    expect(dataOf(result)).toMatchObject({ bytes: MAX_IMAGE_BYTES });
+    expect(imageOf(result).data).toBe(data);
+  });
+
+  test('an image of more than 8 MB is refused with a hint, and not returned', async () => {
+    const { client } = await startHarness({
+      handlers: {
+        [CHART_ID]: { 'Page.captureScreenshot': () => ({ data: paddedPng(MAX_IMAGE_BYTES + 1) }) },
+      },
+    });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content.map((block) => block.type)).toEqual(['text']);
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { bytes: MAX_IMAGE_BYTES + 1, maxBytes: MAX_IMAGE_BYTES },
+    });
+    expect(errorOf(result)?.message).toMatch(/^The image is [\d.]+ MB, over the 8 MB/);
+    expect(errorOf(result)?.hint).toMatch(/jpeg/);
+    expect(errorOf(result)?.hint).toMatch(/maxWidth/);
+  });
+
+  test('a refusal for size lets the next capture through, so a batch goes on with its other steps', async () => {
+    let calls = 0;
+    const { client } = await startHarness({
+      handlers: {
+        [CHART_ID]: {
+          'Page.captureScreenshot': () => {
+            calls += 1;
+            return {
+              data: calls === 1 ? paddedPng(MAX_IMAGE_BYTES + 1) : solidImage('png', 40, 30),
+            };
+          },
+        },
+      },
+    });
+
+    const result = await callTool(client, 'batch_run', {
+      stopOnError: false,
+      steps: [
+        { tool: 'screenshot_capture', arguments: { target: 'page' } },
+        { tool: 'screenshot_capture', arguments: { target: 'page' } },
+      ],
+    });
+
+    expect(result.content.map((block) => block.type)).toEqual(['image', 'text']);
+    expect(dataOf(result)).toMatchObject({
+      completed: 2,
+      steps: [
+        { ok: false, error: { code: 'NOT_AVAILABLE' } },
+        { ok: true, data: { width: 40, height: 30 } },
+      ],
+    });
+  });
+
+  test('the size of a png is read from the image, not worked out from the clip', async () => {
+    const { client } = await startHarness({
+      handlers: { [CHART_ID]: picture('png', 321, 123) },
+    });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page' });
+
+    // The page is 1280 by 720, but the picture that came back is what it is.
+    expect(dataOf(result)).toMatchObject({ format: 'png', width: 321, height: 123 });
+    expect(warningsOf(result)).toEqual([]);
+  });
+
+  test('the size of a jpeg is read from the image as well', async () => {
+    const { client } = await startHarness({
+      handlers: { [CHART_ID]: picture('jpeg', 77, 55) },
+    });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page', format: 'jpeg' });
+
+    expect(dataOf(result)).toMatchObject({ format: 'jpeg', width: 77, height: 55 });
+    expect(warningsOf(result)).toEqual([]);
+  });
+
+  test('an image whose size cannot be read is returned with the size that was asked for, and a warning', async () => {
+    const { client } = await startHarness({
+      handlers: { [CHART_ID]: { 'Page.captureScreenshot': () => ({ data: 'AAAA' }) } },
+    });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page', maxWidth: 800 });
+
+    expect(result.isError).not.toBe(true);
+    // 3 bytes, which no reader can find a size in. The size is the one worked out from the clip.
+    expect(dataOf(result)).toMatchObject({ width: 800, height: 450, bytes: 3 });
+    expect(warningsOf(result)).toEqual([
+      'The size of the image could not be read from it, so width and height are the size that ' +
+        'was asked of Chrome.',
+    ]);
+    expect(imageOf(result).data).toBe('AAAA');
+  });
+
+  test('a jpeg asked for but a png returned is a size that cannot be read', async () => {
+    const { client } = await startHarness({ handlers: { [CHART_ID]: picture('png', 50, 40) } });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'page', format: 'jpeg' });
+
+    expect(dataOf(result)).toMatchObject({ format: 'jpeg', width: 1280, height: 720 });
+    expect(warningsOf(result)).toHaveLength(1);
   });
 });

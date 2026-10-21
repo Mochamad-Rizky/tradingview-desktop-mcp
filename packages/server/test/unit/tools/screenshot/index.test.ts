@@ -47,8 +47,8 @@ test('screenshot_capture is left out of the core profile until the core set is c
   ).not.toContain('screenshot_capture');
 });
 
-test('screenshot_capture takes the chart as a png by default, whole and at full size', () => {
-  expect(schema.parse({})).toEqual({ target: 'chart', format: 'png' });
+test('screenshot_capture takes the chart as a png by default, at most 1920 pixels wide', () => {
+  expect(schema.parse({})).toEqual({ target: 'chart', format: 'png', maxWidth: 1920 });
   expect(schema.parse({ target: 'window', format: 'jpeg', maxWidth: 800, chartIndex: 1 })).toEqual({
     target: 'window',
     format: 'jpeg',
@@ -83,6 +83,26 @@ test('the description says what each target captures and what the result holds',
     expect(description, word).toContain(word);
   }
   expect(description).toMatch(/image/);
-  expect(description).toMatch(/width, height and bytes|width and height/);
+  expect(description).toMatch(/width and height/);
   expect(description).toMatch(/NOT_AVAILABLE/);
+});
+
+test('the description and the schema say how large an image can be', () => {
+  const { description } = screenshotCapture;
+  const maxWidth = z.globalRegistry.get(screenshotCapture.inputSchema.maxWidth)?.description;
+
+  // The cap when maxWidth is left out, the bounds of it, and what is refused.
+  expect(description).toMatch(/1920/);
+  expect(description).toMatch(/8 MB/);
+  expect(description).toMatch(/jpeg/);
+  expect(maxWidth).toMatch(/1920/);
+  expect(maxWidth).toMatch(/100/);
+  expect(maxWidth).toMatch(/4000/);
+});
+
+test('the description says which targets fail when the tab is hidden, and that the size is read from the image', () => {
+  const { description } = screenshotCapture;
+
+  expect(description).toMatch(/hidden/);
+  expect(description).toMatch(/read from the image|the size of the image itself/);
 });
