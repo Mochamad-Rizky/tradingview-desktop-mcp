@@ -174,10 +174,29 @@ describe('analyze_current_chart', () => {
 describe('multi_timeframe_review', () => {
   const STEPS = [
     'chart_get_state',
+    'chart_get_visible_range',
     'chart_set_timeframe',
     'data_get_ohlcv',
     'indicator_get_values',
+    'chart_set_visible_range',
   ];
+
+  test('multi_timeframe_review tells the assistant to restore the visible range too', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'multi_timeframe_review');
+
+    // The range is read before the first change of timeframe, and set again after the timeframe is
+    // back, with the times that were read.
+    expect(text.indexOf('chart_get_visible_range')).toBeGreaterThan(-1);
+    expect(text.indexOf('chart_get_visible_range')).toBeLessThan(
+      text.indexOf('chart_set_timeframe'),
+    );
+    expect(text.indexOf('chart_set_visible_range')).toBeGreaterThan(
+      text.lastIndexOf('chart_set_timeframe'),
+    );
+    expect(text).toMatch(/chart_set_visible_range with the from and to/);
+  });
 
   test('names its tools in order, and restores the first timeframe after the last one', async () => {
     const { client } = await startServer();

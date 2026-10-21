@@ -131,12 +131,16 @@ function multiTimeframeReview(timeframes: readonly string[]): GetPromptResult {
     ...numbered([
       'chart_get_state: note the symbol, the timeframe (resolution) the chart shows now, and the ' +
         'indicators on the chart with their ids. You restore this timeframe at the end.',
+      'chart_get_visible_range: note from and to, the period the chart shows now. A change of ' +
+        'timeframe moves the view, so you put this period back at the end as well.',
       `For each of ${list}, in this order: chart_set_timeframe with that timeframe; ` +
         'data_get_ohlcv for its bars (the default count is enough); indicator_get_values for ' +
         'each indicator on the chart, if it has any (the latest values are enough).',
-      'Restore the original timeframe: chart_set_timeframe with the one you noted in step 1, so ' +
-        'that the chart shows what it showed before. Do this even when a step above failed, and ' +
-        'check that the answer reports that timeframe.',
+      'Restore the original timeframe: chart_set_timeframe with the one you noted in step 1. ' +
+        'Then restore the original view: chart_set_visible_range with the from and to you noted ' +
+        'in step 2, so that the chart shows what it showed before. Do both even when a step ' +
+        'above failed, and check that the answers report that timeframe and that period (the ' +
+        'chart shows whole bars, so its ends can move to the nearest bar).',
     ]),
     '',
     'Then report the alignment across the timeframes:',
@@ -266,7 +270,8 @@ export function registerPrompts(server: McpServer): void {
       title: 'Review a chart across timeframes',
       description:
         'Steps through several timeframes of the chart, reads the bars and the indicators of ' +
-        'each, puts the chart back on the timeframe it showed, and reports how they line up.',
+        'each, puts the chart back on the timeframe and the period it showed, and reports how ' +
+        'they line up.',
       argsSchema: {
         timeframes: z
           .string()
