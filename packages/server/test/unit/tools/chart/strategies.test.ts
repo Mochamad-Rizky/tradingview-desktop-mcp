@@ -13,6 +13,7 @@ import {
   unknownSymbolPrevious,
 } from '../../../../src/tools/chart/strategies.js';
 import { failureOf } from '../../../helpers/failure-of.js';
+import { layoutMetrics } from '../../../helpers/fake-cdp/layout.js';
 import { quietLogger } from '../../../helpers/tool-context.js';
 
 // The parts of the chart strategies that a page cannot easily be made to show: errors that are not
@@ -68,7 +69,8 @@ type Snapshot = NonNullable<ReturnType<typeof readChartSnapshot>>;
 // A chart with a symbol search button, whose dialog takes the focus once the button is clicked, for
 // the symbol search strategy to run through. The chart reads as `snapshots` say, one after another,
 // the last one over and over; a null snapshot is a chart that cannot be read. The input events that
-// reach the page are recorded and answered.
+// reach the page are recorded and answered, and so are the questions about the layout of the page,
+// which a click asks for the zoom of the page.
 function interfacePage(
   snapshots: (Snapshot | null)[],
   options: { withoutSetter?: boolean } = {},
@@ -107,7 +109,11 @@ function interfacePage(
     ...page.session,
     send: (method: string) => {
       sent.push(method);
-      return Promise.resolve({});
+      return Promise.resolve(
+        method === 'Page.getLayoutMetrics'
+          ? layoutMetrics({ width: 1280, height: 720, devicePixelRatio: 1 })
+          : {},
+      );
     },
   };
   return { page: { ...page, session }, sent };

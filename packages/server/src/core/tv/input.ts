@@ -3,6 +3,7 @@ import { TvMcpError } from '../errors.js';
 import type { PageBridge, PageErrorSentinel } from './page-bridge.js';
 import { SELECTORS, UNSAFE_SELECTORS } from './selectors.js';
 import type { TvWindow } from './tv-window.js';
+import { readViewport } from './viewport.js';
 
 // Real input for the places the chart API does not reach: a click, text and key presses sent to
 // the page over CDP, so the page sees them as it sees a user.
@@ -16,6 +17,10 @@ import type { TvWindow } from './tv-window.js';
 //
 // The calls of one page run one at a time, because each rests on a lookup that another call
 // would otherwise change.
+//
+// A page judges a click in its CSS pixels, and a mouse event goes out in the device-independent
+// pixels of the window, which are the CSS pixels times the page zoom of the app. So the zoom is
+// read with every look at a target, and a page that does not report it is refused.
 //
 // That leaves one gap. TradingView may bind trading actions to hotkeys that work wherever the
 // focus is. The notes record none, so a key chord can still reach one, and the check of the
@@ -348,6 +353,25 @@ function centerOf(rect: { x: number; y: number; width: number; height: number })
   return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
 }
 
+// A point of the page, in the CSS pixels the page judges it in, in the device-independent pixels
+// (DIPs) of the window that a mouse event is sent in: the page zoom of the app (0.2 to 5, 1 at
+// 100%) is how many DIPs a CSS pixel takes. At any other zoom than 1, a point sent as the page
+// reports it would land somewhere the page has not looked at.
+function inDips(point: { x: number; y: number }, zoom: number): { x: number; y: number } {
+  return { x: point.x * zoom, y: point.y * zoom };
+}
+
+// One look at the target of a click: what the page says about it, which refuses the click or gives
+// the point it judged, and the zoom of the page, which turns that point into DIPs. The zoom is read
+// anew with every look, after the page has cleared the target, because a change of zoom moves
+// everything on the page as much as a change of its layout does. A page that does not report its
+// viewport, and so its zoom, is refused (readViewport).
+async function lookFor(page: InputPage, selector: string): Promise<{ x: number; y: number }> {
+  const point = centerOf(clickableRect(selector, await lookUp(page, selector)));
+  const { zoom } = await readViewport(page.session);
+  return inDips(point, zoom);
+}
+
 // Clicks the center of the first element that matches `selector`. The element is looked up anew on
 // every call and nothing is cached, because the page moves between calls. The lookup comes first
 // and nothing is sent to the page before it says the target is safe, so a refused click does not
@@ -361,13 +385,16 @@ function centerOf(rect: { x: number; y: number; width: number; height: number })
 // The button then goes down where the second lookup found the target, which is the point it
 // judged. What changes after the second lookup is the race that remains, and it is inherent in
 // clicking by coordinates.
+//
+// The page judges in CSS pixels and the events are sent in DIPs, each at the zoom its own look read
+// (lookFor).
 export async function clickElement(page: InputPage, selector: string): Promise<void> {
   await exclusively(page, async () => {
     const { session } = page;
-    const arrival = centerOf(clickableRect(selector, await lookUp(page, selector)));
+    const arrival = await lookFor(page, selector);
     await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...arrival });
 
-    const { x, y } = centerOf(clickableRect(selector, await lookUp(page, selector)));
+    const { x, y } = await lookFor(page, selector);
     await session.send('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x,

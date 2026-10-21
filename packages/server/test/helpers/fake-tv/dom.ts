@@ -192,6 +192,14 @@ export function fakeElement(options: FakeElementOptions = {}): FakeElement {
 // The members of the window as they really are, with the fake's own element type. A TvWindow
 // takes real elements, which the fake is not, so createFakeDomWindow hands out the window as one.
 export interface FakeDomWindow {
+  // The viewport in CSS pixels and the window in DIPs, which is the viewport times the page zoom,
+  // when the window was given a viewport or a zoom. The fake debug port answers
+  // Page.getLayoutMetrics from them, and takes a window without them for one of 1280 by 720 CSS
+  // pixels at a zoom of 1. Assignable, so that a test can zoom the page.
+  innerWidth?: number;
+  innerHeight?: number;
+  outerWidth?: number;
+  outerHeight?: number;
   document: {
     readonly visibilityState: 'visible';
     querySelector?: (selectors: string) => FakeElement | null;
@@ -213,6 +221,10 @@ export interface FakeDomOptions {
   // The size of the viewport, which elementFromPoint answers null outside of, as a page does. By
   // default there is no limit.
   viewport?: { width: number; height: number };
+  // The page zoom of the app: how many device-independent pixels (DIPs) a CSS pixel takes, 1 at
+  // 100%. The window reports it the way the app does, with an outer width that is the inner one
+  // times the zoom.
+  zoom?: number;
   // The element that has the focus: null for none at all. By default it is the body, as in a page
   // where nothing was focused. The body is not part of the elements the window is built from, so
   // it takes no part in elementFromPoint.
@@ -235,6 +247,15 @@ export function createFakeDomWindow(
   const all = elements.flatMap((element) => [element, ...element.descendants()]);
   const without = new Set(options.without);
   const fakeWindow: FakeDomWindow = { document: { visibilityState: 'visible' } };
+
+  if (options.viewport !== undefined || options.zoom !== undefined) {
+    const { width, height } = options.viewport ?? { width: 1280, height: 720 };
+    const zoom = options.zoom ?? 1;
+    fakeWindow.innerWidth = width;
+    fakeWindow.innerHeight = height;
+    fakeWindow.outerWidth = width * zoom;
+    fakeWindow.outerHeight = height * zoom;
+  }
 
   if (!without.has('querySelector')) {
     fakeWindow.document.querySelector = (selectors) => {

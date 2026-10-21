@@ -14,6 +14,7 @@ import { createPageBridge } from '../../../../src/core/tv/page-bridge.js';
 import { SELECTORS, UNSAFE_SELECTORS } from '../../../../src/core/tv/selectors.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import { failureOf } from '../../../helpers/failure-of.js';
+import { layoutMetrics, layoutSizeOf } from '../../../helpers/fake-cdp/layout.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
 import {
   createFakeDomWindow,
@@ -84,10 +85,13 @@ afterEach(() => {
 });
 
 // A session to a page that is `win`: Runtime.evaluate runs the page function in it, through the
-// real bridge, and every other command goes to `handleInput`, which may reject or wait.
+// real bridge, Page.getLayoutMetrics answers what `answerLayout` gives, by default the viewport and
+// the zoom the window reports, as the fake debug port answers it, and every other command goes to
+// `handleInput`, which may reject or wait.
 function pageOver(
   win: object,
   handleInput: (command: SentCommand) => unknown = () => ({}),
+  answerLayout: () => unknown = () => layoutMetrics(layoutSizeOf(win)),
 ): FakePage {
   const runtime = createPageRuntime(win);
   disposers.push(() => {
@@ -99,6 +103,9 @@ function pageOver(
     sent.push(command);
     if (method === 'Runtime.evaluate') {
       return runtime.evaluate(params as Record<string, unknown>);
+    }
+    if (method === 'Page.getLayoutMetrics') {
+      return Promise.resolve().then(answerLayout);
     }
     return Promise.resolve().then(() => handleInput(command));
   };
@@ -123,8 +130,9 @@ function pageWith(
   elements: FakeElement[],
   options: FakeDomOptions = {},
   handleInput?: (command: SentCommand) => unknown,
+  answerLayout?: () => unknown,
 ): FakePage {
-  return pageOver(createFakeDomWindow(elements, options), handleInput);
+  return pageOver(createFakeDomWindow(elements, options), handleInput, answerLayout);
 }
 
 // The window as the fake really is, with its own elements, so that a test can move the focus.
@@ -1077,13 +1085,53 @@ describe('clickElement', () => {
 
     await clickElement(page, SAVE);
 
+    // Each look is the page function, then the zoom of the page, which the point is sent in.
     expect(sent.map(({ method }) => method)).toEqual([
       'Runtime.evaluate',
+      'Page.getLayoutMetrics',
       'Input.dispatchMouseEvent',
       'Runtime.evaluate',
+      'Page.getLayoutMetrics',
       'Input.dispatchMouseEvent',
       'Input.dispatchMouseEvent',
     ]);
+  });
+
+  test('sends the click in device-independent pixels, the CSS pixels of the page times its zoom', async () => {
+    // At 125% the center the page reports, (120, 60) in CSS pixels, is (150, 75) in the window.
+    const { page, input } = pageWith(chart(), { zoom: 1.25 });
+
+    await clickElement(page, SAVE);
+
+    expect(input()).toEqual([
+      mouseEvent('mouseMoved', 150, 75),
+      mouseEvent('mousePressed', 150, 75),
+      mouseEvent('mouseReleased', 150, 75),
+    ]);
+  });
+
+  test('sends the click at the CSS pixels of the page at a zoom of 1', async () => {
+    const { page, input } = pageWith(chart(), { zoom: 1 });
+
+    await clickElement(page, SAVE);
+
+    expect(input()).toEqual([
+      mouseEvent('mouseMoved', 120, 60),
+      mouseEvent('mousePressed', 120, 60),
+      mouseEvent('mouseReleased', 120, 60),
+    ]);
+  });
+
+  test('refuses to click, and sends no input, when the page does not report its viewport', async () => {
+    // Without the zoom, the point the page judged could not be told in the window, and a click
+    // could land on another element.
+    const { page, input } = pageWith(chart(), {}, undefined, () => ({}));
+
+    const error = await failureOf(clickElement(page, SAVE));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.message).toBe('The page did not report the size of its viewport');
+    expect(input()).toEqual([]);
   });
 
   describe('when the pointer arriving changes the page', () => {
@@ -1119,6 +1167,7 @@ describe('clickElement', () => {
       expect(types()).toEqual(['mouseMoved']);
       expect(sent.map(({ method }) => method)).toEqual([
         'Runtime.evaluate',
+        'Page.getLayoutMetrics',
         'Input.dispatchMouseEvent',
         'Runtime.evaluate',
       ]);
@@ -1177,6 +1226,29 @@ describe('clickElement', () => {
         { type: 'mouseMoved', x: 120, y: 60 },
         { type: 'mousePressed', x: 320, y: 90, button: 'left', clickCount: 1 },
         { type: 'mouseReleased', x: 320, y: 90, button: 'left', clickCount: 1 },
+      ]);
+    });
+
+    test('presses at the zoom the page has after the move, which the second look reads anew', async () => {
+      // The page is zoomed to 150% while the pointer arrives. That reflows it: the second look finds
+      // the target at a new place in CSS pixels, and the press goes there in DIPs of the new zoom.
+      const target = fakeElement({ matches: [SAVE], rect: box(100, 50, 40, 20) });
+      const win = createFakeDomWindow([target], { zoom: 1 });
+      const { page, input } = pageOver(
+        win,
+        afterTheMove(() => {
+          dom(win).outerWidth = 1280 * 1.5;
+          target.place(box(80, 40, 40, 20));
+        }),
+      );
+
+      await clickElement(page, SAVE);
+
+      // The center (100, 50) times 1.5.
+      expect(input().map(({ params }) => params)).toEqual([
+        { type: 'mouseMoved', x: 120, y: 60 },
+        { type: 'mousePressed', x: 150, y: 75, button: 'left', clickCount: 1 },
+        { type: 'mouseReleased', x: 150, y: 75, button: 'left', clickCount: 1 },
       ]);
     });
   });
@@ -2047,10 +2119,13 @@ describe('one call at a time per page', () => {
     ]);
 
     expect(methods(sent)).toEqual([
-      // The click: its lookup, the move, its second lookup, the press and the release.
+      // The click: its lookup and the zoom, the move, its second lookup and the zoom, the press and
+      // the release.
       'Runtime.evaluate',
+      'Page.getLayoutMetrics',
       'Input.dispatchMouseEvent',
       'Runtime.evaluate',
+      'Page.getLayoutMetrics',
       'Input.dispatchMouseEvent',
       'Input.dispatchMouseEvent',
       // The key press: the focus, then down and up.

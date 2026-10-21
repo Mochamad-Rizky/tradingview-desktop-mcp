@@ -113,11 +113,14 @@ describe('clickElement over CDP', () => {
 
     await clickElement(page, SYMBOL_SEARCH);
 
-    // The target is looked at before the pointer moves and again before the button goes down.
+    // The target is looked at before the pointer moves and again before the button goes down, and
+    // each look reads the zoom of the page, which the point is sent in.
     expect(server.calls.map(({ targetId, method }) => [targetId, method])).toEqual([
       [CHART_ID, 'Runtime.evaluate'],
+      [CHART_ID, 'Page.getLayoutMetrics'],
       [CHART_ID, 'Input.dispatchMouseEvent'],
       [CHART_ID, 'Runtime.evaluate'],
+      [CHART_ID, 'Page.getLayoutMetrics'],
       [CHART_ID, 'Input.dispatchMouseEvent'],
       [CHART_ID, 'Input.dispatchMouseEvent'],
     ]);
@@ -125,6 +128,19 @@ describe('clickElement over CDP', () => {
       { type: 'mouseMoved', x: 120, y: 60 },
       { type: 'mousePressed', x: 120, y: 60, button: 'left', clickCount: 1 },
       { type: 'mouseReleased', x: 120, y: 60, button: 'left', clickCount: 1 },
+    ]);
+  });
+
+  test('clicks a zoomed page in device-independent pixels, the CSS pixels times the zoom', async () => {
+    const { server, page } = await openPage(createFakeDomWindow(chart(), { zoom: 1.25 }));
+
+    await clickElement(page, SYMBOL_SEARCH);
+
+    // The center (120, 60) of the button, which the page reports in CSS pixels, at 125%.
+    expect(inputOf(server).map(({ params }) => params)).toEqual([
+      { type: 'mouseMoved', x: 150, y: 75 },
+      { type: 'mousePressed', x: 150, y: 75, button: 'left', clickCount: 1 },
+      { type: 'mouseReleased', x: 150, y: 75, button: 'left', clickCount: 1 },
     ]);
   });
 
@@ -226,9 +242,10 @@ describe('clickElement over CDP', () => {
     const error = await failureOf(clickElement(page, SYMBOL_SEARCH));
 
     expect(error.details).toEqual({ selector: SYMBOL_SEARCH, obscuredBy: 'div#menu-item' });
-    // The first lookup, the move, the second lookup: the button never went down.
+    // The first lookup and the zoom, the move, the second lookup: the button never went down.
     expect(methodsOf(server)).toEqual([
       'Runtime.evaluate',
+      'Page.getLayoutMetrics',
       'Input.dispatchMouseEvent',
       'Runtime.evaluate',
     ]);
@@ -580,12 +597,14 @@ test('drives the symbol search: click the button, type the symbol, press Enter',
   await typeText(page, 'NASDAQ:MSFT');
   await pressKey(page, 'Enter');
 
-  // Each step looks at the page first: the target of the click, twice, around the move of the
-  // pointer, then the focus for the text, then the focus for the key.
+  // Each step looks at the page first: the target of the click and the zoom, twice, around the move
+  // of the pointer, then the focus for the text, then the focus for the key.
   expect(methodsOf(server)).toEqual([
     'Runtime.evaluate',
+    'Page.getLayoutMetrics',
     'Input.dispatchMouseEvent',
     'Runtime.evaluate',
+    'Page.getLayoutMetrics',
     'Input.dispatchMouseEvent',
     'Input.dispatchMouseEvent',
     'Runtime.evaluate',
