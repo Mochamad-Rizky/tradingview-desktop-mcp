@@ -271,7 +271,10 @@ function lookUp(page: PageHandle, selector: string) {
 }
 
 function focusOf(page: PageHandle) {
-  return page.bridge.evaluate(describeFocusedElement, [[...UNSAFE_SELECTORS]]);
+  return page.bridge.evaluate(describeFocusedElement, [
+    [...UNSAFE_SELECTORS],
+    TRADING_ACTION_NAMES,
+  ]);
 }
 
 // Before typing on the chart, and before opening a dialog to type into: no text field has the focus.

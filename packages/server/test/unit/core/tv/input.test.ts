@@ -621,9 +621,10 @@ describe('describeElement', () => {
 });
 
 describe('describeFocusedElement', () => {
-  // As the bridge calls it: with the real list of selectors to refuse.
+  // As the bridge calls it: with the real list of selectors to refuse and the names of trading
+  // actions.
   function focusOf(win: TvWindow) {
-    return describeFocusedElement(win, [...UNSAFE_SELECTORS]);
+    return describeFocusedElement(win, [...UNSAFE_SELECTORS], TRADING_ACTION_NAMES);
   }
 
   test('flags a trading button that has the focus, and says which element it is', () => {
@@ -894,7 +895,7 @@ describe('describeFocusedElement', () => {
   test('refuses to judge without the selectors to treat as unsafe', () => {
     const win = createFakeDomWindow(chart());
 
-    expect(() => describeFocusedElement(win, [])).toThrow(/unsafe/);
+    expect(() => describeFocusedElement(win, [], TRADING_ACTION_NAMES)).toThrow(/unsafe/);
   });
 });
 
@@ -4583,5 +4584,479 @@ describe('clickable elements that the pointer cursor marks', () => {
     });
 
     expect(types()).toEqual(['mouseMoved']);
+  });
+});
+
+describe('keys on a focused trading action', () => {
+  const KEY_HINT = /^A key on a trading action would click it/;
+  // describeFocusedElement as the bridge calls it.
+  const focusArgs = (): ArgsOf<typeof describeFocusedElement> => [
+    [...UNSAFE_SELECTORS],
+    TRADING_ACTION_NAMES,
+  ];
+
+  test('Enter on a focused <button>Buy 1</button> with no data-name is refused, with no key event sent', async () => {
+    const buy = fakeElement({ tag: 'button', text: 'Buy 1' });
+    const { page, input } = pageWith([buy], { focus: buy });
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+
+    expect(error.toPayload()).toEqual({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to press a key: the focus is on `button`, and a key there would reach "Buy 1", a trading action',
+      hint: expect.stringMatching(KEY_HINT) as string,
+      details: { action: 'pressKey', focused: 'button', name: 'Buy 1' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test.each<[string, () => { focus: FakeElement; elements: FakeElement[] }]>([
+    [
+      'a control named by its aria-label',
+      () => {
+        const focus = fakeElement({ tag: 'button', attributes: { 'aria-label': 'Place order' } });
+        return { focus, elements: [focus] };
+      },
+    ],
+    [
+      'an input button named by its value',
+      () => {
+        const focus = fakeElement({
+          tag: 'input',
+          attributes: { type: 'submit', value: 'Close position' },
+        });
+        return { focus, elements: [focus] };
+      },
+    ],
+    [
+      'a button whose label is split into spans',
+      () => {
+        const focus = fakeElement({
+          tag: 'button',
+          children: [fakeElement({ tag: 'span', text: 'Sell' }), fakeElement({ text: '100' })],
+        });
+        return { focus, elements: [focus] };
+      },
+    ],
+    [
+      'a button whose word an element splits inside',
+      () => {
+        const focus = fakeElement({
+          tag: 'button',
+          nodes: [fakeElement({ tag: 'u', text: 'S' }), 'ell'],
+        });
+        return { focus, elements: [focus] };
+      },
+    ],
+    [
+      'a span inside a button named after a trading action',
+      () => {
+        const focus = fakeElement({ tag: 'span', text: '1.0857' });
+        return {
+          focus,
+          elements: [
+            fakeElement({ tag: 'button', children: [fakeElement({ text: 'Buy' }), focus] }),
+          ],
+        };
+      },
+    ],
+    [
+      'a span inside a role-less div the pointer cursor shows as clickable',
+      () => {
+        const focus = fakeElement({ tag: 'span', text: '1.0857' });
+        return {
+          focus,
+          elements: [
+            fakeElement({ cursor: 'pointer', children: [fakeElement({ text: 'Sell' }), focus] }),
+          ],
+        };
+      },
+    ],
+  ])('any key is refused while the focus is on %s', async (_case, build) => {
+    const { focus, elements } = build();
+    const { page, input } = pageWith(elements, { focus });
+
+    for (const key of ['Enter', 'Escape', 'a']) {
+      const error = await failureOf(pressKey(page, key));
+      expect(error.code, key).toBe('UNSAFE_ACTION_BLOCKED');
+      expect(error.details, key).toMatchObject({ action: 'pressKey' });
+    }
+    expect(input()).toEqual([]);
+  });
+
+  test('a focused container is not refused for the trading words of what it holds, and neither is the body', async () => {
+    // Key events go to the focused element and not to its descendants: the text a container shows
+    // is what it holds.
+    const pane = fakeElement({
+      attributes: { 'data-qa-id': 'pane' },
+      children: [fakeElement({ tag: 'button', text: 'Buy' }), fakeElement({ text: 'Sell 100' })],
+    });
+    const onPane = pageWith([pane], { focus: pane });
+    const onBody = pageWith([fakeElement({ tag: 'button', text: 'Sell' })]);
+
+    await pressKey(onPane.page, 'Escape');
+    await pressKey(onBody.page, 'Enter');
+
+    expect(onPane.types()).toEqual(['rawKeyDown', 'keyUp']);
+    expect(onBody.types()).toEqual(['keyDown', 'keyUp']);
+  });
+
+  test('typing into a text field is unaffected by a trading name around it, while a key there is refused', async () => {
+    // A label activates its field, so it is the control of the field.
+    const field = fakeElement({ tag: 'input', id: 'qty' });
+    const label = fakeElement({
+      tag: 'label',
+      children: [fakeElement({ text: 'Buy quantity' }), field],
+    });
+    const { page, input } = pageWith([label], { focus: field });
+
+    await typeText(page, '100');
+    const error = await failureOf(pressKey(page, '5'));
+
+    expect(error.details).toEqual({
+      action: 'pressKey',
+      focused: 'input#qty',
+      name: 'Buy quantity',
+    });
+    expect(input()).toEqual([{ method: 'Input.insertText', params: { text: '100' } }]);
+  });
+
+  test('the value typed into a focused field is never read as a name', async () => {
+    const field = fakeElement({ tag: 'input', attributes: { type: 'text', value: 'Buy 100' } });
+    const { page, types } = pageWith([field], { focus: field });
+
+    await pressKey(page, 'Backspace');
+
+    expect(types()).toEqual(['rawKeyDown', 'keyUp']);
+  });
+
+  // An order ticket made as a form: Enter in its quantity field submits the form, which clicks its
+  // default button, the first submit button of the form.
+  function ticket(buttons: FakeElement[]): { field: FakeElement; elements: FakeElement[] } {
+    const field = fakeElement({ tag: 'input', id: 'qty', attributes: { type: 'number' } });
+    return {
+      field,
+      elements: [fakeElement({ tag: 'form', matches: ['form'], children: [field, ...buttons] })],
+    };
+  }
+
+  test('Enter in a field of a form whose default button is a trading action is refused, other keys are not', async () => {
+    const { field, elements } = ticket([fakeElement({ tag: 'button', text: 'Place order' })]);
+    const { page, input, types } = pageWith(elements, { focus: field });
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+    const shifted = await failureOf(pressKey(page, 'Enter', ['Shift']));
+    await pressKey(page, '5');
+
+    expect(error.toPayload()).toEqual({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to press Enter: the focus is in a field of a form whose default button is "Place order", a trading action, which Enter would click',
+      hint: expect.stringMatching(KEY_HINT) as string,
+      details: { action: 'pressKey', focused: 'input#qty', name: 'Place order' },
+    });
+    expect(shifted.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(types()).toEqual(['keyDown', 'keyUp']);
+    expect(input()).toHaveLength(2);
+  });
+
+  test.each<[string, boolean, () => FakeElement[]]>([
+    [
+      'a submit input',
+      true,
+      () => [fakeElement({ tag: 'input', attributes: { type: 'submit', value: 'Buy' } })],
+    ],
+    [
+      'a button of type submit inside a wrapper',
+      true,
+      () => [
+        fakeElement({
+          children: [
+            fakeElement({ tag: 'button', attributes: { type: 'submit' }, text: 'Sell 1' }),
+          ],
+        }),
+      ],
+    ],
+    [
+      'a plain button before it, which is no submit button',
+      true,
+      () => [
+        fakeElement({ tag: 'button', attributes: { type: 'button' }, text: 'Cancel' }),
+        fakeElement({ tag: 'button', text: 'Buy' }),
+      ],
+    ],
+    [
+      'a first submit button that names no trading action',
+      false,
+      () => [
+        fakeElement({ tag: 'button', text: 'Search' }),
+        fakeElement({ tag: 'button', text: 'Buy' }),
+      ],
+    ],
+    [
+      'no submit button at all',
+      false,
+      () => [fakeElement({ tag: 'button', attributes: { type: 'reset' }, text: 'Sell' })],
+    ],
+  ])('Enter in a form with %s is refused: %s', async (_case, refused, buttons) => {
+    const { field, elements } = ticket(buttons());
+    const { page, types } = pageWith(elements, { focus: field });
+
+    const outcome = await pressKey(page, 'Enter').then(
+      () => 'sent',
+      (error: unknown) => (error as TvMcpError).code,
+    );
+
+    expect(outcome).toBe(refused ? 'UNSAFE_ACTION_BLOCKED' : 'sent');
+    expect(types()).toEqual(refused ? [] : ['keyDown', 'keyUp']);
+  });
+
+  test('Enter is refused in an input that names a form it does not sit in, whose default button is a trading action', async () => {
+    // <input form="ticket"> outside the form: a page gives the input its form as the form property.
+    const make = (): TvWindow => {
+      const form = fakeElement({
+        tag: 'form',
+        children: [fakeElement({ tag: 'button', text: 'Buy' })],
+      });
+      const field = fakeElement({ tag: 'input', id: 'qty' });
+      Object.defineProperty(field, 'form', { value: form });
+      return createFakeDomWindow([form, field], { focus: field });
+    };
+    const { page, input } = pageOver(make());
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+
+    expect(error.details).toEqual({ action: 'pressKey', focused: 'input#qty', name: 'Buy' });
+    expect(input()).toEqual([]);
+    expect(await bothWays(describeFocusedElement, focusArgs(), make)).toMatchObject({
+      formSubmit: 'Buy',
+    });
+  });
+
+  test('describeFocusedElement reports the trading action a key would reach, and the one Enter would submit to, run either way', async () => {
+    const buy = fakeElement({ tag: 'button', text: 'Buy 1' });
+    const onButton = () => createFakeDomWindow([buy], { focus: buy });
+    const form = () => {
+      const { field, elements } = ticket([fakeElement({ tag: 'button', text: 'Sell 2' })]);
+      return createFakeDomWindow(elements, { focus: field });
+    };
+    const plain = () => createFakeDomWindow([fakeElement({ tag: 'button', text: 'Save' })]);
+
+    expect(await bothWays(describeFocusedElement, focusArgs(), onButton)).toEqual({
+      unsafe: false,
+      editable: false,
+      opaque: false,
+      focused: 'button',
+      tradingAction: 'Buy 1',
+    });
+    expect(await bothWays(describeFocusedElement, focusArgs(), form)).toEqual({
+      unsafe: false,
+      editable: true,
+      opaque: false,
+      focused: 'input#qty',
+      formSubmit: 'Sell 2',
+    });
+    expect(await bothWays(describeFocusedElement, focusArgs(), plain)).toEqual({
+      unsafe: false,
+      editable: false,
+      opaque: false,
+      focused: 'body',
+    });
+  });
+
+  test('a focus on a trading control is reported unsafe before its name is', async () => {
+    const buy = fakeElement({ tag: 'button', matches: [BUY], text: 'Buy' });
+    const { page } = pageWith([buy], { focus: buy });
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+
+    expect(error.message).toMatch(/part of a broker trading control/);
+  });
+});
+
+describe('describeFocusedElement reads names the way describeElement does', () => {
+  const args = (): ArgsOf<typeof describeFocusedElement> => [
+    [...UNSAFE_SELECTORS],
+    TRADING_ACTION_NAMES,
+  ];
+  // A page whose focus is on the element `build` names, among the elements it gives.
+  const focusing =
+    (build: () => { focus: FakeElement; elements: FakeElement[] }, options: FakeDomOptions = {}) =>
+    (): TvWindow => {
+      const { focus, elements } = build();
+      return createFakeDomWindow(elements, { ...options, focus });
+    };
+  const alone = (focus: FakeElement) => ({ focus, elements: [focus] });
+  const inside = (wrap: (focus: FakeElement) => FakeElement) => () => {
+    const focus = fakeElement({ tag: 'span', text: '1.0857' });
+    return { focus, elements: [wrap(focus)] };
+  };
+  const withoutStyle: FakeDomOptions = { without: ['getComputedStyle'] };
+  const throwingStyle = (make: () => TvWindow) => (): TvWindow => {
+    const win = make();
+    dom(win).getComputedStyle = () => {
+      throw new Error('No style for this element');
+    };
+    return win;
+  };
+  const pointerDiv = (focus: FakeElement) =>
+    fakeElement({ cursor: 'pointer', children: [fakeElement({ text: 'Sell' }), focus] });
+  const long = `${'a'.repeat(30)} Buy ${'b'.repeat(30)}`;
+
+  test.each<[string, () => TvWindow, Record<string, string>]>([
+    [
+      'the aria-label of the focused element',
+      focusing(() =>
+        alone(fakeElement({ tag: 'div', attributes: { 'aria-label': 'Place order' } })),
+      ),
+      { tradingAction: 'Place order' },
+    ],
+    [
+      'the value of an input button',
+      focusing(() =>
+        alone(fakeElement({ tag: 'input', attributes: { type: 'reset', value: 'Close all' } })),
+      ),
+      { tradingAction: 'Close all' },
+    ],
+    [
+      'a label split into spans, with a space between them',
+      focusing(() =>
+        alone(
+          fakeElement({
+            tag: 'button',
+            children: [fakeElement({ text: 'Sell' }), fakeElement({ text: '100' })],
+          }),
+        ),
+      ),
+      { tradingAction: 'Sell 100' },
+    ],
+    [
+      'a word an element splits inside, run together',
+      focusing(() =>
+        alone(fakeElement({ tag: 'button', nodes: [fakeElement({ tag: 'u', text: 'B' }), 'uy'] })),
+      ),
+      { tradingAction: 'Buy' },
+    ],
+    [
+      'the button the focused span sits in, without the field inside the button',
+      focusing(
+        inside((focus) =>
+          fakeElement({
+            tag: 'button',
+            children: [fakeElement({ text: 'Buy' }), fakeElement({ tag: 'input' }), focus],
+          }),
+        ),
+      ),
+      { tradingAction: 'Buy 1.0857' },
+    ],
+    [
+      'the clickable div the pointer cursor shows',
+      focusing(inside(pointerDiv)),
+      { tradingAction: 'Sell 1.0857' },
+    ],
+    [
+      'the clickable div, where the run of pointer cursors ends below an element that shows another',
+      focusing(
+        inside((focus) => fakeElement({ cursor: 'default', children: [pointerDiv(focus)] })),
+      ),
+      { tradingAction: 'Sell 1.0857' },
+    ],
+    [
+      'no clickable div on a page without getComputedStyle',
+      focusing(inside(pointerDiv), withoutStyle),
+      {},
+    ],
+    [
+      'no clickable div on a page whose getComputedStyle throws',
+      throwingStyle(focusing(inside(pointerDiv))),
+      {},
+    ],
+    [
+      'the words around a trading action in a long label',
+      focusing(() => alone(fakeElement({ tag: 'button', text: long }))),
+      { tradingAction: `…${'a'.repeat(19)} Buy ${'b'.repeat(19)}…` },
+    ],
+    [
+      'no text of a control inside a field',
+      focusing(() => {
+        const focus = fakeElement({ tag: 'span', attributes: { role: 'option' }, text: 'Sell' });
+        return { focus, elements: [fakeElement({ tag: 'select', children: [focus] })] };
+      }),
+      {},
+    ],
+    [
+      'the default button of the form, inside a wrapper',
+      focusing(() => {
+        const focus = fakeElement({ tag: 'input', attributes: { type: 'search' } });
+        return {
+          focus,
+          elements: [
+            fakeElement({
+              tag: 'form',
+              matches: ['form'],
+              children: [
+                focus,
+                fakeElement({ children: [fakeElement({ tag: 'button', text: 'Sell 5' })] }),
+              ],
+            }),
+          ],
+        };
+      }),
+      { formSubmit: 'Sell 5' },
+    ],
+    [
+      'the default button of the form, an input of type image named by its aria-label',
+      focusing(() => {
+        const focus = fakeElement({ tag: 'input' });
+        return {
+          focus,
+          elements: [
+            fakeElement({
+              tag: 'form',
+              matches: ['form'],
+              children: [
+                focus,
+                fakeElement({
+                  tag: 'input',
+                  attributes: { type: 'image', 'aria-label': 'Buy now' },
+                }),
+              ],
+            }),
+          ],
+        };
+      }),
+      { formSubmit: 'Buy now' },
+    ],
+    [
+      'no default button for an input that is a button itself',
+      focusing(() => {
+        const focus = fakeElement({ tag: 'input', attributes: { type: 'submit', value: 'Go' } });
+        return {
+          focus,
+          elements: [
+            fakeElement({
+              tag: 'form',
+              matches: ['form'],
+              children: [focus, fakeElement({ tag: 'button', text: 'Buy' })],
+            }),
+          ],
+        };
+      }),
+      {},
+    ],
+    [
+      'no form for an input that sits in none',
+      focusing(() => alone(fakeElement({ tag: 'input' }))),
+      {},
+    ],
+  ])('%s', async (_case, make, expected) => {
+    const found = await bothWays(describeFocusedElement, args(), make);
+
+    const { tradingAction, formSubmit } = found as { tradingAction?: string; formSubmit?: string };
+    expect({
+      ...(tradingAction === undefined ? {} : { tradingAction }),
+      ...(formSubmit === undefined ? {} : { formSubmit }),
+    }).toEqual(expected);
   });
 });

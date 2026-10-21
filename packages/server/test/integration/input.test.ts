@@ -494,6 +494,40 @@ describe('pressKey over CDP', () => {
     expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
   });
 
+  test('refuses Enter on a focused button named after a trading action, which carries no selector of the guard', async () => {
+    const buy = fakeElement({ tag: 'button', text: 'Buy 1' });
+    const { server, page } = await openPage(createFakeDomWindow(chart([buy]), { focus: buy }));
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to press a key: the focus is on `button`, and a key there would reach "Buy 1", a trading action',
+      details: { action: 'pressKey', focused: 'button', name: 'Buy 1' },
+    });
+    expect(methodsOf(server)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('refuses Enter in a field of a form whose default button places an order, and types into it', async () => {
+    const field = fakeElement({ tag: 'input', id: 'qty', attributes: { type: 'number' } });
+    const form = fakeElement({
+      tag: 'form',
+      matches: ['form'],
+      children: [field, fakeElement({ tag: 'button', text: 'Place order' })],
+    });
+    const { server, page } = await openPage(createFakeDomWindow(chart([form]), { focus: field }));
+
+    const error = await failureOf(pressKey(page, 'Enter'));
+    await typeText(page, '10');
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { action: 'pressKey', focused: 'input#qty', name: 'Place order' },
+    });
+    expect(inputOf(server)).toEqual([{ method: 'Input.insertText', params: { text: '10' } }]);
+  });
+
   test('proceeds when the chart canvas has focus', async () => {
     const canvas = fakeElement({
       tag: 'canvas',

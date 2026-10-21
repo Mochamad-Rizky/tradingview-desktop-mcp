@@ -16,9 +16,11 @@ import { readViewport } from './viewport.js';
 // well on what holds a trading control, and on what is named after a trading action
 // (TRADING_ACTION_NAMES), since an order ticket has no stable selector yet. Key presses land on the
 // element that has the focus, and Enter on a focused button clicks it, so they are refused while
-// that element is a trading control or sits inside one. Text is typed only into a focused text
-// field that is no trading control, because the caret can be somewhere else than the focus (see
-// typeText). A page that cannot say what has the focus, or what lies at a point, is refused too.
+// that element is a trading control or sits inside one, or while it, or the control it belongs to,
+// is named after a trading action, and Enter is refused in a field of a form whose default button
+// is. Text is typed only into a focused text field that is no trading control, because the caret
+// can be somewhere else than the focus (see typeText). A page that cannot say what has the focus,
+// or what lies at a point, is refused too.
 //
 // The calls of one page run one at a time, because each rests on a lookup that another call
 // would otherwise change.
@@ -700,12 +702,35 @@ export function findElements(
 //   trading control in there would not be seen. A closed shadow root cannot be told from none.
 // - focused: the element in a few words for the error that refuses it, its tag followed by its id,
 //   data-qa-id and data-name when it has them. Empty when no element has the focus.
+// - tradingAction: a trading action, which `tradingNames` matches ignoring case, that a key on the
+//   focused element would reach, quoted with the words around it, as describeElement quotes one for
+//   a click: Enter or Space on a focused button clicks it. The names are read as describeElement
+//   reads them, each on its own: the aria-label and the value of an input button of the focused
+//   element, and those and the text shown, read both ways, of the control it belongs to (its
+//   closest button, link or element with the role of one, which can be itself) and of the element
+//   around it that the page makes clickable, which only the pointer cursor shows (the outermost of
+//   the elements, up to six levels up, that show it). The text a focused element that is no
+//   control shows is what it holds, which a key does not reach, as for unsafe. Left out when there
+//   is none.
+// - formSubmit: for a focused input of a form, the trading action its default button names, the
+//   first submit button of the form, which Enter in the input clicks as it submits the form. Left
+//   out when there is none.
 // A page that cannot say what has the focus answers NOT_AVAILABLE, so that nothing is sent to a
 // page that cannot be checked. An empty list of selectors is refused, as in describeElement.
 export function describeFocusedElement(
   win: TvWindow,
   unsafeSelectors: string[],
-): { unsafe: boolean; editable: boolean; opaque: boolean; focused: string } | PageErrorSentinel {
+  tradingNames: string,
+):
+  | {
+      unsafe: boolean;
+      editable: boolean;
+      opaque: boolean;
+      focused: string;
+      tradingAction?: string;
+      formSubmit?: string;
+    }
+  | PageErrorSentinel {
   // A page always has a document, but a fake of one or a frame that is still loading may not.
   const doc = win.document as TvWindow['document'] | undefined;
   const active = doc?.activeElement;
@@ -757,7 +782,151 @@ export function describeFocusedElement(
   const unsafeList = unsafeSelectors.join(', ');
   // closest starts at the element itself, so it also covers an element that matches. The body and
   // the html element match nothing and sit inside nothing, so they come out safe.
-  return { unsafe: active.closest(unsafeList) !== null, editable, opaque, focused };
+  const unsafe = active.closest(unsafeList) !== null;
+
+  // The names, read the way describeElement reads them, which a page function cannot share with
+  // another: tests keep the two in step.
+  const trading = new RegExp(tradingNames, 'i');
+  // A field, whose content the user typed or chose.
+  const field = (node: Element): boolean =>
+    ['input', 'textarea', 'select'].includes(node.localName);
+  // What the user typed or chose: a field, or an element that is editable.
+  const typedIn = (node: Element): boolean =>
+    field(node) || ('isContentEditable' in node && node.isContentEditable === true);
+  // White space as a user reads it: every run of it one space, none at the ends.
+  const collapsed = (value: string | null): string => (value ?? '').replace(/\s+/g, ' ').trim();
+  // The text an element shows, with a space between the pieces of different elements and with the
+  // pieces run together, and nothing that was typed.
+  const texts = (element: Element): { spaced: string; joined: string } => {
+    if (typedIn(element)) {
+      return { spaced: '', joined: '' };
+    }
+    for (let node = element.parentElement; node !== null; node = node.parentElement) {
+      if (field(node)) {
+        return { spaced: '', joined: '' };
+      }
+    }
+    let spaced = '';
+    let joined = '';
+    const collect = (node: Element): void => {
+      for (const child of Array.from(node.childNodes)) {
+        if (child.nodeType === 3) {
+          spaced += (child as CharacterData).data;
+          joined += (child as CharacterData).data;
+        } else if (child.nodeType === 1 && !typedIn(child as Element)) {
+          spaced += ' ';
+          collect(child as Element);
+          spaced += ' ';
+        }
+      }
+    };
+    collect(element);
+    return { spaced: collapsed(spaced), joined: collapsed(joined) };
+  };
+  // The label of an input of type submit, button or reset: its value attribute. The value of an
+  // input of any other type is never read.
+  const buttonValue = (element: Element): string =>
+    element.localName === 'input' &&
+    ['submit', 'button', 'reset'].includes((element.getAttribute('type') ?? '').toLowerCase())
+      ? collapsed(element.getAttribute('value'))
+      : '';
+  // The control an element belongs to: itself or its closest ancestor that a click activates.
+  const controlOf = (element: Element): Element | null => {
+    const roles = ['button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option'];
+    for (let node: Element | null = element; node !== null; node = node.parentElement) {
+      if (
+        ['button', 'a', 'label', 'summary'].includes(node.localName) ||
+        [...roles, 'tab', 'switch', 'checkbox', 'radio'].includes(node.getAttribute('role') ?? '')
+      ) {
+        return node;
+      }
+    }
+    return null;
+  };
+  // The element a handler of the page makes clickable around an element, which only the pointer
+  // cursor tells: the last of the run of elements that show it, six levels above the element at
+  // most. None on a page that cannot say which cursor an element shows.
+  const clickableOf = (element: Element): Element | null => {
+    if (typeof win.getComputedStyle !== 'function') {
+      return null;
+    }
+    try {
+      let clickable: Element | null = null;
+      let node: Element | null = element;
+      for (let level = 0; node !== null && level <= 6; level += 1) {
+        if (win.getComputedStyle(node).cursor === 'pointer') {
+          clickable = node;
+        } else if (clickable !== null) {
+          break;
+        }
+        node = node.parentElement;
+      }
+      return clickable;
+    } catch {
+      return null;
+    }
+  };
+  // The trading action one of the names of `element` holds, quoted with up to twenty characters on
+  // each side: its aria-label, the label of an input button and, when `shown` counts, the text it
+  // shows, read both ways.
+  const tradingName = (element: Element, shown: boolean): string | undefined => {
+    const names = [collapsed(element.getAttribute('aria-label')), buttonValue(element)];
+    if (shown) {
+      const { spaced, joined } = texts(element);
+      names.push(spaced, joined);
+    }
+    for (const named of names) {
+      const match = trading.exec(named);
+      if (match !== null) {
+        const start = Math.max(0, match.index - 20);
+        const end = Math.min(named.length, match.index + match[0].length + 20);
+        return `${start > 0 ? '…' : ''}${named.slice(start, end)}${end < named.length ? '…' : ''}`;
+      }
+    }
+    return undefined;
+  };
+  let tradingAction = tradingName(active, false);
+  for (const reached of [controlOf(active), clickableOf(active)]) {
+    if (reached !== null) {
+      tradingAction ??= tradingName(reached, true);
+    }
+  }
+  // Enter in an input of a form submits the form, and that clicks its default button: the first
+  // submit button of the form in document order, a button of no type or of type submit, or an input
+  // of type submit or image. The form is the one the input names, or else the one it sits in.
+  let formSubmit: string | undefined;
+  const ownType = (active.getAttribute('type') ?? '').toLowerCase();
+  if (active.localName === 'input' && !['submit', 'button', 'reset', 'image'].includes(ownType)) {
+    const owner: unknown = (active as Partial<Record<'form', unknown>>).form;
+    const form =
+      typeof owner === 'object' && owner !== null ? (owner as Element) : active.closest('form');
+    const defaultButton = (node: Element): Element | null => {
+      for (const child of Array.from(node.children)) {
+        const type = (child.getAttribute('type') ?? '').toLowerCase();
+        if (
+          (child.localName === 'button' && type !== 'button' && type !== 'reset') ||
+          (child.localName === 'input' && (type === 'submit' || type === 'image'))
+        ) {
+          return child;
+        }
+        const inside = defaultButton(child);
+        if (inside !== null) {
+          return inside;
+        }
+      }
+      return null;
+    };
+    const submitter = form === null ? null : defaultButton(form);
+    formSubmit = submitter === null ? undefined : tradingName(submitter, true);
+  }
+  return {
+    unsafe,
+    editable,
+    opaque,
+    focused,
+    ...(tradingAction === undefined ? {} : { tradingAction }),
+    ...(formSubmit === undefined ? {} : { formSubmit }),
+  };
 }
 
 // What describeElement says about a target, without the way it can fail.
@@ -768,6 +937,10 @@ const TRADING_HINT =
 const TRADING_ACTION_HINT =
   'Trading actions are never clicked: this server places no orders. Place orders in the ' +
   'TradingView window yourself.';
+const KEY_ON_TRADING_ACTION_HINT =
+  'A key on a trading action would click it: Enter or Space activates a focused button, and Enter ' +
+  'in a field of a form clicks its default button. This server places no orders. Move the focus ' +
+  'to another element first, or use the TradingView window yourself.';
 const LOADED_PAGE_HINT =
   'Make sure the target is a loaded TradingView page, not a blank or helper page.';
 const POINT_HINT =
@@ -1160,13 +1333,20 @@ export async function scrollAt(
 // is sent. A page that cannot say what has the focus is refused as well, and so is a focus in a
 // frame or a shadow root: this fails closed. What the page said about the element is handed back,
 // for the caller that needs more than the verdict.
+//
+// A key is also refused on a trading action by its name, as a click is: a key on the focused
+// element reaches the control it belongs to, and Enter (`enter`) in an input of a form clicks the
+// default button of the form. Text is not refused for a name: typing into a field clicks nothing.
 async function assertFocusIsSafe(
   page: InputPage,
   action: 'pressKey' | 'typeText',
+  enter = false,
 ): Promise<{ focused: string; editable: boolean }> {
-  const { unsafe, editable, opaque, focused } = await page.bridge.evaluate(describeFocusedElement, [
-    [...UNSAFE_SELECTORS],
-  ]);
+  const { unsafe, editable, opaque, focused, tradingAction, formSubmit } =
+    await page.bridge.evaluate(describeFocusedElement, [
+      [...UNSAFE_SELECTORS],
+      TRADING_ACTION_NAMES,
+    ]);
   if (unsafe) {
     throw new TvMcpError(
       'UNSAFE_ACTION_BLOCKED',
@@ -1175,6 +1355,20 @@ async function assertFocusIsSafe(
         hint: 'Trading controls are off limits to this server. Move the focus to another element first, or use the TradingView window yourself.',
         details: { action, focused },
       },
+    );
+  }
+  if (action === 'pressKey' && tradingAction !== undefined) {
+    throw new TvMcpError(
+      'UNSAFE_ACTION_BLOCKED',
+      `Refusing to press a key: the focus is on \`${focused}\`, and a key there would reach ${JSON.stringify(tradingAction)}, a trading action`,
+      { hint: KEY_ON_TRADING_ACTION_HINT, details: { action, focused, name: tradingAction } },
+    );
+  }
+  if (action === 'pressKey' && enter && formSubmit !== undefined) {
+    throw new TvMcpError(
+      'UNSAFE_ACTION_BLOCKED',
+      `Refusing to press Enter: the focus is in a field of a form whose default button is ${JSON.stringify(formSubmit)}, a trading action, which Enter would click`,
+      { hint: KEY_ON_TRADING_ACTION_HINT, details: { action, focused, name: formSubmit } },
     );
   }
   if (opaque) {
@@ -1333,7 +1527,7 @@ export async function pressKey(
   };
   const text = (mask & SHORTCUT_MODIFIERS) === 0 ? description.text : undefined;
   await exclusively(page, async () => {
-    await assertFocusIsSafe(page, 'pressKey');
+    await assertFocusIsSafe(page, 'pressKey', description.key === 'Enter');
     await page.session.send(
       'Input.dispatchKeyEvent',
       text === undefined ? { type: 'rawKeyDown', ...event } : { type: 'keyDown', ...event, text },

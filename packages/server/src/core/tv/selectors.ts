@@ -172,5 +172,7 @@ export const UNSAFE_SELECTORS: readonly string[] = Object.freeze([
 // click by text reaches whatever has a name, so a click is refused on an element named so, and on an
 // element whose control (the button or the link a click on it activates, or the element around it
 // that the page makes clickable, which only the pointer cursor shows) is named so, whatever its
-// selector. A hover or a turn of the mouse wheel is not refused for a name.
+// selector. A key is refused the same way on the focused element and its control, as Enter or Space
+// clicks a focused button, and Enter in a field of a form whose default button is named so. A hover,
+// a turn of the mouse wheel and typed text are not refused for a name.
 export const TRADING_ACTION_NAMES = String.raw`\b(buy|sell)\b|\b(place|submit|send|cancel|modify)\b.{0,24}?\borders?\b|\b(close|exit|reverse|flatten)\b.{0,24}?\bpositions?\b|\bclose all\b|\bflatten\b|\breverse\b`;
