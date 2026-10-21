@@ -16,6 +16,7 @@ import { indicatorTools } from '../../src/tools/indicator/index.js';
 import { pineTools } from '../../src/tools/pine/index.js';
 import { screenshotTools } from '../../src/tools/screenshot/index.js';
 import { strategyTools } from '../../src/tools/strategy/index.js';
+import { uiTools } from '../../src/tools/ui/index.js';
 import { createToolRegistry, registerToolsWithServer } from '../../src/tools/registry.js';
 import { defineTool, type ToolRegistry } from '../../src/tools/types.js';
 import { startFakeCdpServer } from '../helpers/fake-cdp/server.js';
@@ -35,7 +36,8 @@ import {
 
 const HEALTH_URI = 'tradingview://app/health';
 // What a server offers when nothing narrows its tools: the tools of the app, of the chart, of
-// market data, of indicators, of Pine, of the Strategy Tester and of screenshots, then the batch.
+// market data, of indicators, of Pine, of the Strategy Tester, of screenshots and of the low-level
+// interface, then the batch.
 // The core profile keeps the tools that say they are core, in the same order; which tools those
 // are is pinned by test/unit/tools/registry.test.ts.
 const APP_TOOL_NAMES = appTools.map(({ name }) => name);
@@ -56,6 +58,10 @@ const READ_STRATEGY_TOOL_NAMES = strategyTools
   .map(({ name }) => name);
 const SCREENSHOT_TOOL_NAMES = screenshotTools.map(({ name }) => name);
 const READ_SCREENSHOT_TOOL_NAMES = screenshotTools
+  .filter(({ annotations }) => annotations.readOnlyHint === true)
+  .map(({ name }) => name);
+const UI_TOOL_NAMES = uiTools.map(({ name }) => name);
+const READ_UI_TOOL_NAMES = uiTools
   .filter(({ annotations }) => annotations.readOnlyHint === true)
   .map(({ name }) => name);
 
@@ -155,6 +161,7 @@ test('lists registered tools with descriptions and input schemas', async () => {
     ...PINE_TOOL_NAMES,
     ...STRATEGY_TOOL_NAMES,
     ...SCREENSHOT_TOOL_NAMES,
+    ...UI_TOOL_NAMES,
     'batch_run',
   ]);
   expect(tools.find(({ name }) => name === 'batch_run')).toMatchObject({
@@ -606,6 +613,7 @@ test('createMcpServer creates the dependencies it is not given', () => {
     ...PINE_TOOL_NAMES,
     ...STRATEGY_TOOL_NAMES,
     ...SCREENSHOT_TOOL_NAMES,
+    ...UI_TOOL_NAMES,
     'batch_run',
   ]);
 });
@@ -638,6 +646,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     ...READ_PINE_TOOL_NAMES,
     ...READ_STRATEGY_TOOL_NAMES,
     ...READ_SCREENSHOT_TOOL_NAMES,
+    ...READ_UI_TOOL_NAMES,
   ]);
   expect(lines).toEqual([]);
 
