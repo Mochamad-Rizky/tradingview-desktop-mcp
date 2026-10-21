@@ -17,6 +17,7 @@ import {
   type InputPage,
   type KeyModifier,
   type PointerAction,
+  type PointerTarget,
 } from '../../../../src/core/tv/input.js';
 import { createPageBridge, type PageFunction } from '../../../../src/core/tv/page-bridge.js';
 import {
@@ -4394,5 +4395,193 @@ describe('trading words split by elements inside them', () => {
       screen(panel),
     );
     expect(look).toMatchObject({ tradingAction: `…${'a'.repeat(19)} Sell ${'b'.repeat(19)}…` });
+  });
+});
+
+describe('clickable elements that the pointer cursor marks', () => {
+  // A quote button of an order panel the way a page can build one: a div without a role, which a
+  // handler of the page makes clickable and the pointer cursor shows as such, with the side and the
+  // price in spans of their own. The spans declare no cursor and show the pointer of the div.
+  const quoteButton = (children?: FakeElement[]): FakeElement =>
+    fakeElement({
+      id: 'quote-buy',
+      matches: ['#quote-buy'],
+      cursor: 'pointer',
+      rect: box(100, 600, 200, 30),
+      children: children ?? [
+        fakeElement({ tag: 'span', text: 'Buy', rect: box(105, 605, 40, 20) }),
+        fakeElement({ tag: 'span', text: '|', rect: box(150, 605, 10, 20) }),
+        fakeElement({
+          tag: 'span',
+          id: 'quote-price',
+          matches: ['#quote-price'],
+          text: '1.0857',
+          rect: box(165, 605, 80, 20),
+        }),
+      ],
+    });
+  const make = screen(() => [quoteButton()]);
+  const clickArgs = (target: PointerTarget, action: PointerAction = 'click') =>
+    [target, [...UNSAFE_SELECTORS], [OVERLAP_ROOT], TRADING_ACTION_NAMES, action] as ArgsOf<
+      typeof describeElement
+    >;
+
+  test('a click at a point on the price inside a role-less clickable div labelled "Buy | 1.0857" is refused', async () => {
+    const { page, input } = pageOver(make());
+
+    const error = await failureOf(clickPoint(page, { x: 200, y: 615 }));
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to click at (200, 615): the click would reach "Buy | 1.0857", a trading action',
+      details: { x: 200, y: 615, name: 'Buy | 1.0857' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('a click by selector on the price span is refused by the name of the clickable div', async () => {
+    const { page, input } = pageOver(make());
+
+    const error = await failureOf(clickElement(page, '#quote-price'));
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { selector: '#quote-price', name: 'Buy | 1.0857' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('describeElement names the clickable div, run either way, for a click only', async () => {
+    expect(await bothWays(describeElement, clickArgs({ x: 200, y: 615 }), make)).toMatchObject({
+      unsafe: false,
+      tradingAction: 'Buy | 1.0857',
+    });
+    expect(
+      await bothWays(describeElement, clickArgs({ x: 200, y: 615 }, 'hover'), make),
+    ).not.toHaveProperty('tradingAction');
+  });
+
+  test('the clickable element is where the run of pointer cursors ends, not the first element in it', async () => {
+    // The cursor is inherited, so the wrapper around the price shows the pointer too. Taken as the
+    // control, it would name the price alone.
+    const nested = screen(() => [
+      quoteButton([
+        fakeElement({ tag: 'span', text: 'Buy', rect: box(105, 605, 40, 20) }),
+        fakeElement({
+          rect: box(160, 602, 100, 26),
+          children: [fakeElement({ tag: 'span', text: '1.0857', rect: box(165, 605, 80, 20) })],
+        }),
+      ]),
+    ]);
+    const { page, input } = pageOver(nested());
+
+    const error = await failureOf(clickPoint(page, { x: 200, y: 615 }));
+
+    expect(error.details).toEqual({ x: 200, y: 615, name: 'Buy 1.0857' });
+    expect(input()).toEqual([]);
+  });
+
+  test('a span that declares a cursor of its own inside a clickable div still reaches the div', async () => {
+    const own = screen(() => [
+      quoteButton([
+        fakeElement({ tag: 'span', text: 'Buy', rect: box(105, 605, 40, 20) }),
+        fakeElement({ tag: 'span', text: '1.0857', cursor: 'text', rect: box(165, 605, 80, 20) }),
+      ]),
+    ]);
+    const { page, input } = pageOver(own());
+
+    const error = await failureOf(clickPoint(page, { x: 200, y: 615 }));
+
+    expect(error.details).toMatchObject({ name: 'Buy 1.0857' });
+    expect(input()).toEqual([]);
+  });
+
+  test('a span inside a div with the default cursor is not refused for a trading word elsewhere in the div', async () => {
+    const plain = screen(() => [
+      fakeElement({
+        cursor: 'default',
+        rect: box(100, 600, 300, 30),
+        children: [
+          fakeElement({ tag: 'span', text: 'Buy', rect: box(105, 605, 40, 20) }),
+          fakeElement({ tag: 'span', text: 'Details', rect: box(200, 605, 80, 20) }),
+        ],
+      }),
+    ]);
+    const { page, types } = pageOver(plain());
+
+    await expect(clickTarget(page, { x: 240, y: 615 })).resolves.toEqual({ x: 240, y: 615 });
+
+    expect(types()).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+  });
+
+  // Six levels of wrappers, each of which shows the pointer it inherits, between the price and a
+  // clickable div that names a trading action.
+  function deepQuote(levels: number): () => TvWindow {
+    let inner = fakeElement({ tag: 'span', text: '1.0857', rect: box(165, 605, 80, 20) });
+    for (let level = 0; level < levels; level += 1) {
+      inner = fakeElement({ rect: box(160, 602, 100, 26), children: [inner] });
+    }
+    return screen(() => [
+      quoteButton([fakeElement({ tag: 'span', text: 'Buy', rect: box(105, 605, 40, 20) }), inner]),
+    ]);
+  }
+
+  test('the clickable element counts up to six levels above what the click lands on', async () => {
+    // Five wrappers put the div six levels up.
+    const { page, input } = pageOver(deepQuote(5)());
+
+    const error = await failureOf(clickPoint(page, { x: 200, y: 615 }));
+
+    expect(error.details).toMatchObject({ name: 'Buy 1.0857' });
+    expect(input()).toEqual([]);
+  });
+
+  test('a clickable element further up than six levels is not looked for', async () => {
+    // Six wrappers put the div seven levels up: the run of pointers ends at the sixth wrapper, which
+    // names the price alone.
+    const { page, types } = pageOver(deepQuote(6)());
+
+    await clickPoint(page, { x: 200, y: 615 });
+
+    expect(types()).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+  });
+
+  test('a page whose getComputedStyle throws, or that has none, is judged as before', async () => {
+    const throwing = (): TvWindow => {
+      const win = make();
+      dom(win).getComputedStyle = () => {
+        throw new Error('No style for this element');
+      };
+      return win;
+    };
+    const withoutStyle = screen(() => [quoteButton()], { without: ['getComputedStyle'] });
+
+    for (const maker of [throwing, withoutStyle]) {
+      const { page, types } = pageOver(maker());
+
+      // The price is named "1.0857", and no control holds it but the div the cursor tells.
+      await clickPoint(page, { x: 200, y: 615 });
+
+      expect(types()).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+      expect(await bothWays(describeElement, clickArgs({ x: 200, y: 615 }), maker)).toEqual({
+        found: true,
+        visible: true,
+        unsafe: false,
+        coverage: 'clear',
+        obscuredBy: '',
+      });
+    }
+  });
+
+  test('a hover over the price of the clickable div is not refused for its name', async () => {
+    const { page, types } = pageOver(make());
+
+    await expect(hoverPoint(page, { x: 200, y: 615 })).resolves.toEqual({
+      point: { x: 200, y: 615 },
+      warning: null,
+    });
+
+    expect(types()).toEqual(['mouseMoved']);
   });
 });

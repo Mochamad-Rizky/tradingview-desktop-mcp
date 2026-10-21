@@ -170,6 +170,7 @@ export const UNSAFE_SELECTORS: readonly string[] = Object.freeze([
 // Words, not parts of words: "Buyback chart" and "Sellers" pass, and "How to buy" is refused, which
 // is accepted. An order ticket and the other trading dialogs have no stable selector yet, and a
 // click by text reaches whatever has a name, so a click is refused on an element named so, and on an
-// element whose control (the button or the link a click on it activates) is named so, whatever its
+// element whose control (the button or the link a click on it activates, or the element around it
+// that the page makes clickable, which only the pointer cursor shows) is named so, whatever its
 // selector. A hover or a turn of the mouse wheel is not refused for a name.
 export const TRADING_ACTION_NAMES = String.raw`\b(buy|sell)\b|\b(place|submit|send|cancel|modify)\b.{0,24}?\borders?\b|\b(close|exit|reverse|flatten)\b.{0,24}?\bpositions?\b|\bclose all\b|\bflatten\b|\breverse\b`;

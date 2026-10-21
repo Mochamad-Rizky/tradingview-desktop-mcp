@@ -358,6 +358,37 @@ describe('ui_click', () => {
     expect(inputCountOf(app)).toBe(0);
   });
 
+  test('ui_click refuses the price inside a clickable div that only the pointer cursor marks, and not a span of a plain div', async () => {
+    const span = (text: string, x: number, width: number) =>
+      fakeElement({ tag: 'span', text, rect: box(x, 605, width, 20) });
+    // A quote button without a role: the page makes the div clickable, and the cursor shows it.
+    const quote = fakeElement({
+      cursor: 'pointer',
+      rect: box(100, 600, 200, 30),
+      children: [span('Buy', 105, 40), span('|', 150, 10), span('1.0857', 165, 80)],
+    });
+    // A div with the default cursor that shows the word Buy beside the span that is clicked.
+    const plain = fakeElement({
+      cursor: 'default',
+      rect: box(400, 600, 300, 30),
+      children: [span('Buy', 405, 40), span('Details', 500, 80)],
+    });
+    const { client, app } = await startHarness({ win: chartPage([quote, plain]) });
+
+    const onPrice = await callTool(client, 'ui_click', { x: 200, y: 615 });
+    const onDetails = await callTool(client, 'ui_click', { x: 540, y: 615 });
+
+    expect(errorOf(onPrice)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to click at (200, 615): the click would reach "Buy | 1.0857", a trading action',
+      details: { x: 200, y: 615, name: 'Buy | 1.0857' },
+    });
+    expect(dataOf(onDetails)).toEqual({ target: 'chart', by: 'point', point: { x: 540, y: 615 } });
+    // The second click only.
+    expect(typesOf(app)).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+  });
+
   test('ui_click by selector refuses a target whose center a container of the trade button covers', async () => {
     const panel = fakeElement({
       attributes: { 'data-name': 'trading-panel' },

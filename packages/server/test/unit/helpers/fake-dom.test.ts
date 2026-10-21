@@ -183,8 +183,30 @@ describe('the fake DOM', () => {
     const hidden = fakeElement({ display: 'none', visibility: 'hidden' });
     const { getComputedStyle } = domOf(createFakeDomWindow([shown, hidden]));
 
-    expect(getComputedStyle?.(shown)).toEqual({ display: 'block', visibility: 'visible' });
-    expect(getComputedStyle?.(hidden)).toEqual({ display: 'none', visibility: 'hidden' });
+    expect(getComputedStyle?.(shown)).toEqual({
+      display: 'block',
+      visibility: 'visible',
+      cursor: 'auto',
+    });
+    expect(getComputedStyle?.(hidden)).toEqual({
+      display: 'none',
+      visibility: 'hidden',
+      cursor: 'auto',
+    });
+  });
+
+  test('gives an element the cursor it declares, or else the one of its parent, as a page does', () => {
+    const label = fakeElement({ tag: 'span' });
+    const typed = fakeElement({ tag: 'span', cursor: 'text' });
+    const clickable = fakeElement({
+      cursor: 'pointer',
+      children: [fakeElement({ children: [label] }), typed],
+    });
+    const { getComputedStyle } = domOf(createFakeDomWindow([clickable]));
+
+    expect(getComputedStyle?.(clickable).cursor).toBe('pointer');
+    expect(getComputedStyle?.(label).cursor).toBe('pointer');
+    expect(getComputedStyle?.(typed).cursor).toBe('text');
   });
 
   test('tells its tag, its id and the attributes it was given, like an element does', () => {

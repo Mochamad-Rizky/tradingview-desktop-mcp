@@ -189,7 +189,8 @@ export const uiClick = defineTool({
     'a trading action, because an order ticket has no selector to tell it by: an aria-label, the ' +
     'value of an input button or the text shown (each on its own, so the text shown counts under ' +
     `an aria-label that says something else) that holds ${TRADING_NAMES}, as words, of the ` +
-    'target, of what lies at the point, or of the button that holds it. The text shown is read ' +
+    'target, of what lies at the point, or of the button that holds it or the element around it ' +
+    'that the pointer cursor shows as clickable (up to six levels up). The text shown is read ' +
     'with its parts apart and run together, so a word split into elements still counts. A point ' +
     'click lands on the element there and reads all the text it shows: a point click on a panel, ' +
     'a legend or another area whose text shows such a word is refused, so click the specific ' +

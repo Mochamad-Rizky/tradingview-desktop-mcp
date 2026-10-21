@@ -13,7 +13,8 @@ import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 // of an element are a text node with its own text, when it has one, followed by its children, or
 // the text and the elements it was given in their order, and its text content is the text of those
 // nodes in order, a later element is painted over an earlier one, an element that is not shown
-// cannot be hit, and the body is focused, and holds the page, when nothing else has the focus.
+// cannot be hit, the cursor an element shows is the one it declares or else the one of its parent,
+// and the body is focused, and holds the page, when nothing else has the focus.
 //
 // Like the shared fake window, these objects live in the host realm, so page code that runs in a
 // vm context must not use `instanceof` on them.
@@ -33,6 +34,9 @@ export interface FakeElementOptions {
   // The computed style, which defaults to that of a shown element.
   display?: string;
   visibility?: string;
+  // The cursor the element declares, such as 'pointer'. The cursor is inherited, as in a page: an
+  // element that declares none shows the one of its parent, and one at the top shows 'auto'.
+  cursor?: string;
   // Whether the element is part of the document. Defaults to true.
   connected?: boolean;
   children?: readonly FakeElement[];
@@ -61,6 +65,7 @@ export interface FakeElementOptions {
 export interface FakeComputedStyle {
   display: string;
   visibility: string;
+  cursor: string;
 }
 
 // A text node, as an element lists it among its child nodes. Its data and its node value are its
@@ -124,6 +129,8 @@ export class FakeElement {
   readonly isConnected: boolean;
   readonly display: string;
   readonly visibility: string;
+  // The cursor the element declares, undefined for none (see computedCursor).
+  readonly cursor: string | undefined;
   readonly children: readonly FakeElement[];
   readonly localName: string;
   readonly tagName: string;
@@ -159,6 +166,7 @@ export class FakeElement {
     this.#rect = { ...(options.rect ?? DEFAULT_RECT) };
     this.display = options.display ?? 'block';
     this.visibility = options.visibility ?? 'visible';
+    this.cursor = options.cursor;
     this.isConnected = options.connected ?? true;
     this.children = this.#nodes.filter((node): node is FakeElement => node.nodeType === 1);
     this.localName = options.tag ?? 'div';
@@ -203,6 +211,12 @@ export class FakeElement {
 
   get parentElement(): FakeElement | null {
     return this.parent;
+  }
+
+  // The cursor the element shows: the one it declares, or else the one of its parent, as the
+  // cursor is inherited, and 'auto' at the top.
+  get computedCursor(): string {
+    return this.cursor ?? this.parent?.computedCursor ?? 'auto';
   }
 
   // Its text nodes and its children in document order, as Node.childNodes: its own text first, or
@@ -371,6 +385,7 @@ export function createFakeDomWindow(
     fakeWindow.getComputedStyle = (element) => ({
       display: element.display,
       visibility: element.visibility,
+      cursor: element.computedCursor,
     });
   }
   if (!without.has('activeElement')) {

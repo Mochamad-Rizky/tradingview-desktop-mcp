@@ -129,9 +129,10 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 //   under an aria-label that says something else, and the text shown is read both with a space
 //   between the pieces of different elements and with the pieces run together, so that neither a
 //   label split into elements nor a word split by an element inside it gets past. That goes for the
-//   element, for the element at the point, and for the control that one belongs to (its closest
-//   button, link or element with the role of one), which a click on it activates. Left out when
-//   there is none.
+//   element, for the element at the point, for the control that one belongs to (its closest
+//   button, link or element with the role of one), and for the element around it that the page
+//   makes clickable, which only the pointer cursor shows (the outermost of the elements, up to six
+//   levels up, that show it), as a click on it activates those. Left out when there is none.
 // A point is the target itself: it is found and visible, has no rect, and is judged the way the
 // point of an element is, except that a layer or a frame anywhere at it covers it, since it lies on
 // no element the caller named, and that for a click the element at the point is its target, so
@@ -262,6 +263,32 @@ export function describeElement(
     }
     return null;
   };
+  // The element a handler of the page makes clickable around an element, which nothing but the
+  // pointer cursor it shows tells: a div without a role is clickable that way. The cursor is
+  // inherited, so what lies inside such an element shows the pointer too, and the clickable one is
+  // where the run of elements that show it ends: from the element, or the first ancestor that shows
+  // it, up to the last one that does, six levels above the element at most. A page that cannot say
+  // which cursor an element shows (no getComputedStyle, or one that throws) has none of these.
+  const clickableOf = (element: Element): Element | null => {
+    if (typeof win.getComputedStyle !== 'function') {
+      return null;
+    }
+    try {
+      let clickable: Element | null = null;
+      let node: Element | null = element;
+      for (let level = 0; node !== null && level <= 6; level += 1) {
+        if (win.getComputedStyle(node).cursor === 'pointer') {
+          clickable = node;
+        } else if (clickable !== null) {
+          break;
+        }
+        node = node.parentElement;
+      }
+      return clickable;
+    } catch {
+      return null;
+    }
+  };
   // The words around the trading action the pattern finds in a name, twenty characters on each
   // side at most, to show why a click was refused.
   const around = (name: string): string | undefined => {
@@ -275,11 +302,17 @@ export function describeElement(
   };
   // The trading action that a click on `element` would reach, if any, quoted with the words around
   // it: the aria-label, the label of an input button and the text shown, read both ways, each on
-  // its own, of the element and of its control. The text shown counts even when an aria-label says
-  // something else, as the user reads that text and not the label.
+  // its own, of the element, of its control and of the clickable element around it. The text shown
+  // counts even when an aria-label says something else, as the user reads that text and not the
+  // label.
   const tradingNameAt = (element: Element): string | undefined => {
-    const control = controlOf(element);
-    for (const named of control === null ? [element] : [element, control]) {
+    const reached = [element];
+    for (const around of [controlOf(element), clickableOf(element)]) {
+      if (around !== null && !reached.includes(around)) {
+        reached.push(around);
+      }
+    }
+    for (const named of reached) {
       const { spaced, joined } = texts(named);
       for (const name of [
         collapsed(named.getAttribute('aria-label')),
