@@ -29,6 +29,16 @@ export type PageLibFunction<A extends JsonValue[], R extends JsonValue | null> =
   ...args: A
 ) => R | PageErrorSentinel | Promise<R | PageErrorSentinel>;
 
+// How long a call may take. timeoutMs bounds the wait for the answer, the default of the bridge
+// without it. terminateAfterMs also has the page stop the script once it has run that long
+// (Runtime.evaluate's timeout), for code that could run without end, such as an expression a
+// client wrote: a wait that gives up leaves such a script running, and the page frozen. The script
+// is stopped wherever it got to, so this is for code that changes nothing the page relies on.
+export interface PageCallOptions {
+  timeoutMs?: number;
+  terminateAfterMs?: number;
+}
+
 export interface PageBridge {
   // Runs `fn` in the page with `args` and resolves with what it returned, awaiting a promise; an
   // undefined result becomes null. Fails with PAGE_EVALUATION_FAILED when the function throws or
@@ -37,7 +47,7 @@ export interface PageBridge {
   evaluate<A extends JsonValue[], R extends JsonValue | null>(
     fn: PageFunction<A, R>,
     args: A,
-    options?: { timeoutMs?: number },
+    options?: PageCallOptions,
   ): Promise<R>;
   // Like evaluate, for a page function that needs the page library: the library is built in the
   // page for this call and handed to `fn` after the window. Results and failures are those of
@@ -45,7 +55,7 @@ export interface PageBridge {
   evaluateWithLib<A extends JsonValue[], R extends JsonValue | null>(
     fn: PageLibFunction<A, R>,
     args: A,
-    options?: { timeoutMs?: number },
+    options?: PageCallOptions,
   ): Promise<R>;
 }
 
@@ -174,10 +184,15 @@ export function pageLibCallExpression(source: string, args: readonly JsonValue[]
 export function createPageBridge(session: CdpSession, defaults: { timeoutMs: number }): PageBridge {
   // Evaluates the expression that calls a page function and maps what comes back, the same way for
   // both methods.
-  const run = async (expression: string, options?: { timeoutMs?: number }): Promise<unknown> => {
+  const run = async (expression: string, options?: PageCallOptions): Promise<unknown> => {
     const { result, exceptionDetails } = await session.send(
       'Runtime.evaluate',
-      { expression, returnByValue: true, awaitPromise: true },
+      {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+        ...(options?.terminateAfterMs === undefined ? {} : { timeout: options.terminateAfterMs }),
+      },
       { timeoutMs: options?.timeoutMs ?? defaults.timeoutMs },
     );
     if (exceptionDetails !== undefined) {
@@ -194,7 +209,7 @@ export function createPageBridge(session: CdpSession, defaults: { timeoutMs: num
     async evaluate<A extends JsonValue[], R extends JsonValue | null>(
       fn: PageFunction<A, R>,
       args: A,
-      options?: { timeoutMs?: number },
+      options?: PageCallOptions,
     ): Promise<R> {
       // The page function's own type promises R; what came back is JSON either way.
       return (await run(pageCallExpression(fn.toString(), args), options)) as R;
@@ -203,7 +218,7 @@ export function createPageBridge(session: CdpSession, defaults: { timeoutMs: num
     async evaluateWithLib<A extends JsonValue[], R extends JsonValue | null>(
       fn: PageLibFunction<A, R>,
       args: A,
-      options?: { timeoutMs?: number },
+      options?: PageCallOptions,
     ): Promise<R> {
       return (await run(pageLibCallExpression(fn.toString(), args), options)) as R;
     },

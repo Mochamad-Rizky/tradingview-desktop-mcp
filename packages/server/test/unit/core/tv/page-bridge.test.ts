@@ -131,6 +131,25 @@ describe('createPageBridge', () => {
     ]);
   });
 
+  test('asks the page to stop a script that runs past terminateAfterMs, and only when asked', async () => {
+    const { bridge, sent } = bridgeAnswering(returned(null));
+
+    await bridge.evaluate(readBuildTime, [], { timeoutMs: 5000, terminateAfterMs: 4000 });
+    await bridge.evaluateWithLib(readBuildTime, [], { terminateAfterMs: 300 });
+    await bridge.evaluate(readBuildTime, [], { timeoutMs: 5000 });
+
+    const params = sent.map(({ params }) => params as Record<string, unknown>);
+    // Runtime.evaluate stops a script that runs longer than its timeout.
+    expect(params[0]).toMatchObject({ returnByValue: true, awaitPromise: true, timeout: 4000 });
+    expect(params[1]).toMatchObject({ timeout: 300 });
+    expect(params[2]).not.toHaveProperty('timeout');
+    expect(sent.map(({ options }) => options)).toEqual([
+      { timeoutMs: 5000 },
+      { timeoutMs: DEFAULT_TIMEOUT_MS },
+      { timeoutMs: 5000 },
+    ]);
+  });
+
   test.each<[string, JsonValue]>([
     ['a string', '2026-10-16T17:55:37'],
     ['a number', 42.5],
