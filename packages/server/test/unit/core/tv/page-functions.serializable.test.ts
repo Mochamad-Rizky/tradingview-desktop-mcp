@@ -174,6 +174,7 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   expect(Object.keys(pageFunctions)).toContain('readVisibilityState');
   expect(Object.keys(pageFunctions)).toContain('describeElement');
   expect(Object.keys(pageFunctions)).toContain('describeFocusedElement');
+  expect(Object.keys(pageFunctions)).toContain('findElements');
   expect(Object.keys(pageFunctions)).toContain('readAppState');
   expect(Object.keys(pageFunctions)).toContain('probeCapabilities');
   expect(Object.keys(pageFunctions)).toContain('readAppInfo');

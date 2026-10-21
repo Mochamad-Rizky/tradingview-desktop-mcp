@@ -33,8 +33,9 @@ export interface TvWindow {
   // to a member like that. The same goes for querySelectorAll.
   document: Pick<Document, 'visibilityState'> & {
     querySelector?(selectors: string): Element | null;
-    // Every element that matches, in document order. Page code asks of these where they are on the
-    // screen and nothing else.
+    // Every element that matches, in document order. They are typed by their box, which is all the
+    // shared fake window gives them (its chart containers); page code that reads more of them, as
+    // the element finder of the input helpers does, takes them for the elements a real page lists.
     querySelectorAll?(selectors: string): ArrayLike<BoxElementLike>;
     elementFromPoint?(x: number, y: number): Element | null;
     // The element that fills the screen in the browser's fullscreen mode, or null when none does.

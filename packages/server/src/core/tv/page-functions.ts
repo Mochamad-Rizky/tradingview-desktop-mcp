@@ -48,7 +48,7 @@ import {
 import { readChartBox } from '../../tools/screenshot/page.js';
 import { readStrategyReport } from '../../tools/strategy/page.js';
 import { probeCapabilities } from './capabilities.js';
-import { describeElement, describeFocusedElement } from './input.js';
+import { describeElement, describeFocusedElement, findElements } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
 import { readPlanLimits } from './plan-limits.js';
 import { readAppState, readVisibilityState } from './probes.js';
@@ -66,6 +66,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   describeElement,
   describeFocusedElement,
   editStudyInputs,
+  findElements,
   insertStudy,
   probeCapabilities,
   readAppInfo,

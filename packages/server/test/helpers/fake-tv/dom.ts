@@ -5,12 +5,14 @@ import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 // window here instead.
 //
 // There is no CSS engine. An element declares the selectors it matches, and a selector matches
-// when it is one of them, character for character. That is enough to test what a page function
-// decides from the answers of matches, closest and querySelector, and it keeps the fake too small
+// when it is one of them, character for character, or when it is the universal selector `*`,
+// which every element matches. That is enough to test what a page function decides from the
+// answers of matches, closest, querySelector and querySelectorAll, and it keeps the fake too small
 // to hide a bug of its own. The structure follows the DOM: closest starts at the element itself,
-// querySelector looks at descendants only, a later element is painted over an earlier one, an
-// element that is not shown cannot be hit, and the body is focused, and holds the page, when
-// nothing else has the focus.
+// querySelector looks at descendants only, querySelectorAll lists in document order, the text
+// content of an element is its own text followed by that of its children, a later element is
+// painted over an earlier one, an element that is not shown cannot be hit, and the body is
+// focused, and holds the page, when nothing else has the focus.
 //
 // Like the shared fake window, these objects live in the host realm, so page code that runs in a
 // vm context must not use `instanceof` on them.
@@ -39,6 +41,10 @@ export interface FakeElementOptions {
   tag?: string;
   id?: string;
   attributes?: Readonly<Record<string, string>>;
+  // The text of the element itself, which comes before the text of its children in its text
+  // content. Defaults to none. A field has no text of its own in a page, whatever was typed into
+  // it, so a test gives none to an input.
+  text?: string;
   // Whether the element is content-editable, which is what isContentEditable reports. Defaults to
   // false.
   contentEditable?: boolean;
@@ -118,9 +124,11 @@ export class FakeElement {
   readonly #matches: ReadonlySet<string>;
   #rect: FakeRect;
   readonly #attributes: ReadonlyMap<string, string>;
+  readonly #text: string;
 
   constructor(options: FakeElementOptions = {}) {
     this.#matches = new Set(options.matches);
+    this.#text = options.text ?? '';
     this.#rect = { ...(options.rect ?? DEFAULT_RECT) };
     this.display = options.display ?? 'block';
     this.visibility = options.visibility ?? 'visible';
@@ -148,6 +156,11 @@ export class FakeElement {
     return this.#attributes.get(name) ?? null;
   }
 
+  // Its own text, then the text of its children, in document order, as Node.textContent.
+  get textContent(): string {
+    return this.#text + this.children.map((child) => child.textContent).join('');
+  }
+
   // Moves the element, as a page does when its layout changes under the pointer. Only tests that
   // need the page to change call it.
   place(rect: FakeRect): void {
@@ -160,7 +173,9 @@ export class FakeElement {
   }
 
   matches(selectors: string): boolean {
-    return parseSelectorList(selectors).some((selector) => this.#matches.has(selector));
+    return parseSelectorList(selectors).some(
+      (selector) => selector === '*' || this.#matches.has(selector),
+    );
   }
 
   // The element itself, or the nearest ancestor, that matches.
@@ -203,6 +218,8 @@ export interface FakeDomWindow {
   document: {
     readonly visibilityState: 'visible';
     querySelector?: (selectors: string) => FakeElement | null;
+    // Every element that matches, in document order.
+    querySelectorAll?: (selectors: string) => FakeElement[];
     elementFromPoint?: (x: number, y: number) => FakeElement | null;
     // Assignable, so that a test can move the focus.
     activeElement?: FakeElement | null;
@@ -213,7 +230,12 @@ export interface FakeDomWindow {
 }
 
 export type FakeDomMember =
-  'querySelector' | 'elementFromPoint' | 'getComputedStyle' | 'activeElement' | 'fullscreenElement';
+  | 'querySelector'
+  | 'querySelectorAll'
+  | 'elementFromPoint'
+  | 'getComputedStyle'
+  | 'activeElement'
+  | 'fullscreenElement';
 
 export interface FakeDomOptions {
   // Members to leave out, the way a page or a fake without them would be.
@@ -261,6 +283,12 @@ export function createFakeDomWindow(
     fakeWindow.document.querySelector = (selectors) => {
       parseSelectorList(selectors);
       return all.find((element) => element.matches(selectors)) ?? null;
+    };
+  }
+  if (!without.has('querySelectorAll')) {
+    fakeWindow.document.querySelectorAll = (selectors) => {
+      parseSelectorList(selectors);
+      return all.filter((element) => element.matches(selectors));
     };
   }
   if (!without.has('elementFromPoint')) {

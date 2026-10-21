@@ -1,18 +1,26 @@
 import { setImmediate as settle } from 'node:timers/promises';
 import type { CdpSession } from '../../../../src/core/cdp/types.js';
-import { TimeoutError } from '../../../../src/core/errors.js';
+import { TimeoutError, type TvMcpError } from '../../../../src/core/errors.js';
 import {
   clickElement,
+  clickPoint,
+  clickTarget,
   describeElement,
   describeFocusedElement,
+  findElements,
+  hoverElement,
+  hoverPoint,
+  hoverTarget,
   pressKey,
+  scrollAt,
   typeText,
   type InputPage,
   type KeyModifier,
 } from '../../../../src/core/tv/input.js';
-import { createPageBridge } from '../../../../src/core/tv/page-bridge.js';
+import { createPageBridge, type PageFunction } from '../../../../src/core/tv/page-bridge.js';
 import { SELECTORS, UNSAFE_SELECTORS } from '../../../../src/core/tv/selectors.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
+import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
 import { layoutMetrics, layoutSizeOf } from '../../../helpers/fake-cdp/layout.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
@@ -143,6 +151,21 @@ function dom(win: TvWindow): FakeDomWindow {
 function mouseEvent(type: string, x: number, y: number): SentCommand {
   const pressed = type === 'mouseMoved' ? {} : { button: 'left', clickCount: 1 };
   return { method: 'Input.dispatchMouseEvent', params: { type, x, y, ...pressed } };
+}
+
+// A hover that opens a flyout, or moves the target, is how the page changes between the first
+// lookup and the press. The fake session plays the page: when the pointer moves it runs `change`,
+// and the second lookup sees the result.
+function afterTheMove(change: () => void) {
+  return ({ method, params }: SentCommand): unknown => {
+    if (
+      method === 'Input.dispatchMouseEvent' &&
+      (params as { type: string }).type === 'mouseMoved'
+    ) {
+      change();
+    }
+    return {};
+  };
 }
 
 describe('describeElement', () => {
@@ -1135,21 +1158,6 @@ describe('clickElement', () => {
   });
 
   describe('when the pointer arriving changes the page', () => {
-    // A hover that opens a flyout, or moves the target, is how the page changes between the first
-    // lookup and the press. The fake session plays the page: when the pointer moves it runs
-    // `change`, and the second lookup sees the result.
-    function afterTheMove(change: () => void) {
-      return ({ method, params }: SentCommand): unknown => {
-        if (
-          method === 'Input.dispatchMouseEvent' &&
-          (params as { type: string }).type === 'mouseMoved'
-        ) {
-          change();
-        }
-        return {};
-      };
-    }
-
     test('stops with only the move sent when a trading control opens under the pointer', async () => {
       const win = createFakeDomWindow(chart());
       const buy = fakeElement({ tag: 'button', matches: [BUY], rect: box(100, 50, 40, 20) });
@@ -2254,5 +2262,1314 @@ describe('one call at a time per page', () => {
     await settle();
     answerNext();
     await stuck;
+  });
+});
+
+// The pointer tools: a click, a hover and a scroll at an element, an element named by its text, or
+// a point, all through the same look at the target.
+
+const VIEWPORT = { width: 1280, height: 720 };
+const TRADING_HINT =
+  'Trading controls are off limits to this server. Place orders in the TradingView window yourself.';
+
+// What a real page has under everything else, its html element, which every point of the viewport
+// hits at least.
+function background(): FakeElement {
+  return fakeElement({ tag: 'html', rect: box(0, 0, VIEWPORT.width, VIEWPORT.height) });
+}
+
+// A page of the viewport's size with the header button and the pane of the chart, plus what
+// `extra` builds. A maker, so that every window gets elements of its own.
+function screen(
+  extra: () => FakeElement[] = () => [],
+  options: FakeDomOptions = {},
+): () => TvWindow {
+  return () =>
+    createFakeDomWindow([background(), ...chart(), ...extra()], {
+      viewport: VIEWPORT,
+      ...options,
+    });
+}
+
+// The buy button with a label in it, over the pane: its label covers (310, 255) to (350, 275), and
+// the rest of the button the box around it.
+function buyButton(attributes: Record<string, string> = {}): FakeElement {
+  return fakeElement({
+    tag: 'button',
+    matches: [BUY],
+    attributes,
+    rect: box(300, 250, 80, 30),
+    children: [fakeElement({ tag: 'span', rect: box(310, 255, 40, 20) })],
+  });
+}
+
+// A menu of the overlap root, with its item where a point in the middle of the pane lands.
+function openMenu(): FakeElement {
+  return overlapRoot([fakeElement({ id: 'menu-item', rect: box(350, 280, 100, 40) })]);
+}
+
+// The pane of the chart as TradingView builds it: it holds the buy and sell buttons, which lie away
+// from its center.
+function paneWithTradingButtons(): FakeElement {
+  return fakeElement({
+    matches: ['[data-qa-id="pane"]'],
+    rect: box(0, 100, 800, 400),
+    children: [
+      fakeElement({
+        matches: ['[data-name="buy-sell-buttons"]'],
+        rect: box(20, 110, 160, 40),
+        children: [fakeElement({ tag: 'button', matches: [BUY], rect: box(100, 115, 70, 30) })],
+      }),
+    ],
+  });
+}
+
+// A page function run the way the server runs it, as source text through the real bridge, and
+// called directly on a second window built the same way. The two answers must agree.
+async function bothWays<A extends JsonValue[], R extends JsonValue | null>(
+  fn: PageFunction<A, R>,
+  args: A,
+  make: () => TvWindow,
+): Promise<R> {
+  const result = await pageOver(make()).page.bridge.evaluate(fn, args);
+  expect(await fn(make(), ...args)).toEqual(result);
+  return result;
+}
+
+// A failure the page function reports with a sentinel: the bridge turns it into the error, and a
+// direct call returns the sentinel itself.
+async function failureBothWays<A extends JsonValue[], R extends JsonValue | null>(
+  fn: PageFunction<A, R>,
+  args: A,
+  make: () => TvWindow,
+): Promise<TvMcpError> {
+  const error = await failureOf(pageOver(make()).page.bridge.evaluate(fn, args));
+  expect(await fn(make(), ...args)).toEqual({ __tvmcpError: error.toPayload() });
+  return error;
+}
+
+const methodsOf = (sent: SentCommand[]) => sent.map(({ method }) => method);
+
+// The arguments of a page function after the window, as the bridge takes them.
+type ArgsOf<F> = F extends (win: TvWindow, ...args: infer A) => unknown ? A : never;
+
+describe('describeElement with a point', () => {
+  const at = (x: number, y: number): ArgsOf<typeof describeElement> => [
+    { x, y },
+    [...UNSAFE_SELECTORS],
+    [OVERLAP_ROOT],
+  ];
+
+  test('judges what lies at a point, which is the target itself', async () => {
+    const result = await bothWays(describeElement, [...at(120, 60)], screen());
+
+    // A point has no box: the page judges the point it was given.
+    expect(result).toEqual({
+      found: true,
+      visible: true,
+      unsafe: false,
+      coverage: 'clear',
+      obscuredBy: '',
+    });
+  });
+
+  test('flags a point over a trading control, and over a part of one', async () => {
+    const make = screen(() => [buyButton()]);
+
+    // On the label inside the button, and on the button beside the label.
+    expect(await bothWays(describeElement, [...at(320, 260)], make)).toMatchObject({
+      unsafe: true,
+      coverage: 'not-checked',
+    });
+    expect(await bothWays(describeElement, [...at(370, 270)], make)).toMatchObject({
+      unsafe: true,
+    });
+  });
+
+  test('does not flag a point on a container that holds a trading control somewhere else', async () => {
+    const toolbar = () =>
+      fakeElement({
+        attributes: { 'data-name': 'toolbar' },
+        rect: box(0, 0, 1280, 40),
+        children: [fakeElement({ matches: [BUY], rect: box(700, 5, 60, 30) })],
+      });
+
+    const result = await bothWays(
+      describeElement,
+      [...at(100, 20)],
+      screen(() => [toolbar()]),
+    );
+
+    expect(result).toMatchObject({ unsafe: false, coverage: 'clear' });
+  });
+
+  test('reports a point in a layer of the overlap root as obscured, whatever the layer is', async () => {
+    const result = await bothWays(
+      describeElement,
+      [...at(400, 300)],
+      screen(() => [openMenu()]),
+    );
+
+    // The point is not on any element the caller named, so a menu there is what would be clicked,
+    // and what it is cannot be told.
+    expect(result).toEqual({
+      found: true,
+      visible: true,
+      unsafe: false,
+      coverage: 'obscured',
+      obscuredBy: 'div#menu-item',
+    });
+  });
+
+  test('does not count a point on the overlap root itself as covered', async () => {
+    const portal = () => overlapRoot([], box(0, 0, VIEWPORT.width, VIEWPORT.height));
+
+    const result = await bothWays(
+      describeElement,
+      [...at(600, 600)],
+      screen(() => [portal()]),
+    );
+
+    expect(result).toMatchObject({ coverage: 'clear', obscuredBy: '' });
+  });
+
+  test.each(['iframe', 'frame', 'object', 'embed'])(
+    'reports a point on a <%s> as obscured',
+    async (tag) => {
+      const frame = () => fakeElement({ tag, id: 'ad', rect: box(350, 280, 100, 40) });
+
+      const result = await bothWays(
+        describeElement,
+        [...at(400, 300)],
+        screen(() => [frame()]),
+      );
+
+      expect(result).toMatchObject({
+        unsafe: false,
+        coverage: 'obscured',
+        obscuredBy: `${tag}#ad`,
+      });
+    },
+  );
+
+  test('reports a point outside the viewport', async () => {
+    const result = await bothWays(describeElement, [...at(1300, 10)], screen());
+
+    expect(result).toMatchObject({ unsafe: false, coverage: 'center-outside-viewport' });
+  });
+
+  test('reports that a point cannot be judged when the page cannot say what lies there', async () => {
+    const make = screen(() => [buyButton()], { without: ['elementFromPoint'] });
+
+    const result = await bothWays(describeElement, [...at(320, 260)], make);
+
+    expect(result).toMatchObject({ unsafe: false, coverage: 'hit-test-unavailable' });
+  });
+
+  test('returns NOT_AVAILABLE for a point on a page without a DOM', async () => {
+    const error = await failureBothWays(
+      describeElement,
+      [...at(120, 60)],
+      screen(() => [], { without: ['querySelector'] }),
+    );
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+  });
+});
+
+describe('describeElement with a text', () => {
+  const named = (text: string, holdsCount = true): ArgsOf<typeof describeElement> => [
+    { text, holdsCount },
+    [...UNSAFE_SELECTORS],
+    [OVERLAP_ROOT],
+  ];
+  const notFound = {
+    found: false,
+    visible: false,
+    unsafe: false,
+    coverage: 'not-checked',
+    obscuredBy: '',
+  };
+
+  test('finds the visible element whose aria-label is the text, ignoring case', async () => {
+    const button = () =>
+      fakeElement({
+        tag: 'button',
+        attributes: { 'aria-label': 'Save layout' },
+        rect: box(500, 10, 30, 30),
+      });
+
+    const result = await bothWays(
+      describeElement,
+      [...named('save LAYOUT')],
+      screen(() => [button()]),
+    );
+
+    expect(result).toEqual({
+      found: true,
+      visible: true,
+      unsafe: false,
+      coverage: 'clear',
+      obscuredBy: '',
+      rect: box(500, 10, 30, 30),
+    });
+  });
+
+  test('names an element without an aria-label by its text, trimmed', async () => {
+    const label = () =>
+      fakeElement({ tag: 'span', text: '  Indicators  ', rect: box(600, 10, 60, 20) });
+
+    const result = await bothWays(
+      describeElement,
+      [...named('indicators')],
+      screen(() => [label()]),
+    );
+
+    expect(result).toMatchObject({ found: true, rect: box(600, 10, 60, 20) });
+  });
+
+  test('takes the first visible element in document order when several have the name', async () => {
+    const apply = (rect: FakeRect, options: FakeElementOptions = {}) =>
+      fakeElement({ tag: 'button', text: 'Apply', rect, ...options });
+    const both = () => [apply(box(100, 600, 40, 20)), apply(box(300, 600, 40, 20))];
+    const firstHidden = () => [
+      apply(box(100, 600, 40, 20), { display: 'none' }),
+      apply(box(300, 600, 40, 20)),
+    ];
+    // A wrapper whose whole text is the name comes before the element inside it.
+    const wrapped = () => [
+      fakeElement({
+        attributes: { 'data-name': 'wrapper' },
+        rect: box(100, 600, 60, 24),
+        children: [fakeElement({ tag: 'span', text: 'Apply', rect: box(105, 602, 40, 20) })],
+      }),
+    ];
+
+    expect(await bothWays(describeElement, [...named('Apply')], screen(both))).toMatchObject({
+      rect: box(100, 600, 40, 20),
+    });
+    expect(await bothWays(describeElement, [...named('Apply')], screen(firstHidden))).toMatchObject(
+      { rect: box(300, 600, 40, 20) },
+    );
+    expect(await bothWays(describeElement, [...named('Apply')], screen(wrapped))).toMatchObject({
+      rect: box(100, 600, 60, 24),
+    });
+  });
+
+  test('names an element that has an aria-label by it, and not by its text', async () => {
+    const close = () =>
+      fakeElement({
+        tag: 'button',
+        attributes: { 'aria-label': 'Close' },
+        text: '×',
+        rect: box(700, 10, 20, 20),
+      });
+
+    expect(
+      await bothWays(
+        describeElement,
+        [...named('×')],
+        screen(() => [close()]),
+      ),
+    ).toEqual(notFound);
+    expect(
+      await bothWays(
+        describeElement,
+        [...named('close')],
+        screen(() => [close()]),
+      ),
+    ).toMatchObject({ found: true });
+  });
+
+  test('names a field by its aria-label alone, never by what it holds', async () => {
+    const fields = () => [
+      fakeElement({ tag: 'textarea', text: 'a note of the user', rect: box(10, 600, 200, 60) }),
+      fakeElement({
+        tag: 'input',
+        attributes: { 'aria-label': 'Quantity' },
+        rect: box(300, 600, 80, 20),
+      }),
+    ];
+
+    expect(
+      await bothWays(describeElement, [...named('a note of the user')], screen(fields)),
+    ).toEqual(notFound);
+    expect(await bothWays(describeElement, [...named('quantity')], screen(fields))).toMatchObject({
+      found: true,
+      rect: box(300, 600, 80, 20),
+    });
+  });
+
+  test('leaves out elements that are not shown', async () => {
+    const hidden = () => [
+      fakeElement({ text: 'Hidden', display: 'none', rect: box(10, 600, 60, 20) }),
+      fakeElement({ text: 'Hidden', visibility: 'hidden', rect: box(10, 600, 60, 20) }),
+      fakeElement({ text: 'Hidden', rect: box(10, 600, 0, 0) }),
+    ];
+
+    expect(await bothWays(describeElement, [...named('Hidden')], screen(hidden))).toEqual(notFound);
+  });
+
+  test('flags a named element that is, holds or sits inside a trading control', async () => {
+    const panel = () =>
+      fakeElement({
+        attributes: { 'aria-label': 'Order panel' },
+        rect: box(900, 100, 300, 300),
+        children: [fakeElement({ matches: [BUY], rect: box(1100, 350, 80, 30) })],
+      });
+    const make = screen(() => [buyButton({ 'aria-label': 'Buy' }), panel()]);
+
+    expect(await bothWays(describeElement, [...named('buy')], make)).toMatchObject({
+      unsafe: true,
+    });
+    expect(await bothWays(describeElement, [...named('order panel')], make)).toMatchObject({
+      unsafe: true,
+      coverage: 'not-checked',
+    });
+    // What the element holds counts only for a click: a hover or a scroll over the panel lands on
+    // the panel, and its center is clear of the button.
+    expect(await bothWays(describeElement, [...named('order panel', false)], make)).toMatchObject({
+      unsafe: false,
+      coverage: 'clear',
+    });
+    expect(await bothWays(describeElement, [...named('buy', false)], make)).toMatchObject({
+      unsafe: true,
+    });
+  });
+
+  test('judges the center of a named element like that of an element named by a selector', async () => {
+    const make = screen(() => [
+      fakeElement({ tag: 'button', text: 'Apply', rect: box(350, 280, 100, 40) }),
+      openMenu(),
+    ]);
+
+    expect(await bothWays(describeElement, [...named('Apply')], make)).toMatchObject({
+      found: true,
+      unsafe: false,
+      coverage: 'obscured',
+      obscuredBy: 'div#menu-item',
+    });
+  });
+
+  test('returns NOT_AVAILABLE for a text on a page that cannot list its elements', async () => {
+    const error = await failureBothWays(
+      describeElement,
+      [...named('Apply')],
+      screen(() => [], { without: ['querySelectorAll'] }),
+    );
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+  });
+});
+
+describe('describeElement for a hover or a scroll', () => {
+  const PANE_QA = '[data-qa-id="pane"]';
+  const of = (selector: string, holdsCount: boolean): ArgsOf<typeof describeElement> => [
+    { selector, holdsCount },
+    [...UNSAFE_SELECTORS],
+    [OVERLAP_ROOT],
+  ];
+
+  test('does not flag an element that only holds a trading control', async () => {
+    const make = screen(() => [paneWithTradingButtons()]);
+
+    // A click on the pane is refused, because the pane holds the buttons. The pointer over the pane
+    // lands on the pane, and its center is clear of them.
+    expect(await bothWays(describeElement, [...of(PANE_QA, true)], make)).toMatchObject({
+      unsafe: true,
+    });
+    expect(await bothWays(describeElement, [...of(PANE_QA, false)], make)).toMatchObject({
+      unsafe: false,
+      coverage: 'clear',
+    });
+  });
+
+  test('still flags an element that is a trading control or sits inside one', async () => {
+    const label = () =>
+      fakeElement({
+        matches: [BUY],
+        rect: box(300, 250, 80, 30),
+        children: [fakeElement({ matches: ['[data-name="label"]'], rect: box(310, 255, 40, 20) })],
+      });
+    const make = screen(() => [label()]);
+
+    expect(await bothWays(describeElement, [...of(BUY, false)], make)).toMatchObject({
+      unsafe: true,
+    });
+    expect(
+      await bothWays(describeElement, [...of('[data-name="label"]', false)], make),
+    ).toMatchObject({ unsafe: true });
+  });
+});
+
+describe('clickPoint and clickTarget', () => {
+  const pageOn = (make: () => TvWindow, handleInput?: (command: SentCommand) => unknown) =>
+    pageOver(make(), handleInput);
+
+  test('clickPoint at a point over the buy button sends no mouse event at all', async () => {
+    const { page, sent, input } = pageOn(screen(() => [buyButton()]));
+
+    const error = await failureOf(clickPoint(page, { x: 320, y: 260 }));
+
+    expect(error.toPayload()).toEqual({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message: 'Refusing to click at (320, 260): a broker trading control lies there',
+      hint: TRADING_HINT,
+      details: { x: 320, y: 260 },
+    });
+    // The look at the point is all the page saw: not a move, and no press.
+    expect(input()).toEqual([]);
+    expect(methodsOf(sent)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('clickPoint at a point in an open menu of the overlap root refuses with NOT_AVAILABLE', async () => {
+    const { page, input } = pageOn(screen(() => [openMenu()]));
+
+    const error = await failureOf(clickPoint(page, { x: 400, y: 300 }));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.message).toBe('The point (400, 300) is covered by `div#menu-item`');
+    expect(error.details).toEqual({ x: 400, y: 300, obscuredBy: 'div#menu-item' });
+    expect(error.hint).toMatch(/selector or text/);
+    expect(input()).toEqual([]);
+  });
+
+  test.each(['iframe', 'frame', 'object', 'embed'])(
+    'clickPoint at a point on a <%s> refuses with NOT_AVAILABLE',
+    async (tag) => {
+      const frame = () => fakeElement({ tag, id: 'ad', rect: box(350, 280, 100, 40) });
+      const { page, input } = pageOn(screen(() => [frame()]));
+
+      const error = await failureOf(clickPoint(page, { x: 400, y: 300 }));
+
+      expect(error.code).toBe('NOT_AVAILABLE');
+      expect(error.details).toEqual({ x: 400, y: 300, obscuredBy: `${tag}#ad` });
+      expect(input()).toEqual([]);
+    },
+  );
+
+  test('clickPoint refuses a point when the page cannot say what lies there', async () => {
+    const { page, input } = pageOn(screen(() => [], { without: ['elementFromPoint'] }));
+
+    const error = await failureOf(clickPoint(page, { x: 120, y: 60 }));
+
+    expect(error.toPayload()).toEqual({
+      code: 'NOT_AVAILABLE',
+      message: 'The page cannot say what lies at (120, 60)',
+      hint: 'Make sure the target is a loaded TradingView page, not a blank or helper page.',
+      details: { x: 120, y: 60, reason: 'hit-test-unavailable' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('clickPoint moves the pointer, looks again and clicks at the point', async () => {
+    const { page, sent, input } = pageOn(screen());
+
+    await expect(clickPoint(page, { x: 120, y: 60 })).resolves.toBeUndefined();
+
+    expect(methodsOf(sent)).toEqual([
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+    ]);
+    expect(input()).toEqual([
+      mouseEvent('mouseMoved', 120, 60),
+      mouseEvent('mousePressed', 120, 60),
+      mouseEvent('mouseReleased', 120, 60),
+    ]);
+  });
+
+  test('clickPoint sends the point in device-independent pixels, at 1 and at 1.25', async () => {
+    const plain = pageOn(screen(() => [], { zoom: 1 }));
+    const zoomed = pageOn(screen(() => [], { zoom: 1.25 }));
+
+    await clickPoint(plain.page, { x: 120, y: 60 });
+    await clickPoint(zoomed.page, { x: 120, y: 60 });
+
+    expect(plain.input()).toEqual([
+      mouseEvent('mouseMoved', 120, 60),
+      mouseEvent('mousePressed', 120, 60),
+      mouseEvent('mouseReleased', 120, 60),
+    ]);
+    // The page judged (120, 60) in CSS pixels, which is (150, 75) in the window at 125%.
+    expect(zoomed.input()).toEqual([
+      mouseEvent('mouseMoved', 150, 75),
+      mouseEvent('mousePressed', 150, 75),
+      mouseEvent('mouseReleased', 150, 75),
+    ]);
+  });
+
+  test('clickPoint rounds the point to whole pixels, which the page judges and the click goes to', async () => {
+    // (119.6, 60.4) is (120, 60), the center of the header button.
+    const { page, input } = pageOn(screen());
+
+    await clickPoint(page, { x: 119.6, y: 60.4 });
+
+    expect(input().map(({ params }) => params)).toEqual([
+      { type: 'mouseMoved', x: 120, y: 60 },
+      { type: 'mousePressed', x: 120, y: 60, button: 'left', clickCount: 1 },
+      { type: 'mouseReleased', x: 120, y: 60, button: 'left', clickCount: 1 },
+    ]);
+  });
+
+  test('clickPoint refuses a point outside the viewport with INVALID_INPUT, without any input', async () => {
+    const { page, sent, input } = pageOn(screen());
+
+    const error = await failureOf(clickPoint(page, { x: 1300, y: 10 }));
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.message).toBe('The point (1300, 10) is outside the visible part of the page');
+    expect(error.details).toEqual({ x: 1300, y: 10 });
+    expect(error.hint).toMatch(/CSS pixels/);
+    expect(input()).toEqual([]);
+    expect(methodsOf(sent)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('clickPoint refuses a negative point with INVALID_INPUT before it looks at the page', async () => {
+    const { page, sent } = pageOn(screen());
+
+    const error = await failureOf(clickPoint(page, { x: -5, y: 10 }));
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.details).toEqual({ x: -5, y: 10 });
+    expect(sent).toEqual([]);
+  });
+
+  test.each([
+    ['x', { x: Number.NaN, y: 10 }],
+    ['y', { x: 10, y: Number.POSITIVE_INFINITY }],
+  ])(
+    'clickPoint refuses a point whose %s is not a finite number before it looks at the page',
+    async (_axis, point) => {
+      const { page, sent } = pageOn(screen());
+
+      const error = await failureOf(clickPoint(page, point));
+
+      expect(error.code).toBe('INVALID_INPUT');
+      expect(sent).toEqual([]);
+    },
+  );
+
+  test('clickPoint stops with only the move sent when a trading control opens under the pointer', async () => {
+    const win = screen()();
+    const buy = fakeElement({ tag: 'button', matches: [BUY], rect: box(100, 50, 40, 20) });
+    const { page, types } = pageOver(
+      win,
+      afterTheMove(() => {
+        dom(win).document.elementFromPoint = () => buy;
+      }),
+    );
+
+    const error = await failureOf(clickPoint(page, { x: 120, y: 60 }));
+
+    expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(types()).toEqual(['mouseMoved']);
+  });
+
+  test('clickTarget returns where the button went down, in CSS pixels', async () => {
+    const { page } = pageOn(screen(() => [], { zoom: 1.25 }));
+
+    await expect(clickTarget(page, { selector: SAVE })).resolves.toEqual({ x: 120, y: 60 });
+  });
+
+  test('clickTarget by text clicks the first visible element with that name', async () => {
+    const buttons = () => [
+      fakeElement({ tag: 'button', text: 'Apply', rect: box(300, 600, 40, 20), display: 'none' }),
+      fakeElement({ tag: 'button', text: 'Apply', rect: box(100, 600, 40, 20) }),
+      fakeElement({ tag: 'button', text: 'Apply', rect: box(500, 600, 40, 20) }),
+    ];
+    const { page, input } = pageOn(screen(buttons));
+
+    await expect(clickTarget(page, { text: 'apply' })).resolves.toEqual({ x: 120, y: 610 });
+
+    expect(input()).toEqual([
+      mouseEvent('mouseMoved', 120, 610),
+      mouseEvent('mousePressed', 120, 610),
+      mouseEvent('mouseReleased', 120, 610),
+    ]);
+  });
+
+  test('clickTarget by text refuses an element with that name that is a trading control', async () => {
+    const { page, input } = pageOn(screen(() => [buyButton({ 'aria-label': 'Buy' })]));
+
+    const error = await failureOf(clickTarget(page, { text: 'Buy' }));
+
+    expect(error.toPayload()).toEqual({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to click the element named "Buy": it is part of a broker trading control, holds one, or has one over it',
+      hint: TRADING_HINT,
+      details: { text: 'Buy' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('clickTarget by text reports a text no visible element has as INVALID_INPUT and points to ui_find_element', async () => {
+    const { page, sent } = pageOn(screen());
+
+    const error = await failureOf(clickTarget(page, { text: 'Nothing' }));
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.message).toBe('No visible element is named "Nothing"');
+    expect(error.hint).toMatch(/ui_find_element/);
+    expect(error.details).toEqual({ text: 'Nothing' });
+    expect(methodsOf(sent)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('clickTarget by text refuses a named element that a menu covers', async () => {
+    const make = screen(() => [
+      fakeElement({ tag: 'button', text: 'Apply', rect: box(350, 280, 100, 40) }),
+      openMenu(),
+    ]);
+    const { page, input } = pageOn(make);
+
+    const error = await failureOf(clickTarget(page, { text: 'Apply' }));
+
+    expect(error.toPayload()).toEqual({
+      code: 'NOT_AVAILABLE',
+      message: 'The element named "Apply" is covered by `div#menu-item`',
+      hint: 'Close the dialog or menu that covers it first.',
+      details: { text: 'Apply', obscuredBy: 'div#menu-item' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('clickTarget refuses an empty text before it looks at the page', async () => {
+    const { page, sent } = pageOn(screen());
+
+    const error = await failureOf(clickTarget(page, { text: '   ' }));
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(sent).toEqual([]);
+  });
+});
+
+describe('hoverElement, hoverPoint and hoverTarget', () => {
+  test('hoverElement moves the pointer only, and looks again once it is there', async () => {
+    const { page, sent, input } = pageWith(chart());
+
+    await expect(hoverElement(page, SAVE)).resolves.toEqual({
+      point: { x: 120, y: 60 },
+      warning: null,
+    });
+
+    expect(methodsOf(sent)).toEqual([
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+    ]);
+    expect(input()).toEqual([mouseEvent('mouseMoved', 120, 60)]);
+  });
+
+  test('hoverElement refuses a trading control the way a click does, without moving the pointer', async () => {
+    const { page, sent, input } = pageWith([buyButton()]);
+
+    const error = await failureOf(hoverElement(page, BUY));
+
+    expect(error.toPayload()).toEqual({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message: `Refusing to hover over \`${BUY}\`: it is part of a broker trading control or has one over it`,
+      hint: TRADING_HINT,
+      details: { selector: BUY },
+    });
+    expect(input()).toEqual([]);
+    expect(methodsOf(sent)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('hoverPoint refuses a point over a trading control and a point in an open menu', async () => {
+    const overButton = pageOver(screen(() => [buyButton()])());
+    const inMenu = pageOver(screen(() => [openMenu()])());
+
+    const unsafe = await failureOf(hoverPoint(overButton.page, { x: 320, y: 260 }));
+    const covered = await failureOf(hoverPoint(inMenu.page, { x: 400, y: 300 }));
+
+    expect(unsafe.message).toBe(
+      'Refusing to hover at (320, 260): a broker trading control lies there',
+    );
+    expect(unsafe.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(covered.code).toBe('NOT_AVAILABLE');
+    expect(overButton.input()).toEqual([]);
+    expect(inMenu.input()).toEqual([]);
+  });
+
+  test('hoverElement goes over an element that only holds trading controls, such as the pane', async () => {
+    const { page, input } = pageWith([paneWithTradingButtons()]);
+
+    await hoverElement(page, '[data-qa-id="pane"]');
+
+    expect(input()).toEqual([mouseEvent('mouseMoved', 400, 300)]);
+  });
+
+  test('a hover reports a trading control that lies under the pointer once it arrived, and sends nothing more', async () => {
+    const win = createFakeDomWindow(chart());
+    const buy = fakeElement({ tag: 'button', matches: [BUY], rect: box(100, 50, 40, 20) });
+    const { page, sent, types } = pageOver(
+      win,
+      afterTheMove(() => {
+        dom(win).document.elementFromPoint = () => buy;
+      }),
+    );
+
+    await expect(hoverElement(page, SAVE)).resolves.toEqual({
+      point: { x: 120, y: 60 },
+      warning: 'A broker trading control lies under the pointer since it arrived.',
+    });
+
+    expect(types()).toEqual(['mouseMoved']);
+    expect(methodsOf(sent)).toEqual([
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+    ]);
+  });
+
+  test('a hover reports a menu that opened over the point as the pointer arrived', async () => {
+    const item = fakeElement({ id: 'menu-item', rect: box(500, 400, 40, 20) });
+    const win = createFakeDomWindow(chart([overlapRoot([item])]));
+    const { page, types } = pageOver(
+      win,
+      afterTheMove(() => {
+        dom(win).document.elementFromPoint = () => item;
+      }),
+    );
+
+    const result = await hoverElement(page, SAVE);
+
+    expect(result).toEqual({
+      point: { x: 120, y: 60 },
+      warning: `After the pointer arrived: The element \`${SAVE}\` is covered by \`div#menu-item\``,
+    });
+    expect(types()).toEqual(['mouseMoved']);
+  });
+
+  test('a hover follows a target that moved as the pointer arrived', async () => {
+    const target = fakeElement({ matches: [SAVE], rect: box(100, 50, 40, 20) });
+    const win = createFakeDomWindow([target]);
+    const { page, sent, input } = pageOver(
+      win,
+      afterTheMove(() => {
+        target.place(box(300, 80, 40, 20));
+      }),
+    );
+
+    await expect(hoverElement(page, SAVE)).resolves.toEqual({
+      point: { x: 320, y: 90 },
+      warning: null,
+    });
+
+    // The pointer goes on to where the second look found the target, the way a click presses there.
+    expect(input()).toEqual([mouseEvent('mouseMoved', 120, 60), mouseEvent('mouseMoved', 320, 90)]);
+    expect(methodsOf(sent)).toEqual([
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+    ]);
+  });
+
+  test('a hover sends the pointer in device-independent pixels and reports CSS pixels', async () => {
+    const { page, input } = pageWith(chart(), { zoom: 1.25 });
+
+    await expect(hoverElement(page, SAVE)).resolves.toEqual({
+      point: { x: 120, y: 60 },
+      warning: null,
+    });
+
+    expect(input()).toEqual([mouseEvent('mouseMoved', 150, 75)]);
+  });
+
+  test('hoverTarget by text goes to the first visible element with that name', async () => {
+    const make = screen(() => [
+      fakeElement({ tag: 'span', text: 'Apply', rect: box(100, 600, 40, 20) }),
+    ]);
+    const { page, input } = pageOver(make());
+
+    await expect(hoverTarget(page, { text: 'APPLY' })).resolves.toEqual({
+      point: { x: 120, y: 610 },
+      warning: null,
+    });
+    expect(input()).toEqual([mouseEvent('mouseMoved', 120, 610)]);
+  });
+});
+
+describe('scrollAt', () => {
+  function wheel(x: number, y: number, deltaX: number, deltaY: number): SentCommand {
+    return {
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseWheel', x, y, deltaX, deltaY },
+    };
+  }
+
+  test('scrollAt sends one mouseWheel at the center of the target, after the move and a second look', async () => {
+    const { page, sent, input } = pageWith(chart());
+
+    await expect(scrollAt(page, { selector: PANE }, { x: 0, y: 120 })).resolves.toEqual({
+      x: 400,
+      y: 300,
+    });
+
+    expect(methodsOf(sent)).toEqual([
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+    ]);
+    // No button goes down.
+    expect(input()).toEqual([mouseEvent('mouseMoved', 400, 300), wheel(400, 300, 0, 120)]);
+  });
+
+  test('scrollAt sends the point and the deltas in device-independent pixels', async () => {
+    const { page, input } = pageWith(chart(), { zoom: 1.25 });
+
+    await scrollAt(page, { selector: PANE }, { x: -20, y: 120 });
+
+    expect(input()).toEqual([mouseEvent('mouseMoved', 500, 375), wheel(500, 375, -25, 150)]);
+  });
+
+  test('scrollAt scrolls at a point', async () => {
+    const { page, input } = pageOver(screen()());
+
+    await scrollAt(page, { x: 200, y: 200 }, { x: 0, y: -100 });
+
+    expect(input()).toEqual([mouseEvent('mouseMoved', 200, 200), wheel(200, 200, 0, -100)]);
+  });
+
+  test('scrollAt refuses a trading control and a point over one, without any input', async () => {
+    const byButton = pageOver(screen(() => [buyButton()])());
+    const byPoint = pageOver(screen(() => [buyButton()])());
+
+    const onButton = await failureOf(scrollAt(byButton.page, { selector: BUY }, { x: 0, y: 100 }));
+    const atPoint = await failureOf(scrollAt(byPoint.page, { x: 320, y: 260 }, { x: 0, y: 100 }));
+
+    expect(onButton.message).toBe(
+      `Refusing to scroll over \`${BUY}\`: it is part of a broker trading control or has one over it`,
+    );
+    expect(onButton.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(atPoint.message).toBe(
+      'Refusing to scroll at (320, 260): a broker trading control lies there',
+    );
+    expect(atPoint.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(byButton.input()).toEqual([]);
+    expect(byPoint.input()).toEqual([]);
+  });
+
+  test('scrollAt refuses a point over a menu of the overlap root, without any input', async () => {
+    const { page, input } = pageOver(screen(() => [openMenu()])());
+
+    const error = await failureOf(scrollAt(page, { x: 400, y: 300 }, { x: 0, y: 100 }));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(error.details).toEqual({ x: 400, y: 300, obscuredBy: 'div#menu-item' });
+    expect(input()).toEqual([]);
+  });
+
+  test('scrollAt scrolls the pane, although it holds the buy and sell buttons', async () => {
+    const { page, input } = pageWith([paneWithTradingButtons()]);
+
+    await scrollAt(page, { selector: '[data-qa-id="pane"]' }, { x: 0, y: 100 });
+
+    expect(input()).toEqual([mouseEvent('mouseMoved', 400, 300), wheel(400, 300, 0, 100)]);
+  });
+
+  test('scrollAt stops with only the move sent when a menu opens over the target as the pointer arrives', async () => {
+    const item = fakeElement({ id: 'menu-item', rect: box(500, 400, 40, 20) });
+    const win = createFakeDomWindow(chart([overlapRoot([item])]));
+    const { page, types } = pageOver(
+      win,
+      afterTheMove(() => {
+        dom(win).document.elementFromPoint = () => item;
+      }),
+    );
+
+    const error = await failureOf(scrollAt(page, { selector: PANE }, { x: 0, y: 100 }));
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+    expect(types()).toEqual(['mouseMoved']);
+  });
+
+  test.each([
+    ['deltaX', { x: Number.NaN, y: 100 }],
+    ['deltaY', { x: 0, y: Number.NEGATIVE_INFINITY }],
+  ])(
+    'scrollAt refuses a %s that is not a finite number before it looks at the page',
+    async (_name, delta) => {
+      const { page, sent } = pageWith(chart());
+
+      const error = await failureOf(scrollAt(page, { selector: PANE }, delta));
+
+      expect(error.code).toBe('INVALID_INPUT');
+      expect(sent).toEqual([]);
+    },
+  );
+});
+
+describe('findElements', () => {
+  const find = (
+    selector: string | null,
+    text: string | null,
+    limit = 10,
+  ): ArgsOf<typeof findElements> => [{ selector, text }, limit, [...UNSAFE_SELECTORS]];
+
+  test('findElements by text returns the visible elements with that name, with their boxes, and marks trading controls unsafe', async () => {
+    const make = screen(() => [
+      buyButton({ 'aria-label': 'Buy', 'data-name': 'buy-order-button' }),
+      fakeElement({
+        tag: 'span',
+        attributes: { role: 'menuitem' },
+        text: 'Buy',
+        rect: box(10, 600, 50, 20),
+      }),
+      fakeElement({ text: 'Buy', display: 'none', rect: box(10, 640, 50, 20) }),
+    ]);
+
+    const result = await bothWays(findElements, [...find(null, 'buy')], make);
+
+    expect(result).toEqual({
+      elements: [
+        {
+          selector: BUY,
+          tag: 'button',
+          role: null,
+          name: 'Buy',
+          text: '',
+          rect: box(300, 250, 80, 30),
+          visible: true,
+          unsafe: true,
+        },
+        {
+          selector: null,
+          tag: 'span',
+          role: 'menuitem',
+          name: 'Buy',
+          text: 'Buy',
+          rect: box(10, 600, 50, 20),
+          visible: true,
+          unsafe: false,
+        },
+      ],
+      more: false,
+    });
+  });
+
+  test('findElements marks an element inside a trading control as unsafe, but not one that only holds one', async () => {
+    const make = screen(() => [paneWithTradingButtons()]);
+
+    const result = await bothWays(
+      findElements,
+      [...find('[data-name="buy-sell-buttons"], [data-qa-id="pane"]', null)],
+      make,
+    );
+
+    // Listed in document order: the pane, which holds the group, then the group.
+    expect(result.elements.map(({ unsafe }) => unsafe)).toEqual([false, true]);
+  });
+
+  test('findElements by selector lists the visible elements that match, in document order, at most limit of them', async () => {
+    const rows = () => [
+      fakeElement({ matches: ['.row'], text: 'One', rect: box(10, 600, 100, 20) }),
+      fakeElement({
+        matches: ['.row'],
+        text: 'Hidden',
+        rect: box(10, 620, 100, 20),
+        display: 'none',
+      }),
+      fakeElement({ matches: ['.row'], text: 'Two', rect: box(10, 640, 100, 20) }),
+      fakeElement({ matches: ['.row'], text: 'Three', rect: box(10, 660, 100, 20) }),
+    ];
+
+    const two = await bothWays(findElements, [...find('.row', null, 2)], screen(rows));
+    const all = await bothWays(findElements, [...find('.row', null)], screen(rows));
+
+    expect(two.elements.map(({ text }) => text)).toEqual(['One', 'Two']);
+    expect(two.more).toBe(true);
+    expect(all.elements.map(({ text }) => text)).toEqual(['One', 'Two', 'Three']);
+    expect(all.more).toBe(false);
+  });
+
+  test('findElements with a selector and a text keeps the elements that match both', async () => {
+    const rows = () => [
+      fakeElement({ matches: ['.row'], text: 'One', rect: box(10, 600, 100, 20) }),
+      fakeElement({ matches: ['.row'], text: 'Two', rect: box(10, 640, 100, 20) }),
+      fakeElement({ tag: 'span', text: 'Two', rect: box(200, 640, 100, 20) }),
+    ];
+
+    const result = await bothWays(findElements, [...find('.row', 'TWO')], screen(rows));
+
+    expect(result.elements).toEqual([
+      expect.objectContaining({ text: 'Two', rect: box(10, 640, 100, 20) }),
+    ]);
+  });
+
+  test('findElements gives each element a selector that picks it: its id, data-qa-id, data-name or aria-label', async () => {
+    const at = (y: number) => box(10, y, 100, 20);
+    const make = screen(() => [
+      fakeElement({
+        id: 'save',
+        matches: ['.item', '#save'],
+        attributes: { 'data-name': 'x' },
+        rect: at(400),
+      }),
+      fakeElement({
+        matches: ['.item', '[data-qa-id="legend"]'],
+        attributes: { 'data-qa-id': 'legend' },
+        rect: at(430),
+      }),
+      fakeElement({
+        matches: ['.item', '[data-name="alerts"]'],
+        attributes: { 'data-name': 'alerts' },
+        rect: at(460),
+      }),
+      fakeElement({
+        matches: ['.item', '[aria-label="Close"]'],
+        attributes: { 'aria-label': 'Close' },
+        rect: at(490),
+      }),
+      // Its data-name picks the element above it first, so its aria-label is what picks it.
+      fakeElement({
+        matches: ['.item', '[data-name="alerts"]', '[aria-label="Alerts list"]'],
+        attributes: { 'data-name': 'alerts', 'aria-label': 'Alerts list' },
+        rect: at(520),
+      }),
+      // Nothing of it picks it first, and it has nothing else.
+      fakeElement({
+        matches: ['.item', '[data-name="alerts"]'],
+        attributes: { 'data-name': 'alerts' },
+        rect: at(550),
+      }),
+      fakeElement({ matches: ['.item'], text: 'plain', rect: at(580) }),
+    ]);
+
+    const result = await bothWays(findElements, [...find('.item', null)], make);
+
+    expect(result.elements.map(({ selector }) => selector)).toEqual([
+      '#save',
+      '[data-qa-id="legend"]',
+      '[data-name="alerts"]',
+      '[aria-label="Close"]',
+      '[aria-label="Alerts list"]',
+      null,
+      null,
+    ]);
+  });
+
+  test('findElements writes an id that is no CSS identifier, and quotes in a value, so the selector still parses', async () => {
+    const make = screen(() => [
+      fakeElement({
+        id: '3f9c-tab',
+        matches: ['.item', '[id="3f9c-tab"]'],
+        rect: box(10, 400, 100, 20),
+      }),
+      fakeElement({
+        matches: ['.item', String.raw`[data-name="say \"hi\""]`],
+        attributes: { 'data-name': 'say "hi"' },
+        rect: box(10, 430, 100, 20),
+      }),
+      fakeElement({
+        matches: ['.item', String.raw`[data-qa-id="a\\b"]`],
+        attributes: { 'data-qa-id': String.raw`a\b` },
+        rect: box(10, 460, 100, 20),
+      }),
+    ]);
+
+    const result = await bothWays(findElements, [...find('.item', null)], make);
+
+    expect(result.elements.map(({ selector }) => selector)).toEqual([
+      '[id="3f9c-tab"]',
+      String.raw`[data-name="say \"hi\""]`,
+      String.raw`[data-qa-id="a\\b"]`,
+    ]);
+  });
+
+  test('findElements never reads what a field holds: inputs, text areas and selects come without text', async () => {
+    // A field whose value is read fails the test: its getter throws.
+    const field = (options: FakeElementOptions) => {
+      const element = fakeElement({ matches: ['.field'], ...options });
+      Object.defineProperty(element, 'value', {
+        get() {
+          throw new Error('The value of a field was read');
+        },
+      });
+      return element;
+    };
+    const make = screen(() => [
+      field({
+        tag: 'input',
+        attributes: { type: 'password', 'aria-label': 'Password' },
+        rect: box(10, 400, 100, 20),
+      }),
+      field({ tag: 'textarea', text: 'a secret note', rect: box(10, 430, 100, 40) }),
+      field({ tag: 'select', text: 'First choice', rect: box(10, 480, 100, 20) }),
+      field({ tag: 'input', attributes: { type: 'text' }, rect: box(10, 510, 100, 20) }),
+    ]);
+
+    const result = await bothWays(findElements, [...find('.field', null)], make);
+
+    expect(result.elements.map(({ tag, name, text }) => ({ tag, name, text }))).toEqual([
+      { tag: 'input', name: 'Password', text: '' },
+      { tag: 'textarea', name: '', text: '' },
+      { tag: 'select', name: '', text: '' },
+      { tag: 'input', name: '', text: '' },
+    ]);
+    expect(JSON.stringify(result)).not.toMatch(/secret|First choice/);
+  });
+
+  test('findElements cuts the text and the name of an element at 200 characters', async () => {
+    const make = screen(() => [
+      fakeElement({ matches: ['.long'], text: 'x'.repeat(300), rect: box(10, 400, 100, 20) }),
+    ]);
+
+    const [element] = (await bothWays(findElements, [...find('.long', null)], make)).elements;
+
+    expect(element?.text).toBe('x'.repeat(200));
+    expect(element?.name).toBe('x'.repeat(200));
+  });
+
+  test('findElements refuses a selector that is not valid CSS with INVALID_INPUT', async () => {
+    const error = await failureBothWays(
+      findElements,
+      [...find('[data-name="open', null)],
+      screen(),
+    );
+
+    expect(error.code).toBe('INVALID_INPUT');
+    expect(error.details).toEqual({ selector: '[data-name="open' });
+  });
+
+  test('findElements returns NOT_AVAILABLE on a page that cannot list its elements', async () => {
+    const error = await failureBothWays(
+      findElements,
+      [...find(null, 'Apply')],
+      screen(() => [], { without: ['querySelectorAll'] }),
+    );
+
+    expect(error.code).toBe('NOT_AVAILABLE');
+  });
+
+  test('findElements does not cut a character made of two halves in two', async () => {
+    // The 200th unit is the first half of an emoji, so the cut comes one unit earlier.
+    const text = `${'x'.repeat(199)}😀${'y'.repeat(20)}`;
+    const make = screen(() => [
+      fakeElement({ matches: ['.long'], text, rect: box(10, 400, 100, 20) }),
+    ]);
+
+    const [element] = (await bothWays(findElements, [...find('.long', null)], make)).elements;
+
+    expect(element?.text).toBe('x'.repeat(199));
+  });
+
+  test('findElements writes a control character of a value as a CSS escape', async () => {
+    const make = screen(() => [
+      fakeElement({
+        matches: ['.item', String.raw`[data-name="two\a lines"]`],
+        attributes: { 'data-name': 'two\nlines' },
+        rect: box(10, 400, 100, 20),
+      }),
+    ]);
+
+    const result = await bothWays(findElements, [...find('.item', null)], make);
+
+    expect(result.elements.map(({ selector }) => selector)).toEqual([
+      String.raw`[data-name="two\a lines"]`,
+    ]);
+  });
+
+  test('findElements leaves out elements without a size, and judges by the box alone without getComputedStyle', async () => {
+    const make = screen(
+      () => [
+        fakeElement({ matches: ['.item'], text: 'flat', rect: box(10, 400, 0, 20) }),
+        fakeElement({
+          matches: ['.item'],
+          text: 'styled away',
+          display: 'none',
+          rect: box(10, 430, 100, 20),
+        }),
+      ],
+      { without: ['getComputedStyle'] },
+    );
+
+    const result = await bothWays(findElements, [...find('.item', null)], make);
+
+    expect(result.elements.map(({ text }) => text)).toEqual(['styled away']);
+  });
+
+  test('findElements refuses to look without the selectors to treat as unsafe', () => {
+    expect(() => findElements(screen()(), { selector: '.item', text: null }, 10, [])).toThrow(
+      /unsafe/,
+    );
+  });
+
+  test('findElements and a click by text agree on which element has a name', async () => {
+    const make = screen(() => [
+      fakeElement({
+        tag: 'button',
+        text: 'Apply',
+        rect: box(300, 600, 40, 20),
+        visibility: 'hidden',
+      }),
+      fakeElement({ attributes: { 'aria-label': 'apply' }, rect: box(100, 600, 40, 20) }),
+      fakeElement({ tag: 'button', text: 'Apply', rect: box(500, 600, 40, 20) }),
+    ]);
+
+    const [first] = (await bothWays(findElements, [...find(null, 'Apply')], make)).elements;
+    const clicked = await clickTarget(pageOver(make()).page, { text: 'Apply' });
+
+    expect(first?.rect).toEqual(box(100, 600, 40, 20));
+    expect(clicked).toEqual({ x: 120, y: 610 });
+  });
+});
+
+describe('the pointer calls of one page', () => {
+  test('run a click at a point, a hover and a scroll one after the other, in the order they were made', async () => {
+    const { page, sent } = pageWith(chart());
+
+    await Promise.all([
+      clickPoint(page, { x: 120, y: 60 }),
+      hoverElement(page, SAVE),
+      scrollAt(page, { selector: PANE }, { x: 0, y: 100 }),
+    ]);
+
+    expect(methodsOf(sent)).toEqual([
+      // The click: two looks with the zoom, the move, the press and the release.
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Input.dispatchMouseEvent',
+      // The hover: a look with the zoom, the move and the second look.
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+      // The scroll: two looks with the zoom, the move and the wheel.
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Input.dispatchMouseEvent',
+    ]);
+  });
+
+  test('let the next call run when a hover is refused', async () => {
+    const { page, input } = pageWith([buyButton(), ...chart()]);
+
+    const refused = failureOf(hoverElement(page, BUY));
+    const click = clickElement(page, SAVE);
+
+    expect((await refused).code).toBe('UNSAFE_ACTION_BLOCKED');
+    await expect(click).resolves.toBeUndefined();
+    expect(input()).toHaveLength(3);
   });
 });

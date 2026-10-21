@@ -1,24 +1,27 @@
+import type { JsonObject } from '../../utils/json.js';
 import type { CdpSession } from '../cdp/types.js';
-import { TvMcpError } from '../errors.js';
+import { isTvMcpError, TvMcpError } from '../errors.js';
 import type { PageBridge, PageErrorSentinel } from './page-bridge.js';
 import { SELECTORS, UNSAFE_SELECTORS } from './selectors.js';
-import type { TvWindow } from './tv-window.js';
+import type { BoxElementLike, TvWindow } from './tv-window.js';
 import { readViewport } from './viewport.js';
 
-// Real input for the places the chart API does not reach: a click, text and key presses sent to
-// the page over CDP, so the page sees them as it sees a user.
+// Real input for the places the chart API does not reach: a click, a hover, a turn of the mouse
+// wheel, text and key presses sent to the page over CDP, so the page sees them as it sees a user.
 //
-// A click is refused when its target, or whatever would take the click, belongs to a broker
-// trading control (UNSAFE_SELECTORS). Key presses land on the element that has the focus, and
-// Enter on a focused button clicks it, so they are refused while that element is a trading
-// control or sits inside one. Text is typed only into a focused text field that is no trading
-// control, because the caret can be somewhere else than the focus (see typeText). A page that
-// cannot say what has the focus is refused too.
+// The pointer goes to an element, the first one that matches a selector or the first visible one
+// with a name, or to a point of the page. It is refused when the target, or whatever would take the
+// event, belongs to a broker trading control (UNSAFE_SELECTORS), and when a dialog, a menu, a popup
+// or a frame lies where it would land, because what that is cannot be told. Key presses land on the
+// element that has the focus, and Enter on a focused button clicks it, so they are refused while
+// that element is a trading control or sits inside one. Text is typed only into a focused text
+// field that is no trading control, because the caret can be somewhere else than the focus (see
+// typeText). A page that cannot say what has the focus, or what lies at a point, is refused too.
 //
 // The calls of one page run one at a time, because each rests on a lookup that another call
 // would otherwise change.
 //
-// A page judges a click in its CSS pixels, and a mouse event goes out in the device-independent
+// A page judges a point in its CSS pixels, and a mouse event goes out in the device-independent
 // pixels of the window, which are the CSS pixels times the page zoom of the app. So the zoom is
 // read with every look at a target, and a page that does not report it is refused.
 //
@@ -36,6 +39,16 @@ export interface InputPage {
 
 export type KeyModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
 
+// A point of a page in CSS pixels, from the top left of its viewport, the way getBoundingClientRect
+// reports the box of an element. A type alias, not an interface: a target of the pointer goes to the
+// page as JSON, which a type must satisfy JsonValue for.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+export type Point = { x: number; y: number };
+
+// Where the pointer goes: the first element that matches a CSS selector, the first visible element
+// with a name (describeElement says what the name of an element is), or a point.
+export type PointerTarget = { selector: string } | { text: string } | Point;
+
 // Every call is a lookup of the page followed by events that rest on it, and two calls that
 // overlap can send an event on a lookup the other call has made stale: Tab moves the focus to a
 // trade button between the lookup that cleared an Enter and the Enter, and nothing ever looked at
@@ -43,9 +56,9 @@ export type KeyModifier = 'Alt' | 'Control' | 'Meta' | 'Shift';
 // answer to its last event, and gives it up when it ends, however it ends. The queue belongs to
 // the session, so it goes away with the page.
 //
-// A turn is not re-entrant: an action that called clickElement, pressKey or typeText of the same
-// page would queue behind itself and never end. So no helper calls another one while it holds a
-// turn, and a caller that needs several runs them one after the other.
+// A turn is not re-entrant: an action that called a helper of this module for the same page would
+// queue behind itself and never end. So no helper calls another one while it holds a turn, and a
+// caller that needs several runs them one after the other.
 const queues = new WeakMap<CdpSession, Promise<void>>();
 
 function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
@@ -61,14 +74,21 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
   return turn;
 }
 
-// What a click needs to know about the first element that matches `selector`:
-// - found: whether there is one.
+// What an action of the pointer needs to know about its target: the first element that matches a
+// selector (a string is one), the first visible element with a name, or a point. Of an element:
+// - found: whether there is one. One looked for by its name is found only when it is visible. Its
+//   name is its aria-label, or else its text, trimmed, compared whole and ignoring case; a field
+//   (an input, a textarea or a select) is named by its aria-label alone, since its text is not what
+//   it shows and what it holds is the user's. Several elements with the name go by document order,
+//   so a wrapper whose whole text is the name comes before the element inside it.
 // - visible: whether it is connected, has a box with a size, and is not display: none or
 //   visibility: hidden. A page without getComputedStyle is judged by its box alone.
-// - unsafe: whether a click on it could reach a trading control. That is so when it matches one of
-//   `unsafeSelectors`, holds an element that does, sits inside one that does, or, when it is
-//   visible, has such an element at the point a click on it would land on, for instance an order
-//   ticket floating over it.
+// - unsafe: whether the pointer at it could reach a trading control. That is so when it matches one
+//   of `unsafeSelectors`, sits inside one that does, holds an element that does, or, when it is
+//   visible, has such an element at the point the pointer would land on, for instance an order
+//   ticket floating over it. What it holds counts unless the target says holdsCount: false, which
+//   a hover and a scroll do: the pointer over a container lands on the container, and the pane of
+//   the chart, where they are aimed at most, always holds the buy and sell buttons shown on it.
 // - coverage: what lies at that point, which is judged for an element that is visible and not
 //   unsafe:
 //   - clear: the element, something inside it, or a layer stacked over it that is nothing special.
@@ -76,7 +96,7 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 //     reaches the page through the one on top, so a layer alone is no reason to refuse.
 //   - obscured: something else lies over the point, and it is a layer of `overlaySelectors` (a
 //     dialog, a menu or a popup, but not the portal itself) or a frame (iframe, frame, object or
-//     embed). The click would go to that, and what it is cannot be told: an order ticket has no
+//     embed). The event would go to that, and what it is cannot be told: an order ticket has no
 //     selector, and a frame cannot be looked into. obscuredBy says what it is.
 //   - center-outside-viewport: no element is hit there, because the point is not on the page.
 //   - hit-test-unavailable: the page cannot say what is there.
@@ -84,15 +104,21 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 // - obscuredBy: the covering element in a few words, its tag followed by its id, data-qa-id and
 //   data-name when it has them. Empty unless the coverage is obscured.
 // - rect: its box in viewport pixels, as the page reports it.
+// A point is the target itself: it is found and visible, has no rect, and is judged the way the
+// point of an element is, except that a layer or a frame anywhere at it covers it, since it lies on
+// no element the caller named.
 // It answers NOT_AVAILABLE on a page without a DOM, and INVALID_INPUT for a selector that is not
 // valid CSS.
 //
 // The caller passes the selectors to refuse and the layers that cover a page, because a page
 // function cannot import them. An empty list of either is refused: with none, every element would
 // pass.
+//
+// It runs in the window chrome too, whose renderer has Node integration. It only reads the DOM, and
+// must never reach for anything of Node there: no require, no process, nothing but the document.
 export function describeElement(
   win: TvWindow,
-  selector: string,
+  target: string | (PointerTarget & { holdsCount?: boolean }),
   unsafeSelectors: string[],
   overlaySelectors: string[],
 ):
@@ -106,8 +132,191 @@ export function describeElement(
       rect?: { x: number; y: number; width: number; height: number };
     }
   | PageErrorSentinel {
+  type Coverage =
+    'not-checked' | 'clear' | 'obscured' | 'center-outside-viewport' | 'hit-test-unavailable';
   const doc = win.document;
+  const noDom: PageErrorSentinel = {
+    __tvmcpError: {
+      code: 'NOT_AVAILABLE',
+      message: 'The page has no DOM to look elements up in',
+      hint: 'Make sure the target is a loaded TradingView page, not a blank or helper page.',
+    },
+  };
   if (typeof doc.querySelector !== 'function') {
+    return noDom;
+  }
+  if (unsafeSelectors.length === 0) {
+    throw new Error('describeElement needs the selectors to treat as unsafe');
+  }
+  if (overlaySelectors.length === 0) {
+    throw new Error('describeElement needs the selectors of the layers that cover a page');
+  }
+  const wanted = typeof target === 'string' ? { selector: target } : target;
+  const holdsCount = typeof target === 'string' || target.holdsCount !== false;
+  const unsafeList = unsafeSelectors.join(', ');
+
+  // What lies at the point (x, y) of `element`, or of no element for a point that is the target.
+  const judge = (
+    x: number,
+    y: number,
+    element: Element | null,
+  ): { unsafe: boolean; coverage: Coverage; obscuredBy: string } => {
+    if (typeof doc.elementFromPoint !== 'function') {
+      return { unsafe: false, coverage: 'hit-test-unavailable', obscuredBy: '' };
+    }
+    const hit = doc.elementFromPoint(x, y);
+    if (hit === null) {
+      return { unsafe: false, coverage: 'center-outside-viewport', obscuredBy: '' };
+    }
+    if (hit.closest(unsafeList) !== null) {
+      // Only what the pointer would hit is judged, not what that holds: a large container that
+      // happens to hold a trading control somewhere is no reason.
+      return { unsafe: true, coverage: 'not-checked', obscuredBy: '' };
+    }
+    // The portal that holds the dialogs is not a layer of itself, so hitting it is not being
+    // covered, and neither is hitting the element or something inside it.
+    const layer = hit.closest(overlaySelectors.join(', '));
+    const inLayer = layer !== null && layer !== hit;
+    const inFrame = ['iframe', 'frame', 'object', 'embed'].includes(hit.localName);
+    if (!element?.contains(hit) && (inLayer || inFrame)) {
+      let obscuredBy = hit.localName;
+      if (hit.id !== '') {
+        obscuredBy += `#${hit.id}`;
+      }
+      const qaId = hit.getAttribute('data-qa-id');
+      if (qaId !== null) {
+        obscuredBy += `[data-qa-id="${qaId}"]`;
+      }
+      const name = hit.getAttribute('data-name');
+      if (name !== null) {
+        obscuredBy += `[data-name="${name}"]`;
+      }
+      return { unsafe: false, coverage: 'obscured', obscuredBy: obscuredBy.slice(0, 120) };
+    }
+    return { unsafe: false, coverage: 'clear', obscuredBy: '' };
+  };
+
+  if ('x' in wanted) {
+    return { found: true, visible: true, ...judge(wanted.x, wanted.y, null) };
+  }
+
+  const shown = (element: Element, box = element.getBoundingClientRect()): boolean => {
+    if (!(element.isConnected && box.width > 0 && box.height > 0)) {
+      return false;
+    }
+    if (typeof win.getComputedStyle !== 'function') {
+      return true;
+    }
+    const style = win.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  };
+
+  let element: Element | null = null;
+  if ('text' in wanted) {
+    if (typeof doc.querySelectorAll !== 'function') {
+      return noDom;
+    }
+    const nameOf = (candidate: Element): string => {
+      const label = (candidate.getAttribute('aria-label') ?? '').trim();
+      if (label !== '') {
+        return label;
+      }
+      return ['input', 'textarea', 'select'].includes(candidate.localName)
+        ? ''
+        : candidate.textContent.trim();
+    };
+    const name = wanted.text.trim().toLowerCase();
+    for (const listed of Array.from(doc.querySelectorAll('*'))) {
+      // A real page lists elements, of which the type of the window records only the box.
+      const candidate = listed as Element;
+      if (nameOf(candidate).toLowerCase() === name && shown(candidate)) {
+        element = candidate;
+        break;
+      }
+    }
+  } else {
+    try {
+      element = doc.querySelector(wanted.selector);
+    } catch {
+      // querySelector throws only for a selector it cannot parse.
+      return {
+        __tvmcpError: {
+          code: 'INVALID_INPUT',
+          message: `The selector is not valid CSS: ${wanted.selector}`,
+          hint: 'Use a CSS selector such as #id or [data-name="..."].',
+          details: { selector: wanted.selector },
+        },
+      };
+    }
+  }
+  if (element === null) {
+    return { found: false, visible: false, unsafe: false, coverage: 'not-checked', obscuredBy: '' };
+  }
+
+  const box = element.getBoundingClientRect();
+  const rect = { x: box.x, y: box.y, width: box.width, height: box.height };
+  const visible = shown(element, box);
+  // closest starts at the element itself, so it also covers an element that matches.
+  let unsafe =
+    element.closest(unsafeList) !== null ||
+    (holdsCount && element.querySelector(unsafeList) !== null);
+  let coverage: Coverage = 'not-checked';
+  let obscuredBy = '';
+  if (!unsafe && visible) {
+    // The same point the pointer is sent to.
+    ({ unsafe, coverage, obscuredBy } = judge(
+      Math.round(rect.x + rect.width / 2),
+      Math.round(rect.y + rect.height / 2),
+      element,
+    ));
+  }
+  return { found: true, visible, unsafe, coverage, obscuredBy, rect };
+}
+
+// An element as findElements lists it. A type alias, not an interface: it comes back from the page
+// as JSON, which a type must satisfy JsonValue for.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+export type FoundElement = {
+  selector: string | null;
+  tag: string;
+  role: string | null;
+  name: string;
+  text: string;
+  rect: { x: number; y: number; width: number; height: number };
+  visible: boolean;
+  unsafe: boolean;
+};
+
+// The visible elements of the page that match `query`, for a caller to aim the pointer with: those
+// that match its selector, every element for null, and of those the ones named its text, any for
+// null, named as describeElement names them. In document order, at most `limit`, and `more` says
+// whether more match. Each comes with:
+// - selector: one that picks it, which is to say whose first match it is, so that the pointer sent
+//   by it goes to it: by its id, data-qa-id, data-name or aria-label, in that order, the order of
+//   SELECTORS. null when none of these picks it.
+// - tag: its tag in lower case. role: its role attribute, null without one.
+// - name: its name, and text: its text, both trimmed and cut at 200 characters. A field (an input,
+//   a textarea or a select) comes without text, and its value is never read: what it holds is the
+//   user's.
+// - rect: its box in CSS pixels of the viewport, as the page reports it, which is what a point of
+//   the pointer is in.
+// - visible: true, as only visible elements are listed (visible as describeElement means it).
+// - unsafe: whether it is a trading control or sits inside one, which the pointer is refused at.
+//   Holding one does not count here, and what lies over the element is not looked at.
+// It answers NOT_AVAILABLE on a page without a DOM, and INVALID_INPUT for a selector that is not
+// valid CSS. A page function cannot share code with another, so the name and the visibility are
+// worked out here the way describeElement works them out, and a test keeps the two in step.
+//
+// It runs in the window chrome too, whose renderer has Node integration. It only reads the DOM, and
+// must never reach for anything of Node there: no require, no process, nothing but the document.
+export function findElements(
+  win: TvWindow,
+  query: { selector: string | null; text: string | null },
+  limit: number,
+  unsafeSelectors: string[],
+): { elements: FoundElement[]; more: boolean } | PageErrorSentinel {
+  const doc = win.document;
+  if (typeof doc.querySelectorAll !== 'function' || typeof doc.querySelector !== 'function') {
     return {
       __tvmcpError: {
         code: 'NOT_AVAILABLE',
@@ -117,16 +326,14 @@ export function describeElement(
     };
   }
   if (unsafeSelectors.length === 0) {
-    throw new Error('describeElement needs the selectors to treat as unsafe');
+    throw new Error('findElements needs the selectors to treat as unsafe');
   }
-  if (overlaySelectors.length === 0) {
-    throw new Error('describeElement needs the selectors of the layers that cover a page');
-  }
-  let element: Element | null;
+  const selector = query.selector ?? '*';
+  let candidates: ArrayLike<BoxElementLike>;
   try {
-    element = doc.querySelector(selector);
+    candidates = doc.querySelectorAll(selector);
   } catch {
-    // querySelector throws only for a selector it cannot parse.
+    // querySelectorAll throws only for a selector it cannot parse.
     return {
       __tvmcpError: {
         code: 'INVALID_INPUT',
@@ -136,67 +343,102 @@ export function describeElement(
       },
     };
   }
-  if (element === null) {
-    return { found: false, visible: false, unsafe: false, coverage: 'not-checked', obscuredBy: '' };
-  }
 
-  const box = element.getBoundingClientRect();
-  const rect = { x: box.x, y: box.y, width: box.width, height: box.height };
-  let visible = element.isConnected && rect.width > 0 && rect.height > 0;
-  if (visible && typeof win.getComputedStyle === 'function') {
+  const fields = ['input', 'textarea', 'select'];
+  const nameOf = (element: Element): string => {
+    const label = (element.getAttribute('aria-label') ?? '').trim();
+    if (label !== '') {
+      return label;
+    }
+    return fields.includes(element.localName) ? '' : element.textContent.trim();
+  };
+  const shown = (element: Element, box = element.getBoundingClientRect()): boolean => {
+    if (!(element.isConnected && box.width > 0 && box.height > 0)) {
+      return false;
+    }
+    if (typeof win.getComputedStyle !== 'function') {
+      return true;
+    }
     const style = win.getComputedStyle(element);
-    visible = style.display !== 'none' && style.visibility !== 'hidden';
-  }
-
-  const unsafeList = unsafeSelectors.join(', ');
-  // closest starts at the element itself, so it also covers an element that matches.
-  let unsafe = element.closest(unsafeList) !== null || element.querySelector(unsafeList) !== null;
-  let coverage:
-    'not-checked' | 'clear' | 'obscured' | 'center-outside-viewport' | 'hit-test-unavailable' =
-    'not-checked';
-  let obscuredBy = '';
-  if (!unsafe && visible) {
-    if (typeof doc.elementFromPoint !== 'function') {
-      coverage = 'hit-test-unavailable';
-    } else {
-      // The same point clickElement uses.
-      const hit = doc.elementFromPoint(
-        Math.round(rect.x + rect.width / 2),
-        Math.round(rect.y + rect.height / 2),
-      );
-      if (hit === null) {
-        coverage = 'center-outside-viewport';
-      } else if (hit.closest(unsafeList) !== null) {
-        // Only what the click would hit is judged, not what that holds: a large container that
-        // happens to hold a trading control somewhere is no reason.
-        unsafe = true;
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  };
+  // At most 200 characters, without cutting a character made of two halves in two.
+  const cut = (value: string): string => {
+    if (value.length <= 200) {
+      return value;
+    }
+    const last = value.charCodeAt(199);
+    return value.slice(0, last >= 0xd800 && last <= 0xdbff ? 199 : 200);
+  };
+  // A value in double quotes for an attribute selector, with what would end it or break it escaped.
+  const quoted = (value: string): string => {
+    let escaped = '';
+    for (const character of value) {
+      const code = character.charCodeAt(0);
+      if (character === '"' || character === '\\') {
+        escaped += `\\${character}`;
+      } else if (code < 0x20 || code === 0x7f) {
+        escaped += `\\${code.toString(16)} `;
       } else {
-        coverage = 'clear';
-        // The portal that holds the dialogs is not a layer of itself, so hitting it is not being
-        // covered, and neither is hitting the element or something inside it.
-        const layer = hit.closest(overlaySelectors.join(', '));
-        const inLayer = layer !== null && layer !== hit;
-        const inFrame = ['iframe', 'frame', 'object', 'embed'].includes(hit.localName);
-        if (!element.contains(hit) && (inLayer || inFrame)) {
-          coverage = 'obscured';
-          obscuredBy = hit.localName;
-          if (hit.id !== '') {
-            obscuredBy += `#${hit.id}`;
-          }
-          const qaId = hit.getAttribute('data-qa-id');
-          if (qaId !== null) {
-            obscuredBy += `[data-qa-id="${qaId}"]`;
-          }
-          const name = hit.getAttribute('data-name');
-          if (name !== null) {
-            obscuredBy += `[data-name="${name}"]`;
-          }
-          obscuredBy = obscuredBy.slice(0, 120);
-        }
+        escaped += character;
       }
     }
+    return `"${escaped}"`;
+  };
+  const selectorOf = (element: Element): string | null => {
+    const tries: string[] = [];
+    if (element.id !== '') {
+      // An id that is no CSS identifier, such as one that starts with a digit, goes in quotes.
+      tries.push(
+        /^[A-Za-z_][\w-]*$/.test(element.id) ? `#${element.id}` : `[id=${quoted(element.id)}]`,
+      );
+    }
+    for (const attribute of ['data-qa-id', 'data-name', 'aria-label']) {
+      const value = element.getAttribute(attribute);
+      if (value !== null && value !== '') {
+        tries.push(`[${attribute}=${quoted(value)}]`);
+      }
+    }
+    for (const candidate of tries) {
+      try {
+        if (doc.querySelector?.(candidate) === element) {
+          return candidate;
+        }
+      } catch {
+        // A value that no selector of this form can carry: the next one may do.
+      }
+    }
+    return null;
+  };
+
+  const wanted = query.text === null ? null : query.text.trim().toLowerCase();
+  const unsafeList = unsafeSelectors.join(', ');
+  const elements: FoundElement[] = [];
+  let more = false;
+  for (const listed of Array.from(candidates)) {
+    // A real page lists elements, of which the type of the window records only the box.
+    const element = listed as Element;
+    const name = nameOf(element);
+    const box = element.getBoundingClientRect();
+    if ((wanted !== null && name.toLowerCase() !== wanted) || !shown(element, box)) {
+      continue;
+    }
+    if (elements.length >= limit) {
+      more = true;
+      break;
+    }
+    elements.push({
+      selector: selectorOf(element),
+      tag: element.localName,
+      role: element.getAttribute('role'),
+      name: cut(name),
+      text: fields.includes(element.localName) ? '' : cut(element.textContent.trim()),
+      rect: { x: box.x, y: box.y, width: box.width, height: box.height },
+      visible: true,
+      unsafe: element.closest(unsafeList) !== null,
+    });
   }
-  return { found: true, visible, unsafe, coverage, obscuredBy, rect };
+  return { elements, more };
 }
 
 // What a key press or a text needs to know about the element that has the focus. A key lands on
@@ -278,104 +520,243 @@ export function describeFocusedElement(
   return { unsafe: active.closest(unsafeList) !== null, editable, opaque, focused };
 }
 
-// What describeElement says about an element, without the way it can fail.
-type ElementDescription = Exclude<ReturnType<typeof describeElement>, PageErrorSentinel>;
+// What describeElement says about a target, without the way it can fail.
+type TargetDescription = Exclude<ReturnType<typeof describeElement>, PageErrorSentinel>;
 
-function lookUp(page: InputPage, selector: string): Promise<ElementDescription> {
+// What the pointer does at its target: a click presses the left button there, a hover only moves
+// the pointer there, and a scroll turns the wheel there.
+type PointerAction = 'click' | 'hover' | 'scroll';
+
+const TRADING_HINT =
+  'Trading controls are off limits to this server. Place orders in the TradingView window yourself.';
+const LOADED_PAGE_HINT =
+  'Make sure the target is a loaded TradingView page, not a blank or helper page.';
+const POINT_HINT =
+  'Give x and y in CSS pixels from the top left of the visible part of the page, as ' +
+  'ui_find_element reports the rect of an element.';
+
+// How a refusal names the action, at an element and at a point.
+const VERB: Record<PointerAction, string> = {
+  click: 'click',
+  hover: 'hover over',
+  scroll: 'scroll over',
+};
+const VERB_AT: Record<PointerAction, string> = {
+  click: 'click at',
+  hover: 'hover at',
+  scroll: 'scroll at',
+};
+
+// What the page says about the target of `action`. What an element holds counts for a click only.
+function lookAt(
+  page: InputPage,
+  target: PointerTarget,
+  action: PointerAction,
+): Promise<TargetDescription> {
   return page.bridge.evaluate(describeElement, [
-    selector,
+    { ...target, holdsCount: action === 'click' },
     [...UNSAFE_SELECTORS],
     [SELECTORS.regions.overlapManagerRoot],
   ]);
 }
 
-// The box of an element a click may go to, or the reason it may not. The unsafe verdict comes
-// first, so a trading control is reported as one even when it is also hidden or covered.
-function clickableRect(
-  selector: string,
-  element: ElementDescription,
-): NonNullable<ElementDescription['rect']> {
-  if (element.unsafe) {
-    throw new TvMcpError(
-      'UNSAFE_ACTION_BLOCKED',
-      `Refusing to click \`${selector}\`: it is part of a broker trading control, holds one, or has one over it`,
-      {
-        hint: 'Trading controls are off limits to this server. Place orders in the TradingView window yourself.',
-        details: { selector },
-      },
-    );
-  }
-  const { rect } = element;
-  if (!element.found || !element.visible || rect === undefined) {
-    throw new TvMcpError(
-      'NOT_AVAILABLE',
-      element.found
-        ? `The element \`${selector}\` is not visible`
-        : `No element matches \`${selector}\``,
-      {
-        hint: 'Open the panel or dialog that holds the element first, or check the selector.',
-        details: { selector, found: element.found, visible: element.visible },
-      },
-    );
-  }
-  if (element.coverage === 'obscured') {
-    throw new TvMcpError(
-      'NOT_AVAILABLE',
-      `The element \`${selector}\` is covered by \`${element.obscuredBy}\``,
-      {
-        hint: 'Close the dialog or menu that covers it first.',
-        details: { selector, obscuredBy: element.obscuredBy },
-      },
-    );
-  }
-  if (element.coverage !== 'clear') {
-    // The point of the click is off the page or the page cannot say what is there. Anything else
-    // that is not clear is refused the same way, so that an answer nobody expected cannot pass.
-    const offPage = element.coverage === 'center-outside-viewport';
-    throw new TvMcpError(
-      'NOT_AVAILABLE',
-      offPage
-        ? `The center of \`${selector}\` is outside the visible part of the page`
-        : `The page cannot say what lies over \`${selector}\``,
-      {
-        hint: offPage
-          ? 'Bring the element into view first.'
-          : 'Make sure the target is a loaded TradingView page, not a blank or helper page.',
-        details: { selector, reason: offPage ? 'center-outside-viewport' : 'hit-test-unavailable' },
-      },
-    );
-  }
-  return rect;
-}
-
 // Whole pixels, which is also the point describeElement judged.
-function centerOf(rect: { x: number; y: number; width: number; height: number }) {
+function centerOf(rect: { x: number; y: number; width: number; height: number }): Point {
   return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
 }
 
-// A point of the page, in the CSS pixels the page judges it in, in the device-independent pixels
-// (DIPs) of the window that a mouse event is sent in: the page zoom of the app (0.2 to 5, 1 at
-// 100%) is how many DIPs a CSS pixel takes. At any other zoom than 1, a point sent as the page
-// reports it would land somewhere the page has not looked at.
-function inDips(point: { x: number; y: number }, zoom: number): { x: number; y: number } {
-  return { x: point.x * zoom, y: point.y * zoom };
+function outsideTheViewport(point: Point): TvMcpError {
+  return new TvMcpError(
+    'INVALID_INPUT',
+    `The point (${String(point.x)}, ${String(point.y)}) is outside the visible part of the page`,
+    { hint: POINT_HINT, details: { x: point.x, y: point.y } },
+  );
 }
 
-// One look at the target of a click: what the page says about it, which refuses the click or gives
-// the point it judged, and the zoom of the page, which turns that point into DIPs. The zoom is read
-// anew with every look, after the page has cleared the target, because a change of zoom moves
-// everything on the page as much as a change of its layout does. A page that does not report its
-// viewport, and so its zoom, is refused (readViewport).
-async function lookFor(page: InputPage, selector: string): Promise<{ x: number; y: number }> {
-  const point = centerOf(clickableRect(selector, await lookUp(page, selector)));
-  const { zoom } = await readViewport(page.session);
-  return inDips(point, zoom);
+// The point to send the pointer to for an element, the center of its box, or the reason it may not
+// go there. The unsafe verdict comes first, so a trading control is reported as one even when it is
+// also hidden or covered. An element named by a text that no visible element has is the caller's
+// mistake, INVALID_INPUT, where an element a selector names is NOT_AVAILABLE until it is shown.
+function aimAtElement(
+  target: { selector: string } | { text: string },
+  action: PointerAction,
+  look: TargetDescription,
+): Point | TvMcpError {
+  const byText = 'text' in target;
+  const what = byText
+    ? `the element named ${JSON.stringify(target.text)}`
+    : `\`${target.selector}\``;
+  const subject = byText
+    ? `The element named ${JSON.stringify(target.text)}`
+    : `The element ${what}`;
+  const named: JsonObject = byText ? { text: target.text } : { selector: target.selector };
+  if (look.unsafe) {
+    return new TvMcpError(
+      'UNSAFE_ACTION_BLOCKED',
+      `Refusing to ${VERB[action]} ${what}: ${
+        action === 'click'
+          ? 'it is part of a broker trading control, holds one, or has one over it'
+          : 'it is part of a broker trading control or has one over it'
+      }`,
+      { hint: TRADING_HINT, details: named },
+    );
+  }
+  const { rect } = look;
+  if (!look.found || !look.visible || rect === undefined) {
+    if (byText) {
+      return new TvMcpError(
+        'INVALID_INPUT',
+        `No visible element is named ${JSON.stringify(target.text)}`,
+        {
+          hint:
+            'A name is the aria-label of an element, or else its text, compared whole and ignoring ' +
+            'case. List the elements with ui_find_element, by a selector such as button or ' +
+            '[role="menuitem"], to see their names, or give a selector instead.',
+          details: named,
+        },
+      );
+    }
+    return new TvMcpError(
+      'NOT_AVAILABLE',
+      look.found ? `${subject} is not visible` : `No element matches ${what}`,
+      {
+        hint: 'Open the panel or dialog that holds the element first, or check the selector.',
+        details: { ...named, found: look.found, visible: look.visible },
+      },
+    );
+  }
+  if (look.coverage === 'obscured') {
+    return new TvMcpError('NOT_AVAILABLE', `${subject} is covered by \`${look.obscuredBy}\``, {
+      hint: 'Close the dialog or menu that covers it first.',
+      details: { ...named, obscuredBy: look.obscuredBy },
+    });
+  }
+  if (look.coverage !== 'clear') {
+    // The point is off the page or the page cannot say what is there. Anything else that is not
+    // clear is refused the same way, so that an answer nobody expected cannot pass.
+    const offPage = look.coverage === 'center-outside-viewport';
+    return new TvMcpError(
+      'NOT_AVAILABLE',
+      offPage
+        ? `The center of ${what} is outside the visible part of the page`
+        : `The page cannot say what lies over ${what}`,
+      {
+        hint: offPage ? 'Bring the element into view first.' : LOADED_PAGE_HINT,
+        details: { ...named, reason: offPage ? 'center-outside-viewport' : 'hit-test-unavailable' },
+      },
+    );
+  }
+  return centerOf(rect);
 }
 
-// Clicks the center of the first element that matches `selector`. The element is looked up anew on
-// every call and nothing is cached, because the page moves between calls. The lookup comes first
-// and nothing is sent to the page before it says the target is safe, so a refused click does not
-// even move the mouse.
+// A point goes where it is, or the reason it may not. A point outside the viewport is the caller's
+// mistake, INVALID_INPUT, unlike the center of an element that is out of view.
+function aimAtPoint(
+  point: Point,
+  action: PointerAction,
+  look: TargetDescription,
+): Point | TvMcpError {
+  const at = `(${String(point.x)}, ${String(point.y)})`;
+  const where = { x: point.x, y: point.y };
+  if (look.unsafe) {
+    return new TvMcpError(
+      'UNSAFE_ACTION_BLOCKED',
+      `Refusing to ${VERB_AT[action]} ${at}: a broker trading control lies there`,
+      { hint: TRADING_HINT, details: where },
+    );
+  }
+  if (look.coverage === 'clear') {
+    return point;
+  }
+  if (look.coverage === 'obscured') {
+    return new TvMcpError('NOT_AVAILABLE', `The point ${at} is covered by \`${look.obscuredBy}\``, {
+      hint:
+        'Close the dialog or menu that covers it first. To act on an item of an open menu or ' +
+        'dialog, give its selector or text instead of a point.',
+      details: { ...where, obscuredBy: look.obscuredBy },
+    });
+  }
+  if (look.coverage === 'center-outside-viewport') {
+    return outsideTheViewport(point);
+  }
+  return new TvMcpError('NOT_AVAILABLE', `The page cannot say what lies at ${at}`, {
+    hint: LOADED_PAGE_HINT,
+    details: { ...where, reason: 'hit-test-unavailable' },
+  });
+}
+
+function aimAt(
+  target: PointerTarget,
+  action: PointerAction,
+  look: TargetDescription,
+): Point | TvMcpError {
+  return 'x' in target ? aimAtPoint(target, action, look) : aimAtElement(target, action, look);
+}
+
+// Where the pointer goes: the point in the CSS pixels the page judged it in, the same point in the
+// device-independent pixels (DIPs) of the window that a mouse event is sent in, and the page zoom
+// of the app between them (0.2 to 5, 1 at 100%): how many DIPs a CSS pixel takes. At any other
+// zoom than 1, a point sent as the page reports it would land somewhere the page has not looked.
+interface Aim {
+  point: Point;
+  dips: Point;
+  zoom: number;
+}
+
+function aimed(point: Point, zoom: number): Aim {
+  return { point, dips: { x: point.x * zoom, y: point.y * zoom }, zoom };
+}
+
+// One look at the target: what the page says about it, which refuses the action or gives the point
+// it judged, and the zoom of the page, which turns that point into DIPs. The zoom is read anew with
+// every look, after the page has cleared the target, because a change of zoom moves everything on
+// the page as much as a change of its layout does. A page that does not report its viewport, and
+// so its zoom, is refused (readViewport).
+async function aimFor(page: InputPage, target: PointerTarget, action: PointerAction): Promise<Aim> {
+  const point = aimAt(target, action, await lookAt(page, target, action));
+  if (isTvMcpError(point)) {
+    throw point;
+  }
+  return aimed(point, (await readViewport(page.session)).zoom);
+}
+
+// The target as the page is asked about it, or INVALID_INPUT before anything is looked at or
+// waited for. A point is rounded to whole pixels, which the page judges and the event goes to, the
+// way the center of an element is, and a negative one is outside the viewport. A text is trimmed
+// and must not be empty. A selector is the page's to judge.
+function checkedTarget(target: PointerTarget): PointerTarget {
+  if ('x' in target) {
+    if (!Number.isFinite(target.x) || !Number.isFinite(target.y)) {
+      throw new TvMcpError('INVALID_INPUT', 'A point needs x and y as finite numbers', {
+        hint: POINT_HINT,
+      });
+    }
+    const point = { x: Math.round(target.x), y: Math.round(target.y) };
+    if (point.x < 0 || point.y < 0) {
+      throw outsideTheViewport(point);
+    }
+    return point;
+  }
+  if ('text' in target) {
+    const text = target.text.trim();
+    if (text === '') {
+      throw new TvMcpError('INVALID_INPUT', 'The text to look for is empty', {
+        hint: 'Give the name of the element: its aria-label, or else its text.',
+      });
+    }
+    return { text };
+  }
+  return target;
+}
+
+function moveTo(page: InputPage, aim: Aim): Promise<unknown> {
+  return page.session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...aim.dips });
+}
+
+// Clicks the target with the left button, once, and resolves with the point, in CSS pixels, where
+// the button went down. The target is looked up anew on every call and nothing is cached, because
+// the page moves between calls. The lookup comes first and nothing is sent to the page before it
+// says the target is safe, so a refused click does not even move the mouse.
 //
 // The mouse arrives before the button goes down, so that the page sees the pointer over the
 // element, which menus rely on. Arriving can change the page: a hover opens a flyout, often right
@@ -387,28 +768,114 @@ async function lookFor(page: InputPage, selector: string): Promise<{ x: number; 
 // clicking by coordinates.
 //
 // The page judges in CSS pixels and the events are sent in DIPs, each at the zoom its own look read
-// (lookFor).
-export async function clickElement(page: InputPage, selector: string): Promise<void> {
-  await exclusively(page, async () => {
+// (aimFor).
+export async function clickTarget(page: InputPage, target: PointerTarget): Promise<Point> {
+  const wanted = checkedTarget(target);
+  return exclusively(page, async () => {
     const { session } = page;
-    const arrival = await lookFor(page, selector);
-    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...arrival });
+    await moveTo(page, await aimFor(page, wanted, 'click'));
 
-    const { x, y } = await lookFor(page, selector);
-    await session.send('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x,
-      y,
-      button: 'left',
-      clickCount: 1,
+    const { point, dips } = await aimFor(page, wanted, 'click');
+    const press = { ...dips, button: 'left', clickCount: 1 } as const;
+    await session.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...press });
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...press });
+    return point;
+  });
+}
+
+// Clicks the center of the first element that matches `selector` (clickTarget).
+export async function clickElement(page: InputPage, selector: string): Promise<void> {
+  await clickTarget(page, { selector });
+}
+
+// Clicks at `point`, in CSS pixels of the viewport, rounded to whole pixels (clickTarget).
+export async function clickPoint(page: InputPage, point: Point): Promise<void> {
+  await clickTarget(page, point);
+}
+
+// What a hover did: where the pointer is, in CSS pixels, and, when the page under it was not as
+// clean once it arrived as it was before, what the second look found there.
+export interface HoverResult {
+  point: Point;
+  warning: string | null;
+}
+
+// Moves the pointer onto the target without pressing a button, for what the page shows on hover: a
+// tooltip, the buttons of a legend item, a menu that opens on hover. It is refused as a click is,
+// before anything is sent, except that what an element holds does not count (describeElement).
+//
+// The target is looked at again once the pointer is there, as for a click. A click then presses only
+// if that look is as clean as the first; a hover has already done what it does, so it reports what
+// the second look found instead: a trading control under the pointer, a menu that covers the point,
+// a target that is gone. A target that is clean but moved as the pointer arrived is followed to
+// where the second look found it, the way a click presses there.
+export async function hoverTarget(page: InputPage, target: PointerTarget): Promise<HoverResult> {
+  const wanted = checkedTarget(target);
+  return exclusively(page, async () => {
+    const first = await aimFor(page, wanted, 'hover');
+    await moveTo(page, first);
+
+    const point = aimAt(wanted, 'hover', await lookAt(page, wanted, 'hover'));
+    if (isTvMcpError(point)) {
+      return {
+        point: first.point,
+        warning:
+          point.code === 'UNSAFE_ACTION_BLOCKED'
+            ? 'A broker trading control lies under the pointer since it arrived.'
+            : `After the pointer arrived: ${point.message}`,
+      };
+    }
+    if (point.x !== first.point.x || point.y !== first.point.y) {
+      await moveTo(page, aimed(point, (await readViewport(page.session)).zoom));
+    }
+    return { point, warning: null };
+  });
+}
+
+// Moves the pointer onto the center of the first element that matches `selector` (hoverTarget).
+export function hoverElement(page: InputPage, selector: string): Promise<HoverResult> {
+  return hoverTarget(page, { selector });
+}
+
+// Moves the pointer to `point`, in CSS pixels of the viewport, rounded to whole pixels
+// (hoverTarget).
+export function hoverPoint(page: InputPage, point: Point): Promise<HoverResult> {
+  return hoverTarget(page, point);
+}
+
+// How far one turn of the mouse wheel goes, in CSS pixels: x to the right and y down.
+export interface ScrollDelta {
+  x: number;
+  y: number;
+}
+
+// Turns the mouse wheel once over the target, by `delta`, and resolves with the point, in CSS
+// pixels, where it turned. It is refused as a hover is (the pane of the chart, which holds the buy
+// and sell buttons, can be scrolled), and, as for a click, the pointer arrives first, the target is
+// looked at again, and the wheel turns only if that look is as clean as the first, where it found
+// the target. No button goes down. The deltas are sent in DIPs, like the point.
+export async function scrollAt(
+  page: InputPage,
+  target: PointerTarget,
+  delta: ScrollDelta,
+): Promise<Point> {
+  if (!Number.isFinite(delta.x) || !Number.isFinite(delta.y)) {
+    throw new TvMcpError('INVALID_INPUT', 'A scroll needs deltaX and deltaY as finite numbers', {
+      hint: 'Give the deltas in CSS pixels: deltaY above 0 scrolls down, deltaX above 0 to the right.',
     });
-    await session.send('Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x,
-      y,
-      button: 'left',
-      clickCount: 1,
+  }
+  const wanted = checkedTarget(target);
+  return exclusively(page, async () => {
+    await moveTo(page, await aimFor(page, wanted, 'scroll'));
+
+    const { point, dips, zoom } = await aimFor(page, wanted, 'scroll');
+    await page.session.send('Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      ...dips,
+      deltaX: delta.x * zoom,
+      deltaY: delta.y * zoom,
     });
+    return point;
   });
 }
 

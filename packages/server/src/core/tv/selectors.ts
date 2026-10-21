@@ -140,9 +140,11 @@ export const SELECTORS = {
 // What no tool of this server may click (notes, section 5.5): the buy and sell buttons of the
 // chart and the trade button of the header toolbar. This server has no trading tools, so a click on
 // one of them, on anything that holds one, on anything inside one, or on anything one lies over
-// at the point of the click, is refused. Keys and text are refused while the focus is on one of
-// them or inside one, but not for what the focused element merely holds, such as the chart pane.
-// Text is also typed only into a focused text field.
+// at the point of the click, is refused, and so is a click at a point where one lies. A hover or a
+// turn of the mouse wheel is refused the same way, except for what the element merely holds: the
+// pointer over a container lands on the container, such as the chart pane, which holds the buy and
+// sell buttons. Keys and text are refused while the focus is on one of them or inside one, but not
+// for what the focused element merely holds. Text is also typed only into a focused text field.
 //
 // The notes add "anything inside a broker order ticket", but a ticket has no stable selector yet.
 // Until one is recorded from a live broker session, a ticket is covered only through the buttons
