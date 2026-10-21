@@ -85,6 +85,7 @@ export function createTestContext(
       createdStudyIds: new Set(),
       createdScriptIds: new Set(),
       lastPineCompile: null,
+      lastWrittenPineText: null,
     },
     ...overrides,
   };

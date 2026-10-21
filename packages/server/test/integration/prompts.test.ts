@@ -347,13 +347,18 @@ describe('write_and_backtest_strategy', () => {
     expect(text).toMatch(/never discard/i);
   });
 
-  test('passes confirm: true to the later changes, which TradingView flags until the editor is closed', async () => {
+  test('changes the script it wrote without confirm: true, and asks the user once the text is no longer its own', async () => {
     const { client } = await startServer();
 
     const text = await messageOf(client, 'write_and_backtest_strategy', { idea: IDEA });
 
-    expect(text).toMatch(/flags? [^.]*unsaved changes until (?:the editor|it) is closed/i);
-    expect(text).toMatch(/later change[^.]*confirm: true/i);
+    expect(text).toMatch(/changing it needs no confirm: true/i);
+    expect(text).not.toMatch(/writeBack: true and confirm: true/);
+    expect(text).not.toMatch(/with confirm: true again/);
+    // A refusal after that means the text changed in the editor, and only the user may let it go.
+    const compile = text.slice(text.indexOf('pine_smart_compile with writeBack'));
+    expect(compile).toMatch(/CONFIRMATION_REQUIRED[^.]*no longer the one you wrote/);
+    expect(compile).toMatch(/ask the user before you pass confirm: true/);
   });
 
   test('asks for a summary of the results', async () => {

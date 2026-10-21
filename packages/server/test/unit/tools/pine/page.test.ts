@@ -245,6 +245,55 @@ describe('readPineEditorState', () => {
     });
   });
 
+  test('takes the kept flag for nothing while isModified() says none and the editor holds exactly the text this session wrote', async () => {
+    const facade = (overrides: Record<string, unknown>) => ({
+      isModified: () => false,
+      isDraft: () => false,
+      getScriptIdVersion: () => ({ scriptIdPart: 'USER;s', version: '1.0' }),
+      getSource: () => Promise.resolve('own text'),
+      ...overrides,
+    });
+    const modified = async (
+      written: string | null,
+      kept: unknown,
+      overrides: Record<string, unknown> = {},
+    ) =>
+      (
+        await libResultOf(
+          readPineEditorState,
+          [written],
+          withModules(registry({ dialog: { getFacade: () => facade(overrides) } }, kept)),
+        )
+      ).result.state.modified;
+
+    expect(await modified('own text', true)).toBe(false);
+    expect(await modified('other text', true)).toBe(true);
+    expect(await modified(null, true)).toBe(true);
+    // Unsaved changes of the text itself still count, and without the flag nothing changes.
+    expect(await modified('own text', true, { isModified: () => true })).toBe(true);
+    expect(await modified('own text', false)).toBe(false);
+    // A flag or a text that cannot be read, or no way to read the text: unsaved changes assumed.
+    expect(await modified('own text', 'yes')).toBe(true);
+    expect(
+      await modified('own text', true, {
+        getSource: () => Promise.reject(new Error('Value is null')),
+      }),
+    ).toBe(true);
+    expect(await modified('own text', true, { getSource: undefined })).toBe(true);
+    const unreachable = {
+      ...facade({}),
+      get getSource(): never {
+        throw new Error('private');
+      },
+    };
+    const { result } = await libResultOf(
+      readPineEditorState,
+      ['own text'],
+      withModules(registry({ dialog: { getFacade: () => unreachable } }, true)),
+    );
+    expect(result.state.modified).toBe(true);
+  });
+
   test('reads the flag under the key the app keeps it under, for either placement', async () => {
     const facade = { isModified: () => false, isDraft: () => true, getScriptIdVersion: () => null };
     // The app writes and reads the flag under the bare key, whatever the placement of the editor.

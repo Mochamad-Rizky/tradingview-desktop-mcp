@@ -507,6 +507,47 @@ describe('changePineEditor', () => {
     expect(throwing.error).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
   });
 
+  test('replaces unsaved changes while the editor holds exactly the text this session wrote', async () => {
+    const setScript = vi.fn(() => Promise.resolve());
+    // An editor with unsaved changes, flagged by TradingView too, whose text getSource reads.
+    const holding = (getSource: unknown) =>
+      withFacade(() => ({ isModified: () => true, setScript, getSource }), { kept: true });
+    const replacing = (written?: string | null): [PineEditorChange] =>
+      change({
+        kind: 'source',
+        source: SOURCE,
+        allowModified: false,
+        ...(written === undefined ? {} : { written }),
+      });
+
+    const own = await libResultOf(
+      changePineEditor,
+      replacing('own text'),
+      holding(() => Promise.resolve('own text')),
+    );
+    expect(own.result).toStrictEqual({ changed: true });
+    // Once per window: the page of the bridge and the direct call.
+    expect(setScript).toHaveBeenCalledTimes(2);
+
+    const refused: [string, [PineEditorChange], Make][] = [
+      ['another text', replacing('own text'), holding(() => Promise.resolve('own text!'))],
+      ['no text written', replacing(null), holding(() => Promise.resolve('own text'))],
+      ['nothing said of it', replacing(), holding(() => Promise.resolve('own text'))],
+      [
+        'a text that cannot be read',
+        replacing('own text'),
+        holding(() => Promise.reject(new Error('Value is null'))),
+      ],
+      ['a facade that cannot tell its text', replacing('own text'), holding(undefined)],
+    ];
+    for (const [what, args, make] of refused) {
+      const { error } = await libFailureOfBoth(changePineEditor, args, make);
+      expect(error, what).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+      expect(error.hint, what).toContain('closing the Pine Editor in TradingView');
+    }
+    expect(setScript).toHaveBeenCalledTimes(2);
+  });
+
   test('fails without the registry, an open editor, its facade or the member it needs', async () => {
     const args = change({ kind: 'source', source: SOURCE, allowModified: true });
     const failing = async (make: Make) =>

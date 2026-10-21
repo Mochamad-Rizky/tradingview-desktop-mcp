@@ -46,6 +46,12 @@ export interface SessionState {
   // The result of the last pine_compile, or of the last attempt of a pine_smart_compile, which
   // pine_get_errors returns; null before the first.
   lastPineCompile: PineCompileResult | null;
+  // The text this session last wrote into the Pine Editor (pine_new with a source, pine_set_source
+  // and the write-back of pine_smart_compile); null before the first. While the editor holds
+  // exactly this text, its unsaved changes, and the flag of them TradingView keeps until the editor
+  // closes, are the session's own, so replacing the text needs no confirmation. Kept in memory
+  // only: never logged or returned.
+  lastWrittenPineText: string | null;
 }
 
 // What a handler works with. Over HTTP the connection, the launcher, the logger and the event bus

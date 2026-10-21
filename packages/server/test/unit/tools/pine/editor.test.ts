@@ -5,6 +5,7 @@ import { createPageBridge } from '../../../../src/core/tv/page-bridge.js';
 import {
   ensureEditorOpen,
   readEditorState,
+  requireReplaceable,
   requireUnmodifiedOrConfirmed,
   type PineEditorState,
 } from '../../../../src/tools/pine/editor.js';
@@ -213,6 +214,7 @@ describe('requireUnmodifiedOrConfirmed', () => {
       expect(error.message).toContain('unsaved');
       expect(error.hint).toContain('confirm: true');
       expect(error.hint).toContain('pine_save');
+      expect(error.hint).toContain('closing the Pine Editor in TradingView');
       expect(error.details).toEqual({ action: 'pine_set_source' });
     }
   });
@@ -227,5 +229,70 @@ describe('requireUnmodifiedOrConfirmed', () => {
     expect(() => {
       requireUnmodifiedOrConfirmed(state(false), undefined, 'pine_new');
     }).not.toThrow();
+  });
+});
+
+describe('requireReplaceable', () => {
+  const state = (modified: boolean): PineEditorState => ({
+    open: true,
+    placement: 'dialog',
+    modified,
+    draft: false,
+    script: SCRIPT,
+  });
+  const OWN = '//@version=6\nindicator("Own")\nplot(close)\n';
+  // A page whose editor holds `source` with unsaved changes.
+  const holding = (source: string) =>
+    pageOf(createFakeTvWindow(withEditor('dialog', { source, savedSource: 'saved' })));
+  const refusal = async (run: Promise<void>) =>
+    run.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+  test('lets the text this session wrote last be replaced without confirm', async () => {
+    await expect(
+      requireReplaceable(holding(OWN), state(true), undefined, 'pine_set_source', OWN),
+    ).resolves.toBeUndefined();
+  });
+
+  test('refuses other unsaved text without confirm, as requireUnmodifiedOrConfirmed does', async () => {
+    for (const written of [`${OWN}x`, null]) {
+      const error = await refusal(
+        requireReplaceable(holding(OWN), state(true), undefined, 'pine_set_source', written),
+      );
+      expect(error).toMatchObject({
+        code: 'CONFIRMATION_REQUIRED',
+        details: { action: 'pine_set_source' },
+      });
+    }
+    // A text that cannot be read is not taken for the one this session wrote.
+    const closed = pageOf(createFakeTvWindow(fixture));
+    await expect(
+      refusal(requireReplaceable(closed, state(true), undefined, 'pine_new', OWN)),
+    ).resolves.toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
+  });
+
+  test('needs nothing for an editor without unsaved changes, and nothing more than confirm', async () => {
+    const closed = pageOf(createFakeTvWindow(fixture));
+    await expect(
+      requireReplaceable(closed, state(false), undefined, 'pine_new', null),
+    ).resolves.toBeUndefined();
+    await expect(
+      requireReplaceable(closed, state(true), true, 'pine_new', null),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('readEditorState with the text this session wrote', () => {
+  test('takes the flag TradingView keeps for nothing while the editor holds exactly that text', async () => {
+    const OWN = '//@version=6\nindicator("Own")\nplot(close)\n';
+    const win = createFakeTvWindow(withEditor('dialog', { source: OWN, savedSource: OWN }));
+    inspectFakeWindow(win).state.pineEditor.unsavedKept = true;
+    const page = pageOf(win);
+
+    await expect(readEditorState(page)).resolves.toMatchObject({ modified: true });
+    await expect(readEditorState(page, [], OWN)).resolves.toMatchObject({ modified: false });
+    await expect(readEditorState(page, [], `${OWN}x`)).resolves.toMatchObject({ modified: true });
   });
 });

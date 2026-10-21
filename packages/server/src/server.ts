@@ -80,6 +80,7 @@ export function createMcpServer(
     createdStudyIds: new Set(),
     createdScriptIds: new Set(),
     lastPineCompile: null,
+    lastWrittenPineText: null,
   };
   const base = { config, logger, connection, launcher, events, session };
 

@@ -1,7 +1,8 @@
 import type { CdpSession, CdpTargetInfo } from '../../../../src/core/cdp/types.js';
 import type { ConnectionManager, PageHandle } from '../../../../src/core/connection.js';
-import { createPageBridge } from '../../../../src/core/tv/page-bridge.js';
-import { pineSave, readPineSourceData } from '../../../../src/tools/pine/index.js';
+import { createPageBridge, type PageBridge } from '../../../../src/core/tv/page-bridge.js';
+import { pineSave, pineSetSource, readPineSourceData } from '../../../../src/tools/pine/index.js';
+import { changePineEditor } from '../../../../src/tools/pine/page.js';
 import type { ToolContext, ToolRegistry } from '../../../../src/tools/types.js';
 import { failureOf } from '../../../helpers/failure-of.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
@@ -177,4 +178,35 @@ test('pine_save refuses a saved version TradingView reports as a draft', async (
     details: { id: 'USER;unit', version: '1.0' },
   });
   expect(saveScript).not.toHaveBeenCalled();
+});
+
+test('pine_set_source passes on a failure of the page that is no refusal as it is', async () => {
+  const facade = {
+    isModified: () => true,
+    isDraft: () => true,
+    getScriptIdVersion: () => null,
+    getSource: () => Promise.resolve(SOURCE),
+    setScript: () => Promise.resolve(),
+  };
+  const page = pageOf(
+    pageWith((placement) => (placement === 'dialog' ? { getFacade: () => facade } : null)),
+  );
+  const broken = new Error('The socket closed');
+  // The change itself fails with an error that is not one of the server, as a broken transport
+  // could; everything else reaches the page.
+  const bridge: PageBridge = {
+    evaluate: (fn, args, options) => page.bridge.evaluate(fn, args, options),
+    evaluateWithLib: (fn, args, options) =>
+      (fn as unknown) === changePineEditor
+        ? Promise.reject(broken)
+        : page.bridge.evaluateWithLib(fn, args, options),
+  };
+  const connection = {
+    chartPage: () => Promise.resolve({ ...page, bridge }),
+  } as unknown as ConnectionManager;
+  const ctx: ToolContext = { ...createTestContext({ connection }), registry: {} as ToolRegistry };
+  ctx.session.lastWrittenPineText = SOURCE;
+
+  await expect(pineSetSource.handler({ source: 'plot(open)' }, ctx)).rejects.toBe(broken);
+  expect(ctx.session.lastWrittenPineText).toBe(SOURCE);
 });
