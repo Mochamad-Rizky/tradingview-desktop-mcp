@@ -1,4 +1,5 @@
 import {
+  declaredTitle,
   logTimeToSeconds,
   mergeConsoleMessages,
   normalizeCompileErrors,
@@ -333,4 +334,15 @@ test('toCompileResult succeeds without errors, and for a script added to the cha
     addedToChart: false,
     studyId: null,
   });
+});
+
+test('declaredTitle reads the title a script declares as a plain string, and nothing else', () => {
+  expect(declaredTitle('//@version=6\nindicator("Two lines", overlay=true)\n')).toBe('Two lines');
+  expect(declaredTitle("//@version=6\n  strategy(title = 'Breakout')\n")).toBe('Breakout');
+  expect(declaredTitle('//@version=6\nlibrary("Tools")\n')).toBe('Tools');
+  // A title that is no plain string, one with an escape, which the app reads otherwise than it is
+  // written, and a script without a declaration.
+  expect(declaredTitle('//@version=6\nindicator(name)\n')).toBeNull();
+  expect(declaredTitle('//@version=6\nindicator("A \\"quoted\\" one")\n')).toBeNull();
+  expect(declaredTitle('plot(close)\n')).toBeNull();
 });

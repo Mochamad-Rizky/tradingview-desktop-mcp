@@ -126,6 +126,19 @@ export function normalizeCompileErrors(
 
 export type PineCompileError = ReturnType<typeof normalizeCompileErrors>['errors'][number];
 
+// The title the indicator(), strategy() or library() declaration of a script gives as its first
+// argument, when that is a plain string literal (as savePineScript reads it), else null. TradingView
+// describes the study of a script on the chart by it, which tells that study apart when the id of
+// the script is not known. A title with an escape is null too: the app reads it otherwise than it
+// is written.
+export function declaredTitle(source: string): string | null {
+  const title =
+    /^[ \t]*(?:indicator|strategy|library)[ \t]*\([ \t]*(?:title[ \t]*=[ \t]*)?(["'])((?:\\.|(?!\1)[^\\\n])*)\1/m.exec(
+      source,
+    )?.[2];
+  return title === undefined || title.includes('\\') ? null : title;
+}
+
 // What one compilation came to, a PineCompileResult. added is what became of adding the script to
 // the chart, null for a compilation alone. success is true when there are no errors and, for a
 // script added to the chart, the study was added and TradingView reports no compile error for it.

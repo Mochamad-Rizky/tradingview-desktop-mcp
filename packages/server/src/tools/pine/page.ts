@@ -1467,28 +1467,33 @@ export type PineRawDiagnostic = Exclude<
 
 // Adds the script the open editor holds to the active chart through addToChart of the facade, the
 // way the Add to chart button of the editor does, and answers the ids of the studies on the chart
-// right before (for the caller to find the one that was added) and how many entries the console
-// of the editor held then (consoleFrom; null when the console cannot be read), for the caller to
-// read the diagnostics written since. The app saves a draft (a new script or a server draft) as a
-// server draft first and compiles; it resolves even when compilation fails. Waits at most waitMs for
-// addToChart (TIMEOUT). The checks that keep the app from opening a dialog run right before it acts
-// and refuse before anything is added: AUTH_REQUIRED while signed out (the app would ask the user
-// to sign in), NOT_AVAILABLE for a saved script with unsaved changes or whose state cannot be read
-// (the app would ask in a modal dialog whether to save a new version). The indicator limit of the
-// plan is the caller's to check first, as the app opens its paywall on a full chart. chartIndex is
-// the chart whose room the caller checked, by the index the check resolved the active chart to
-// (null when the page did not say which chart was active): the editor adds to the active chart
-// only, so right before it acts this checks that the active chart is still that one, and refuses
-// with NOT_AVAILABLE when it is not, and it reads the studies before on that chart. Other failures:
-// CAPABILITY_UNAVAILABLE without the registry, a facade with addToChart or the chart API,
-// NOT_AVAILABLE when no editor is open or addToChart rejects (with the reason).
+// right before (for the caller to find the one that was added), how many entries the console of
+// the editor held then (consoleFrom; null when the console cannot be read), for the caller to read
+// the diagnostics written since, and the id of the script the editor holds once the add is done
+// (scriptId; null when it has none or it cannot be read), which names the study of the script. The
+// app saves a draft (a new script or a server draft) as a server draft first, so a new script has
+// the id of that draft by then, and compiles; it resolves even when compilation fails. Waits at
+// most waitMs for addToChart (TIMEOUT). The checks that keep the app from opening a dialog run
+// right before it acts and refuse before anything is added: AUTH_REQUIRED while signed out (the app
+// would ask the user to sign in), NOT_AVAILABLE for a saved script with unsaved changes or whose
+// state cannot be read (the app would ask in a modal dialog whether to save a new version). The
+// indicator limit of the plan is the caller's to check first, as the app opens its paywall on a
+// full chart. chartIndex is the chart whose room the caller checked, by the index the check
+// resolved the active chart to (null when the page did not say which chart was active): the editor
+// adds to the active chart only, so right before it acts this checks that the active chart is
+// still that one, and refuses with NOT_AVAILABLE when it is not, and it reads the studies before on
+// that chart. Other failures: CAPABILITY_UNAVAILABLE without the registry, a facade with
+// addToChart or the chart API, NOT_AVAILABLE when no editor is open or addToChart rejects (with
+// the reason).
 export function addPineScriptToChart(
   win: TvWindow,
   lib: PageLib,
   waitMs: number,
   chartIndex: number | null,
 ):
-  | Promise<{ before: string[]; consoleFrom: number | null } | PageErrorSentinel>
+  | Promise<
+      { before: string[]; consoleFrom: number | null; scriptId: string | null } | PageErrorSentinel
+    >
   | PageErrorSentinel {
   const getOpenPineEditor = lib.findExport('getOpenPineEditor');
   if (typeof getOpenPineEditor !== 'function') {
@@ -1676,21 +1681,39 @@ export function addPineScriptToChart(
         },
       };
     }
-    return { before, consoleFrom };
+    let scriptId: string | null;
+    try {
+      const part: unknown = (
+        facade.getScriptIdVersion?.() as { scriptIdPart?: unknown } | null | undefined
+      )?.scriptIdPart;
+      scriptId = typeof part === 'string' && part !== '' ? part : null;
+    } catch {
+      scriptId = null;
+    }
+    return { before, consoleFrom, scriptId };
   });
 }
 
 // The study on the chart of chartIndex (the active chart for null) whose id is not in `before`,
-// which the editor added: the last such Pine study, else null. Only a Pine study is taken for it,
-// so that a study that appeared at the same time for another reason is never taken for the script;
-// others lists the ids of the new studies that are not Pine studies (or whose metadata cannot be
-// read). compileError is what hasCompileError of its study core answers, null when it cannot be
-// read. Changes nothing, and needs no page library, so the caller may poll it.
+// which the editor added: the last such Pine study of `script`, the script that was added, else
+// null. The user can add a study at the same moment, so a new study counts only when it is a Pine
+// study whose metadata names that script: by its scriptIdPart when both it and script.id are known,
+// else by its description, which is the title the script declares (script.title). With neither
+// known no study counts. others lists the ids of the new studies that are not Pine studies (or
+// whose metadata cannot be read), and otherScripts those of the new Pine studies of other scripts.
+// compileError is what hasCompileError of its study core answers, null when it cannot be read.
+// Changes nothing, and needs no page library, so the caller may poll it.
 export function readAddedPineStudy(
   win: TvWindow,
   before: string[],
   chartIndex: number | null,
-): { studyId: string | null; compileError: boolean | null; others: string[] } {
+  script: { id: string | null; title: string | null },
+): {
+  studyId: string | null;
+  compileError: boolean | null;
+  others: string[];
+  otherScripts: string[];
+} {
   const attempt = (read: () => unknown): unknown => {
     try {
       return read();
@@ -1698,6 +1721,8 @@ export function readAddedPineStudy(
       return undefined;
     }
   };
+  const text = (value: unknown): string | null =>
+    typeof value === 'string' && value !== '' ? value : null;
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
   const chart = attempt(() =>
     typeof chartIndex === 'number' ? api?.chart?.(chartIndex) : api?.activeChart?.(),
@@ -1706,24 +1731,42 @@ export function readAddedPineStudy(
   const known = new Set(before);
   const fresh = (Array.isArray(listed) ? (listed as unknown[]) : []).flatMap((item) => {
     const id: unknown = (item as { id?: unknown } | null | undefined)?.id;
-    const text = typeof id === 'string' ? id : typeof id === 'number' ? String(id) : null;
-    return text === null || known.has(text) ? [] : [text];
+    const name = typeof id === 'string' ? id : typeof id === 'number' ? String(id) : null;
+    return name === null || known.has(name) ? [] : [name];
   });
   const coreOf = (id: string) =>
     attempt(() => chart?.getStudyById?.(id).study()) as Partial<StudyCoreLike> | null | undefined;
-  const isPine = (id: string): boolean => {
+  const wanted = (script as { id?: unknown; title?: unknown } | null | undefined) ?? {};
+  const wantedId = text(wanted.id);
+  const wantedTitle = text(wanted.title);
+  const pine: string[] = [];
+  const others: string[] = [];
+  const otherScripts: string[] = [];
+  for (const id of fresh) {
     const meta = attempt(() => coreOf(id)?.metaInfo?.()) as StudyMetaInfoLike | null | undefined;
-    const pine: unknown = meta?.pine;
-    return typeof pine === 'object' && pine !== null;
-  };
-  const pine = fresh.filter(isPine);
-  const others = fresh.filter((id) => !pine.includes(id));
+    const pineOf: unknown = meta?.pine;
+    if (meta === null || meta === undefined || typeof pineOf !== 'object' || pineOf === null) {
+      others.push(id);
+      continue;
+    }
+    const scriptId = text(meta.scriptIdPart);
+    const ofScript =
+      wantedId !== null && scriptId !== null
+        ? scriptId === wantedId
+        : wantedTitle !== null && meta.description === wantedTitle;
+    (ofScript ? pine : otherScripts).push(id);
+  }
   const studyId = pine.at(-1) ?? null;
   if (studyId === null) {
-    return { studyId: null, compileError: null, others };
+    return { studyId: null, compileError: null, others, otherScripts };
   }
   const failed = attempt(() => coreOf(studyId)?.hasCompileError?.());
-  return { studyId, compileError: typeof failed === 'boolean' ? failed : null, others };
+  return {
+    studyId,
+    compileError: typeof failed === 'boolean' ? failed : null,
+    others,
+    otherScripts,
+  };
 }
 
 // The diagnostics the console of the open editor holds from entry `from` on (the length it had

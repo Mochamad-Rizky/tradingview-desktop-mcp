@@ -282,7 +282,11 @@ describe('addPineScriptToChart', () => {
       }),
     );
 
-    expect(result).toEqual({ before: ['STUDY01', 'STUDY02'], consoleFrom: 1 });
+    expect(result).toEqual({
+      before: ['STUDY01', 'STUDY02'],
+      consoleFrom: 1,
+      scriptId: fixture.pineEditor.script?.scriptIdPart,
+    });
     expect(inspectFakeWindow(win).callsTo('pineFacade.addToChart')).toEqual([[]]);
     expect(
       (win as ReturnType<typeof createFakeTvWindow>).TradingViewApi?.activeChart().getAllStudies(),
@@ -293,7 +297,11 @@ describe('addPineScriptToChart', () => {
     const twoCharts = withRoom({ ...withEditor(), layout: { ...fixture.layout, chartsCount: 2 } });
     const { result, win } = await libResultOf(addPineScriptToChart, [1000, 0], chart(twoCharts));
 
-    expect(result).toEqual({ before: ['STUDY01', 'STUDY02'], consoleFrom: 0 });
+    expect(result).toEqual({
+      before: ['STUDY01', 'STUDY02'],
+      consoleFrom: 0,
+      scriptId: fixture.pineEditor.script?.scriptIdPart,
+    });
     expect(inspectFakeWindow(win).callsTo('pineFacade.addToChart')).toEqual([[]]);
 
     const moved = await libFailureOfBoth(
@@ -328,6 +336,38 @@ describe('addPineScriptToChart', () => {
       details: { chartIndex: 0, activeChartIndex: null },
     });
     expect(inspectFakeWindow(unknown.win).callsTo('pineFacade.addToChart')).toEqual([]);
+  });
+
+  test('answers the script the editor holds after the add: a new script under the id of its draft', async () => {
+    const { result } = await libResultOf(
+      addPineScriptToChart,
+      [1000, null],
+      chart(withRoom(withEditor({ script: null, source: 'plot(close)' }))),
+    );
+    expect(result).toMatchObject({ scriptId: `USER;${(0xd4b0).toString(16).padStart(32, '0')}` });
+
+    const unknown = async (getScriptIdVersion: () => unknown) =>
+      (
+        await libResultOf(
+          addPineScriptToChart,
+          [1000, null],
+          withFacade(
+            () => ({
+              addToChart: () => Promise.resolve(),
+              isDraft: () => true,
+              getScriptIdVersion,
+            }),
+            { chartApi: () => ({ getAllStudies: () => [] }) },
+          ),
+        )
+      ).result.scriptId;
+    await expect(unknown(() => null)).resolves.toBeNull();
+    await expect(unknown(() => ({ scriptIdPart: '' }))).resolves.toBeNull();
+    await expect(
+      unknown(() => {
+        throw new Error('No script');
+      }),
+    ).resolves.toBeNull();
   });
 
   test('refuses before acting: signed out, a changed saved script, no editor', async () => {
@@ -423,7 +463,7 @@ describe('addPineScriptToChart', () => {
       ),
     );
 
-    expect(result).toEqual({ before: ['A', '7'], consoleFrom: null });
+    expect(result).toEqual({ before: ['A', '7'], consoleFrom: null, scriptId: null });
     expect(added).toEqual(['x', 'x']);
   });
 
@@ -503,7 +543,7 @@ describe('page members that throw', () => {
     });
 
     const { result } = await libResultOf(addPineScriptToChart, [1000, null], make);
-    expect(result).toEqual({ before: [], consoleFrom: null });
+    expect(result).toEqual({ before: [], consoleFrom: null, scriptId: null });
 
     const brokenFacade = await libFailureOfBoth(
       addPineScriptToChart,
@@ -559,45 +599,111 @@ describe('page members that throw', () => {
 });
 
 describe('readAddedPineStudy', () => {
+  // The id the fake saves the first new script it adds under, as a server draft.
+  const DRAFT_ID = `USER;${(0xd4b0).toString(16).padStart(32, '0')}`;
+  // Adds the script of the editor of the fake app to its chart.
+  const addScript = (win: object): void => {
+    const api = (win as ReturnType<typeof createFakeTvWindow>).TradingViewApi?.pineEditorApi();
+    void api?.getDialogFacade()?.addToChart();
+  };
+  // A chart on which the studies of `metas` appeared after OLD, each with that metadata.
+  const appeared =
+    (metas: Record<string, unknown>): Make =>
+    () => ({
+      TradingViewApi: {
+        activeChart: () => ({
+          getAllStudies: () => ['OLD', ...Object.keys(metas)].map((id) => ({ id })),
+          getStudyById: (id: string) => ({ study: () => ({ metaInfo: () => metas[id] }) }),
+        }),
+      },
+    });
+  // The metadata of a Pine study, with a script id unless it is undefined.
+  const pine = (scriptIdPart: string | undefined, description: string) => ({
+    pine: { version: '1' },
+    ...(scriptIdPart === undefined ? {} : { scriptIdPart }),
+    description,
+  });
+
   test('finds the study the editor added and whether it failed to compile', async () => {
     const make = chart(
       withRoom(withEditor({ script: null, source: 'plot(undeclared_q)' })),
-      (win) => {
-        const api = (win as ReturnType<typeof createFakeTvWindow>).TradingViewApi?.pineEditorApi();
-        void api?.getDialogFacade()?.addToChart();
-      },
+      addScript,
     );
+    const script = { id: DRAFT_ID, title: null };
 
-    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], null], make)).toEqual({
+    expect(
+      await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], null, script], make),
+    ).toEqual({
       studyId: 'NEW001',
       compileError: true,
       others: [],
+      otherScripts: [],
     });
     expect(
-      await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02', 'NEW001'], null], make),
+      await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02', 'NEW001'], null, script], make),
     ).toEqual({
       studyId: null,
       compileError: null,
       others: [],
+      otherScripts: [],
     });
   });
 
   test('reads the chart of the index it is given, and finds nothing on a chart it cannot reach', async () => {
-    const make = chart(withRoom(withEditor({ script: null, source: 'plot(close)' })), (win) => {
-      const api = (win as ReturnType<typeof createFakeTvWindow>).TradingViewApi?.pineEditorApi();
-      void api?.getDialogFacade()?.addToChart();
-    });
+    const make = chart(withRoom(withEditor({ script: null, source: 'plot(close)' })), addScript);
+    const script = { id: DRAFT_ID, title: null };
 
-    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], 0], make)).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], 0, script], make)).toEqual({
       studyId: 'NEW001',
       compileError: false,
       others: [],
+      otherScripts: [],
     });
     // The fake has one chart: chart(1) throws, as on a layout of one chart.
-    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], 1], make)).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], 1, script], make)).toEqual({
       studyId: null,
       compileError: null,
       others: [],
+      otherScripts: [],
+    });
+  });
+
+  test('takes a new Pine study only when its metadata names the script that was added', async () => {
+    const sameTitle = appeared({
+      MINE: pine('USER;mine', 'Mine'),
+      THEIRS: pine('USER;theirs', 'Mine'),
+      JAVA: {},
+    });
+    // By the id, when the study and the script both have one: a study of another script with the
+    // same title is not taken.
+    expect(
+      await resultOf(
+        readAddedPineStudy,
+        [['OLD'], null, { id: 'USER;mine', title: 'Mine' }],
+        sameTitle,
+      ),
+    ).toEqual({ studyId: 'MINE', compileError: null, others: ['JAVA'], otherScripts: ['THEIRS'] });
+    // By the title, when the id of the script is not known, or the study has none.
+    const titled = appeared({ MINE: pine('USER;mine', 'Mine'), THEIRS: pine('USER;theirs', 'X') });
+    expect(
+      await resultOf(readAddedPineStudy, [['OLD'], null, { id: null, title: 'Mine' }], titled),
+    ).toMatchObject({ studyId: 'MINE', otherScripts: ['THEIRS'] });
+    const unnamed = appeared({ MINE: pine(undefined, 'Mine'), THEIRS: pine(undefined, 'X') });
+    expect(
+      await resultOf(
+        readAddedPineStudy,
+        [['OLD'], null, { id: 'USER;mine', title: 'Mine' }],
+        unnamed,
+      ),
+    ).toMatchObject({ studyId: 'MINE', otherScripts: ['THEIRS'] });
+    // Nothing to tell the script by: no study is taken for it.
+    expect(
+      await resultOf(readAddedPineStudy, [['OLD'], null, { id: null, title: null }], sameTitle),
+    ).toEqual({
+      studyId: null,
+      compileError: null,
+      others: ['JAVA'],
+      otherScripts: ['MINE', 'THEIRS'],
     });
   });
 
@@ -611,28 +717,35 @@ describe('readAddedPineStudy', () => {
               throw new Error('There is no such study');
             }
             return {
-              study: () => ({ metaInfo: () => (id === 'PINE' ? { pine: { version: '1' } } : {}) }),
+              study: () => ({
+                metaInfo: () =>
+                  id === 'PINE' ? { pine: { version: '1' }, scriptIdPart: 'USER;pine' } : {},
+              }),
             };
           },
         }),
       },
     });
+    const script = { id: 'USER;pine', title: null };
 
-    expect(await resultOf(readAddedPineStudy, [['OLD'], null], make)).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['OLD'], null, script], make)).toEqual({
       studyId: 'PINE',
       compileError: null,
       others: ['JAVA', 'BAD'],
+      otherScripts: [],
     });
     // A new study that is not a Pine study is never taken for the script.
-    expect(await resultOf(readAddedPineStudy, [['OLD', 'PINE'], null], make)).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['OLD', 'PINE'], null, script], make)).toEqual({
       studyId: null,
       compileError: null,
       others: ['JAVA', 'BAD'],
+      otherScripts: [],
     });
-    expect(await resultOf(readAddedPineStudy, [['OLD'], null], () => ({}))).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['OLD'], null, script], () => ({}))).toEqual({
       studyId: null,
       compileError: null,
       others: [],
+      otherScripts: [],
     });
   });
 });

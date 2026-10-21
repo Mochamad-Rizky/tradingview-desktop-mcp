@@ -10,6 +10,7 @@ import { readStudyInsertContext } from '../indicator/page.js';
 import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.js';
 import { notOpenError, readEditorState } from './editor.js';
 import {
+  declaredTitle,
   mergeConsoleMessages,
   normalizeCompileErrors,
   toCompileResult,
@@ -89,8 +90,11 @@ async function editorSource(page: PageHandle): Promise<string> {
 // and sign-in right before it acts). The check of the room resolves the active chart to its index,
 // once: the add goes ahead only while that chart is still the active one, which the editor adds
 // to, and the new study is looked for on it, by the ids on the chart before and after, with a plain
-// poll. Its compile errors are read from the console of the editor. The caller runs it in a turn of
-// the plan-limited actions (inPlanLimitedTurn).
+// poll. A new study is taken for the script, and counted as added by this session, only when it is
+// a Pine study of the script the editor added, by the id of that script or else by the title the
+// text declares, so that a study the user adds at the same moment is never taken for it. Its
+// compile errors are read from the console of the editor. The caller runs it in a turn of the
+// plan-limited actions (inPlanLimitedTurn).
 async function addEditorScript(
   page: PageHandle,
   ctx: ToolContext,
@@ -122,19 +126,20 @@ async function addEditorScript(
   const source = await editorSource(page);
   // What is left of the wait after the checks, so that a slow add ends in the TIMEOUT of the page
   // function, with its hint, within the time of the call.
-  const { before, consoleFrom } = await page.bridge.evaluateWithLib(addPineScriptToChart, [
-    Math.max(deadline - Date.now(), 0),
-    context.chartIndex,
-  ]);
+  const { before, consoleFrom, scriptId } = await page.bridge.evaluateWithLib(
+    addPineScriptToChart,
+    [Math.max(deadline - Date.now(), 0), context.chartIndex],
+  );
+  const script = { id: scriptId, title: declaredTitle(source) };
   const found = await pollUntil(
-    () => page.bridge.evaluate(readAddedPineStudy, [before, context.chartIndex]),
+    () => page.bridge.evaluate(readAddedPineStudy, [before, context.chartIndex, script]),
     ({ studyId }) => studyId !== null,
     {
       intervalMs: ADDED_STUDY_POLL_MS,
       timeoutMs: Math.max(Math.min(ADDED_STUDY_WAIT_MS, deadline - Date.now()), 0),
     },
   );
-  const { studyId, compileError, others } = found.last;
+  const { studyId, compileError, others, otherScripts } = found.last;
   if (studyId !== null) {
     ctx.session.createdStudyIds.add(studyId);
     if (state.script === null || state.draft) {
@@ -146,7 +151,18 @@ async function addEditorScript(
   }
   const diagnostics = await page.bridge.evaluateWithLib(readPineConsoleDiagnostics, [consoleFrom]);
   const compiled = normalizeCompileErrors(diagnostics, source);
-  if (studyId === null && others.length > 0) {
+  if (studyId === null && otherScripts.length > 0) {
+    const appeared = [...otherScripts, ...others];
+    warnings.push(
+      `No new Pine study of the script appeared on the chart, only ${appeared.join(', ')}, ` +
+        `which ${appeared.length === 1 ? 'is' : 'are'} not taken for the script and not ` +
+        'counted as added by this session: ' +
+        (script.id === null && script.title === null
+          ? 'neither the id of the script nor a title it declares could tell its study. '
+          : 'a Pine study of another script can be one the user added at the same moment. ') +
+        'Check indicator_list and the console of the Pine Editor (pine_get_console).',
+    );
+  } else if (studyId === null && others.length > 0) {
     warnings.push(
       `No new Pine study appeared on the chart, only ${others.join(', ')}, which is not taken ` +
         'for the script and not counted as added by this session. Check indicator_list and the ' +

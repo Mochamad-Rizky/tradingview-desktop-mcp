@@ -1370,6 +1370,111 @@ describe('pine_compile', () => {
     expect(ctx.session.createdStudyIds).toEqual(new Set(['NEW001']));
   });
 
+  test('a Pine study the user adds at the same moment is not adopted as created by the session', async () => {
+    // A standard Pine script the user adds right after the script of the editor.
+    const userAdds = (win: FakeTvWindow) =>
+      win.TradingViewApi?.activeChart().createStudy({
+        type: 'pine',
+        pineId: 'STD;RSI',
+        pineVersion: 'last',
+      });
+    const facadeOf = (win: FakeTvWindow) => {
+      const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+      if (facade === null || facade === undefined) {
+        throw new Error('The editor must be open');
+      }
+      return facade;
+    };
+
+    const both = await startHarness(withStudyRoom(5, withEditor()));
+    const facade = facadeOf(both.win);
+    const add = facade.addToChart.bind(facade);
+    facade.addToChart = async () => {
+      await add();
+      await userAdds(both.win);
+    };
+
+    const result = await callTool(both.client, 'pine_compile', { addToChart: true });
+
+    // The last new Pine study is the user's; the one of the script is NEW001.
+    expect(studyIdsOf(both.win)).toEqual(['STUDY01', 'STUDY02', 'NEW001', 'NEW002']);
+    expect(dataOf(result)).toMatchObject({ success: true, addedToChart: true, studyId: 'NEW001' });
+    expect(both.ctx.session.createdStudyIds).toEqual(new Set(['NEW001']));
+
+    // TradingView adds nothing for the script, and the user adds a study meanwhile.
+    const only = await startHarness(withStudyRoom(5, withEditor()));
+    facadeOf(only.win).addToChart = async () => {
+      await userAdds(only.win);
+    };
+
+    const alone = await callTool(only.client, 'pine_compile', { addToChart: true });
+
+    expect(studyIdsOf(only.win)).toEqual(['STUDY01', 'STUDY02', 'NEW001']);
+    expect(dataOf(alone)).toMatchObject({ addedToChart: false, studyId: null });
+    expect(only.ctx.session.createdStudyIds).toEqual(new Set());
+    expect(warningsOf(alone).join(' ')).toMatch(
+      /only NEW001, .*not taken for the script.*another script/,
+    );
+  });
+
+  test('pine_compile with addToChart tells the study of a new script by the title it declares when its id is unknown', async () => {
+    const { client, win, ctx } = await startHarness(
+      withStudyRoom(5, withEditor({ script: null, source: NEW_SOURCE, savedSource: NEW_SOURCE })),
+    );
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    if (facade === null || facade === undefined) {
+      throw new Error('The editor must be open');
+    }
+    const add = facade.addToChart.bind(facade);
+    facade.addToChart = async () => {
+      await add();
+      await win.TradingViewApi?.activeChart().createStudy({
+        type: 'pine',
+        pineId: 'STD;RSI',
+        pineVersion: 'last',
+      });
+    };
+    // The editor does not tell which script it holds after the add.
+    facade.getScriptIdVersion = () => {
+      throw new Error('No script yet');
+    };
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    // NEW_SOURCE declares the title Breakout, which names the study of the script.
+    expect(dataOf(result)).toMatchObject({ addedToChart: true, studyId: 'NEW001' });
+    expect(ctx.session.createdStudyIds).toEqual(new Set(['NEW001']));
+  });
+
+  test('pine_compile with addToChart takes no study for the script when neither its id nor a title tells it', async () => {
+    const untitled = '//@version=6\nindicator(title = name)\nplot(close)\n';
+    const { client, win, ctx } = await startHarness(
+      withStudyRoom(5, withEditor({ script: null, source: untitled, savedSource: untitled })),
+    );
+    const facade = win.TradingViewApi?.pineEditorApi().getDialogFacade();
+    if (facade === null || facade === undefined) {
+      throw new Error('The editor must be open');
+    }
+    const add = facade.addToChart.bind(facade);
+    facade.addToChart = async () => {
+      await add();
+      await win.TradingViewApi?.activeChart().createStudy({
+        type: 'pine',
+        pineId: 'STD;RSI',
+        pineVersion: 'last',
+      });
+    };
+    facade.getScriptIdVersion = () => null;
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(dataOf(result)).toMatchObject({ addedToChart: false, studyId: null });
+    expect(ctx.session.createdStudyIds).toEqual(new Set());
+    expect(warningsOf(result).join(' ')).toMatch(
+      /only NEW001, NEW002, which are not taken for the script.*neither the id of the script nor a title/,
+    );
+  });
+
   test('pine_compile with addToChart takes no study that is not a Pine study for the script', async () => {
     const { client, win, ctx } = await startHarness(withStudyRoom(5, withEditor()));
     const chart = win.TradingViewApi?.activeChart();
