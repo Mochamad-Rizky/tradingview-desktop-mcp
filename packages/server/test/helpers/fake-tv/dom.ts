@@ -10,10 +10,10 @@ import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 // answers of matches, closest, querySelector and querySelectorAll, and it keeps the fake too small
 // to hide a bug of its own. The structure follows the DOM: closest starts at the element itself,
 // querySelector looks at descendants only, querySelectorAll lists in document order, the child nodes
-// of an element are a text node with its own text, when it has one, followed by its children, and
-// its text content is that text followed by that of its children, a later element is painted over
-// an earlier one, an element that is not shown cannot be hit, and the body is focused, and holds
-// the page, when nothing else has the focus.
+// of an element are a text node with its own text, when it has one, followed by its children, or
+// the text and the elements it was given in their order, and its text content is the text of those
+// nodes in order, a later element is painted over an earlier one, an element that is not shown
+// cannot be hit, and the body is focused, and holds the page, when nothing else has the focus.
 //
 // Like the shared fake window, these objects live in the host realm, so page code that runs in a
 // vm context must not use `instanceof` on them.
@@ -36,6 +36,9 @@ export interface FakeElementOptions {
   // Whether the element is part of the document. Defaults to true.
   connected?: boolean;
   children?: readonly FakeElement[];
+  // The child nodes in document order, text and elements mixed, for text that comes after an
+  // element, such as Se<wbr>ll. A string is a text node. Not to be given with children or text.
+  nodes?: readonly (FakeElement | string)[];
   // What the element reports about itself. The tag is in lower case and defaults to 'div'. The
   // attributes answer getAttribute and do not make the element match a selector: that is what
   // `matches` is for. The type attribute also decides the type property, the way it does in a page.
@@ -135,17 +138,29 @@ export class FakeElement {
   readonly #matches: ReadonlySet<string>;
   #rect: FakeRect;
   readonly #attributes: ReadonlyMap<string, string>;
-  readonly #text: string;
+  readonly #nodes: readonly (FakeTextNode | FakeElement)[];
   readonly #contentEditable: boolean | undefined;
 
   constructor(options: FakeElementOptions = {}) {
     this.#matches = new Set(options.matches);
-    this.#text = options.text ?? '';
+    if (
+      options.nodes !== undefined &&
+      (options.children !== undefined || options.text !== undefined)
+    ) {
+      throw new Error('A fake element takes its nodes, or its text and its children, not both');
+    }
+    const text = options.text ?? '';
+    this.#nodes = options.nodes?.map((node) =>
+      typeof node === 'string' ? { nodeType: 3 as const, data: node, nodeValue: node } : node,
+    ) ?? [
+      ...(text === '' ? [] : [{ nodeType: 3 as const, data: text, nodeValue: text }]),
+      ...(options.children ?? []),
+    ];
     this.#rect = { ...(options.rect ?? DEFAULT_RECT) };
     this.display = options.display ?? 'block';
     this.visibility = options.visibility ?? 'visible';
     this.isConnected = options.connected ?? true;
-    this.children = options.children ?? [];
+    this.children = this.#nodes.filter((node): node is FakeElement => node.nodeType === 1);
     this.localName = options.tag ?? 'div';
     this.tagName = this.localName.toUpperCase();
     this.id = options.id ?? '';
@@ -190,16 +205,15 @@ export class FakeElement {
     return this.parent;
   }
 
-  // Its own text as a text node, then its children, as Node.childNodes.
+  // Its text nodes and its children in document order, as Node.childNodes: its own text first, or
+  // the nodes it was given.
   get childNodes(): (FakeTextNode | FakeElement)[] {
-    const own: FakeTextNode[] =
-      this.#text === '' ? [] : [{ nodeType: 3, data: this.#text, nodeValue: this.#text }];
-    return [...own, ...this.children];
+    return [...this.#nodes];
   }
 
-  // Its own text, then the text of its children, in document order, as Node.textContent.
+  // The text of its child nodes in document order, as Node.textContent.
   get textContent(): string {
-    return this.#text + this.children.map((child) => child.textContent).join('');
+    return this.#nodes.map((node) => (node.nodeType === 3 ? node.data : node.textContent)).join('');
   }
 
   // Moves the element, as a page does when its layout changes under the pointer. Only tests that

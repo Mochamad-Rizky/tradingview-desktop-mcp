@@ -4278,3 +4278,121 @@ describe('trading actions in split labels, input buttons and the text shown', ()
     expect(clicked).toEqual({ x: 200, y: 612 });
   });
 });
+
+describe('trading words split by elements inside them', () => {
+  // Words that the screen shows whole, split in the page by an element inside them: an underlined
+  // first letter, two spans, a line break opportunity, and a span that makes no box of its own.
+  const splitWords = (): FakeElement[] => [
+    fakeElement({
+      tag: 'button',
+      matches: ['#underlined'],
+      rect: box(100, 560, 80, 24),
+      nodes: [fakeElement({ tag: 'u', text: 'S', rect: box(102, 562, 8, 20) }), 'ell 100'],
+    }),
+    fakeElement({
+      matches: ['#two-spans'],
+      rect: box(200, 560, 60, 24),
+      children: [
+        fakeElement({ tag: 'span', text: 'B', rect: box(202, 562, 10, 20) }),
+        fakeElement({ tag: 'span', text: 'uy', rect: box(212, 562, 20, 20) }),
+      ],
+    }),
+    fakeElement({
+      tag: 'button',
+      matches: ['#break'],
+      rect: box(300, 560, 60, 24),
+      nodes: ['Se', fakeElement({ tag: 'wbr', rect: box(320, 562, 0, 0) }), 'll'],
+    }),
+    fakeElement({
+      tag: 'button',
+      matches: ['#contents'],
+      rect: box(400, 560, 80, 24),
+      nodes: [
+        fakeElement({
+          tag: 'span',
+          attributes: { style: 'display:contents' },
+          text: 'Se',
+          rect: box(0, 0, 0, 0),
+        }),
+        'll 100',
+      ],
+    }),
+    // The same two spans inside a button, for a point on the second one.
+    fakeElement({
+      tag: 'button',
+      rect: box(500, 560, 60, 24),
+      children: [
+        fakeElement({ tag: 'span', text: 'B', rect: box(502, 562, 10, 20) }),
+        fakeElement({ tag: 'span', text: 'uy', rect: box(512, 562, 30, 20) }),
+      ],
+    }),
+  ];
+  const make = screen(splitWords);
+
+  test.each([
+    ['an underlined first letter', '#underlined', 'Sell 100'],
+    ['two spans', '#two-spans', 'Buy'],
+    ['a line break opportunity', '#break', 'Sell'],
+    ['a span of display: contents', '#contents', 'Sell 100'],
+  ])('a click on a word split by %s is refused', async (_case, selector, name) => {
+    const { page, input } = pageOver(make());
+
+    const error = await failureOf(clickElement(page, selector));
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { selector, name },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('a click at a point on the second span of a split word is refused by the word of its button', async () => {
+    const { page, input } = pageOver(make());
+
+    const error = await failureOf(clickPoint(page, { x: 525, y: 572 }));
+
+    expect(error.details).toEqual({ x: 525, y: 572, name: 'Buy' });
+    expect(input()).toEqual([]);
+  });
+
+  test('names shown keep the text with its parts apart', async () => {
+    const found = await bothWays(
+      findElements,
+      [{ selector: '#underlined, #two-spans, #break', text: null }, 10, [...UNSAFE_SELECTORS]],
+      make,
+    );
+
+    expect(found.elements.map(({ name }) => name)).toEqual(['S ell 100', 'B uy', 'Se ll']);
+  });
+
+  test('a refusal quotes the words around the trading action, not the whole text', async () => {
+    // A panel whose long text holds the word Sell in the middle.
+    const text = `${'a'.repeat(40)} Sell ${'b'.repeat(40)}`;
+    const panel = () => [fakeElement({ matches: ['#panel'], text, rect: box(100, 600, 400, 60) })];
+    const { page } = pageOver(screen(panel)());
+
+    const error = await failureOf(clickPoint(page, { x: 300, y: 630 }));
+
+    expect(error.details).toEqual({
+      x: 300,
+      y: 630,
+      name: `…${'a'.repeat(19)} Sell ${'b'.repeat(19)}…`,
+    });
+    expect(error.message).toBe(
+      `Refusing to click at (300, 630): the click would reach "…${'a'.repeat(19)} Sell ${'b'.repeat(19)}…", a trading action`,
+    );
+    // The page function quotes it so, run either way.
+    const look = await bothWays(
+      describeElement,
+      [
+        { selector: '#panel' },
+        [...UNSAFE_SELECTORS],
+        [OVERLAP_ROOT],
+        TRADING_ACTION_NAMES,
+        'click',
+      ],
+      screen(panel),
+    );
+    expect(look).toMatchObject({ tradingAction: `…${'a'.repeat(19)} Sell ${'b'.repeat(19)}…` });
+  });
+});

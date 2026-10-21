@@ -5,6 +5,7 @@ import {
   clickTarget,
   findElements,
   hoverTarget,
+  NAME_RULE,
   scrollAt,
   type PointerTarget,
 } from '../../core/tv/input.js';
@@ -60,12 +61,6 @@ function refusals(done: 'clicked' | 'hovered over' | 'scrolled over'): string {
     'and what it is cannot be told.'
   );
 }
-
-// What the name of an element is, for the tools that look an element up by its name.
-const NAME_RULE =
-  'its aria-label, or else the value of an input button, or else the text it shows, with a space ' +
-  'between the texts of different elements and white space collapsed (a label made of Sell and 100 ' +
-  'in two spans is "Sell 100"), compared whole and ignoring case';
 
 // The names a click is refused on, as the tools describe them.
 const TRADING_NAMES =
@@ -163,7 +158,7 @@ function pointerTargetOf(
   if (text !== undefined) {
     if (text.trim() === '') {
       throw new TvMcpError('INVALID_INPUT', 'The text to look for is empty', {
-        hint: 'Give the name of the element: its aria-label, or else its text.',
+        hint: `Give the name of the element: ${NAME_RULE}.`,
       });
     }
     return { target: { text }, by: 'text' };
@@ -194,7 +189,11 @@ export const uiClick = defineTool({
     'a trading action, because an order ticket has no selector to tell it by: an aria-label, the ' +
     'value of an input button or the text shown (each on its own, so the text shown counts under ' +
     `an aria-label that says something else) that holds ${TRADING_NAMES}, as words, of the ` +
-    'target, of what lies at the point, or of the button that holds it. The ' +
+    'target, of what lies at the point, or of the button that holds it. The text shown is read ' +
+    'with its parts apart and run together, so a word split into elements still counts. A point ' +
+    'click lands on the element there and reads all the text it shows: a point click on a panel, ' +
+    'a legend or another area whose text shows such a word is refused, so click the specific ' +
+    'control by selector instead. The refusal quotes the words that matched. The ' +
     'pointer moves onto the target first, and the button goes down only if the target still ' +
     'looks the same once the pointer is there, so a menu that opens on hover stops the click. ' +
     'Also NOT_AVAILABLE: a page that does not report its zoom, no ' +
@@ -361,7 +360,7 @@ export const uiFindElement = defineTool({
     }
     if (text?.trim() === '') {
       throw new TvMcpError('INVALID_INPUT', 'The text to look for is empty', {
-        hint: 'Give the name of the elements: their aria-label, or else their text.',
+        hint: `Give the name of the elements. The name of an element is ${NAME_RULE}.`,
       });
     }
     const page = await uiTargetPage(ctx, target);

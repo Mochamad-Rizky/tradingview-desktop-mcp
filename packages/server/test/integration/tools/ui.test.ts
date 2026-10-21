@@ -338,6 +338,26 @@ describe('ui_click', () => {
     expect(inputCountOf(app)).toBe(0);
   });
 
+  test('ui_click refuses a trading word that an element splits inside, and quotes it', async () => {
+    // <button><u>S</u>ell 100</button>: the screen shows "Sell 100".
+    const underlined = fakeElement({
+      tag: 'button',
+      rect: box(100, 600, 80, 24),
+      nodes: [fakeElement({ tag: 'u', text: 'S', rect: box(102, 602, 8, 20) }), 'ell 100'],
+    });
+    const { client, app } = await startHarness({ win: chartPage([underlined]) });
+
+    const result = await callTool(client, 'ui_click', { x: 150, y: 612 });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to click at (150, 612): the click would reach "Sell 100", a trading action',
+      details: { x: 150, y: 612, name: 'Sell 100' },
+    });
+    expect(inputCountOf(app)).toBe(0);
+  });
+
   test('ui_click by selector refuses a target whose center a container of the trade button covers', async () => {
     const panel = fakeElement({
       attributes: { 'data-name': 'trading-panel' },

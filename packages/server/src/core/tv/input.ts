@@ -55,6 +55,13 @@ export type PointerTarget = { selector: string } | { text: string } | Point;
 // the pointer there, and a scroll turns the wheel there.
 export type PointerAction = 'click' | 'hover' | 'scroll';
 
+// What the name of an element is, in the words of the hints and of the descriptions of the tools
+// that look an element up by its name. describeElement says it in full.
+export const NAME_RULE =
+  'its aria-label, or else the value of an input button, or else the text it shows, with a space ' +
+  'between the texts of different elements and white space collapsed (a label made of Sell and 100 ' +
+  'in two spans is "Sell 100"), compared whole and ignoring case';
+
 // Every call is a lookup of the page followed by events that rest on it, and two calls that
 // overlap can send an event on a lookup the other call has made stale: Tab moves the focus to a
 // trade button between the lookup that cleared an Enter and the Enter, and nothing ever looked at
@@ -116,12 +123,15 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 // - obscuredBy: the covering element in a few words, its tag followed by its id, data-qa-id and
 //   data-name when it has them. Empty unless the coverage is obscured.
 // - rect: its box in viewport pixels, as the page reports it.
-// - tradingAction: for a click, the name of a trading action, which `tradingNames` matches ignoring
-//   case, that the click would reach. Each of the aria-label, the value of an input button and the
-//   text shown is matched on its own, so that the text a user reads counts even under an aria-label
-//   that says something else, for the element, for the element at the point, and for the control
-//   that one belongs to (its closest button, link or element with the role of one), which a click
-//   on it activates. Left out when there is none.
+// - tradingAction: for a click, a trading action, which `tradingNames` matches ignoring case, that
+//   the click would reach, quoted with the words around it. Each of the aria-label, the value of an
+//   input button and the text shown is matched on its own, so that the text a user reads counts even
+//   under an aria-label that says something else, and the text shown is read both with a space
+//   between the pieces of different elements and with the pieces run together, so that neither a
+//   label split into elements nor a word split by an element inside it gets past. That goes for the
+//   element, for the element at the point, and for the control that one belongs to (its closest
+//   button, link or element with the role of one), which a click on it activates. Left out when
+//   there is none.
 // A point is the target itself: it is found and visible, has no rect, and is judged the way the
 // point of an element is, except that a layer or a frame anywhere at it covers it, since it lies on
 // no element the caller named, and that for a click the element at the point is its target, so
@@ -188,34 +198,39 @@ export function describeElement(
     field(node) || ('isContentEditable' in node && node.isContentEditable === true);
   // White space as a user reads it: every run of it one space, none at the ends.
   const collapsed = (value: string | null): string => (value ?? '').replace(/\s+/g, ' ').trim();
-  // The text an element shows: its text nodes, with a space between the pieces of different
+  // The text an element shows, read two ways. spaced has a space between the pieces of different
   // elements, as they stand apart on the screen, so that a label split into "Sell" and "100" reads
-  // "Sell 100". Nothing that was typed: an element that is typed into, or sits inside a field,
-  // shows nothing, and the fields and editable regions inside an element are left out.
-  const readable = (element: Element): string => {
+  // "Sell 100": that is how a name reads. joined runs the pieces together, as a word that an element
+  // splits inside ("S" in a u, then "ell 100") is still one word on the screen: the trading check
+  // reads both. Nothing that was typed: an element that is typed into, or sits inside a field, shows
+  // nothing, and the fields and editable regions inside an element are left out.
+  const texts = (element: Element): { spaced: string; joined: string } => {
     if (typedIn(element)) {
-      return '';
+      return { spaced: '', joined: '' };
     }
     for (let node = element.parentElement; node !== null; node = node.parentElement) {
       if (field(node)) {
-        return '';
+        return { spaced: '', joined: '' };
       }
     }
-    let text = '';
+    let spaced = '';
+    let joined = '';
     const collect = (node: Element): void => {
       for (const child of Array.from(node.childNodes)) {
         if (child.nodeType === 3) {
-          text += (child as CharacterData).data;
+          spaced += (child as CharacterData).data;
+          joined += (child as CharacterData).data;
         } else if (child.nodeType === 1 && !typedIn(child as Element)) {
-          text += ' ';
+          spaced += ' ';
           collect(child as Element);
-          text += ' ';
+          spaced += ' ';
         }
       }
     };
     collect(element);
-    return collapsed(text);
+    return { spaced: collapsed(spaced), joined: collapsed(joined) };
   };
+  const readable = (element: Element): string => texts(element).spaced;
   // The label of a button made of an input of type submit, button or reset: its value, which the
   // page sets and the user does not type, and which is its value attribute. The value of an input of
   // any other type is never read.
@@ -247,20 +262,34 @@ export function describeElement(
     }
     return null;
   };
-  // The name of a trading action that a click on `element` would reach, if any: the aria-label, the
-  // label of an input button and the text shown, each on its own, of the element and of its
-  // control. The text shown counts even when an aria-label says something else, as the user reads
-  // that text and not the label.
+  // The words around the trading action the pattern finds in a name, twenty characters on each
+  // side at most, to show why a click was refused.
+  const around = (name: string): string | undefined => {
+    const match = trading.exec(name);
+    if (match === null) {
+      return undefined;
+    }
+    const start = Math.max(0, match.index - 20);
+    const end = Math.min(name.length, match.index + match[0].length + 20);
+    return `${start > 0 ? '…' : ''}${name.slice(start, end)}${end < name.length ? '…' : ''}`;
+  };
+  // The trading action that a click on `element` would reach, if any, quoted with the words around
+  // it: the aria-label, the label of an input button and the text shown, read both ways, each on
+  // its own, of the element and of its control. The text shown counts even when an aria-label says
+  // something else, as the user reads that text and not the label.
   const tradingNameAt = (element: Element): string | undefined => {
     const control = controlOf(element);
     for (const named of control === null ? [element] : [element, control]) {
+      const { spaced, joined } = texts(named);
       for (const name of [
         collapsed(named.getAttribute('aria-label')),
         buttonValue(named),
-        readable(named),
+        spaced,
+        joined,
       ]) {
-        if (trading.test(name)) {
-          return name.slice(0, 120);
+        const quoted = around(name);
+        if (quoted !== undefined) {
+          return quoted;
         }
       }
     }
@@ -801,9 +830,9 @@ function aimAtElement(
         `No visible element is named ${JSON.stringify(target.text)}`,
         {
           hint:
-            'A name is the aria-label of an element, or else its text, compared whole and ignoring ' +
-            'case. List the elements with ui_find_element, by a selector such as button or ' +
-            '[role="menuitem"], to see their names, or give a selector instead.',
+            `The name of an element is ${NAME_RULE}. List the elements with ui_find_element, by ` +
+            'a selector such as button or [role="menuitem"], to see their names, or give a ' +
+            'selector instead.',
           details: named,
         },
       );
@@ -953,7 +982,7 @@ function checkedTarget(target: PointerTarget): PointerTarget {
     const text = target.text.trim();
     if (text === '') {
       throw new TvMcpError('INVALID_INPUT', 'The text to look for is empty', {
-        hint: 'Give the name of the element: its aria-label, or else its text.',
+        hint: `Give the name of the element: ${NAME_RULE}.`,
       });
     }
     return { text };

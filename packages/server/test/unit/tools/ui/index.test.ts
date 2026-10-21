@@ -169,6 +169,10 @@ describe('the descriptions', () => {
     }
     // Every source of a name counts on its own, the text shown under an aria-label included.
     expect(description).toMatch(/value of an input button or the text shown \(each on its own/);
+    expect(description).toMatch(/parts apart and run together/);
+    // Point clicks on areas that show such words are refused, and the way around it is said.
+    expect(description).toMatch(/point click on a panel, a legend or another area/);
+    expect(description).toMatch(/click the specific control by selector instead/);
     expect(description).toMatch(/does not report its zoom/);
   });
 
