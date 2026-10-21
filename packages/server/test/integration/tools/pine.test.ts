@@ -15,6 +15,7 @@ import {
   type FakeTvOverrides,
   type FakeTvWindow,
 } from '../../helpers/fake-tv/window.js';
+import { recordChartLookups } from '../../helpers/chart-lookups.js';
 import { callTool, connectInMemoryClient, textOf } from '../../helpers/mcp-client.js';
 import {
   capturingLogger,
@@ -1157,32 +1158,6 @@ const studyIdsOf = (win: FakeTvWindow) =>
   win.TradingViewApi?.activeChart()
     .getAllStudies()
     .map(({ id }) => id);
-
-// From now on, notes each time the page asks the layout which chart is active (activeChart,
-// activeChartIndex) and each chart it reaches by its index (chart:<index>), in order.
-function recordChartLookups(win: FakeTvWindow): string[] {
-  const api = win.TradingViewApi;
-  if (api === undefined) {
-    throw new Error('The fake window has no API');
-  }
-  const asked: string[] = [];
-  const activeChart = api.activeChart.bind(api);
-  const activeChartIndex = api.activeChartIndex.bind(api);
-  const chart = api.chart.bind(api);
-  api.activeChart = () => {
-    asked.push('activeChart');
-    return activeChart();
-  };
-  api.activeChartIndex = () => {
-    asked.push('activeChartIndex');
-    return activeChartIndex();
-  };
-  api.chart = (index?: number) => {
-    asked.push(`chart:${String(index)}`);
-    return chart(index);
-  };
-  return asked;
-}
 
 // Holds the next createStudy of the chart until release() is called. called settles once it was
 // called, so that a test can start another call while an indicator_add is halfway.

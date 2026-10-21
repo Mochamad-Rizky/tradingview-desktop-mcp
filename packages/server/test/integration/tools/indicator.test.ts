@@ -14,6 +14,7 @@ import {
   type FakeTvOverrides,
   type FakeTvWindow,
 } from '../../helpers/fake-tv/window.js';
+import { recordChartLookups } from '../../helpers/chart-lookups.js';
 import { callTool, connectInMemoryClient, textOf } from '../../helpers/mcp-client.js';
 import { quietLogger, refusingLauncher, testConfig } from '../../helpers/tool-context.js';
 
@@ -440,32 +441,6 @@ function chartOf(win: FakeTvWindow) {
 // The dialogs the app would have opened.
 const dialogsOf = (win: FakeTvWindow) =>
   inspectFakeWindow(win).calls.filter(({ name }) => name.startsWith('dialog.'));
-
-// From now on, notes each time the page asks the layout which chart is active (activeChart,
-// activeChartIndex) and each chart it reaches by its index (chart:<index>), in order.
-function recordChartLookups(win: FakeTvWindow): string[] {
-  const api = win.TradingViewApi;
-  if (api === undefined) {
-    throw new Error('The fake window has no API');
-  }
-  const asked: string[] = [];
-  const activeChart = api.activeChart.bind(api);
-  const activeChartIndex = api.activeChartIndex.bind(api);
-  const chart = api.chart.bind(api);
-  api.activeChart = () => {
-    asked.push('activeChart');
-    return activeChart();
-  };
-  api.activeChartIndex = () => {
-    asked.push('activeChartIndex');
-    return activeChartIndex();
-  };
-  api.chart = (index?: number) => {
-    asked.push(`chart:${String(index)}`);
-    return chart(index);
-  };
-  return asked;
-}
 
 // The changes the server made to the studies.
 const changesOf = (win: FakeTvWindow) =>
