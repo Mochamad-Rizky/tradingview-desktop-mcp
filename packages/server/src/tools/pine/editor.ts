@@ -93,13 +93,20 @@ export const CLOSE_EDITOR_HINT =
 // (changePineEditor), which a test holds to these.
 export const UNSAVED_TEXT_HINT = `Pass confirm: true to replace it, or save it first with pine_save. ${CLOSE_EDITOR_HINT}`;
 
+// What saving and closing do to the flag of unsaved changes TradingView keeps, for the refusals to
+// add or save a script it flags: saving leaves the flag set, and only a close with nothing unsaved
+// writes it down (see CLOSE_EDITOR_HINT).
+export const KEPT_FLAG_REMEDY =
+  'Saving does not clear the flag of unsaved changes TradingView keeps, which also marks text it ' +
+  'kept across a close of the Pine Editor: once nothing is unsaved, closing the Pine Editor in ' +
+  'TradingView clears it.';
+
 // The hint of a refusal to add a saved script with unsaved changes to the chart, which TradingView
 // would ask about in a dialog. The page says it in its own words (addPineScriptToChart), which a
 // test holds to these.
 export const SAVED_CHANGES_HINT =
   'Save the changes first with pine_save, or start a new script with pine_new and the source, ' +
-  'then add that. The changes include those TradingView only flags, as for text it kept across a ' +
-  'close of the Pine Editor.';
+  `then add that. ${KEPT_FLAG_REMEDY} Then open the script with pine_open and add it.`;
 
 // The error of `action`, which would replace unsaved text of the editor without confirm.
 export function unsavedTextError(action: string): TvMcpError {

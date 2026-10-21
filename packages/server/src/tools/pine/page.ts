@@ -1690,8 +1690,10 @@ export function addPineScriptToChart(
           'after asking in a dialog whether to save a new version',
         hint:
           'Save the changes first with pine_save, or start a new script with pine_new and the ' +
-          'source, then add that. The changes include those TradingView only flags, as for text ' +
-          'it kept across a close of the Pine Editor.',
+          'source, then add that. Saving does not clear the flag of unsaved changes TradingView ' +
+          'keeps, which also marks text it kept across a close of the Pine Editor: once nothing ' +
+          'is unsaved, closing the Pine Editor in TradingView clears it. Then open the script ' +
+          'with pine_open and add it.',
       },
     };
   }

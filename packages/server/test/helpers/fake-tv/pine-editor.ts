@@ -306,10 +306,11 @@ export interface FakePineEditorState {
   compileFirstErrorOnly: boolean;
   // What the app keeps for the editor between opens (has_unsaved_modifications, which its helper
   // getPersistedValue reads): whether the text has unsaved changes. Seen on the app: written when
-  // the side panel closes, from whether the text then differs from that of its script (its saved
-  // version), and left as
-  // it is while the editor is open, however the text changes: starting, opening, saving or adding
-  // a script does not clear it.
+  // the side panel closes, and left as it is while the editor is open, however the text changes:
+  // starting, opening, saving or adding a script does not clear it. What the app writes it from on
+  // the close is not known; the fake writes whether the text then differs from that of its script
+  // (its saved version, versionSource), so that text kept across a close is kept again by the next
+  // close.
   unsavedKept: boolean;
   // Whether the editor was opened before in this session. Seen on the app: once it was, an open
   // after the side panel closed shows a new script, unless unsaved changes are kept, whose text it
@@ -814,7 +815,8 @@ export function createFakePineEditor(
     closeSidePanel(id: string) {
       record('pageLayout.closeSidePanel', [id]);
       // The side panel goes, and the editor leaves the registry; the app keeps the script it held
-      // and whether its text had unsaved changes against its saved version (seen on the app).
+      // and whether its text had unsaved changes (seen on the app). That they are counted against
+      // the saved version, so that kept text is kept again, is the fake's guess (unsavedKept).
       if (id === 'pine' && state.placement === 'dialog') {
         state.unsavedKept = state.source !== state.versionSource;
         state.placement = null;

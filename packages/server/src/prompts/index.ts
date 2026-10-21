@@ -9,8 +9,9 @@ import { normalizeTimeframe } from '../tools/chart/mappers.js';
 // which tools to call, in which order, and what to report back; reading one asks TradingView
 // nothing. The tools are named as the registry names them, which a test checks. A message never
 // asks for more than the tools are meant to do: it has the model pass confirm: true only once the
-// user agreed, and ask the user before it discards or removes anything that was theirs. The text
-// the model put into the Pine Editor itself needs no confirm: true to be changed again.
+// user agreed, and ask the user before it discards or removes anything that was theirs. Only an
+// edit the model made in the Pine Editor and did not save passes without confirm: true; a refusal
+// can come over the model's own text too, once TradingView kept it across a close.
 
 // What multi_timeframe_review reviews when it is given no timeframes, and how many it takes at
 // most: each one costs three tool calls.
@@ -176,14 +177,16 @@ function writeAndBacktestStrategy(
         '//@version=6, a strategy() declaration, the entry and exit rules of the idea, and an ' +
         'input for each parameter. If it fails with CONFIRMATION_REQUIRED, the Pine Editor holds ' +
         'unsaved text: ask the user before you call it again with confirm: true, and never ' +
-        'discard that text on your own. Once the editor holds your script, changing it needs no ' +
-        'confirm: true, because the server tells the text it wrote from text of the user.',
+        'discard that text on your own. While the editor holds your script as an edit you made ' +
+        'and did not save, changing it needs no confirm: true: the server tells that edit from ' +
+        'text of the user.',
       'pine_smart_compile with writeBack: true. It compiles the text, applies the rule-based ' +
         'fixes it knows and writes the fixed text back. If it fails with CONFIRMATION_REQUIRED, ' +
-        'the text in the editor is no longer the one you wrote (the user may have typed in it): ' +
-        'ask the user before you pass confirm: true. If errors remain, fix the source yourself, ' +
-        'put it in the editor with pine_set_source and call pine_smart_compile again, until the ' +
-        'script compiles without errors.',
+        'the editor no longer holds your edit as you left it: the user may have typed in it, or ' +
+        'TradingView kept the text across a close of the editor, after which even your own text ' +
+        'needs confirm: true. Ask the user before you pass confirm: true. If errors remain, fix ' +
+        'the source yourself, put it in the editor with pine_set_source and call ' +
+        'pine_smart_compile again, until the script compiles without errors.',
       'pine_compile with addToChart: true, which adds the strategy to the chart. It can fail ' +
         'with PLAN_LIMIT when the chart already holds as many indicators as the plan allows. Do ' +
         'not remove anything on your own then: tell the user, and offer to take one indicator ' +

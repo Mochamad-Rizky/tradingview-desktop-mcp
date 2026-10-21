@@ -352,13 +352,17 @@ describe('write_and_backtest_strategy', () => {
 
     const text = await messageOf(client, 'write_and_backtest_strategy', { idea: IDEA });
 
-    expect(text).toMatch(/changing it needs no confirm: true/i);
+    // Only an edit of its own that is not saved yet passes without confirm.
+    expect(text).toMatch(
+      /as an edit you made and did not save, changing it needs no confirm: true/,
+    );
     expect(text).not.toMatch(/writeBack: true and confirm: true/);
     expect(text).not.toMatch(/with confirm: true again/);
-    // A refusal after that means the text changed in the editor, and only the user may let it go.
+    // A refusal after that can come over its own text too, and only the user may let it go.
     const compile = text.slice(text.indexOf('pine_smart_compile with writeBack'));
-    expect(compile).toMatch(/CONFIRMATION_REQUIRED[^.]*no longer the one you wrote/);
-    expect(compile).toMatch(/ask the user before you pass confirm: true/);
+    expect(compile).toMatch(/CONFIRMATION_REQUIRED[^.]*no longer holds your edit as you left it/);
+    expect(compile).toMatch(/kept the text across a close/);
+    expect(compile).toMatch(/ask the user before you pass confirm: true/i);
   });
 
   test('asks for a summary of the results', async () => {

@@ -3,7 +3,12 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Logger } from '../../../src/core/logger.js';
 import { createMcpServer } from '../../../src/server.js';
-import { ensureEditorOpen } from '../../../src/tools/pine/editor.js';
+import {
+  ensureEditorOpen,
+  KEPT_FLAG_REMEDY,
+  SAVED_CHANGES_HINT,
+  UNSAVED_TEXT_HINT,
+} from '../../../src/tools/pine/editor.js';
 import { closePineEditor } from '../../../src/tools/pine/page.js';
 import type { ToolContext } from '../../../src/tools/types.js';
 import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
@@ -305,19 +310,24 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     expect(errorOf(replaced)?.code).toBe('CONFIRMATION_REQUIRED');
     expect(errorOf(added)?.code).toBe('NOT_AVAILABLE');
     expect(errorOf(saved)?.code).toBe('CONFIRMATION_REQUIRED');
-    // Closing clears the flag only over text without unsaved changes, so only a refusal to replace
-    // the text names it; adding and saving point to saving.
+    // Every refusal names closing the editor, which clears the flag once nothing is unsaved. Saving
+    // does not clear it, so adding and saving say that too, after saving first.
+    expect(errorOf(replaced)?.hint).toBe(UNSAVED_TEXT_HINT);
     expect(errorOf(replaced)?.hint).toContain('Closing the Pine Editor in TradingView');
     expect(errorOf(replaced)?.hint).toContain('only when the editor holds no unsaved changes');
-    expect(errorOf(added)?.hint).toContain('Save the changes first with pine_save');
+    expect(errorOf(added)?.hint).toBe(SAVED_CHANGES_HINT);
+    expect(errorOf(added)?.hint).toMatch(/^Save the changes first with pine_save/);
+    expect(errorOf(added)?.hint).toContain('open the script with pine_open and add it');
     expect(errorOf(saved)?.hint).toContain('call pine_save again with confirm: true');
     for (const result of [added, saved]) {
-      expect(errorOf(result)?.hint).not.toMatch(/closing/i);
+      expect(errorOf(result)?.hint).toContain(KEPT_FLAG_REMEDY);
+      expect(errorOf(result)?.hint).toContain('Saving does not clear the flag');
+      expect(errorOf(result)?.hint).toContain('closing the Pine Editor in TradingView clears it');
     }
   });
 
   test('pine_save and pine_compile with addToChart count the flag TradingView keeps as unsaved changes, also over the text this session wrote', async () => {
-    const { client, win } = await closedWithUnsavedText(withStudyRoom(3, withEditor()));
+    const { client, ctx, win } = await closedWithUnsavedText(withStudyRoom(3, withEditor()));
     await callTool(client, 'pine_open', { scriptId: SCRIPT.scriptIdPart, confirm: true });
     // The script is the user's, and the flag of the replaced text is still set: confirm, twice.
     await callTool(client, 'pine_set_source', { source: EDITED, confirm: true });
@@ -332,6 +342,17 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     expect(errorOf(added)?.code).toBe('NOT_AVAILABLE');
     expect(callsOf(win, 'pineFacade.saveScript')).toHaveLength(1);
     expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+
+    // What the hints say does it: with nothing unsaved, the user closes the Pine Editor, which
+    // writes the flag down; the script is opened again and added.
+    const page = await ctx.connection.chartPage();
+    await page.bridge.evaluateWithLib(closePineEditor, []);
+    expect(editorOf(win)).toMatchObject({ placement: null, unsavedKept: false });
+    const opened = await callTool(client, 'pine_open', { scriptId: SCRIPT.scriptIdPart });
+    expect(dataOf(opened)).toMatchObject({ script: { id: SCRIPT.scriptIdPart }, modified: false });
+    const addedThen = await callTool(client, 'pine_compile', { addToChart: true });
+    expect(dataOf(addedThen)).toMatchObject({ addedToChart: true, studyId: 'NEW001' });
+    expect(callsOf(win, 'dialog.confirmSaveChanges')).toEqual([]);
   });
 
   test('the text this session wrote counts as unsaved for saving, adding and replacing once TradingView kept it across a close', async () => {

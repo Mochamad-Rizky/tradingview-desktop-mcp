@@ -14,6 +14,7 @@ import { analyzePine, pineVersion } from './analyze/analyze.js';
 import { compileSource, pineCompileTools } from './compile.js';
 import {
   ensureEditorOpen,
+  KEPT_FLAG_REMEDY,
   notOpenError,
   readEditorState,
   requireReplaceable,
@@ -112,12 +113,11 @@ function editorData(state: PineEditorState) {
 // must hold (expect), so that an editor that has changed is told from unsaved text this call may
 // not replace, and whenever this session has written a text, since unsaved changes are its own
 // while they are an unsaved edit of exactly that text. Either refusal is the same
-// CONFIRMATION_REQUIRED. A
-// text the change writes is remembered as the one this session wrote last. Answers the state
-// afterwards; when nothing was changed because the editor did not hold what was expected, which
-// part it did not hold (null when the change was made); and whether the editor held unsaved
-// changes, as the tools count them, when the call came to change it, which only confirm: true, or
-// the text this session wrote, lets a change replace.
+// CONFIRMATION_REQUIRED. A text the change writes is remembered as the one this session wrote last.
+// Answers the state afterwards; when nothing was changed because the editor did not hold what was
+// expected, which part it did not hold (null when the change was made); and whether the editor held
+// unsaved changes, as the tools count them, when the call came to change it, which only confirm:
+// true, or an unsaved edit of the text this session wrote, lets a change replace.
 async function changeEditor(
   page: PageHandle,
   ctx: ToolContext,
@@ -578,8 +578,7 @@ async function saveEditorScript(
       {
         hint:
           "The script is the user's. Make sure the user wants a new version saved, then call " +
-          'pine_save again with confirm: true. The changes include those TradingView only flags, ' +
-          'as for text it kept across a close of the Pine Editor.',
+          `pine_save again with confirm: true. ${KEPT_FLAG_REMEDY}`,
         details: { id },
       },
     );
