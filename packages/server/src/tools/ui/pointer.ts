@@ -11,7 +11,7 @@ import {
 } from '../../core/tv/input.js';
 import { UNSAFE_SELECTORS } from '../../core/tv/selectors.js';
 import { READ_ONLY } from '../annotations.js';
-import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.js';
+import { defineTool, type ToolContext } from '../types.js';
 
 // The pointer tools of the low-level interface (design spec 7, domain Low-level UI): a click, a
 // hover and a turn of the mouse wheel at an element of TradingView or at a point, and the look-up
@@ -41,8 +41,8 @@ const MAX_LIMIT = 50;
 const DEFAULT_LIMIT = 10;
 
 // A click or a turn of the wheel can change anything a click or a turn of the wheel of the user
-// can, and doing one twice is not doing it once.
-const ACTS = {
+// can, and doing one twice is not doing it once. A key and a text likewise.
+export const ACTS = {
   readOnlyHint: false,
   destructiveHint: true,
   idempotentHint: false,
@@ -63,7 +63,7 @@ function refusals(done: 'clicked' | 'hovered over' | 'scrolled over'): string {
 }
 
 // The names a click is refused on, as the tools describe them.
-const TRADING_NAMES =
+export const TRADING_NAMES =
   'the word Buy or Sell; placing, submitting, sending, cancelling or modifying an order; closing, ' +
   'exiting, reversing or flattening a position; Close all, Flatten or Reverse';
 
@@ -75,7 +75,7 @@ export function uiTargetPage(
   return target === 'window' ? ctx.connection.windowChromePage() : ctx.connection.chartPage();
 }
 
-function targetInput() {
+export function targetInput() {
   return z
     .enum(TARGETS)
     .default('chart')
@@ -382,5 +382,3 @@ export const uiFindElement = defineTool({
     };
   },
 });
-
-export const pointerTools: AnyToolDefinition[] = [uiClick, uiHover, uiScroll, uiFindElement];

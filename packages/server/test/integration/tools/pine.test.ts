@@ -313,7 +313,9 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     // Every refusal names closing the editor, which clears the flag once nothing is unsaved. Saving
     // does not clear it, so adding and saving say that too, after saving first.
     expect(errorOf(replaced)?.hint).toBe(UNSAVED_TEXT_HINT);
-    expect(errorOf(replaced)?.hint).toContain('Closing the Pine Editor in TradingView');
+    expect(errorOf(replaced)?.hint).toContain(
+      'Closing the Pine Editor, in TradingView or with ui_open_panel (panel: "pine_editor", open: false), clears the flag',
+    );
     expect(errorOf(replaced)?.hint).toContain('only when the editor holds no unsaved changes');
     expect(errorOf(added)?.hint).toBe(SAVED_CHANGES_HINT);
     expect(errorOf(added)?.hint).toMatch(/^Save the changes first with pine_save/);
@@ -322,12 +324,14 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     for (const result of [added, saved]) {
       expect(errorOf(result)?.hint).toContain(KEPT_FLAG_REMEDY);
       expect(errorOf(result)?.hint).toContain('Saving does not clear the flag');
-      expect(errorOf(result)?.hint).toContain('closing the Pine Editor in TradingView clears it');
+      expect(errorOf(result)?.hint).toContain(
+        'closing the Pine Editor, in TradingView or with ui_open_panel (panel: "pine_editor", open: false), clears it',
+      );
     }
   });
 
   test('pine_save and pine_compile with addToChart count the flag TradingView keeps as unsaved changes, also over the text this session wrote', async () => {
-    const { client, ctx, win } = await closedWithUnsavedText(withStudyRoom(3, withEditor()));
+    const { client, win } = await closedWithUnsavedText(withStudyRoom(3, withEditor()));
     await callTool(client, 'pine_open', { scriptId: SCRIPT.scriptIdPart, confirm: true });
     // The script is the user's, and the flag of the replaced text is still set: confirm, twice.
     await callTool(client, 'pine_set_source', { source: EDITED, confirm: true });
@@ -343,10 +347,10 @@ describe('unsaved text TradingView keeps for a closed editor', () => {
     expect(callsOf(win, 'pineFacade.saveScript')).toHaveLength(1);
     expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
 
-    // What the hints say does it: with nothing unsaved, the user closes the Pine Editor, which
+    // What the hints say does it: with nothing unsaved, closing the Pine Editor with ui_open_panel
     // writes the flag down; the script is opened again and added.
-    const page = await ctx.connection.chartPage();
-    await page.bridge.evaluateWithLib(closePineEditor, []);
+    const closed = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+    expect(dataOf(closed)).toEqual({ panel: 'pine_editor', open: false, changed: true });
     expect(editorOf(win)).toMatchObject({ placement: null, unsavedKept: false });
     const opened = await callTool(client, 'pine_open', { scriptId: SCRIPT.scriptIdPart });
     expect(dataOf(opened)).toMatchObject({ script: { id: SCRIPT.scriptIdPart }, modified: false });

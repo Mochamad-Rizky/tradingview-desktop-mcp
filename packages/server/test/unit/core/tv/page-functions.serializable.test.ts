@@ -183,6 +183,14 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   expect(Object.keys(pageFunctions)).toContain('createPageLib');
   expect(Object.keys(pageFunctions)).toContain('readChartBox');
   for (const name of [
+    'readPanelControls',
+    'setFullscreen',
+    'readFullscreen',
+    'evaluateExpression',
+  ]) {
+    expect(Object.keys(pageFunctions)).toContain(name);
+  }
+  for (const name of [
     'readChartLayout',
     'readChartState',
     'readChartSnapshot',

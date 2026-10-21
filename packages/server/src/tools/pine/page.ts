@@ -1038,9 +1038,10 @@ export function changePineEditor(
             hint:
               'Pass confirm: true to replace it, or save it first with pine_save. TradingView ' +
               'flags unsaved changes until the Pine Editor closes, also after a call replaced ' +
-              'them. Closing the Pine Editor in TradingView clears the flag only when the editor ' +
-              'holds no unsaved changes at that moment; else TradingView keeps the text and shows ' +
-              'it again on the next open.',
+              'them. Closing the Pine Editor, in TradingView or with ui_open_panel (panel: ' +
+              '"pine_editor", open: false), clears the flag only when the editor holds no unsaved ' +
+              'changes at that moment; else TradingView keeps the text and shows it again on the ' +
+              'next open.',
           },
         };
       }
@@ -1692,8 +1693,8 @@ export function addPineScriptToChart(
           'Save the changes first with pine_save, or start a new script with pine_new and the ' +
           'source, then add that. Saving does not clear the flag of unsaved changes TradingView ' +
           'keeps, which also marks text it kept across a close of the Pine Editor: once nothing ' +
-          'is unsaved, closing the Pine Editor in TradingView clears it. Then open the script ' +
-          'with pine_open and add it.',
+          'is unsaved, closing the Pine Editor, in TradingView or with ui_open_panel (panel: ' +
+          '"pine_editor", open: false), clears it. Then open the script with pine_open and add it.',
       },
     };
   }

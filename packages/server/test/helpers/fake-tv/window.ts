@@ -136,6 +136,8 @@ export interface FakeTvOverrides {
   pineEditorOpenError?: string;
   // Leaves the page layout service out of the service locator, so the side panel cannot be closed.
   withoutPageLayoutService?: boolean;
+  // Makes the page layout service ignore a close of the side panel (pine-editor.ts).
+  pineEditorCloseIgnored?: boolean;
   // Leaves TradingView.bottomWidgetBar out.
   withoutBottomWidgetBar?: boolean;
   // The viewport, its pixel ratio and the boxes of the chart containers (screen.ts).
@@ -380,6 +382,7 @@ export function createFakeTvWindow(
     readyMs: overrides.pineEditorReadyMs ?? 20,
     openError: overrides.pineEditorOpenError,
     withoutPageLayoutService: overrides.withoutPageLayoutService,
+    closeIgnored: overrides.pineEditorCloseIgnored,
     savedScriptsLimit: fixture.planLimits.SAVED_PINE_SCRIPTS,
     isFeatureEnabled: (name) => fixture.featureToggles[name] === true,
     record,

@@ -144,7 +144,7 @@ export class FakeElement {
   parent: FakeElement | null = null;
   readonly #matches: ReadonlySet<string>;
   #rect: FakeRect;
-  readonly #attributes: ReadonlyMap<string, string>;
+  readonly #attributes: Map<string, string>;
   readonly #nodes: readonly (FakeTextNode | FakeElement)[];
   readonly #contentEditable: boolean | undefined;
 
@@ -189,6 +189,18 @@ export class FakeElement {
 
   getAttribute(name: string): string | null {
     return this.#attributes.get(name) ?? null;
+  }
+
+  // Sets an attribute, as a page does when its state changes, such as aria-pressed on a toggle. It
+  // does not change which selectors the element matches, nor its type property. Only tests and
+  // fakes that need the page to change call it.
+  setAttribute(name: string, value: string): void {
+    this.#attributes.set(name, value);
+  }
+
+  // The name of the node, as Node.nodeName: the tag in capitals for an element.
+  get nodeName(): string {
+    return this.tagName;
   }
 
   hasAttribute(name: string): boolean {

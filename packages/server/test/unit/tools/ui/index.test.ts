@@ -3,7 +3,10 @@ import type { PageHandle } from '../../../../src/core/connection.js';
 import { READ_ONLY } from '../../../../src/tools/annotations.js';
 import { allTools } from '../../../../src/tools/index.js';
 import { selectTools } from '../../../../src/tools/registry.js';
+import { uiEvaluate } from '../../../../src/tools/ui/evaluate.js';
 import { uiTools } from '../../../../src/tools/ui/index.js';
+import { uiPressKey, uiTypeText } from '../../../../src/tools/ui/keyboard.js';
+import { uiFullscreen, uiOpenPanel } from '../../../../src/tools/ui/panels.js';
 import {
   uiClick,
   uiFindElement,
@@ -12,15 +15,35 @@ import {
   uiTargetPage,
 } from '../../../../src/tools/ui/pointer.js';
 
-// What the model and the client see of the pointer tools: their names, annotations, input schemas
-// and descriptions, and the page each acts on. Their behavior is tested through a server in
+// What the model and the client see of the ui tools: their names, annotations, input schemas and
+// descriptions, and the page each acts on. Their behavior is tested through a server in
 // test/integration/tools/ui.test.ts, and the guard behind them in test/unit/core/tv/input.test.ts.
 
 const names = (tools: { name: string }[]) => tools.map(({ name }) => name);
 
-test('uiTools lists the pointer tools of the ui domain', () => {
-  expect(uiTools).toEqual([uiClick, uiHover, uiScroll, uiFindElement]);
-  expect(names(uiTools)).toEqual(['ui_click', 'ui_hover', 'ui_scroll', 'ui_find_element']);
+test('uiTools lists the tools of the ui domain in the order of the catalog of the design', () => {
+  expect(uiTools).toEqual([
+    uiClick,
+    uiHover,
+    uiTypeText,
+    uiPressKey,
+    uiScroll,
+    uiFindElement,
+    uiOpenPanel,
+    uiFullscreen,
+    uiEvaluate,
+  ]);
+  expect(names(uiTools)).toEqual([
+    'ui_click',
+    'ui_hover',
+    'ui_type_text',
+    'ui_press_key',
+    'ui_scroll',
+    'ui_find_element',
+    'ui_open_panel',
+    'ui_fullscreen',
+    'ui_evaluate',
+  ]);
   for (const tool of uiTools) {
     expect(tool.domain, tool.name).toBe('ui');
   }
@@ -31,8 +54,47 @@ test('the catalog lists the ui tools after the screenshot tool and before the ba
   const first = catalog.indexOf('ui_click');
 
   expect(first).toBeGreaterThan(catalog.indexOf('screenshot_capture'));
-  expect(catalog.slice(first, first + 4)).toEqual(names(uiTools));
-  expect(catalog.indexOf('ui_find_element')).toBeLessThan(catalog.indexOf('batch_run'));
+  expect(catalog.slice(first, first + uiTools.length)).toEqual(names(uiTools));
+  expect(catalog.indexOf('ui_evaluate')).toBeLessThan(catalog.indexOf('batch_run'));
+});
+
+test('ui_type_text, ui_press_key, ui_fullscreen and ui_evaluate can change what a user can, so they are destructive', () => {
+  for (const tool of [uiTypeText, uiPressKey, uiEvaluate]) {
+    expect(tool.annotations, tool.name).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    });
+  }
+  // Asking for the same mode twice changes nothing more.
+  expect(uiFullscreen.annotations).toEqual({
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  });
+});
+
+test('ui_open_panel changes the interface, and asking twice changes nothing more', () => {
+  expect(uiOpenPanel.annotations).toEqual({
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  });
+});
+
+test('ui_evaluate is offered by the full profile only', () => {
+  const offered = (profile: 'full' | 'core' | 'readonly') =>
+    names(selectTools(allTools, { profile, patterns: [] }));
+
+  expect(offered('full')).toContain('ui_evaluate');
+  expect(offered('core')).not.toContain('ui_evaluate');
+  expect(offered('readonly')).not.toContain('ui_evaluate');
+  for (const name of ['ui_type_text', 'ui_press_key', 'ui_open_panel', 'ui_fullscreen']) {
+    expect(offered('readonly'), name).not.toContain(name);
+  }
 });
 
 test('ui_click and ui_scroll can change anything a user can, so they are destructive', () => {
@@ -71,6 +133,38 @@ describe('the input schemas', () => {
   const hover = z.object(uiHover.inputSchema);
   const scroll = z.object(uiScroll.inputSchema);
   const find = z.object(uiFindElement.inputSchema);
+  const type = z.object(uiTypeText.inputSchema);
+  const key = z.object(uiPressKey.inputSchema);
+  const panel = z.object(uiOpenPanel.inputSchema);
+  const fullscreen = z.object(uiFullscreen.inputSchema);
+  const evaluate = z.object(uiEvaluate.inputSchema);
+
+  test('ui_type_text and ui_press_key act on the chart by default', () => {
+    expect(type.parse({ text: 'AAPL' })).toEqual({ text: 'AAPL', target: 'chart' });
+    expect(type.parse({ text: 'x'.repeat(1000), target: 'window' })).toMatchObject({
+      target: 'window',
+    });
+    expect(key.parse({ key: 'Enter' })).toEqual({ key: 'Enter', target: 'chart' });
+    expect(key.parse({ key: 'z', modifiers: ['Control', 'Shift'] })).toEqual({
+      key: 'z',
+      modifiers: ['Control', 'Shift'],
+      target: 'chart',
+    });
+  });
+
+  test('ui_open_panel opens a panel by default, and ui_fullscreen takes enabled', () => {
+    for (const name of ['watchlist', 'alerts', 'object_tree', 'data_window', 'pine_editor']) {
+      expect(panel.parse({ panel: name })).toEqual({ panel: name, open: true });
+    }
+    expect(panel.parse({ panel: 'alerts', open: false })).toEqual({ panel: 'alerts', open: false });
+    expect(fullscreen.parse({ enabled: false })).toEqual({ enabled: false });
+  });
+
+  test('ui_evaluate takes an expression of up to 10000 characters, and nothing else', () => {
+    expect(evaluate.parse({ expression: '1 + 1' })).toEqual({ expression: '1 + 1' });
+    expect(evaluate.parse({ expression: 'x'.repeat(10_000) })).toMatchObject({});
+    expect(Object.keys(uiEvaluate.inputSchema)).toEqual(['expression']);
+  });
 
   test('ui_click and ui_hover take a selector, a text or a point, on the chart by default', () => {
     for (const schema of [click, hover]) {
@@ -119,6 +213,18 @@ describe('the input schemas', () => {
     ['ui_find_element, a limit of 0', find, { selector: 'a', limit: 0 }],
     ['ui_find_element, a limit of 51', find, { selector: 'a', limit: 51 }],
     ['ui_find_element, a limit that is not whole', find, { selector: 'a', limit: 2.5 }],
+    ['ui_type_text, an empty text', type, { text: '' }],
+    ['ui_type_text, a text over 1000 characters', type, { text: 'x'.repeat(1001) }],
+    ['ui_press_key, no key', key, {}],
+    ['ui_press_key, a modifier it does not know', key, { key: 'a', modifiers: ['Hyper'] }],
+    ['ui_open_panel, a panel it does not know', panel, { panel: 'news' }],
+    ['ui_fullscreen, no enabled', fullscreen, {}],
+    ['ui_evaluate, an empty expression', evaluate, { expression: '' }],
+    [
+      'ui_evaluate, an expression over 10000 characters',
+      evaluate,
+      { expression: 'x'.repeat(10_001) },
+    ],
   ])('refuses %s', (_case, schema, input) => {
     expect(schema.safeParse(input).success).toBe(false);
   });
@@ -199,6 +305,64 @@ describe('the descriptions', () => {
     expect(description).toMatch(/editable region is never read/);
     expect(description).toMatch(/1 to 50, default 10/);
     expect(description).toMatch(/INVALID_INPUT/);
+  });
+});
+
+describe('the descriptions of the keyboard, panel, fullscreen and evaluate tools', () => {
+  test('ui_type_text types into a focused text field only and refuses trading controls', () => {
+    const { description } = uiTypeText;
+
+    expect(description).toMatch(/text field that has the focus/);
+    expect(description).toMatch(/no key events/);
+    expect(description).toMatch(/NOT_AVAILABLE/);
+    expect(description).toMatch(/UNSAFE_ACTION_BLOCKED/);
+    expect(description).toMatch(/frame or a shadow root/);
+  });
+
+  test('ui_press_key lists its keys and says which keys are refused, and why', () => {
+    const { description } = uiPressKey;
+
+    for (const word of ['Enter', 'Escape', 'PageDown', 'letter', 'a digit', 'Alt', 'Meta']) {
+      expect(description, word).toContain(word);
+    }
+    expect(description).toMatch(/places no orders/);
+    expect(description).toMatch(/UNSAFE_ACTION_BLOCKED/);
+    expect(description).toMatch(/default button/);
+    // The gap that remains is said plainly.
+    expect(description).toMatch(/key chord/);
+  });
+
+  test('ui_open_panel names its panels and says how the Pine Editor opens and closes', () => {
+    const { description } = uiOpenPanel;
+
+    for (const word of ['watchlist', 'alerts', 'object_tree', 'data_window', 'pine_editor']) {
+      expect(description, word).toContain(word);
+    }
+    expect(description).toMatch(/changed false/);
+    expect(description).toMatch(/without discarding its text/);
+    expect(description).toMatch(/app_get_ui_state/);
+  });
+
+  test("ui_fullscreen says it is TradingView's own mode and what observed is", () => {
+    const { description } = uiFullscreen;
+
+    expect(description).toMatch(/TradingView's own fullscreen mode/);
+    expect(description).toMatch(/observed/);
+    expect(description).toMatch(/null/);
+  });
+
+  test('ui_evaluate says it is a power tool, off by default, and that its denylist is best effort', () => {
+    const { description } = uiEvaluate;
+
+    expect(description).toMatch(/power tool/);
+    expect(description).toMatch(/off by default/);
+    expect(description).toMatch(/TV_MCP_ALLOW_EVAL=true/);
+    expect(description).toMatch(/--allow-eval/);
+    expect(description).toMatch(/best effort/);
+    expect(description).toMatch(/chart tab/);
+    expect(description).toMatch(/never in the window chrome/);
+    expect(description).toMatch(/100 kB/);
+    expect(description).toMatch(/UNSAFE_ACTION_BLOCKED/);
   });
 });
 

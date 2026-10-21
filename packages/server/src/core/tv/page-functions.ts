@@ -47,6 +47,12 @@ import {
 } from '../../tools/pine/page.js';
 import { readChartBox } from '../../tools/screenshot/page.js';
 import { readStrategyReport } from '../../tools/strategy/page.js';
+import {
+  evaluateExpression,
+  readFullscreen,
+  readPanelControls,
+  setFullscreen,
+} from '../../tools/ui/page.js';
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement, findElements } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
@@ -66,6 +72,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   describeElement,
   describeFocusedElement,
   editStudyInputs,
+  evaluateExpression,
   findElements,
   insertStudy,
   probeCapabilities,
@@ -79,7 +86,9 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readChartSnapshot,
   readChartState,
   readChartSymbolInfo,
+  readFullscreen,
   readHistory,
+  readPanelControls,
   readPineGraphics,
   readStrategyReport,
   readStudies,
@@ -93,6 +102,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   scrollToTime,
   searchSymbolsViaApi,
   setChartTypeViaApi,
+  setFullscreen,
   setResolutionViaApi,
   setStudyVisibility,
   setSymbolViaApi,

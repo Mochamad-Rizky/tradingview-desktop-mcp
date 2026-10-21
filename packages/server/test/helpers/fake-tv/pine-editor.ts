@@ -326,6 +326,9 @@ export interface FakePineEditorOptions {
   // Leaves the page layout service out of the service locator, as on a build without the side
   // panel.
   withoutPageLayoutService?: boolean | undefined;
+  // Makes closeSidePanel("pine") record itself and change nothing, as a close the app does not
+  // carry out.
+  closeIgnored?: boolean | undefined;
   // The SAVED_PINE_SCRIPTS limit of the plan, and whether a toggle of the app is on: the paywall
   // check of saveNewScript applies the limit only while pine_free_saved_scripts_limit is on.
   savedScriptsLimit: number | undefined;
@@ -817,7 +820,7 @@ export function createFakePineEditor(
       // The side panel goes, and the editor leaves the registry; the app keeps the script it held
       // and whether its text had unsaved changes (seen on the app). That they are counted against
       // the saved version, so that kept text is kept again, is the fake's guess (unsavedKept).
-      if (id === 'pine' && state.placement === 'dialog') {
+      if (id === 'pine' && state.placement === 'dialog' && options.closeIgnored !== true) {
         state.unsavedKept = state.source !== state.versionSource;
         state.placement = null;
         state.visible = false;

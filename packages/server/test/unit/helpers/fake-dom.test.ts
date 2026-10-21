@@ -334,3 +334,28 @@ describe('the fake DOM', () => {
     expect(typeof partial.getComputedStyle).toBe('function');
   });
 });
+
+describe('the fake DOM as a page changes it', () => {
+  test('sets an attribute without changing what the element matches', () => {
+    const button = fakeElement({
+      tag: 'button',
+      matches: ['#toggle'],
+      attributes: { 'aria-pressed': 'false' },
+    });
+
+    button.setAttribute('aria-pressed', 'true');
+    button.setAttribute('data-state', 'on');
+
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(button.getAttribute('data-state')).toBe('on');
+    expect(button.matches('[data-state="on"]')).toBe(false);
+  });
+
+  test('tells its node name, the tag in capitals', () => {
+    expect(['button', 'div', 'a'].map((tag) => fakeElement({ tag }).nodeName)).toEqual([
+      'BUTTON',
+      'DIV',
+      'A',
+    ]);
+  });
+});

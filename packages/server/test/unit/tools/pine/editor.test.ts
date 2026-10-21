@@ -216,7 +216,9 @@ describe('requireUnmodifiedOrConfirmed', () => {
       expect(error.hint).toContain('confirm: true');
       expect(error.hint).toContain('pine_save');
       expect(error.hint).toBe(UNSAVED_TEXT_HINT);
-      expect(error.hint).toContain('Closing the Pine Editor in TradingView');
+      expect(error.hint).toContain(
+        'Closing the Pine Editor, in TradingView or with ui_open_panel (panel: "pine_editor", open: false)',
+      );
       expect(error.details).toEqual({ action: 'pine_set_source' });
     }
   });

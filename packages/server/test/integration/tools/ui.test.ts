@@ -1,6 +1,12 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { describeElement, findElements } from '../../../src/core/tv/input.js';
+import type { Config } from '../../../src/config/schema.js';
+import type { Logger } from '../../../src/core/logger.js';
+import {
+  describeElement,
+  describeFocusedElement,
+  findElements,
+} from '../../../src/core/tv/input.js';
 import { SELECTORS } from '../../../src/core/tv/selectors.js';
 import { createMcpServer } from '../../../src/server.js';
 import type { JsonValue } from '../../../src/utils/json.js';
@@ -16,8 +22,25 @@ import {
   type FakeElementOptions,
   type FakeRect,
 } from '../../helpers/fake-tv/dom.js';
+import { loadTvFixture, type TvStateFixture } from '../../helpers/fake-tv/fixture.js';
+import {
+  createFakeRightToolbar,
+  type FakeRightToolbar,
+  type FakeRightToolbarOptions,
+} from '../../helpers/fake-tv/right-toolbar.js';
+import {
+  createFakeTvWindow,
+  inspectFakeWindow,
+  type FakeTvOverrides,
+  type FakeTvWindow,
+} from '../../helpers/fake-tv/window.js';
 import { callTool, connectInMemoryClient } from '../../helpers/mcp-client.js';
-import { quietLogger, refusingLauncher, testConfig } from '../../helpers/tool-context.js';
+import {
+  capturingLogger,
+  quietLogger,
+  refusingLauncher,
+  testConfig,
+} from '../../helpers/tool-context.js';
 
 // The pointer tools through the whole server: an SDK client over the in-memory transport, the real
 // registry, connection manager, discovery and CDP adapter, and the fake debug port of the app, whose
@@ -137,10 +160,15 @@ function openMenu(): FakeElement {
 type Handlers = Record<string, (params: unknown) => unknown>;
 
 interface HarnessOptions {
-  win?: FakeDomWindow;
+  // The window of the chart tab: a DOM page, or the shared fake of a chart for the tools that use
+  // its API.
+  win?: object;
   chrome?: FakeDomWindow;
   // Answers of the chart tab for single CDP commands: the page reacting to input.
   chartHandlers?: Handlers;
+  // Settings of the server besides the port and the call timeout, such as allowEval.
+  config?: Partial<Config>;
+  logger?: Logger;
 }
 
 interface Harness {
@@ -159,10 +187,10 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   }
   const app = await startFakeCdpServer({ targets });
   cleanups.push(() => app.close());
-  const config = testConfig({ cdpPort: app.port, callTimeoutMs: 5000 });
+  const config = testConfig({ ...options.config, cdpPort: app.port, callTimeoutMs: 5000 });
   const { server, ctx } = createMcpServer(config, {
     launcher: refusingLauncher(),
-    logger: quietLogger,
+    logger: options.logger ?? quietLogger,
   });
   cleanups.push(() => ctx.connection.close());
   return { client: await connect(server), app };
@@ -926,14 +954,24 @@ describe('the window chrome', () => {
       deltaY: 0,
       target: 'window',
     });
+    await callTool(client, 'ui_press_key', { key: 'Escape', target: 'window' });
+    // Nothing takes text there: the body has the focus.
+    await callTool(client, 'ui_type_text', { text: 'x', target: 'window' });
 
     const calls = app.calls.filter(({ targetId }) => targetId === CHROME_ID);
     // The renderer of the window chrome has Node integration: what runs there is the source of the
     // page functions that read elements, and nothing else.
     expect(new Set(calls.map(({ method }) => method))).toEqual(
-      new Set(['Runtime.evaluate', 'Page.getLayoutMetrics', 'Input.dispatchMouseEvent']),
+      new Set([
+        'Runtime.evaluate',
+        'Page.getLayoutMetrics',
+        'Input.dispatchMouseEvent',
+        'Input.dispatchKeyEvent',
+      ]),
     );
-    const sources = [describeElement, findElements].map((fn) => fn.toString());
+    const sources = [describeElement, findElements, describeFocusedElement].map((fn) =>
+      fn.toString(),
+    );
     const evaluated = calls.filter(({ method }) => method === 'Runtime.evaluate');
     expect(evaluated.length).toBeGreaterThan(0);
     for (const { params } of evaluated) {
@@ -969,5 +1007,770 @@ describe('points outside the page', () => {
       details: { x: 1300, y: 10 },
     });
     expect(inputCountOf(app)).toBe(0);
+  });
+});
+
+// The key events a target received, as their parameters.
+function keysOf(app: FakeCdpServer, targetId = CHART_ID): Record<string, unknown>[] {
+  return app.calls
+    .filter((call) => call.targetId === targetId && call.method === 'Input.dispatchKeyEvent')
+    .map(({ params }) => params as Record<string, unknown>);
+}
+
+describe('ui_type_text and ui_press_key', () => {
+  test('ui_type_text types only into a focused text field', async () => {
+    const field = fakeElement({ tag: 'input', id: 'search', rect: box(500, 600, 200, 24) });
+    const button = fakeElement({ tag: 'button', text: 'Apply', rect: box(750, 600, 60, 24) });
+    const win = chartPage([field, button], { focus: field });
+    const { client, app } = await startHarness({ win });
+
+    const typed = await callTool(client, 'ui_type_text', { text: 'NASDAQ:AAPL' });
+    win.document.activeElement = button;
+    const onButton = await callTool(client, 'ui_type_text', { text: 'MSFT' });
+    win.document.activeElement = null;
+    const nowhere = await callTool(client, 'ui_type_text', { text: 'MSFT' });
+
+    expect(envelopeOf(typed)).toMatchObject({
+      ok: true,
+      data: { target: 'chart', characters: 11 },
+      meta: { via: 'cdp' },
+    });
+    expect(errorOf(onButton)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: 'Cannot type text: the focus is on `button`, which is not a text field',
+    });
+    expect(errorOf(nowhere)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    // The one text that was typed, and no key event.
+    expect(
+      app.calls
+        .filter(({ method }) => method.startsWith('Input.'))
+        .map(({ method, params }) => ({
+          method,
+          params,
+        })),
+    ).toEqual([{ method: 'Input.insertText', params: { text: 'NASDAQ:AAPL' } }]);
+  });
+
+  test('ui_type_text refuses a field inside a trading control', async () => {
+    const field = fakeElement({ tag: 'input', id: 'qty' });
+    const group = fakeElement({
+      matches: ['[data-name="buy-sell-buttons"]'],
+      rect: box(500, 600, 200, 40),
+      children: [field],
+    });
+    const { client, app } = await startHarness({ win: chartPage([group], { focus: field }) });
+
+    const result = await callTool(client, 'ui_type_text', { text: '100' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { action: 'typeText', focused: 'input#qty' },
+    });
+    expect(inputCountOf(app)).toBe(0);
+  });
+
+  test('ui_press_key refuses while a trading control has the focus', async () => {
+    const buy = fakeElement({
+      tag: 'button',
+      matches: [BUY],
+      attributes: { 'data-name': 'buy-order-button' },
+      rect: box(300, 250, 80, 30),
+    });
+    // A button of an order ticket that carries no selector of the guard, named by its text.
+    const ticketBuy = fakeElement({ tag: 'button', text: 'Buy 1', rect: box(500, 600, 80, 24) });
+    const win = chartPage([buy, ticketBuy], { focus: buy });
+    const { client, app } = await startHarness({ win });
+
+    const onControl = await callTool(client, 'ui_press_key', { key: 'Enter' });
+    win.document.activeElement = ticketBuy;
+    const onTicket = await callTool(client, 'ui_press_key', { key: 'Enter' });
+
+    expect(errorOf(onControl)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to press a key: the focus is on `button[data-name="buy-order-button"]`, which is part of a broker trading control',
+    });
+    expect(errorOf(onTicket)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to press a key: the focus is on `button`, and a key there would reach "Buy 1", a trading action',
+      details: { action: 'pressKey', focused: 'button', name: 'Buy 1' },
+    });
+    expect(keysOf(app)).toEqual([]);
+  });
+
+  test('ui_press_key sends the key with its modifiers to the focused element, on the chart or the window chrome', async () => {
+    const { client, app } = await startHarness();
+
+    const escape = await callTool(client, 'ui_press_key', { key: 'Escape' });
+    const undo = await callTool(client, 'ui_press_key', {
+      key: 'z',
+      modifiers: ['Control'],
+      target: 'window',
+    });
+
+    expect(dataOf(escape)).toEqual({ target: 'chart', key: 'Escape', modifiers: [] });
+    expect(dataOf(undo)).toEqual({ target: 'window', key: 'z', modifiers: ['Control'] });
+    expect(keysOf(app).map(({ type, key }) => [type, key])).toEqual([
+      ['rawKeyDown', 'Escape'],
+      ['keyUp', 'Escape'],
+    ]);
+    expect(
+      keysOf(app, CHROME_ID).map(({ type, key, modifiers }) => [type, key, modifiers]),
+    ).toEqual([
+      ['rawKeyDown', 'z', 2],
+      ['keyUp', 'z', 2],
+    ]);
+  });
+
+  test('ui_press_key refuses an unsupported key, and ui_type_text an empty or a long text, before anything is sent', async () => {
+    const { client, app } = await startHarness();
+
+    const key = await callTool(client, 'ui_press_key', { key: 'F5' });
+    const empty = await callTool(client, 'ui_type_text', { text: '' });
+    const long = await callTool(client, 'ui_type_text', { text: 'x'.repeat(1001) });
+
+    expect(errorOf(key)).toMatchObject({ code: 'INVALID_INPUT', details: { key: 'F5' } });
+    for (const result of [empty, long]) {
+      expect(result.isError).toBe(true);
+    }
+    expect(app.calls).toEqual([]);
+  });
+});
+
+// A chart page with the right toolbar of the app at its right edge, whose clicks the chart tab
+// answers the way TradingView does (right-toolbar.ts).
+function withToolbar(
+  options: FakeRightToolbarOptions = {},
+  extra: FakeElement[] = [],
+): { win: FakeDomWindow; toolbar: FakeRightToolbar; chartHandlers: Handlers } {
+  const toolbar = createFakeRightToolbar(options);
+  return {
+    win: chartPage([...extra, toolbar.element]),
+    toolbar,
+    chartHandlers: {
+      'Input.dispatchMouseEvent': (params) => {
+        const { type, x, y } = params as { type: string; x: number; y: number };
+        if (type === 'mouseReleased') {
+          toolbar.click(x, y);
+        }
+        return {};
+      },
+    },
+  };
+}
+
+// Where a click went, as its point: the presses only.
+const pressesOf = (app: FakeCdpServer): { x: unknown; y: unknown }[] =>
+  mouseOf(app)
+    .filter(({ type }) => type === 'mousePressed')
+    .map(({ x, y }) => ({ x, y }));
+
+// The centers of the buttons of the fake toolbar and of the tabs of the object tree panel.
+const WATCHLIST_BUTTON = { x: 1257, y: 68 };
+const ALERTS_BUTTON = { x: 1257, y: 108 };
+const OBJECT_TREE_BUTTON = { x: 1257, y: 148 };
+const OBJECT_TREE_TAB = { x: 960, y: 65 };
+const DATA_WINDOW_TAB = { x: 1070, y: 65 };
+
+describe('ui_open_panel', () => {
+  test('ui_open_panel opens the watchlist through the right toolbar and reports it open', async () => {
+    const { win, toolbar, chartHandlers } = withToolbar();
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'watchlist' });
+    const state = await callTool(client, 'app_get_ui_state');
+
+    expect(envelopeOf(result)).toMatchObject({
+      ok: true,
+      data: { panel: 'watchlist', open: true, changed: true },
+      meta: { via: 'cdp' },
+    });
+    expect(pressesOf(app)).toEqual([WATCHLIST_BUTTON]);
+    expect(toolbar.state.shown).toBe('watchlist');
+    // app_get_ui_state reads the panel the same way.
+    expect(dataOf(state)).toMatchObject({
+      rightPanel: { open: true },
+      panels: { watchlist: true, alerts: false, object_tree: false, data_window: false },
+    });
+  });
+
+  test('ui_open_panel closing an already closed panel changes nothing', async () => {
+    const { win, chartHandlers } = withToolbar({ shown: 'watchlist' });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const closed = await callTool(client, 'ui_open_panel', { panel: 'alerts', open: false });
+    const open = await callTool(client, 'ui_open_panel', { panel: 'watchlist' });
+
+    expect(dataOf(closed)).toEqual({ panel: 'alerts', open: false, changed: false });
+    expect(dataOf(open)).toEqual({ panel: 'watchlist', open: true, changed: false });
+    expect(inputCountOf(app)).toBe(0);
+  });
+
+  test('ui_open_panel switches the panel to another page, and collapses the one shown', async () => {
+    const { win, toolbar, chartHandlers } = withToolbar({ shown: 'watchlist' });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const alerts = await callTool(client, 'ui_open_panel', { panel: 'alerts' });
+    const closed = await callTool(client, 'ui_open_panel', { panel: 'alerts', open: false });
+
+    expect(dataOf(alerts)).toEqual({ panel: 'alerts', open: true, changed: true });
+    expect(dataOf(closed)).toEqual({ panel: 'alerts', open: false, changed: true });
+    expect(pressesOf(app)).toEqual([ALERTS_BUTTON, ALERTS_BUTTON]);
+    expect(toolbar.state.shown).toBeNull();
+  });
+
+  test('ui_open_panel opens the data window: the panel of the object tree, then its tab', async () => {
+    const collapsed = withToolbar();
+    const fromCollapsed = await startHarness({
+      win: collapsed.win,
+      chartHandlers: collapsed.chartHandlers,
+    });
+    const onTree = withToolbar({ shown: 'object_tree' });
+    const fromTree = await startHarness({ win: onTree.win, chartHandlers: onTree.chartHandlers });
+
+    const opened = await callTool(fromCollapsed.client, 'ui_open_panel', { panel: 'data_window' });
+    const switched = await callTool(fromTree.client, 'ui_open_panel', { panel: 'data_window' });
+
+    for (const result of [opened, switched]) {
+      expect(dataOf(result)).toEqual({ panel: 'data_window', open: true, changed: true });
+    }
+    expect(pressesOf(fromCollapsed.app)).toEqual([OBJECT_TREE_BUTTON, DATA_WINDOW_TAB]);
+    expect(pressesOf(fromTree.app)).toEqual([DATA_WINDOW_TAB]);
+    for (const { toolbar } of [collapsed, onTree]) {
+      expect(toolbar.state).toEqual({ shown: 'object_tree', dataWindow: true });
+    }
+  });
+
+  test('ui_open_panel opens the object tree on its own tab when the panel remembers the data window', async () => {
+    const { win, toolbar, chartHandlers } = withToolbar({ dataWindow: true });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'object_tree' });
+
+    expect(dataOf(result)).toEqual({ panel: 'object_tree', open: true, changed: true });
+    expect(pressesOf(app)).toEqual([OBJECT_TREE_BUTTON, OBJECT_TREE_TAB]);
+    expect(toolbar.state).toEqual({ shown: 'object_tree', dataWindow: false });
+  });
+
+  test('ui_open_panel closes the data window by collapsing its panel, and the object tree it does not show changes nothing', async () => {
+    const { win, toolbar, chartHandlers } = withToolbar({ shown: 'object_tree', dataWindow: true });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const tree = await callTool(client, 'ui_open_panel', { panel: 'object_tree', open: false });
+    const dataWindow = await callTool(client, 'ui_open_panel', {
+      panel: 'data_window',
+      open: false,
+    });
+
+    expect(dataOf(tree)).toEqual({ panel: 'object_tree', open: false, changed: false });
+    expect(dataOf(dataWindow)).toEqual({ panel: 'data_window', open: false, changed: true });
+    expect(pressesOf(app)).toEqual([OBJECT_TREE_BUTTON]);
+    expect(toolbar.state.shown).toBeNull();
+  });
+
+  test('ui_open_panel says CAPABILITY_UNAVAILABLE for a data window the panel has no tab for, and collapses the panel it opened', async () => {
+    const { win, toolbar, chartHandlers } = withToolbar({ withoutTabs: true });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'data_window' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: expect.stringMatching(/no tab for the data window/) as string,
+    });
+    // The panel of the object tree was opened to look for the tab, and collapsed again.
+    expect(pressesOf(app)).toEqual([OBJECT_TREE_BUTTON, OBJECT_TREE_BUTTON]);
+    expect(toolbar.state.shown).toBeNull();
+  });
+
+  test('ui_open_panel says CAPABILITY_UNAVAILABLE for a missing button, or one that does not say whether its panel is shown, before any input', async () => {
+    const missing = withToolbar({ without: ['alerts'] });
+    const unpressable = withToolbar({ unpressable: ['watchlist'] });
+    const first = await startHarness({ win: missing.win, chartHandlers: missing.chartHandlers });
+    const second = await startHarness({
+      win: unpressable.win,
+      chartHandlers: unpressable.chartHandlers,
+    });
+
+    const noButton = await callTool(first.client, 'ui_open_panel', { panel: 'alerts' });
+    const noState = await callTool(second.client, 'ui_open_panel', { panel: 'watchlist' });
+
+    expect(errorOf(noButton)).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      details: { panel: 'alerts', selector: SELECTORS.buttons.alerts },
+    });
+    expect(errorOf(noState)).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      details: { panel: 'watchlist', selector: SELECTORS.buttons.watchlist },
+    });
+    expect([inputCountOf(first.app), inputCountOf(second.app)]).toEqual([0, 0]);
+  });
+
+  test('ui_open_panel says NOT_AVAILABLE while the toolbar is hidden, as in fullscreen mode', async () => {
+    const { win, chartHandlers } = withToolbar({ hidden: true });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'watchlist' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: expect.stringMatching(/ui_fullscreen/) as string,
+    });
+    expect(inputCountOf(app)).toBe(0);
+  });
+
+  test('ui_open_panel reports TIMEOUT when the panel does not change after the click', async () => {
+    const { win, chartHandlers } = withToolbar({ inert: true });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'alerts' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'TIMEOUT',
+      details: { panel: 'alerts', open: true },
+    });
+    // One click, and no second one.
+    expect(pressesOf(app)).toEqual([ALERTS_BUTTON]);
+  });
+
+  test('ui_open_panel reports TIMEOUT for a panel that does not close, or a panel of the object tree that does not open', async () => {
+    const closing = withToolbar({ shown: 'alerts', inert: true });
+    const opening = withToolbar({ inert: true });
+    const first = await startHarness({ win: closing.win, chartHandlers: closing.chartHandlers });
+    const second = await startHarness({ win: opening.win, chartHandlers: opening.chartHandlers });
+
+    const closed = await callTool(first.client, 'ui_open_panel', { panel: 'alerts', open: false });
+    const tree = await callTool(second.client, 'ui_open_panel', { panel: 'object_tree' });
+
+    expect(errorOf(closed)).toMatchObject({
+      code: 'TIMEOUT',
+      message: expect.stringMatching(/^The alerts did not close within/) as string,
+    });
+    expect(errorOf(tree)).toMatchObject({
+      code: 'TIMEOUT',
+      message: expect.stringMatching(/^The object tree did not open within/) as string,
+    });
+    expect(pressesOf(second.app)).toEqual([OBJECT_TREE_BUTTON]);
+  });
+
+  test('ui_open_panel opens the data window with one click when its panel remembers it', async () => {
+    const { win, toolbar, chartHandlers } = withToolbar({ dataWindow: true });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'data_window' });
+
+    expect(dataOf(result)).toEqual({ panel: 'data_window', open: true, changed: true });
+    expect(pressesOf(app)).toEqual([OBJECT_TREE_BUTTON]);
+    expect(toolbar.state).toEqual({ shown: 'object_tree', dataWindow: true });
+  });
+
+  test('ui_open_panel refuses a data window the open panel has no tab for, before any click', async () => {
+    const { win, chartHandlers } = withToolbar({ shown: 'object_tree', withoutTabs: true });
+    const { client, app } = await startHarness({ win, chartHandlers });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'data_window' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: 'The panel of the object tree has no tab for the data window',
+    });
+    expect(inputCountOf(app)).toBe(0);
+  });
+
+  test('ui_open_panel says so when the panel it opened to look for the tab does not collapse again', async () => {
+    const toolbar = createFakeRightToolbar({ withoutTabs: true });
+    let taken = 0;
+    // The page takes the first click only.
+    const chartHandlers: Handlers = {
+      'Input.dispatchMouseEvent': (params) => {
+        const { type, x, y } = params as { type: string; x: number; y: number };
+        if (type === 'mouseReleased' && taken === 0) {
+          taken += 1;
+          toolbar.click(x, y);
+        }
+        return {};
+      },
+    };
+    const { client } = await startHarness({ win: chartPage([toolbar.element]), chartHandlers });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'data_window' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message:
+        'The panel of the object tree has no tab for the data window, and it could not be collapsed again',
+    });
+    expect(toolbar.state.shown).toBe('object_tree');
+  });
+
+  test('ui_open_panel clicks the toolbar through the guard, which refuses a button that a menu covers', async () => {
+    // A menu of the overlap root open over the button of the watchlist.
+    const menu = fakeElement({
+      matches: [SELECTORS.regions.overlapManagerRoot],
+      rect: box(0, 0, 0, 0),
+      children: [fakeElement({ id: 'menu', rect: box(1200, 40, 80, 100) })],
+    });
+    const toolbar = createFakeRightToolbar();
+    const { client, app } = await startHarness({ win: chartPage([toolbar.element, menu]) });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'watchlist' });
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    expect(errorOf(result)?.message).toMatch(/covered by/);
+    expect(inputCountOf(app)).toBe(0);
+  });
+});
+
+describe('ui_open_panel for the Pine Editor', () => {
+  const fixture = loadTvFixture();
+  const UNSAVED = '//@version=6\nindicator("Unsaved work")\nplot(open)\n';
+  const withEditor = (): TvStateFixture => ({
+    ...fixture,
+    pineEditor: { ...fixture.pineEditor, open: 'dialog' },
+  });
+
+  async function pineHarness(from: TvStateFixture = fixture, overrides: FakeTvOverrides = {}) {
+    const win = createFakeTvWindow(from, overrides);
+    return { ...(await startHarness({ win })), win };
+  }
+  const callsOf = (win: FakeTvWindow, name: string) => inspectFakeWindow(win).callsTo(name);
+  const editorOf = (win: FakeTvWindow) => inspectFakeWindow(win).state.pineEditor;
+
+  test('ui_open_panel opens the Pine Editor the way its button does', async () => {
+    const { client, win } = await pineHarness();
+
+    const opened = await callTool(client, 'ui_open_panel', { panel: 'pine_editor' });
+    const again = await callTool(client, 'ui_open_panel', { panel: 'pine_editor' });
+
+    expect(envelopeOf(opened)).toMatchObject({
+      ok: true,
+      data: { panel: 'pine_editor', open: true, changed: true },
+      meta: { via: 'internal' },
+    });
+    expect(dataOf(again)).toEqual({ panel: 'pine_editor', open: true, changed: false });
+    expect(callsOf(win, 'pineEditorApi.open')).toHaveLength(1);
+    expect(editorOf(win).placement).toBe('dialog');
+  });
+
+  test('ui_open_panel closes the Pine Editor without discarding its text, and changes nothing once it is closed', async () => {
+    const { client, win } = await pineHarness(withEditor());
+    editorOf(win).source = UNSAVED;
+
+    const closed = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+    const again = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    expect(dataOf(closed)).toEqual({ panel: 'pine_editor', open: false, changed: true });
+    expect(dataOf(again)).toEqual({ panel: 'pine_editor', open: false, changed: false });
+    // The side panel closed through the page layout service, and TradingView kept the text.
+    expect(callsOf(win, 'pageLayout.closeSidePanel')).toEqual([['pine']]);
+    expect(editorOf(win)).toMatchObject({ placement: null, unsavedKept: true, source: UNSAVED });
+    // Nothing else that changes the editor was called.
+    expect(
+      inspectFakeWindow(win)
+        .calls.map(({ name }) => name)
+        .filter((name) => name.startsWith('pineFacade.') || name.startsWith('pineEditorApi.')),
+    ).toEqual([]);
+  });
+
+  test('ui_open_panel hides the Pine Editor at the bottom, which stays registered', async () => {
+    const atBottom: TvStateFixture = {
+      ...fixture,
+      pineEditor: { ...fixture.pineEditor, open: 'bottom', opensAt: 'bottom' },
+    };
+    const { client, win } = await pineHarness(atBottom);
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    expect(dataOf(result)).toEqual({ panel: 'pine_editor', open: false, changed: true });
+    expect(callsOf(win, 'bottomWidgetBar.close')).toEqual([[]]);
+  });
+
+  test('ui_open_panel reports TIMEOUT when the side panel of the Pine Editor does not close', async () => {
+    const { client, win } = await pineHarness(withEditor(), { pineEditorCloseIgnored: true });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'TIMEOUT',
+      message: 'The Pine Editor did not close',
+    });
+    expect(callsOf(win, 'pageLayout.closeSidePanel')).toEqual([['pine']]);
+  });
+
+  test('ui_open_panel refuses to close the Pine Editor where the close path is missing', async () => {
+    const { client, win } = await pineHarness(withEditor(), { withoutPageLayoutService: true });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      hint: 'Close the Pine Editor in TradingView itself.',
+    });
+    expect(editorOf(win).placement).toBe('dialog');
+  });
+});
+
+describe('ui_fullscreen', () => {
+  const fixture = loadTvFixture();
+
+  async function fullscreenHarness(overrides: FakeTvOverrides = {}) {
+    const win = createFakeTvWindow(fixture, overrides);
+    return { ...(await startHarness({ win })), win };
+  }
+  const callsOf = (win: FakeTvWindow, name: string) => inspectFakeWindow(win).callsTo(name);
+
+  test('ui_fullscreen calls startFullscreen and reports observed null with a warning when the state cannot be read', async () => {
+    const { client, win } = await fullscreenHarness({ fullscreen: { unreadable: true } });
+
+    const result = await callTool(client, 'ui_fullscreen', { enabled: true });
+
+    expect(envelopeOf(result)).toMatchObject({
+      ok: true,
+      data: { requested: true, observed: null, changed: true },
+      meta: { via: 'api' },
+    });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/did not say whether its fullscreen mode is on/) as string,
+    ]);
+    expect(callsOf(win, 'TradingViewApi.startFullscreen')).toEqual([[]]);
+  });
+
+  test("ui_fullscreen turns TradingView's fullscreen mode on and off, and changes nothing when it already is as asked", async () => {
+    const { client, win } = await fullscreenHarness();
+
+    const on = await callTool(client, 'ui_fullscreen', { enabled: true });
+    const again = await callTool(client, 'ui_fullscreen', { enabled: true });
+    const off = await callTool(client, 'ui_fullscreen', { enabled: false });
+
+    expect(dataOf(on)).toEqual({ requested: true, observed: true, changed: true });
+    expect(dataOf(again)).toEqual({ requested: true, observed: true, changed: false });
+    expect(dataOf(off)).toEqual({ requested: false, observed: false, changed: true });
+    for (const result of [on, again, off]) {
+      expect(warningsOf(result)).toEqual([]);
+    }
+    expect(callsOf(win, 'TradingViewApi.startFullscreen')).toHaveLength(1);
+    expect(callsOf(win, 'TradingViewApi.exitFullscreen')).toHaveLength(1);
+    expect(inspectFakeWindow(win).state.fullscreen.on).toBe(false);
+  });
+
+  test('ui_fullscreen warns when TradingView does not report the mode it was asked for', async () => {
+    const { client, win } = await fullscreenHarness();
+    // A start that does not take, as on a chart that cannot fill the tab.
+    const api = win.TradingViewApi;
+    if (api !== undefined) {
+      api.startFullscreen = () => undefined;
+    }
+
+    const result = await callTool(client, 'ui_fullscreen', { enabled: true });
+
+    expect(dataOf(result)).toEqual({ requested: true, observed: false, changed: true });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/still reports its fullscreen mode off/) as string,
+    ]);
+  });
+
+  test('ui_fullscreen warns when TradingView stays in its fullscreen mode after it was asked to leave it', async () => {
+    const { client, win } = await fullscreenHarness({ fullscreen: { on: true } });
+    const api = win.TradingViewApi;
+    if (api !== undefined) {
+      api.exitFullscreen = () => undefined;
+    }
+
+    const result = await callTool(client, 'ui_fullscreen', { enabled: false });
+
+    expect(dataOf(result)).toEqual({ requested: false, observed: true, changed: true });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/still reports its fullscreen mode on .* to turn it off\.$/) as string,
+    ]);
+  });
+
+  test('ui_fullscreen says CAPABILITY_UNAVAILABLE on a page without the calls, and calls nothing', async () => {
+    const { client, win } = await fullscreenHarness({ fullscreen: { withoutCalls: true } });
+
+    const result = await callTool(client, 'ui_fullscreen', { enabled: true });
+
+    expect(errorOf(result)).toMatchObject({ code: 'CAPABILITY_UNAVAILABLE' });
+    expect(inspectFakeWindow(win).calls).toEqual([]);
+  });
+});
+
+describe('ui_evaluate', () => {
+  const ALLOW_EVAL: Partial<Config> = { allowEval: true };
+  const evaluatesOf = (app: FakeCdpServer, targetId = CHART_ID) =>
+    app.calls.filter((call) => call.targetId === targetId && call.method === 'Runtime.evaluate');
+
+  test('ui_evaluate is refused with CAPABILITY_UNAVAILABLE unless TV_MCP_ALLOW_EVAL is true', async () => {
+    const { client, app } = await startHarness();
+
+    const result = await callTool(client, 'ui_evaluate', { expression: '1 + 1' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: expect.stringMatching(/TV_MCP_ALLOW_EVAL=true/) as string,
+    });
+    // Not even the chart tab was looked up.
+    expect(app.calls).toEqual([]);
+  });
+
+  test('ui_evaluate is not registered in the readonly profile', async () => {
+    const { client } = await startHarness({ config: { ...ALLOW_EVAL, profile: 'readonly' } });
+
+    const { tools } = await client.listTools();
+    const names = tools.map(({ name }) => name);
+
+    expect(names).not.toContain('ui_evaluate');
+    for (const name of ['ui_type_text', 'ui_press_key', 'ui_open_panel', 'ui_fullscreen']) {
+      expect(names).not.toContain(name);
+    }
+    expect(names).toContain('ui_find_element');
+  });
+
+  test('ui_evaluate runs in the chart page only, with returnByValue, awaitPromise and the call timeout', async () => {
+    const { client, app } = await startHarness({ config: ALLOW_EVAL });
+
+    const sum = await callTool(client, 'ui_evaluate', { expression: '1 + 1' });
+    const awaited = await callTool(client, 'ui_evaluate', {
+      expression: 'Promise.resolve([document.visibilityState, 3])',
+    });
+
+    expect(envelopeOf(sum)).toMatchObject({
+      ok: true,
+      data: { value: 2, truncated: false },
+      meta: { via: 'cdp', warnings: [] },
+    });
+    expect(dataOf(awaited)).toEqual({ value: ['visible', 3], truncated: false });
+    const evaluated = evaluatesOf(app);
+    expect(evaluated).toHaveLength(2);
+    for (const { params } of evaluated) {
+      // The page stops the expression once the call would give up on it.
+      expect(params).toMatchObject({ returnByValue: true, awaitPromise: true, timeout: 5000 });
+    }
+    // The window chrome has Node integration: nothing is evaluated there.
+    expect(app.calls.filter(({ targetId }) => targetId === CHROME_ID)).toEqual([]);
+  });
+
+  test.each([
+    ['tvd', 'TVD.getCredentials()'],
+    ['tvd', "window [ 'TVD' ]"],
+    ['identity', 'window.user'],
+    ['identity', "window['user']"],
+    ['identity', 'window [ "us" + "er" ].username'],
+    ['cookies', 'document.cookie'],
+    ['cookies', "document['coo' + 'kie']"],
+    ['storage', 'localStorage.getItem("x")'],
+    ['storage', "window['indexedDB']"],
+    ['credentials', 'signIn()'],
+    ['network', "fetch('/x')"],
+    ['node', "require('fs')"],
+  ])(
+    'ui_evaluate refuses expressions that reach TVD credentials, window.user, cookies, storage or indexedDB: %s in %s',
+    async (category, expression) => {
+      const { client, app } = await startHarness({ config: ALLOW_EVAL });
+
+      const result = await callTool(client, 'ui_evaluate', { expression });
+
+      expect(errorOf(result)).toMatchObject({
+        code: 'UNSAFE_ACTION_BLOCKED',
+        details: { category },
+      });
+      // The refusal names the category, not what matched.
+      expect(errorOf(result)?.message).not.toContain(expression);
+      expect(app.calls).toEqual([]);
+    },
+  );
+
+  test('ui_evaluate returns JSON-safe values and truncates beyond 100 kB', async () => {
+    const save = fakeElement({
+      tag: 'button',
+      id: 'header-toolbar-save-load',
+      matches: ['#save'],
+      rect: box(100, 50, 40, 20),
+    });
+    // What Object.prototype.toString names a button of a page by, which the fake does not give.
+    Object.defineProperty(save, Symbol.toStringTag, { value: 'HTMLButtonElement' });
+    const { client } = await startHarness({ config: ALLOW_EVAL, win: chartPage([save]) });
+
+    const shapes = await callTool(client, 'ui_evaluate', {
+      expression:
+        '({ missing: undefined, list: [undefined, NaN, 1], fn() {}, node: document.querySelector("#save"), when: new Date(0), self: window })',
+    });
+    const big = await callTool(client, 'ui_evaluate', { expression: "'x'.repeat(300000)" });
+    const many = await callTool(client, 'ui_evaluate', {
+      expression: 'Array.from({ length: 100000 }, (_, i) => i)',
+    });
+
+    expect(dataOf(shapes)).toEqual({
+      value: {
+        missing: null,
+        list: [null, null, 1],
+        fn: '[object Function]',
+        node: '[object HTMLButtonElement]',
+        when: '1970-01-01T00:00:00.000Z',
+        self: '[object Window]',
+      },
+      truncated: false,
+    });
+    for (const result of [big, many]) {
+      const data = dataOf(result) as { value: JsonValue; truncated: boolean };
+      expect(data.truncated).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(data.value))).toBeLessThanOrEqual(100_000);
+      expect(Buffer.byteLength(JSON.stringify(data.value))).toBeGreaterThan(90_000);
+      expect(warningsOf(result)).toEqual([expect.stringMatching(/100 kB/) as string]);
+    }
+    expect((dataOf(many) as { value: number[] }).value.slice(0, 3)).toEqual([0, 1, 2]);
+  });
+
+  test('ui_evaluate reports an exception as PAGE_EVALUATION_FAILED with its description and no stack', async () => {
+    const { client } = await startHarness({ config: ALLOW_EVAL });
+
+    const thrown = await callTool(client, 'ui_evaluate', {
+      expression: 'null.symbol()',
+    });
+    const rejected = await callTool(client, 'ui_evaluate', {
+      expression: 'Promise.reject(new RangeError("out of range"))',
+    });
+    const invalid = await callTool(client, 'ui_evaluate', { expression: 'let = ;' });
+
+    expect(errorOf(thrown)).toMatchObject({
+      code: 'PAGE_EVALUATION_FAILED',
+      message: expect.stringMatching(/^The expression threw TypeError: /) as string,
+    });
+    expect(errorOf(rejected)?.message).toBe('The expression threw RangeError: out of range');
+    expect(errorOf(invalid)?.message).toMatch(/^The expression threw SyntaxError: /);
+    for (const result of [thrown, rejected, invalid]) {
+      expect(JSON.stringify(errorOf(result))).not.toMatch(/\bat <anonymous>|\n\s+at /);
+    }
+  });
+
+  test('ui_evaluate never returns the user object or the desktop bridge, even under a name built at run time', async () => {
+    const win = Object.assign(chartPage(), {
+      user: { id: 101, username: 'synthetic-user' },
+      TVD: { getCredentials: () => 'synthetic-secret' },
+    });
+    const { client } = await startHarness({ config: ALLOW_EVAL, win });
+
+    // The names are built from character codes, which no denylist of the text can see.
+    const result = await callTool(client, 'ui_evaluate', {
+      expression:
+        '[String.fromCharCode(117, 115, 101, 114), String.fromCharCode(84, 86, 68)].map((name) => window[name])',
+    });
+
+    expect(dataOf(result)).toEqual({ value: ['[withheld]', '[withheld]'], truncated: false });
+    expect(JSON.stringify(result)).not.toContain('synthetic-user');
+  });
+
+  test('ui_evaluate logs neither the expression nor its value', async () => {
+    const { logger, lines } = capturingLogger();
+    const { client } = await startHarness({ config: ALLOW_EVAL, logger });
+
+    await callTool(client, 'ui_evaluate', { expression: '"marker-" + "of-the-value"' });
+    await callTool(client, 'ui_evaluate', { expression: 'throw new Error("marker-of-a-failure")' });
+    await callTool(client, 'ui_evaluate', { expression: 'document.cookie + "marker-refused"' });
+
+    const logged = JSON.stringify(lines);
+    for (const marker of ['marker-', 'of-the-value', 'marker-of-a-failure', 'marker-refused']) {
+      expect(logged).not.toContain(marker);
+    }
   });
 });

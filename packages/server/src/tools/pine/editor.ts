@@ -82,12 +82,13 @@ export function notOpenError(): TvMcpError {
 }
 
 // What the flag of unsaved changes TradingView keeps for the editor does, and what closing the
-// editor does to it: the close writes the flag anew from the text the editor holds then.
+// editor does to it: the close writes the flag anew from the text the editor holds then. The editor
+// closes in TradingView or with ui_open_panel, which closes it without discarding its text.
 export const CLOSE_EDITOR_HINT =
   'TradingView flags unsaved changes until the Pine Editor closes, also after a call replaced ' +
-  'them. Closing the Pine Editor in TradingView clears the flag only when the editor holds no ' +
-  'unsaved changes at that moment; else TradingView keeps the text and shows it again on the next ' +
-  'open.';
+  'them. Closing the Pine Editor, in TradingView or with ui_open_panel (panel: "pine_editor", ' +
+  'open: false), clears the flag only when the editor holds no unsaved changes at that moment; ' +
+  'else TradingView keeps the text and shows it again on the next open.';
 
 // The hint of a refusal to replace unsaved text of the editor. The page says it in its own words
 // (changePineEditor), which a test holds to these.
@@ -98,8 +99,8 @@ export const UNSAVED_TEXT_HINT = `Pass confirm: true to replace it, or save it f
 // writes it down (see CLOSE_EDITOR_HINT).
 export const KEPT_FLAG_REMEDY =
   'Saving does not clear the flag of unsaved changes TradingView keeps, which also marks text it ' +
-  'kept across a close of the Pine Editor: once nothing is unsaved, closing the Pine Editor in ' +
-  'TradingView clears it.';
+  'kept across a close of the Pine Editor: once nothing is unsaved, closing the Pine Editor, in ' +
+  'TradingView or with ui_open_panel (panel: "pine_editor", open: false), clears it.';
 
 // The hint of a refusal to add a saved script with unsaved changes to the chart, which TradingView
 // would ask about in a dialog. The page says it in its own words (addPineScriptToChart), which a

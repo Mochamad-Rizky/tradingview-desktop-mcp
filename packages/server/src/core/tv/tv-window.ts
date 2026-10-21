@@ -45,6 +45,10 @@ export interface TvWindow {
     activeElement?: Element | null;
   };
   getComputedStyle?: Window['getComputedStyle'];
+  // The global eval of the page. Called through a reference, which makes it an indirect eval, it
+  // runs code in the global scope of the page, the way the console of the browser runs it. Only
+  // ui_evaluate uses it, for the expression its caller wrote.
+  eval?: (code: string) => unknown;
   location: Pick<
     Location,
     'href' | 'origin' | 'protocol' | 'host' | 'hostname' | 'pathname' | 'search' | 'hash'

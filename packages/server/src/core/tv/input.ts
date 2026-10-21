@@ -1452,7 +1452,8 @@ const NAMED_KEYS: ReadonlyMap<string, { keyCode: number; text?: string }> = new 
   ['PageDown', { keyCode: 34 }],
 ]);
 
-const SUPPORTED_KEYS = `${[...NAMED_KEYS.keys()].join(', ')}, a single letter (a-z, A-Z) or a digit (0-9)`;
+// The keys pressKey takes, in words.
+export const SUPPORTED_KEYS = `${[...NAMED_KEYS.keys()].join(', ')}, a single letter (a-z, A-Z) or a digit (0-9)`;
 
 interface KeyDescription {
   key: string;
