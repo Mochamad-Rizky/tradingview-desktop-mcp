@@ -1475,13 +1475,18 @@ export type PineRawDiagnostic = Exclude<
 // and refuse before anything is added: AUTH_REQUIRED while signed out (the app would ask the user
 // to sign in), NOT_AVAILABLE for a saved script with unsaved changes or whose state cannot be read
 // (the app would ask in a modal dialog whether to save a new version). The indicator limit of the
-// plan is the caller's to check first, as the app opens its paywall on a full chart. Other failures:
+// plan is the caller's to check first, as the app opens its paywall on a full chart. chartIndex is
+// the chart whose room the caller checked, by the index the check resolved the active chart to
+// (null when the page did not say which chart was active): the editor adds to the active chart
+// only, so right before it acts this checks that the active chart is still that one, and refuses
+// with NOT_AVAILABLE when it is not, and it reads the studies before on that chart. Other failures:
 // CAPABILITY_UNAVAILABLE without the registry, a facade with addToChart or the chart API,
 // NOT_AVAILABLE when no editor is open or addToChart rejects (with the reason).
 export function addPineScriptToChart(
   win: TvWindow,
   lib: PageLib,
   waitMs: number,
+  chartIndex: number | null,
 ):
   | Promise<{ before: string[]; consoleFrom: number | null } | PageErrorSentinel>
   | PageErrorSentinel {
@@ -1536,9 +1541,10 @@ export function addPineScriptToChart(
     };
   }
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
+  const index = typeof chartIndex === 'number' ? chartIndex : null;
   let chart: { getAllStudies?: unknown } | null | undefined;
   try {
-    chart = api?.activeChart?.();
+    chart = index === null ? api?.activeChart?.() : api?.chart?.(index);
   } catch {
     chart = undefined;
   }
@@ -1583,6 +1589,31 @@ export function addPineScriptToChart(
           'source, then add that.',
       },
     };
+  }
+  if (index !== null) {
+    let active: unknown;
+    try {
+      active = api?.activeChartIndex?.();
+    } catch {
+      active = undefined;
+    }
+    if (active !== index) {
+      return {
+        __tvmcpError: {
+          code: 'NOT_AVAILABLE',
+          message:
+            'Another chart became the active one after the room for the script was checked, so ' +
+            'the script was not added',
+          hint:
+            'The Pine Editor adds a script to the active chart. Call pine_compile with ' +
+            'addToChart: true again to add it to the chart that is active now.',
+          details: {
+            chartIndex: index,
+            activeChartIndex: typeof active === 'number' ? active : null,
+          },
+        },
+      };
+    }
   }
   const idsNow = (): string[] => {
     let listed: unknown;
@@ -1649,15 +1680,16 @@ export function addPineScriptToChart(
   });
 }
 
-// The study on the active chart whose id is not in `before`, which the editor added: the last such
-// Pine study, else null. Only a Pine study is taken for it, so that a study that appeared at the
-// same time for another reason is never taken for the script; others lists the ids of the new
-// studies that are not Pine studies (or whose metadata cannot be read). compileError is what
-// hasCompileError of its study core answers, null when it cannot be read. Changes nothing, and
-// needs no page library, so the caller may poll it.
+// The study on the chart of chartIndex (the active chart for null) whose id is not in `before`,
+// which the editor added: the last such Pine study, else null. Only a Pine study is taken for it,
+// so that a study that appeared at the same time for another reason is never taken for the script;
+// others lists the ids of the new studies that are not Pine studies (or whose metadata cannot be
+// read). compileError is what hasCompileError of its study core answers, null when it cannot be
+// read. Changes nothing, and needs no page library, so the caller may poll it.
 export function readAddedPineStudy(
   win: TvWindow,
   before: string[],
+  chartIndex: number | null,
 ): { studyId: string | null; compileError: boolean | null; others: string[] } {
   const attempt = (read: () => unknown): unknown => {
     try {
@@ -1667,8 +1699,9 @@ export function readAddedPineStudy(
     }
   };
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
-  const chart = attempt(() => api?.activeChart?.()) as
-    Partial<ChartWidgetApiLike> | null | undefined;
+  const chart = attempt(() =>
+    typeof chartIndex === 'number' ? api?.chart?.(chartIndex) : api?.activeChart?.(),
+  ) as Partial<ChartWidgetApiLike> | null | undefined;
   const listed = attempt(() => chart?.getAllStudies?.());
   const known = new Set(before);
   const fresh = (Array.isArray(listed) ? (listed as unknown[]) : []).flatMap((item) => {

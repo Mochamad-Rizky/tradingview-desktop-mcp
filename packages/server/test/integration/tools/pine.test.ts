@@ -1044,6 +1044,32 @@ const studyIdsOf = (win: FakeTvWindow) =>
     .getAllStudies()
     .map(({ id }) => id);
 
+// From now on, notes each time the page asks the layout which chart is active (activeChart,
+// activeChartIndex) and each chart it reaches by its index (chart:<index>), in order.
+function recordChartLookups(win: FakeTvWindow): string[] {
+  const api = win.TradingViewApi;
+  if (api === undefined) {
+    throw new Error('The fake window has no API');
+  }
+  const asked: string[] = [];
+  const activeChart = api.activeChart.bind(api);
+  const activeChartIndex = api.activeChartIndex.bind(api);
+  const chart = api.chart.bind(api);
+  api.activeChart = () => {
+    asked.push('activeChart');
+    return activeChart();
+  };
+  api.activeChartIndex = () => {
+    asked.push('activeChartIndex');
+    return activeChartIndex();
+  };
+  api.chart = (index?: number) => {
+    asked.push(`chart:${String(index)}`);
+    return chart(index);
+  };
+  return asked;
+}
+
 // Holds the next createStudy of the chart until release() is called. called settles once it was
 // called, so that a test can start another call while an indicator_add is halfway.
 function holdCreateStudy(win: FakeTvWindow): { called: Promise<void>; release: () => void } {
@@ -1421,6 +1447,52 @@ describe('pine_compile', () => {
     expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
     expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
     expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+  });
+
+  test('pine_compile with addToChart resolves the active chart once', async () => {
+    const { client, win } = await startHarness(withStudyRoom(3, withEditor()));
+    const asked = recordChartLookups(win);
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+    const lookups = asked.splice(0);
+
+    expect(dataOf(result)).toMatchObject({ success: true, addedToChart: true, studyId: 'NEW001' });
+    // The room check asks the layout which chart is active. The editor adds to the active chart
+    // only, so the add checks right before it acts that the active chart is still that one; the
+    // studies before the add and the study it added are read on that chart, by its index.
+    expect(lookups[0]).toBe('activeChartIndex');
+    expect(lookups.filter((name) => !name.startsWith('chart:'))).toEqual([
+      'activeChartIndex',
+      'activeChartIndex',
+    ]);
+    expect(new Set(lookups.filter((name) => name.startsWith('chart:')))).toEqual(
+      new Set(['chart:0']),
+    );
+  });
+
+  test('pine_compile with addToChart adds nothing when the active chart changed after its room was checked', async () => {
+    const twoCharts = { ...withEditor(), layout: { ...fixture.layout, chartsCount: 2 } };
+    const { client, win } = await startHarness(withStudyRoom(3, twoCharts));
+    const model = win.TradingViewApi?.activeChart()._chartWidget.model();
+    const check = model?.canCreateStudy;
+    if (model === undefined || check === undefined) {
+      throw new Error('The chart model must check the room for a study');
+    }
+    // The user makes the other chart of the layout the active one right after the room check.
+    model.canCreateStudy = (spec) => {
+      const answer = check(spec);
+      inspectFakeWindow(win).state.activeChartIndex = 1;
+      return answer;
+    };
+
+    const result = await callTool(client, 'pine_compile', { addToChart: true });
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE', details: { chartIndex: 0 } });
+    expect(errorOf(result)?.hint).toContain('pine_compile');
+    expect(callsOf(win, 'pineFacade.addToChart')).toEqual([]);
+    expect(inspectFakeWindow(win).calls.filter(({ name }) => name.startsWith('dialog.'))).toEqual(
+      [],
+    );
   });
 });
 

@@ -440,6 +440,11 @@ export function readStudyCatalog(
 // left out) and whether any input asks for confirmation. builtin is null for Pine and for an id the
 // repository does not hold. The repository is read from its cache once it is ready, else through
 // findAllJavaStudies, which requests the metadata once.
+//
+// The active chart is resolved here to its index, the one time a call asks the layout for it, and
+// the chart is reached by that index, so that the caller can add the study to the very chart whose
+// room this checked, whichever chart is active by then. Only a page that does not say which chart
+// is active leaves the active chart to be asked again (chartIndex null).
 export function readStudyInsertContext(
   win: TvWindow,
   lib: PageLib,
@@ -478,9 +483,9 @@ export function readStudyInsertContext(
   const number = (value: unknown): number | null =>
     typeof value === 'number' && Number.isFinite(value) ? value : null;
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
-  const chart = attempt(() =>
-    chartIndex === null ? api?.activeChart?.() : api?.chart?.(chartIndex),
-  ) as Partial<ChartWidgetApiLike> | null | undefined;
+  const index = chartIndex ?? number(attempt(() => api?.activeChartIndex?.()));
+  const chart = attempt(() => (index === null ? api?.activeChart?.() : api?.chart?.(index))) as
+    Partial<ChartWidgetApiLike> | null | undefined;
   if (typeof chart?.createStudy !== 'function' || typeof chart.getAllStudies !== 'function') {
     return {
       __tvmcpError: {
@@ -499,7 +504,7 @@ export function readStudyInsertContext(
       : undefined
   ) as { success?: unknown; reason?: unknown; limitValue?: unknown } | null | undefined;
   const found = {
-    chartIndex: chartIndex ?? number(attempt(() => api?.activeChartIndex?.())),
+    chartIndex: index,
     count: Array.isArray(listed) ? listed.length : null,
     check:
       typeof answer?.success === 'boolean'

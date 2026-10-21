@@ -216,8 +216,11 @@ export async function requireStudyRoom(
 
 // What indicator_add does once it knows the indicator: it checks the room on the chart and whether
 // the indicator needs a dialog, adds the study and sets its inputs, taking the study off again when
-// they fail. Answers the id of the study and the chart it went to. Runs in a turn of the
-// plan-limited actions (inPlanLimitedTurn), so that no other call takes the slot it checked.
+// they fail. Answers the id of the study and the chart it went to. Without chartIndex the check
+// resolves the active chart to its index, once, and every later step works on the chart of that
+// index, so the study goes to the chart whose room was checked even when another chart becomes the
+// active one meanwhile. Runs in a turn of the plan-limited actions (inPlanLimitedTurn), so that no
+// other call takes the slot it checked.
 async function addStudy(
   page: PageHandle,
   ctx: ToolContext,
@@ -254,6 +257,9 @@ async function addStudy(
     );
   }
   await requireStudyRoom(page, context.check, context.count);
+  // The chart the check looked at: the one named, else the active one, by the index it had then.
+  // Null only on a page that does not say which chart is active, which then gets the active chart.
+  const at = context.chartIndex;
   const wanted = inputs ?? {};
   const hasInputs = Object.keys(wanted).length > 0;
   // A built-in's inputs are known before it is added; a Pine script's only afterwards.
@@ -272,7 +278,7 @@ async function addStudy(
     );
   }
   const { id } = await page.bridge.evaluate(insertStudy, [
-    chartIndex,
+    at,
     how,
     overlay === true,
     pageWaitMs(ctx.config.callTimeoutMs),
@@ -284,16 +290,16 @@ async function addStudy(
       const values =
         checked ??
         validateInputs(
-          (await page.bridge.evaluate(editStudyInputs, [chartIndex, id, null])).inputs,
+          (await page.bridge.evaluate(editStudyInputs, [at, id, null])).inputs,
           wanted,
         );
-      await page.bridge.evaluate(editStudyInputs, [chartIndex, id, values]);
+      await page.bridge.evaluate(editStudyInputs, [at, id, values]);
     } catch (error) {
       // The study was added for nothing: take it off again, so the chart is as it was. Should
       // that fail too, the error of the inputs still is the one to report, with the study it left
       // on the chart, which stays one this session added.
       try {
-        await page.bridge.evaluate(removeStudy, [chartIndex, id, true]);
+        await page.bridge.evaluate(removeStudy, [at, id, true]);
         ctx.session.createdStudyIds.delete(id);
       } catch (cause) {
         ctx.logger.warn(
@@ -305,7 +311,7 @@ async function addStudy(
       throw error;
     }
   }
-  return { id, chartIndex: context.chartIndex };
+  return { id, chartIndex: at };
 }
 
 // The error of inputs that failed after the study `id` was added, when it could not be taken off

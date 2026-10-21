@@ -441,6 +441,32 @@ function chartOf(win: FakeTvWindow) {
 const dialogsOf = (win: FakeTvWindow) =>
   inspectFakeWindow(win).calls.filter(({ name }) => name.startsWith('dialog.'));
 
+// From now on, notes each time the page asks the layout which chart is active (activeChart,
+// activeChartIndex) and each chart it reaches by its index (chart:<index>), in order.
+function recordChartLookups(win: FakeTvWindow): string[] {
+  const api = win.TradingViewApi;
+  if (api === undefined) {
+    throw new Error('The fake window has no API');
+  }
+  const asked: string[] = [];
+  const activeChart = api.activeChart.bind(api);
+  const activeChartIndex = api.activeChartIndex.bind(api);
+  const chart = api.chart.bind(api);
+  api.activeChart = () => {
+    asked.push('activeChart');
+    return activeChart();
+  };
+  api.activeChartIndex = () => {
+    asked.push('activeChartIndex');
+    return activeChartIndex();
+  };
+  api.chart = (index?: number) => {
+    asked.push(`chart:${String(index)}`);
+    return chart(index);
+  };
+  return asked;
+}
+
 // The changes the server made to the studies.
 const changesOf = (win: FakeTvWindow) =>
   inspectFakeWindow(win)
@@ -962,6 +988,31 @@ describe('indicator_add', () => {
 
     expect(errorOf(result)?.code).toBe('INVALID_INPUT');
     expect(changesOf(win)).toEqual([]);
+  });
+
+  test('indicator_add resolves the active chart once', async () => {
+    const { client, win } = await startHarness(roomy());
+    const asked = recordChartLookups(win);
+
+    const result = await callTool(client, 'indicator_add', {
+      name: 'MACD',
+      inputs: { 'Fast Length': 10 },
+    });
+    const lookups = asked.splice(0);
+    const named = await callTool(client, 'indicator_add', { name: 'RSI', chartIndex: 0 });
+
+    expect(dataOf(result)).toEqual({
+      id: 'NEW001',
+      name: 'Moving Average Convergence Divergence',
+      chartIndex: 0,
+    });
+    // The room check asks the layout which chart is active, once; the insert, the read of the
+    // inputs and their change go to that chart by its index.
+    expect(lookups[0]).toBe('activeChartIndex');
+    expect(new Set(lookups.slice(1))).toEqual(new Set(['chart:0']));
+    // A chart the caller names is checked against the layout, which is the one read of it.
+    expect(dataOf(named)).toMatchObject({ id: 'NEW002', chartIndex: 0 });
+    expect(asked.filter((name) => !name.startsWith('chart:'))).toEqual(['activeChartIndex']);
   });
 });
 

@@ -86,9 +86,11 @@ async function editorSource(page: PageHandle): Promise<string> {
 // Adds the script of the open editor to the active chart and answers what came of it. The checks run
 // before anything is added: the indicator limit of the plan, an open editor, and a script the app
 // adds without a dialog (a draft, or a saved script without unsaved changes; the page re-checks this
-// and sign-in right before it acts). The new study is found by the ids on the chart before and
-// after, with a plain poll, and its compile errors are read from the console of the editor. The
-// caller runs it in a turn of the plan-limited actions (inPlanLimitedTurn).
+// and sign-in right before it acts). The check of the room resolves the active chart to its index,
+// once: the add goes ahead only while that chart is still the active one, which the editor adds
+// to, and the new study is looked for on it, by the ids on the chart before and after, with a plain
+// poll. Its compile errors are read from the console of the editor. The caller runs it in a turn of
+// the plan-limited actions (inPlanLimitedTurn).
 async function addEditorScript(
   page: PageHandle,
   ctx: ToolContext,
@@ -122,9 +124,10 @@ async function addEditorScript(
   // function, with its hint, within the time of the call.
   const { before, consoleFrom } = await page.bridge.evaluateWithLib(addPineScriptToChart, [
     Math.max(deadline - Date.now(), 0),
+    context.chartIndex,
   ]);
   const found = await pollUntil(
-    () => page.bridge.evaluate(readAddedPineStudy, [before]),
+    () => page.bridge.evaluate(readAddedPineStudy, [before, context.chartIndex]),
     ({ studyId }) => studyId !== null,
     {
       intervalMs: ADDED_STUDY_POLL_MS,

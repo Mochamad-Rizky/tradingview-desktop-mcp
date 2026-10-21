@@ -276,7 +276,7 @@ describe('addPineScriptToChart', () => {
   test('adds the script of the editor and answers the studies before and the console length', async () => {
     const { result, win } = await libResultOf(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       chart(withRoom(withEditor()), (win) => {
         editorOf(win).consoleMessages.push({ level: 'info', text: 'old', time: '09:00:00' });
       }),
@@ -289,10 +289,51 @@ describe('addPineScriptToChart', () => {
     ).toContainEqual({ id: 'NEW001', name: 'Fixture Script' });
   });
 
+  test('adds to the chart whose room was checked, and refuses once another chart is the active one', async () => {
+    const twoCharts = withRoom({ ...withEditor(), layout: { ...fixture.layout, chartsCount: 2 } });
+    const { result, win } = await libResultOf(addPineScriptToChart, [1000, 0], chart(twoCharts));
+
+    expect(result).toEqual({ before: ['STUDY01', 'STUDY02'], consoleFrom: 0 });
+    expect(inspectFakeWindow(win).callsTo('pineFacade.addToChart')).toEqual([[]]);
+
+    const moved = await libFailureOfBoth(
+      addPineScriptToChart,
+      [1000, 0],
+      chart(twoCharts, (page) => {
+        inspectFakeWindow(page).state.activeChartIndex = 1;
+      }),
+    );
+    expect(moved.error.toPayload()).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { chartIndex: 0, activeChartIndex: 1 },
+    });
+    expect(moved.error.hint).toContain('pine_compile');
+    expect(inspectFakeWindow(moved.win).callsTo('pineFacade.addToChart')).toEqual([]);
+
+    // An active chart that cannot be told is not taken for the one that was checked.
+    const unknown = await libFailureOfBoth(
+      addPineScriptToChart,
+      [1000, 0],
+      chart(twoCharts, (page) => {
+        const api = (page as ReturnType<typeof createFakeTvWindow>).TradingViewApi;
+        if (api !== undefined) {
+          api.activeChartIndex = () => {
+            throw new Error('No layout');
+          };
+        }
+      }),
+    );
+    expect(unknown.error.toPayload()).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { chartIndex: 0, activeChartIndex: null },
+    });
+    expect(inspectFakeWindow(unknown.win).callsTo('pineFacade.addToChart')).toEqual([]);
+  });
+
   test('refuses before acting: signed out, a changed saved script, no editor', async () => {
     const signedOut = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       chart(withRoom(withEditor()), (win) => {
         editorOf(win).signedIn = false;
       }),
@@ -302,17 +343,21 @@ describe('addPineScriptToChart', () => {
 
     const changed = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       chart(withRoom(withEditor({ source: '//@version=6\nindicator("Changed")\n' }))),
     );
     expect(changed.error.code).toBe('NOT_AVAILABLE');
     expect(changed.error.hint).toContain('pine_save');
     expect(inspectFakeWindow(changed.win).callsTo('dialog.confirmSaveChanges')).toEqual([]);
 
-    const closed = await libFailureOfBoth(addPineScriptToChart, [1000], chart(withRoom(fixture)));
+    const closed = await libFailureOfBoth(
+      addPineScriptToChart,
+      [1000, null],
+      chart(withRoom(fixture)),
+    );
     expect(closed.error.code).toBe('NOT_AVAILABLE');
 
-    const noRegistry = await libFailureOfBoth(addPineScriptToChart, [1000], withModules({}));
+    const noRegistry = await libFailureOfBoth(addPineScriptToChart, [1000, null], withModules({}));
     expect(noRegistry.error.code).toBe('CAPABILITY_UNAVAILABLE');
   });
 
@@ -320,7 +365,7 @@ describe('addPineScriptToChart', () => {
     const studies = () => ({ getAllStudies: () => [] });
     const unknownModified = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       withFacade(
         () => ({
           addToChart: () => Promise.resolve(),
@@ -336,14 +381,14 @@ describe('addPineScriptToChart', () => {
 
     const noAdd = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       withFacade(() => ({ isDraft: () => true, isModified: () => false }), { chartApi: studies }),
     );
     expect(noAdd.error.code).toBe('CAPABILITY_UNAVAILABLE');
 
     const noChart = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       withFacade(() => ({
         addToChart: () => Promise.resolve(),
         isDraft: () => true,
@@ -354,7 +399,7 @@ describe('addPineScriptToChart', () => {
 
     const noFacade = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       withFacade(() => null, { chartApi: studies }),
     );
     expect(noFacade.error.code).toBe('CAPABILITY_UNAVAILABLE');
@@ -364,7 +409,7 @@ describe('addPineScriptToChart', () => {
     const added: string[] = [];
     const { result } = await libResultOf(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       withFacade(
         () => ({
           addToChart: () => {
@@ -386,7 +431,7 @@ describe('addPineScriptToChart', () => {
     const chartApi = () => ({ getAllStudies: () => [] });
     const rejected = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       withFacade(
         () => ({
           addToChart: () => Promise.reject(new Error('Compilation request failed')),
@@ -403,7 +448,7 @@ describe('addPineScriptToChart', () => {
 
     const hanging = await libFailureOfBoth(
       addPineScriptToChart,
-      [20],
+      [20, null],
       withFacade(
         () => ({
           addToChart: () => new Promise(() => undefined),
@@ -457,18 +502,18 @@ describe('page members that throw', () => {
       }),
     });
 
-    const { result } = await libResultOf(addPineScriptToChart, [1000], make);
+    const { result } = await libResultOf(addPineScriptToChart, [1000, null], make);
     expect(result).toEqual({ before: [], consoleFrom: null });
 
     const brokenFacade = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       withModules({ getOpenPineEditor: () => ({ getFacade: throwing }) }),
     );
     expect(brokenFacade.error.code).toBe('CAPABILITY_UNAVAILABLE');
     const brokenChart = await libFailureOfBoth(
       addPineScriptToChart,
-      [1000],
+      [1000, null],
       withModules(
         { getOpenPineEditor: () => ({ getFacade: () => ({ addToChart: () => undefined }) }) },
         { TradingViewApi: { activeChart: throwing } },
@@ -523,12 +568,33 @@ describe('readAddedPineStudy', () => {
       },
     );
 
-    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02']], make)).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], null], make)).toEqual({
       studyId: 'NEW001',
       compileError: true,
       others: [],
     });
-    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02', 'NEW001']], make)).toEqual({
+    expect(
+      await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02', 'NEW001'], null], make),
+    ).toEqual({
+      studyId: null,
+      compileError: null,
+      others: [],
+    });
+  });
+
+  test('reads the chart of the index it is given, and finds nothing on a chart it cannot reach', async () => {
+    const make = chart(withRoom(withEditor({ script: null, source: 'plot(close)' })), (win) => {
+      const api = (win as ReturnType<typeof createFakeTvWindow>).TradingViewApi?.pineEditorApi();
+      void api?.getDialogFacade()?.addToChart();
+    });
+
+    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], 0], make)).toEqual({
+      studyId: 'NEW001',
+      compileError: false,
+      others: [],
+    });
+    // The fake has one chart: chart(1) throws, as on a layout of one chart.
+    expect(await resultOf(readAddedPineStudy, [['STUDY01', 'STUDY02'], 1], make)).toEqual({
       studyId: null,
       compileError: null,
       others: [],
@@ -552,18 +618,18 @@ describe('readAddedPineStudy', () => {
       },
     });
 
-    expect(await resultOf(readAddedPineStudy, [['OLD']], make)).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['OLD'], null], make)).toEqual({
       studyId: 'PINE',
       compileError: null,
       others: ['JAVA', 'BAD'],
     });
     // A new study that is not a Pine study is never taken for the script.
-    expect(await resultOf(readAddedPineStudy, [['OLD', 'PINE']], make)).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['OLD', 'PINE'], null], make)).toEqual({
       studyId: null,
       compileError: null,
       others: ['JAVA', 'BAD'],
     });
-    expect(await resultOf(readAddedPineStudy, [['OLD']], () => ({}))).toEqual({
+    expect(await resultOf(readAddedPineStudy, [['OLD'], null], () => ({}))).toEqual({
       studyId: null,
       compileError: null,
       others: [],
