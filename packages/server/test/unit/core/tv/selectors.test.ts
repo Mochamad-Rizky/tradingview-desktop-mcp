@@ -318,16 +318,35 @@ describe('TRADING_ACTION_NAMES', () => {
     'Sell',
     'Sell 100',
     'Sell market',
+    'Market Buy',
+    '1.08571 Sell',
+    '▲ Buy',
+    'Buy 1 AAPL @ 150 MKT',
+    'Buy/sell buttons',
     'Place order',
     'Place an order',
+    'Place buy order',
+    'Submit order',
+    'Send orders',
+    'Cancel order',
+    'Modify order',
     'Close position',
     'Close position AAPL',
+    'Close positions',
+    'Close all positions',
+    'Close all',
+    'Exit position',
     'Reverse',
     'Reverse position',
     'Flatten',
     'Flatten all',
   ])('names a trading action: %j', (name) => {
     expect(trading.test(name)).toBe(true);
+  });
+
+  test('takes "How to buy" for a trading action, which is accepted', () => {
+    // Buy and sell count as words anywhere in a name, which refuses a few names that trade nothing.
+    expect(trading.test('How to buy')).toBe(true);
   });
 
   test.each([
@@ -337,8 +356,9 @@ describe('TRADING_ACTION_NAMES', () => {
     'Bestsellers',
     'Close',
     'Order panel',
-    'Place',
     'Orders',
+    'Place',
+    'Positions',
     'Alerts',
     'Save all charts',
     '',

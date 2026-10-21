@@ -266,10 +266,11 @@ describe('describeElement', () => {
     expect(look(win, PANE)).toMatchObject({ found: true, visible: true, unsafe: true });
   });
 
-  test('does not flag a safe element for an unsafe control elsewhere on the page', () => {
-    // The ticket covers the center of the pane, but it is not a trading control itself, and the
-    // control it holds lies elsewhere: only what the click would hit counts as unsafe. Being
-    // covered is a different matter, and is reported on its own.
+  test('flags a target for a click when what covers its center holds a trading control, and no target elsewhere', () => {
+    // The ticket covers the center of the pane and holds a trading control, which lies elsewhere.
+    // The click would land on the ticket, and a click on an element that holds a trading control is
+    // refused: that is reported as unsafe, which comes before being covered. The header button lies
+    // away from the ticket and is not flagged for the control on the page.
     const ticket = fakeElement({
       attributes: { 'data-name': 'order-ticket' },
       rect: box(300, 250, 200, 100),
@@ -280,11 +281,27 @@ describe('describeElement', () => {
     expect(look(win, PANE)).toMatchObject({
       found: true,
       visible: true,
+      unsafe: true,
+      coverage: 'not-checked',
+      obscuredBy: '',
+    });
+    expect(look(win, SAVE)).toMatchObject({ unsafe: false, coverage: 'clear', obscuredBy: '' });
+  });
+
+  test('reports a target whose center a layer covers that holds no trading control as obscured, not unsafe', () => {
+    // Being covered is a different matter from being unsafe, and is reported on its own.
+    const ticket = fakeElement({
+      attributes: { 'data-name': 'order-ticket' },
+      rect: box(300, 250, 200, 100),
+      children: [fakeElement({ tag: 'button', id: 'submit-order', rect: box(700, 20, 60, 30) })],
+    });
+    const win = createFakeDomWindow(chart([overlapRoot([ticket])]));
+
+    expect(look(win, PANE)).toMatchObject({
       unsafe: false,
       coverage: 'obscured',
       obscuredBy: 'div[data-name="order-ticket"]',
     });
-    expect(look(win, SAVE)).toMatchObject({ unsafe: false, coverage: 'clear', obscuredBy: '' });
   });
 
   test.each<[string, (layer: FakeElement) => FakeElement[]]>([
@@ -3776,6 +3793,48 @@ describe('the text of fields and editable regions', () => {
   });
 });
 
+test("the options of a select show nothing: what is chosen in a field is the user's", async () => {
+  const make = screen(() => [
+    fakeElement({
+      tag: 'select',
+      matches: ['.choice'],
+      rect: box(100, 600, 120, 24),
+      children: [
+        fakeElement({
+          tag: 'option',
+          matches: ['.choice'],
+          text: 'Option A',
+          rect: box(100, 624, 120, 20),
+        }),
+        fakeElement({
+          tag: 'option',
+          matches: ['.choice'],
+          text: 'Option B',
+          rect: box(100, 644, 120, 20),
+        }),
+      ],
+    }),
+  ]);
+
+  const found = await bothWays(
+    findElements,
+    [{ selector: '.choice', text: null }, 10, [...UNSAFE_SELECTORS]],
+    make,
+  );
+  const byText = await bothWays(
+    describeElement,
+    [{ text: 'Option B' }, [...UNSAFE_SELECTORS], [OVERLAP_ROOT], TRADING_ACTION_NAMES, 'click'],
+    make,
+  );
+
+  expect(found.elements.map(({ tag, name, text }) => ({ tag, name, text }))).toEqual([
+    { tag: 'select', name: '', text: '' },
+    { tag: 'option', name: '', text: '' },
+    { tag: 'option', name: '', text: '' },
+  ]);
+  expect(byText).toMatchObject({ found: false });
+});
+
 describe('a page that does not report its zoom', () => {
   // Layout metrics whose visual viewport says nothing about the zoom.
   const withoutZoom = () => {
@@ -3822,17 +3881,19 @@ describe('a page that does not report its zoom', () => {
 
 describe('trading actions by name', () => {
   // Trading buttons that carry no selector of the guard, as those of an order ticket do: they are
-  // known by their names alone. "Sell 100" shows its quantity in a label of its own, and "Place
-  // order" is named by its aria-label and shows a mark.
+  // known by their names alone. "Sell 100" is two spans side by side, with no space in the text
+  // between them, and "Place order" is named by its aria-label and shows a mark.
   const tradingButtons = (): FakeElement[] => [
     fakeElement({ tag: 'button', text: 'Buy', rect: box(100, 600, 60, 24) }),
     fakeElement({
       tag: 'button',
       id: 'order-sell',
       matches: ['#order-sell'],
-      text: 'Sell ',
       rect: box(200, 600, 80, 24),
-      children: [fakeElement({ tag: 'span', text: '100', rect: box(240, 602, 30, 20) })],
+      children: [
+        fakeElement({ tag: 'span', text: 'Sell', rect: box(205, 602, 30, 20) }),
+        fakeElement({ tag: 'span', text: '100', rect: box(240, 602, 30, 20) }),
+      ],
     }),
     fakeElement({
       tag: 'button',
@@ -3909,7 +3970,7 @@ describe('trading actions by name', () => {
     expect(input()).toEqual([]);
   });
 
-  test('"Buyback chart" and "Sellers" are clicked: buy and sell count only as the first word of a name', async () => {
+  test('"Buyback chart" and "Sellers" are clicked: buy and sell count only as whole words', async () => {
     const { page, types } = pageOver(make());
 
     await expect(clickTarget(page, { text: 'Buyback chart' })).resolves.toEqual({
@@ -3957,5 +4018,263 @@ describe('trading actions by name', () => {
     expect(await bothWays(describeElement, [...args('hover')], make)).not.toHaveProperty(
       'tradingAction',
     );
+  });
+});
+
+describe('trading actions in split labels, input buttons and the text shown', () => {
+  const clickArgs = (
+    target: { selector: string } | { text: string },
+  ): ArgsOf<typeof describeElement> => [
+    target,
+    [...UNSAFE_SELECTORS],
+    [OVERLAP_ROOT],
+    TRADING_ACTION_NAMES,
+    'click',
+  ];
+
+  test('a label split into spans side by side is read with a space between them', async () => {
+    const buttons = () => [
+      fakeElement({
+        tag: 'button',
+        matches: ['#ticket-buy'],
+        rect: box(100, 600, 200, 24),
+        children: [
+          fakeElement({ tag: 'span', text: 'Buy', rect: box(105, 602, 30, 20) }),
+          fakeElement({ tag: 'span', text: '1 AAPL @ 150 MKT', rect: box(140, 602, 150, 20) }),
+        ],
+      }),
+      fakeElement({
+        tag: 'button',
+        matches: ['#quote-sell'],
+        rect: box(400, 600, 120, 24),
+        children: [
+          fakeElement({ tag: 'span', text: '1.08571', rect: box(405, 602, 60, 20) }),
+          fakeElement({ tag: 'span', text: 'Sell', rect: box(470, 602, 40, 20) }),
+        ],
+      }),
+    ];
+    const make = screen(buttons);
+
+    expect(
+      await bothWays(describeElement, [...clickArgs({ selector: '#ticket-buy' })], make),
+    ).toMatchObject({
+      tradingAction: 'Buy 1 AAPL @ 150 MKT',
+    });
+    expect(
+      await bothWays(describeElement, [...clickArgs({ selector: '#quote-sell' })], make),
+    ).toMatchObject({
+      tradingAction: '1.08571 Sell',
+    });
+    // At a point on the second span of the first button, which a click on activates the button.
+    const { page, input } = pageOver(make());
+    const error = await failureOf(clickPoint(page, { x: 200, y: 612 }));
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { x: 200, y: 612, name: 'Buy 1 AAPL @ 150 MKT' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('the text shown is matched even when an aria-label says something else', async () => {
+    const make = screen(() => [
+      fakeElement({
+        tag: 'button',
+        attributes: { 'aria-label': 'Confirm' },
+        text: 'Buy 100',
+        rect: box(100, 600, 80, 24),
+      }),
+    ]);
+    const { page, input } = pageOver(make());
+
+    // The button is named "Confirm", and shows "Buy 100".
+    const error = await failureOf(clickTarget(page, { text: 'confirm' }));
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { text: 'confirm', name: 'Buy 100' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('the value of an input button is its label, and a trading one is refused', async () => {
+    const make = screen(() => [
+      fakeElement({
+        tag: 'input',
+        matches: ['#submit-order'],
+        attributes: { type: 'submit', value: 'Place order' },
+        rect: box(100, 600, 100, 24),
+      }),
+      fakeElement({
+        tag: 'input',
+        matches: ['#sell-button'],
+        attributes: { type: 'BUTTON', value: 'Sell' },
+        rect: box(250, 600, 60, 24),
+      }),
+      fakeElement({
+        tag: 'input',
+        matches: ['#reset'],
+        attributes: { type: 'reset', value: 'Reset form' },
+        rect: box(350, 600, 80, 24),
+      }),
+    ]);
+
+    expect(
+      await bothWays(describeElement, [...clickArgs({ text: 'place order' })], make),
+    ).toMatchObject({
+      found: true,
+      tradingAction: 'Place order',
+    });
+    expect(
+      await bothWays(describeElement, [...clickArgs({ selector: '#sell-button' })], make),
+    ).toMatchObject({
+      tradingAction: 'Sell',
+    });
+    // The label of a button that names no trading action is a name like any other.
+    const { page, types } = pageOver(make());
+    await expect(clickTarget(page, { text: 'reset form' })).resolves.toEqual({ x: 390, y: 612 });
+    expect(types()).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+  });
+
+  test('findElements names an input button by its value, and an input without a type by nothing', async () => {
+    const make = screen(() => [
+      fakeElement({
+        tag: 'input',
+        matches: ['.control'],
+        attributes: { type: 'submit', value: '  Place   order ' },
+        rect: box(100, 600, 100, 24),
+      }),
+      fakeElement({
+        tag: 'input',
+        matches: ['.control'],
+        attributes: { value: 'typed by the user' },
+        rect: box(250, 600, 100, 24),
+      }),
+    ]);
+
+    const found = await bothWays(
+      findElements,
+      [{ selector: '.control', text: null }, 10, [...UNSAFE_SELECTORS]],
+      make,
+    );
+
+    // An input without a type takes text, so its value is the user's and is not read.
+    expect(found.elements.map(({ name, text }) => ({ name, text }))).toEqual([
+      { name: 'Place order', text: '' },
+      { name: '', text: '' },
+    ]);
+  });
+
+  test('the value of an input of another type is never read, not even for a trading name', async () => {
+    // What a field holds is the user's: its value is neither a name nor a reason to refuse.
+    const quantity = fakeElement({
+      tag: 'input',
+      matches: ['#quantity'],
+      attributes: { type: 'text', value: 'Buy 100' },
+      rect: box(100, 600, 100, 24),
+    });
+    Object.defineProperty(quantity, 'value', {
+      get() {
+        throw new Error('The value of a field was read');
+      },
+    });
+    const make = screen(() => [quantity]);
+
+    const look = await bothWays(describeElement, [...clickArgs({ selector: '#quantity' })], make);
+    const found = await bothWays(
+      findElements,
+      [{ selector: '#quantity', text: null }, 10, [...UNSAFE_SELECTORS]],
+      make,
+    );
+
+    expect(look).not.toHaveProperty('tradingAction');
+    expect(found.elements).toEqual([expect.objectContaining({ name: '', text: '' })]);
+    expect(JSON.stringify(found)).not.toContain('Buy 100');
+  });
+
+  test('a button inside a contenteditable="false" block of an editable region is named and checked', async () => {
+    const editor = () =>
+      fakeElement({
+        attributes: { contenteditable: 'true' },
+        rect: box(100, 550, 400, 120),
+        children: [
+          fakeElement({ tag: 'p', text: 'a typed note', rect: box(105, 555, 200, 20) }),
+          fakeElement({
+            attributes: { contenteditable: 'false' },
+            rect: box(105, 600, 200, 40),
+            children: [
+              fakeElement({
+                tag: 'button',
+                matches: ['#widget-buy'],
+                text: 'Buy',
+                rect: box(110, 605, 60, 24),
+              }),
+            ],
+          }),
+        ],
+      });
+    const make = screen(() => [editor()]);
+
+    expect(
+      await bothWays(describeElement, [...clickArgs({ selector: '#widget-buy' })], make),
+    ).toMatchObject({
+      tradingAction: 'Buy',
+    });
+    // The typed paragraph of the region is still no name.
+    expect(
+      await bothWays(describeElement, [...clickArgs({ text: 'a typed note' })], make),
+    ).toMatchObject({
+      found: false,
+    });
+  });
+
+  test('a click by selector is refused when what covers its center holds a trading control', async () => {
+    // A trading panel lies over the canvas of the pane, outside the overlap root, and holds the
+    // trade button away from the center of the canvas. The click would land on the panel.
+    const panel = () =>
+      fakeElement({
+        attributes: { 'data-name': 'trading-panel' },
+        rect: box(0, 100, 800, 400),
+        children: [fakeElement({ matches: [TRADE_BUTTON], rect: box(700, 110, 60, 30) })],
+      });
+    const clicked = pageOver(screen(() => [panel()])());
+    const hovered = pageOver(screen(() => [panel()])());
+
+    const error = await failureOf(clickElement(clicked.page, PANE));
+    await hoverElement(hovered.page, PANE);
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { selector: PANE },
+    });
+    expect(clicked.input()).toEqual([]);
+    // The pointer over the panel lands on the panel, so a hover there is no click on it.
+    expect(hovered.types()).toEqual(['mouseMoved']);
+  });
+
+  test('names read the same way for a click by text and for findElements', async () => {
+    // A menu item whose label and shortcut stand apart, in two spans.
+    const make = screen(() => [
+      fakeElement({
+        matches: ['.item'],
+        attributes: { role: 'menuitem' },
+        rect: box(100, 600, 200, 24),
+        children: [
+          fakeElement({ tag: 'span', text: 'Undo', rect: box(105, 602, 40, 20) }),
+          fakeElement({ tag: 'span', text: 'Ctrl+Z', rect: box(240, 602, 50, 20) }),
+        ],
+      }),
+    ]);
+
+    const found = await bothWays(
+      findElements,
+      [{ selector: '.item', text: null }, 10, [...UNSAFE_SELECTORS]],
+      make,
+    );
+    const clicked = await clickTarget(pageOver(make()).page, { text: '  undo   CTRL+Z ' });
+
+    expect(found.elements.map(({ name, text }) => ({ name, text }))).toEqual([
+      { name: 'Undo Ctrl+Z', text: 'Undo Ctrl+Z' },
+    ]);
+    expect(clicked).toEqual({ x: 200, y: 612 });
   });
 });

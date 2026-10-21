@@ -83,19 +83,22 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 // What an action of the pointer needs to know about its target: the first element that matches a
 // selector (a string is one), the first visible element with a name, or a point. Of an element:
 // - found: whether there is one. One looked for by its name is found only when it is visible. Its
-//   name is its aria-label, or else the text it shows, trimmed, compared whole and ignoring case.
-//   The text it shows is that of its text nodes, without the text inside a field (an input, a
-//   textarea or a select) or an editable region ([contenteditable]): what is in those was typed or
-//   chosen by the user, and a textarea keeps its text as a text node. An element that is such a
-//   place, or sits inside one, shows no text and is named by its aria-label alone. Several elements
-//   with the name go by document order, so a wrapper whose whole text is the name comes before the
-//   element inside it.
+//   name is its aria-label, or else, for an input of type submit, button or reset, its value, or
+//   else the text it shows, compared whole and ignoring case. The text it shows is that of its text
+//   nodes, with a space between the pieces of different elements, as they stand apart on the
+//   screen, and every run of white space one space: a label made of "Sell" and "100" in two spans
+//   is named "Sell 100". The text inside a field (an input, a textarea or a select) or an editable
+//   element is left out: what is in those was typed or chosen by the user, and a textarea keeps its
+//   text as a text node. An element that is editable, or sits inside a field, shows no text. The
+//   value of an input of any other type is never read. Several elements with the name go by
+//   document order, so a wrapper whose whole text is the name comes before the element inside it.
 // - visible: whether it is connected, has a box with a size, and is not display: none or
 //   visibility: hidden. A page without getComputedStyle is judged by its box alone.
 // - unsafe: whether the pointer at it could reach a trading control. That is so when it matches one
 //   of `unsafeSelectors`, sits inside one that does, holds an element that does, or, when it is
 //   visible, has such an element at the point the pointer would land on, for instance an order
-//   ticket floating over it. What it holds counts for a click only: a hover or a scroll over a
+//   ticket floating over it. What it holds counts for a click only, and so does what an element at
+//   that point holds when it is not the element itself or inside it: a hover or a scroll over a
 //   container lands on the container, and the pane of the chart, where they are aimed at most,
 //   always holds the buy and sell buttons shown on it.
 // - coverage: what lies at that point, which is judged for an element that is visible and not
@@ -114,9 +117,11 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 //   data-name when it has them. Empty unless the coverage is obscured.
 // - rect: its box in viewport pixels, as the page reports it.
 // - tradingAction: for a click, the name of a trading action, which `tradingNames` matches ignoring
-//   case, that the click would reach: the name of the element, of the element at the point, or of
-//   the control that one belongs to (its closest button, link or element with the role of one),
-//   which a click on it activates. Left out when there is none.
+//   case, that the click would reach. Each of the aria-label, the value of an input button and the
+//   text shown is matched on its own, so that the text a user reads counts even under an aria-label
+//   that says something else, for the element, for the element at the point, and for the control
+//   that one belongs to (its closest button, link or element with the role of one), which a click
+//   on it activates. Left out when there is none.
 // A point is the target itself: it is found and visible, has no rect, and is judged the way the
 // point of an element is, except that a layer or a frame anywhere at it covers it, since it lies on
 // no element the caller named, and that for a click the element at the point is its target, so
@@ -173,15 +178,26 @@ export function describeElement(
   const unsafeList = unsafeSelectors.join(', ');
   const trading = new RegExp(tradingNames, 'i');
 
-  // A field or an editable region, whose text was typed or chosen by the user.
+  // A field, whose content the user typed or chose.
+  const field = (node: Element): boolean =>
+    ['input', 'textarea', 'select'].includes(node.localName);
+  // What the user typed or chose: a field, or an element that is editable. isContentEditable is the
+  // page's own answer: an element of an editable region is editable, and one inside a
+  // contenteditable="false" block of it is not.
   const typedIn = (node: Element): boolean =>
-    ['input', 'textarea', 'select'].includes(node.localName) ||
-    node.hasAttribute('contenteditable');
-  // The text an element shows: its text nodes, without those inside a field or an editable region,
-  // and none at all for one that is or sits inside such a place.
+    field(node) || ('isContentEditable' in node && node.isContentEditable === true);
+  // White space as a user reads it: every run of it one space, none at the ends.
+  const collapsed = (value: string | null): string => (value ?? '').replace(/\s+/g, ' ').trim();
+  // The text an element shows: its text nodes, with a space between the pieces of different
+  // elements, as they stand apart on the screen, so that a label split into "Sell" and "100" reads
+  // "Sell 100". Nothing that was typed: an element that is typed into, or sits inside a field,
+  // shows nothing, and the fields and editable regions inside an element are left out.
   const readable = (element: Element): string => {
-    for (let node: Element | null = element; node !== null; node = node.parentElement) {
-      if (typedIn(node)) {
+    if (typedIn(element)) {
+      return '';
+    }
+    for (let node = element.parentElement; node !== null; node = node.parentElement) {
+      if (field(node)) {
         return '';
       }
     }
@@ -191,16 +207,32 @@ export function describeElement(
         if (child.nodeType === 3) {
           text += (child as CharacterData).data;
         } else if (child.nodeType === 1 && !typedIn(child as Element)) {
+          text += ' ';
           collect(child as Element);
+          text += ' ';
         }
       }
     };
     collect(element);
-    return text.trim();
+    return collapsed(text);
   };
+  // The label of a button made of an input of type submit, button or reset: its value, which the
+  // page sets and the user does not type, and which is its value attribute. The value of an input of
+  // any other type is never read.
+  const buttonValue = (element: Element): string =>
+    element.localName === 'input' &&
+    ['submit', 'button', 'reset'].includes((element.getAttribute('type') ?? '').toLowerCase())
+      ? collapsed(element.getAttribute('value'))
+      : '';
+  // The name of an element: its aria-label, or else the label of an input button, or else the text
+  // it shows.
   const nameOf = (element: Element): string => {
-    const label = (element.getAttribute('aria-label') ?? '').trim();
-    return label !== '' ? label : readable(element);
+    const label = collapsed(element.getAttribute('aria-label'));
+    if (label !== '') {
+      return label;
+    }
+    const value = buttonValue(element);
+    return value !== '' ? value : readable(element);
   };
   // The control an element belongs to: itself or its closest ancestor that a click activates.
   const controlOf = (element: Element): Element | null => {
@@ -215,13 +247,21 @@ export function describeElement(
     }
     return null;
   };
-  // The name of a trading action that a click on `element` would reach, if any.
+  // The name of a trading action that a click on `element` would reach, if any: the aria-label, the
+  // label of an input button and the text shown, each on its own, of the element and of its
+  // control. The text shown counts even when an aria-label says something else, as the user reads
+  // that text and not the label.
   const tradingNameAt = (element: Element): string | undefined => {
     const control = controlOf(element);
     for (const named of control === null ? [element] : [element, control]) {
-      const name = nameOf(named);
-      if (trading.test(name)) {
-        return name.slice(0, 120);
+      for (const name of [
+        collapsed(named.getAttribute('aria-label')),
+        buttonValue(named),
+        readable(named),
+      ]) {
+        if (trading.test(name)) {
+          return name.slice(0, 120);
+        }
       }
     }
     return undefined;
@@ -240,13 +280,14 @@ export function describeElement(
     if (hit === null) {
       return { unsafe: false, coverage: 'center-outside-viewport', obscuredBy: '' };
     }
-    // Only what the pointer would hit is judged, not what that holds: a large container that
-    // happens to hold a trading control somewhere is no reason. The one exception is a click at a
-    // point, whose target the element there is, and a click is refused on a target that holds a
-    // trading control, as it is on an element named by a selector.
+    // What the pointer would hit is judged, and for a click also what that holds, unless it is the
+    // target or inside it, whose holding was judged already: a click on an element that holds a
+    // trading control is refused, whether the element is the target, lies at the point of a target
+    // that is a point, or lies over the center of a target named by a selector or a text. A hover
+    // or a scroll lands on the element it hits, so what that holds is no reason for them.
     if (
       hit.closest(unsafeList) !== null ||
-      (click && element === null && hit.querySelector(unsafeList) !== null)
+      (click && !element?.contains(hit) && hit.querySelector(unsafeList) !== null)
     ) {
       return { unsafe: true, coverage: 'not-checked', obscuredBy: '' };
     }
@@ -300,7 +341,7 @@ export function describeElement(
     if (typeof doc.querySelectorAll !== 'function') {
       return noDom;
     }
-    const name = wanted.text.trim().toLowerCase();
+    const name = collapsed(wanted.text).toLowerCase();
     for (const listed of Array.from(doc.querySelectorAll('*'))) {
       // A real page lists elements, of which the type of the window records only the box.
       const candidate = listed as Element;
@@ -381,9 +422,10 @@ export type FoundElement = {
 //   by it goes to it: by its id, data-qa-id, data-name or aria-label, in that order, the order of
 //   SELECTORS. null when none of these picks it.
 // - tag: its tag in lower case. role: its role attribute, null without one.
-// - name: its name, and text: the text it shows, both trimmed and cut at 200 characters, as
-//   describeElement reads them: the text inside a field or an editable region is left out, of the
-//   element itself and of every element around it, and is never read.
+// - name: its name, and text: the text it shows, both cut at 200 characters, as describeElement
+//   reads them: a space between the pieces of different elements, white space collapsed, and the
+//   text inside a field or an editable element left out, of the element itself and of every element
+//   around it, never read. The value of an input is read only for an input button, as its label.
 // - rect: its box in CSS pixels of the viewport, as the page reports it, which is what a point of
 //   the pointer is in.
 // - visible: true, as only visible elements are listed (visible as describeElement means it).
@@ -431,15 +473,26 @@ export function findElements(
     };
   }
 
-  // A field or an editable region, whose text was typed or chosen by the user.
+  // A field, whose content the user typed or chose.
+  const field = (node: Element): boolean =>
+    ['input', 'textarea', 'select'].includes(node.localName);
+  // What the user typed or chose: a field, or an element that is editable. isContentEditable is the
+  // page's own answer: an element of an editable region is editable, and one inside a
+  // contenteditable="false" block of it is not.
   const typedIn = (node: Element): boolean =>
-    ['input', 'textarea', 'select'].includes(node.localName) ||
-    node.hasAttribute('contenteditable');
-  // The text an element shows: its text nodes, without those inside a field or an editable region,
-  // and none at all for one that is or sits inside such a place.
+    field(node) || ('isContentEditable' in node && node.isContentEditable === true);
+  // White space as a user reads it: every run of it one space, none at the ends.
+  const collapsed = (value: string | null): string => (value ?? '').replace(/\s+/g, ' ').trim();
+  // The text an element shows: its text nodes, with a space between the pieces of different
+  // elements, as they stand apart on the screen, so that a label split into "Sell" and "100" reads
+  // "Sell 100". Nothing that was typed: an element that is typed into, or sits inside a field,
+  // shows nothing, and the fields and editable regions inside an element are left out.
   const readable = (element: Element): string => {
-    for (let node: Element | null = element; node !== null; node = node.parentElement) {
-      if (typedIn(node)) {
+    if (typedIn(element)) {
+      return '';
+    }
+    for (let node = element.parentElement; node !== null; node = node.parentElement) {
+      if (field(node)) {
         return '';
       }
     }
@@ -449,16 +502,32 @@ export function findElements(
         if (child.nodeType === 3) {
           text += (child as CharacterData).data;
         } else if (child.nodeType === 1 && !typedIn(child as Element)) {
+          text += ' ';
           collect(child as Element);
+          text += ' ';
         }
       }
     };
     collect(element);
-    return text.trim();
+    return collapsed(text);
   };
+  // The label of a button made of an input of type submit, button or reset: its value, which the
+  // page sets and the user does not type, and which is its value attribute. The value of an input of
+  // any other type is never read.
+  const buttonValue = (element: Element): string =>
+    element.localName === 'input' &&
+    ['submit', 'button', 'reset'].includes((element.getAttribute('type') ?? '').toLowerCase())
+      ? collapsed(element.getAttribute('value'))
+      : '';
+  // The name of an element: its aria-label, or else the label of an input button, or else the text
+  // it shows.
   const nameOf = (element: Element): string => {
-    const label = (element.getAttribute('aria-label') ?? '').trim();
-    return label !== '' ? label : readable(element);
+    const label = collapsed(element.getAttribute('aria-label'));
+    if (label !== '') {
+      return label;
+    }
+    const value = buttonValue(element);
+    return value !== '' ? value : readable(element);
   };
   const shown = (element: Element, box = element.getBoundingClientRect()): boolean => {
     if (!(element.isConnected && box.width > 0 && box.height > 0)) {
@@ -519,7 +588,7 @@ export function findElements(
     return null;
   };
 
-  const wanted = query.text === null ? null : query.text.trim().toLowerCase();
+  const wanted = query.text === null ? null : collapsed(query.text).toLowerCase();
   const unsafeList = unsafeSelectors.join(', ');
   const elements: FoundElement[] = [];
   let more = false;

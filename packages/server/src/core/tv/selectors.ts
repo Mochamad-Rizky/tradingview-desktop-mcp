@@ -162,12 +162,14 @@ export const UNSAFE_SELECTORS: readonly string[] = Object.freeze([
   '#header-toolbar-trade-desktop',
 ]);
 
-// The names of trading actions, as a pattern that is matched, ignoring case, against the name of an
-// element: its aria-label, or else the text it shows, without what is typed into a field. Buying or
-// selling, placing an order, closing, reversing or flattening a position. An order ticket and the
-// other trading dialogs have no stable selector yet, and a click by text reaches whatever has a
-// name, so a click is refused on an element named so, and on an element whose control (the button
-// or the link a click on it activates) is named so, whatever its selector. Buy and sell count only
-// as the first word of a name, so "Buyback chart" and "Sellers" pass. A hover or a turn of the
-// mouse wheel is not refused for a name.
-export const TRADING_ACTION_NAMES = String.raw`^(buy|sell)\b|\bplace (an )?order\b|\bclose position\b|\breverse( position)?\b|\bflatten\b`;
+// The names of trading actions, as a pattern that is matched, ignoring case, against the names of
+// an element: its aria-label, the value of an input button, and the text it shows, with a space
+// between the pieces of different elements and without what is typed into a field, each on its own.
+// The words buy and sell anywhere in a name; placing, submitting, sending, cancelling or modifying
+// an order; closing, exiting, reversing or flattening a position; close all, flatten and reverse.
+// Words, not parts of words: "Buyback chart" and "Sellers" pass, and "How to buy" is refused, which
+// is accepted. An order ticket and the other trading dialogs have no stable selector yet, and a
+// click by text reaches whatever has a name, so a click is refused on an element named so, and on an
+// element whose control (the button or the link a click on it activates) is named so, whatever its
+// selector. A hover or a turn of the mouse wheel is not refused for a name.
+export const TRADING_ACTION_NAMES = String.raw`\b(buy|sell)\b|\b(place|submit|send|cancel|modify)\b.{0,24}?\borders?\b|\b(close|exit|reverse|flatten)\b.{0,24}?\bpositions?\b|\bclose all\b|\bflatten\b|\breverse\b`;

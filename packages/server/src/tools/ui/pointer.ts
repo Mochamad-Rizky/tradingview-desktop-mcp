@@ -61,6 +61,17 @@ function refusals(done: 'clicked' | 'hovered over' | 'scrolled over'): string {
   );
 }
 
+// What the name of an element is, for the tools that look an element up by its name.
+const NAME_RULE =
+  'its aria-label, or else the value of an input button, or else the text it shows, with a space ' +
+  'between the texts of different elements and white space collapsed (a label made of Sell and 100 ' +
+  'in two spans is "Sell 100"), compared whole and ignoring case';
+
+// The names a click is refused on, as the tools describe them.
+const TRADING_NAMES =
+  'the word Buy or Sell; placing, submitting, sending, cancelling or modifying an order; closing, ' +
+  'exiting, reversing or flattening a position; Close all, Flatten or Reverse';
+
 // The page a ui tool acts on: the chart tab, or the window chrome, the strip with the tabs.
 export function uiTargetPage(
   ctx: Pick<ToolContext, 'connection'>,
@@ -99,8 +110,8 @@ function textInput() {
     .max(MAX_TEXT)
     .optional()
     .describe(
-      'The name of the target: the first visible element whose aria-label, or else its text, ' +
-        'equals this, ignoring case and the spaces around it, at the center of its box.',
+      'The name of the target: the first visible element whose name equals this is the target, at ' +
+        `the center of its box. A name is ${NAME_RULE}.`,
     );
 }
 
@@ -173,16 +184,17 @@ export const uiClick = defineTool({
     'Clicks an element of TradingView, or a point of it, once with the left mouse button, the way ' +
     'a user would. Use it only where no other tool does the job: a click can change anything a ' +
     "user's click can. Give exactly one target: selector (the first element that matches), text " +
-    '(the first visible element whose aria-label, or else its text, equals it, ignoring case) or x ' +
+    `(the first visible element whose name equals it; a name is ${NAME_RULE}) or x ` +
     "and y (a point in CSS pixels from the top left of the page's visible part, as " +
     'ui_find_element reports rect). An element is clicked at the center of its box. target chart ' +
     '(default) is the chart tab; window is the window chrome, the strip with the tabs. ' +
     refusals('clicked') +
-    ' A click is also refused on an element that holds a trading control, a point where such an ' +
-    'element lies included, and on anything named after a trading action, because an order ' +
-    'ticket has no selector to tell it by: a name (the aria-label, or else the text shown) that ' +
-    'starts with Buy or Sell as a word, or that says Place order, Close position, Reverse or ' +
-    'Flatten, of the target, of what lies at the point, or of the button that holds it. The ' +
+    ' A click is also refused on an element that holds a trading control, whether it is the ' +
+    'target, lies at the point, or covers the center of the target, and on anything named after ' +
+    'a trading action, because an order ticket has no selector to tell it by: an aria-label, the ' +
+    'value of an input button or the text shown (each on its own, so the text shown counts under ' +
+    `an aria-label that says something else) that holds ${TRADING_NAMES}, as words, of the ` +
+    'target, of what lies at the point, or of the button that holds it. The ' +
     'pointer moves onto the target first, and the button goes down only if the target still ' +
     'looks the same once the pointer is there, so a menu that opens on hover stops the click. ' +
     'Also NOT_AVAILABLE: a page that does not report its zoom, no ' +
@@ -214,7 +226,7 @@ export const uiHover = defineTool({
     'Moves the mouse pointer onto an element of TradingView, or to a point of it, without pressing ' +
     'a button, to show what the app shows on hover: a tooltip, the buttons of a legend item or of ' +
     'a pane, a menu that opens on hover. Give exactly one target, as for ui_click: selector, text ' +
-    "(the aria-label, or else the text, ignoring case) or x and y (CSS pixels of the page's " +
+    "(the name, as ui_click reads it) or x and y (CSS pixels of the page's " +
     'visible part); target chart (default) or window, the window chrome. ' +
     refusals('hovered over') +
     ' Unlike a click, an element that only holds a trading control, such as the chart pane, can be ' +
@@ -300,15 +312,15 @@ export const uiFindElement = defineTool({
   description:
     'Lists the visible elements of TradingView that match a CSS selector, have a name (text), or ' +
     'both, to aim ui_click, ui_hover and ui_scroll with. Changes nothing. text matches an element ' +
-    'whose aria-label, or else its text, equals it, ignoring case, the rule ui_click uses. Each ' +
+    `whose name equals it, the rule ui_click uses: a name is ${NAME_RULE}. Each ` +
     'element has selector (one that picks it, by its id, data-qa-id, data-name or aria-label; null ' +
     'when none of those does), tag, role, name, text (at most 200 characters), rect (its box in ' +
     'CSS pixels from the top left of the visible part of the page, the x and y the other tools ' +
     'take), visible (always true: hidden elements are left out), unsafe (true for a trading ' +
     'control or anything inside one, which the other tools refuse) and holdsUnsafe (true for an ' +
     'element that holds one, which ui_click refuses, at a point on it too, while ui_hover and ' +
-    'ui_scroll do not). ui_click also refuses an element named after a trading action (a name ' +
-    'that starts with Buy or Sell, or says Place order, Close position, Reverse or Flatten). What ' +
+    'ui_scroll do not). ui_click also refuses an element named after a trading action (an ' +
+    `aria-label, input button value or text shown that holds ${TRADING_NAMES}, as words). What ` +
     'is typed into a field (an input, a text area, a select) or an editable region is never read: ' +
     'such an element comes without text, and its text is no part of the name or the text of the ' +
     'elements around it. In document order, at ' +
@@ -330,10 +342,7 @@ export const uiFindElement = defineTool({
       .min(1)
       .max(MAX_TEXT)
       .optional()
-      .describe(
-        'The name the elements must have: their aria-label, or else their text, equal to this, ' +
-          'ignoring case and the spaces around it.',
-      ),
+      .describe(`The name the elements must have, equal to this. A name is ${NAME_RULE}.`),
     target: targetInput(),
     limit: z
       .number()

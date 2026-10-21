@@ -46,8 +46,9 @@ export interface FakeElementOptions {
   // content. Defaults to none. A field has no text of its own in a page, whatever was typed into
   // it, so a test gives none to an input.
   text?: string;
-  // Whether the element is content-editable, which is what isContentEditable reports. Defaults to
-  // false.
+  // Whether the element is content-editable, which is what isContentEditable reports. Without it,
+  // the element reports what a page computes: editable for a contenteditable attribute of "", "true"
+  // or "plaintext-only", not editable for "false", and otherwise what its parent reports.
   contentEditable?: boolean;
   // Makes the element the host of a shadow root, and says which element in it has the focus, null
   // for none. Without this the element has no shadow root, as most elements have none.
@@ -125,7 +126,6 @@ export class FakeElement {
   readonly tagName: string;
   // Like the property of an element, an empty string when there is none.
   readonly id: string;
-  readonly isContentEditable: boolean;
   readonly shadowRoot: { activeElement: FakeElement | null } | null;
   // The property of an input is its type normalized, so it is never empty. On any other element
   // the property reflects the attribute, as it does on a link, and is empty without one.
@@ -136,6 +136,7 @@ export class FakeElement {
   #rect: FakeRect;
   readonly #attributes: ReadonlyMap<string, string>;
   readonly #text: string;
+  readonly #contentEditable: boolean | undefined;
 
   constructor(options: FakeElementOptions = {}) {
     this.#matches = new Set(options.matches);
@@ -153,7 +154,7 @@ export class FakeElement {
       attributes.set('id', options.id);
     }
     this.#attributes = attributes;
-    this.isContentEditable = options.contentEditable ?? false;
+    this.#contentEditable = options.contentEditable;
     this.shadowRoot =
       options.shadowFocus === undefined ? null : { activeElement: options.shadowFocus };
     const typeAttribute = attributes.get('type');
@@ -169,6 +170,20 @@ export class FakeElement {
 
   hasAttribute(name: string): boolean {
     return this.#attributes.has(name);
+  }
+
+  get isContentEditable(): boolean {
+    if (this.#contentEditable !== undefined) {
+      return this.#contentEditable;
+    }
+    const attribute = this.#attributes.get('contenteditable')?.toLowerCase();
+    if (attribute === '' || attribute === 'true' || attribute === 'plaintext-only') {
+      return true;
+    }
+    if (attribute === 'false') {
+      return false;
+    }
+    return this.parent?.isContentEditable ?? false;
   }
 
   get parentElement(): FakeElement | null {

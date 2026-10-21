@@ -151,14 +151,24 @@ describe('the descriptions', () => {
     expect(uiHover.description).toMatch(/without pressing a button/);
   });
 
-  test('ui_click says it refuses containers of trading controls and trading actions by name', () => {
+  test('ui_click says it refuses containers of trading controls and trading actions by name, as words', () => {
     const { description } = uiClick;
 
-    expect(description).toMatch(/holds a trading control, a point where such an element lies/);
+    expect(description).toMatch(
+      /holds a trading control, whether it is the target, lies at the point, or covers the center/,
+    );
     expect(description).toMatch(/named after a trading action/);
-    for (const action of ['Buy or Sell', 'Place order', 'Close position', 'Reverse', 'Flatten']) {
-      expect(description, action).toContain(action);
+    for (const words of [
+      'the word Buy or Sell',
+      'modifying an order',
+      'flattening a position',
+      'Close all, Flatten or Reverse',
+      'as words',
+    ]) {
+      expect(description, words).toContain(words);
     }
+    // Every source of a name counts on its own, the text shown under an aria-label included.
+    expect(description).toMatch(/value of an input button or the text shown \(each on its own/);
     expect(description).toMatch(/does not report its zoom/);
   });
 

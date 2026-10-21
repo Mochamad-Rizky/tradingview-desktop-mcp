@@ -290,6 +290,73 @@ describe('ui_click', () => {
     expect(typesOf(app)).toEqual(['mouseMoved']);
   });
 
+  test('ui_click refuses trading actions in a split label, under another aria-label and in an input button', async () => {
+    const win = chartPage([
+      // "Sell" and "100" in two spans side by side, with no space in the text between them.
+      fakeElement({
+        tag: 'button',
+        id: 'split-sell',
+        matches: ['#split-sell'],
+        rect: box(100, 600, 100, 24),
+        children: [
+          fakeElement({ tag: 'span', text: 'Sell', rect: box(105, 602, 40, 20) }),
+          fakeElement({ tag: 'span', text: '100', rect: box(150, 602, 40, 20) }),
+        ],
+      }),
+      // Named "Confirm", and shows "Buy 100".
+      fakeElement({
+        tag: 'button',
+        attributes: { 'aria-label': 'Confirm' },
+        text: 'Buy 100',
+        rect: box(250, 600, 100, 24),
+      }),
+      // A submit input whose label is its value.
+      fakeElement({
+        tag: 'input',
+        attributes: { type: 'submit', value: 'Submit order' },
+        rect: box(400, 600, 100, 24),
+      }),
+    ]);
+    const { client, app } = await startHarness({ win });
+
+    const split = await callTool(client, 'ui_click', { x: 170, y: 612 });
+    const labelled = await callTool(client, 'ui_click', { text: 'Confirm' });
+    const submit = await callTool(client, 'ui_click', { text: 'submit order' });
+
+    expect(errorOf(split)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { x: 170, y: 612, name: 'Sell 100' },
+    });
+    expect(errorOf(labelled)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { text: 'Confirm', name: 'Buy 100' },
+    });
+    expect(errorOf(submit)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { text: 'submit order', name: 'Submit order' },
+    });
+    expect(inputCountOf(app)).toBe(0);
+  });
+
+  test('ui_click by selector refuses a target whose center a container of the trade button covers', async () => {
+    const panel = fakeElement({
+      attributes: { 'data-name': 'trading-panel' },
+      rect: box(0, 100, 800, 400),
+      children: [
+        fakeElement({ matches: ['[data-qa-id="trade-button"]'], rect: box(700, 110, 60, 30) }),
+      ],
+    });
+    const { client, app } = await startHarness({ win: chartPage([panel]) });
+
+    const result = await callTool(client, 'ui_click', { selector: PANE });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { selector: PANE },
+    });
+    expect(inputCountOf(app)).toBe(0);
+  });
+
   test('ui_click refuses a page that does not report its zoom, before any input', async () => {
     const metrics = layoutMetrics({
       width: VIEWPORT.width,
