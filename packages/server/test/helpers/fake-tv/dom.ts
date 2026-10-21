@@ -9,10 +9,11 @@ import type { TvWindow } from '../../../src/core/tv/tv-window.js';
 // which every element matches. That is enough to test what a page function decides from the
 // answers of matches, closest, querySelector and querySelectorAll, and it keeps the fake too small
 // to hide a bug of its own. The structure follows the DOM: closest starts at the element itself,
-// querySelector looks at descendants only, querySelectorAll lists in document order, the text
-// content of an element is its own text followed by that of its children, a later element is
-// painted over an earlier one, an element that is not shown cannot be hit, and the body is
-// focused, and holds the page, when nothing else has the focus.
+// querySelector looks at descendants only, querySelectorAll lists in document order, the child nodes
+// of an element are a text node with its own text, when it has one, followed by its children, and
+// its text content is that text followed by that of its children, a later element is painted over
+// an earlier one, an element that is not shown cannot be hit, and the body is focused, and holds
+// the page, when nothing else has the focus.
 //
 // Like the shared fake window, these objects live in the host realm, so page code that runs in a
 // vm context must not use `instanceof` on them.
@@ -56,6 +57,14 @@ export interface FakeElementOptions {
 export interface FakeComputedStyle {
   display: string;
   visibility: string;
+}
+
+// A text node, as an element lists it among its child nodes. Its data and its node value are its
+// text, as they are in a page.
+export interface FakeTextNode {
+  readonly nodeType: 3;
+  readonly data: string;
+  readonly nodeValue: string;
 }
 
 const DEFAULT_RECT: FakeRect = { x: 10, y: 10, width: 100, height: 40 };
@@ -106,6 +115,8 @@ function parseSelectorList(selectors: string): string[] {
 }
 
 export class FakeElement {
+  // Node.ELEMENT_NODE.
+  readonly nodeType = 1;
   readonly isConnected: boolean;
   readonly display: string;
   readonly visibility: string;
@@ -154,6 +165,21 @@ export class FakeElement {
 
   getAttribute(name: string): string | null {
     return this.#attributes.get(name) ?? null;
+  }
+
+  hasAttribute(name: string): boolean {
+    return this.#attributes.has(name);
+  }
+
+  get parentElement(): FakeElement | null {
+    return this.parent;
+  }
+
+  // Its own text as a text node, then its children, as Node.childNodes.
+  get childNodes(): (FakeTextNode | FakeElement)[] {
+    const own: FakeTextNode[] =
+      this.#text === '' ? [] : [{ nodeType: 3, data: this.#text, nodeValue: this.#text }];
+    return [...own, ...this.children];
   }
 
   // Its own text, then the text of its children, in document order, as Node.textContent.

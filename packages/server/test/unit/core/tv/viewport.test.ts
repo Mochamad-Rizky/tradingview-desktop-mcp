@@ -15,6 +15,7 @@ describe('viewportOf', () => {
       height: 1000,
       devicePixelRatio: 2,
       zoom: 1,
+      zoomReported: true,
       pageX: 0,
       pageY: 0,
     });
@@ -45,6 +46,7 @@ describe('viewportOf', () => {
       height: 1000,
       devicePixelRatio: 2,
       zoom: 1,
+      zoomReported: true,
       pageX: 0,
       pageY: 0,
     });
@@ -67,6 +69,7 @@ describe('viewportOf', () => {
       height: 800,
       devicePixelRatio: 2.5,
       zoom: 1.25,
+      zoomReported: true,
       pageX: 100,
       pageY: 200,
     });
@@ -83,10 +86,16 @@ describe('viewportOf', () => {
     ['a zoom that is not a number', NaN],
     ['an infinite zoom', Infinity],
     ['a zoom that is null', null],
-  ])('viewportOf takes a zoom of 1 for %s', (_case, zoom) => {
+  ])('viewportOf takes a zoom of 1 for %s, and says the page did not report one', (_case, zoom) => {
     const metrics = { ...good, cssVisualViewport: { ...visual, zoom } };
 
-    expect(viewportOf(metrics)).toMatchObject({ zoom: 1 });
+    expect(viewportOf(metrics)).toMatchObject({ zoom: 1, zoomReported: false });
+  });
+
+  test('viewportOf says the page reported a zoom of 1 when it did', () => {
+    const metrics = { ...good, cssVisualViewport: { ...visual, zoom: 1 } };
+
+    expect(viewportOf(metrics)).toMatchObject({ zoom: 1, zoomReported: true });
   });
 
   test.each([
@@ -164,6 +173,7 @@ describe('readViewport', () => {
       height: 800,
       devicePixelRatio: 2.5,
       zoom: 1.25,
+      zoomReported: true,
       pageX: 0,
       pageY: 0,
     });

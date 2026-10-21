@@ -70,10 +70,11 @@ type Snapshot = NonNullable<ReturnType<typeof readChartSnapshot>>;
 // the symbol search strategy to run through. The chart reads as `snapshots` say, one after another,
 // the last one over and over; a null snapshot is a chart that cannot be read. The input events that
 // reach the page are recorded and answered, and so are the questions about the layout of the page,
-// which a click asks for the zoom of the page.
+// which a click asks for the zoom of the page. With `tradingAction`, the page says that a click on
+// the button would reach a trading action of that name, in a layer that covers the button.
 function interfacePage(
   snapshots: (Snapshot | null)[],
-  options: { withoutSetter?: boolean } = {},
+  options: { withoutSetter?: boolean; tradingAction?: string } = {},
 ): { page: PageHandle; sent: string[] } {
   const sent: string[] = [];
   let reads = 0;
@@ -92,9 +93,14 @@ function interfacePage(
         found: true,
         visible: true,
         unsafe: false,
-        coverage: 'clear',
-        obscuredBy: '',
         rect: { x: 10, y: 10, width: 80, height: 30 },
+        ...(options.tradingAction === undefined
+          ? { coverage: 'clear', obscuredBy: '' }
+          : {
+              coverage: 'obscured',
+              obscuredBy: 'div[data-name="ticket"]',
+              tradingAction: options.tradingAction,
+            }),
       };
     }
     if (fn === describeFocusedElement) {
@@ -260,6 +266,20 @@ describe('revertUnknownSymbol', () => {
       revertUnknownSymbol(page, ACTIVE, 'NASDAQ:NOPE', 'NASDAQ:AAPL', 500, quietLogger),
     ).rejects.toBe(failure);
   });
+});
+
+test('the symbol search ends with the refusal of a click that would reach a trading action by its name', async () => {
+  // The verdict is left to the click, whose refusal ends the operation, also when a layer covers the
+  // button, which alone would hand the change on to the next strategy: no other way is tried after
+  // a trading action was in the way.
+  const { page, sent } = interfacePage([SNAPSHOT], { tradingAction: 'Buy' });
+  const search = strategyAt(symbolStrategies(page, ACTIVE, 'NASDAQ:MSFT', 500), 1);
+
+  const error = await failureOf(search.run());
+
+  expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+  expect(error.details).toMatchObject({ name: 'Buy' });
+  expect(sent.filter((method) => method.startsWith('Input.'))).toEqual([]);
 });
 
 describe('confirming a symbol entered through the symbol search', () => {

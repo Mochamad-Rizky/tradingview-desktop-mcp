@@ -9,7 +9,7 @@ import {
   pressKey,
   typeText,
 } from '../../core/tv/input.js';
-import { SELECTORS, UNSAFE_SELECTORS } from '../../core/tv/selectors.js';
+import { SELECTORS, TRADING_ACTION_NAMES, UNSAFE_SELECTORS } from '../../core/tv/selectors.js';
 import { runWithFallback, type Strategy } from '../../core/tv/tiers.js';
 import { pollUntil } from '../../utils/poll.js';
 import { sameResolution, sameSymbol } from './mappers.js';
@@ -233,8 +233,9 @@ function requireActiveChart(target: ChartTarget, way: string): void {
 // is checked before anything is sent, so a failure leaves the next strategy to try: no element, an
 // element that is hidden, covered by a dialog or a frame, off the visible part of the page, or on a
 // page that cannot say what lies over it (and a page without a DOM, which has no interface at all).
-// A verdict that the element is, holds or sits under a trading control is left to clickElement,
-// whose refusal ends the operation instead of handing it on.
+// A verdict that the element is, holds or sits under a trading control, or that the click would
+// reach a trading action by its name, is left to clickElement, whose refusal ends the operation
+// instead of handing it on.
 async function requireClickable(page: PageHandle, selector: string, what: string): Promise<void> {
   let element: Awaited<ReturnType<typeof lookUp>>;
   try {
@@ -248,7 +249,7 @@ async function requireClickable(page: PageHandle, selector: string, what: string
   if (!element.found || !element.visible) {
     throw unavailable(`${what} is not shown`);
   }
-  if (element.unsafe) {
+  if (element.unsafe || element.tradingAction !== undefined) {
     return;
   }
   if (element.coverage === 'obscured') {
@@ -264,6 +265,8 @@ function lookUp(page: PageHandle, selector: string) {
     selector,
     [...UNSAFE_SELECTORS],
     [SELECTORS.regions.overlapManagerRoot],
+    TRADING_ACTION_NAMES,
+    'click',
   ]);
 }
 

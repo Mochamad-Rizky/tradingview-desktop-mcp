@@ -140,11 +140,13 @@ export const SELECTORS = {
 // What no tool of this server may click (notes, section 5.5): the buy and sell buttons of the
 // chart and the trade button of the header toolbar. This server has no trading tools, so a click on
 // one of them, on anything that holds one, on anything inside one, or on anything one lies over
-// at the point of the click, is refused, and so is a click at a point where one lies. A hover or a
-// turn of the mouse wheel is refused the same way, except for what the element merely holds: the
-// pointer over a container lands on the container, such as the chart pane, which holds the buy and
-// sell buttons. Keys and text are refused while the focus is on one of them or inside one, but not
-// for what the focused element merely holds. Text is also typed only into a focused text field.
+// at the point of the click, is refused, and so is a click at a point where one lies or where an
+// element lies that holds one. A hover or a turn of the mouse wheel is refused the same way, except
+// for what the element merely holds: the pointer over a container lands on the container, such as
+// the chart pane, which holds the buy and sell buttons. Keys and text are refused while the focus
+// is on one of them or inside one, but not for what the focused element merely holds. Text is also
+// typed only into a focused text field. A click is refused on a trading action by its name as well
+// (TRADING_ACTION_NAMES).
 //
 // The notes add "anything inside a broker order ticket", but a ticket has no stable selector yet.
 // Until one is recorded from a live broker session, a ticket is covered only through the buttons
@@ -159,3 +161,13 @@ export const UNSAFE_SELECTORS: readonly string[] = Object.freeze([
   '[data-qa-id="trade-button"]',
   '#header-toolbar-trade-desktop',
 ]);
+
+// The names of trading actions, as a pattern that is matched, ignoring case, against the name of an
+// element: its aria-label, or else the text it shows, without what is typed into a field. Buying or
+// selling, placing an order, closing, reversing or flattening a position. An order ticket and the
+// other trading dialogs have no stable selector yet, and a click by text reaches whatever has a
+// name, so a click is refused on an element named so, and on an element whose control (the button
+// or the link a click on it activates) is named so, whatever its selector. Buy and sell count only
+// as the first word of a name, so "Buyback chart" and "Sellers" pass. A hover or a turn of the
+// mouse wheel is not refused for a name.
+export const TRADING_ACTION_NAMES = String.raw`^(buy|sell)\b|\bplace (an )?order\b|\bclose position\b|\breverse( position)?\b|\bflatten\b`;

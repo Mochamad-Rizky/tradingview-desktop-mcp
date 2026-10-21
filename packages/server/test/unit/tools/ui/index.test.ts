@@ -151,14 +151,36 @@ describe('the descriptions', () => {
     expect(uiHover.description).toMatch(/without pressing a button/);
   });
 
+  test('ui_click says it refuses containers of trading controls and trading actions by name', () => {
+    const { description } = uiClick;
+
+    expect(description).toMatch(/holds a trading control, a point where such an element lies/);
+    expect(description).toMatch(/named after a trading action/);
+    for (const action of ['Buy or Sell', 'Place order', 'Close position', 'Reverse', 'Flatten']) {
+      expect(description, action).toContain(action);
+    }
+    expect(description).toMatch(/does not report its zoom/);
+  });
+
   test('ui_find_element says it changes nothing and never reads what a field holds', () => {
     const { description } = uiFindElement;
 
     expect(description).toMatch(/Changes nothing/);
     expect(description).toMatch(/never read/);
-    for (const word of ['selector', 'tag', 'role', 'name', 'text', 'rect', 'visible', 'unsafe']) {
+    for (const word of [
+      'selector',
+      'tag',
+      'role',
+      'name',
+      'text',
+      'rect',
+      'visible',
+      'unsafe',
+      'holdsUnsafe',
+    ]) {
       expect(description, word).toContain(word);
     }
+    expect(description).toMatch(/editable region is never read/);
     expect(description).toMatch(/1 to 50, default 10/);
     expect(description).toMatch(/INVALID_INPUT/);
   });

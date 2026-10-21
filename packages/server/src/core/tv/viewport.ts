@@ -20,6 +20,9 @@ export interface Viewport {
   devicePixelRatio: number;
   // DIPs for each CSS pixel: the page zoom of the app.
   zoom: number;
+  // Whether the page reported the zoom. One that did not is taken as not zoomed, which is good
+  // enough to cut a picture but not to send the pointer to a point the page has judged.
+  zoomReported: boolean;
   // Where the visible part starts in the document, in CSS pixels: how far the page is scrolled. 0
   // for a page that does not scroll, which the chart page does not (seen on the app).
   pageX: number;
@@ -50,6 +53,8 @@ function finite(value: unknown): number | null {
 // display with a pixel ratio of 2, so it does not hold the ratio of the display), and the page
 // offset is the position of the visual viewport in the document. A zoom that is missing is 1, and
 // an offset that is missing is 0: a page that does not say is taken as not zoomed and not scrolled.
+// zoomReported tells a zoom of 1 the page reported from one it did not report, for a caller that
+// must not guess.
 export function viewportOf(metrics: unknown): Viewport | null {
   if (!isRecord(metrics)) {
     return null;
@@ -64,11 +69,13 @@ export function viewportOf(metrics: unknown): Viewport | null {
   if (width === null || height === null || deviceWidth === null) {
     return null;
   }
+  const zoom = positive(css.zoom);
   return {
     width,
     height,
     devicePixelRatio: deviceWidth / width,
-    zoom: positive(css.zoom) ?? 1,
+    zoom: zoom ?? 1,
+    zoomReported: zoom !== null,
     pageX: finite(css.pageX) ?? 0,
     pageY: finite(css.pageY) ?? 0,
   };

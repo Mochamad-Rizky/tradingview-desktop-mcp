@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { SELECTORS, UNSAFE_SELECTORS } from '../../../../src/core/tv/selectors.js';
+import {
+  SELECTORS,
+  TRADING_ACTION_NAMES,
+  UNSAFE_SELECTORS,
+} from '../../../../src/core/tv/selectors.js';
 
 // The expectations below are copied by hand from the reverse-engineering notes (section 5), so a
 // typo in the selectors under test does not also sit in the assertion that should catch it.
@@ -300,5 +304,45 @@ describe('UNSAFE_SELECTORS', () => {
       (UNSAFE_SELECTORS as string[]).length = 0;
     }).toThrow(TypeError);
     expect(UNSAFE_SELECTORS).toHaveLength(5);
+  });
+});
+
+describe('TRADING_ACTION_NAMES', () => {
+  // Matched as the page function matches it: ignoring case.
+  const trading = new RegExp(TRADING_ACTION_NAMES, 'i');
+
+  test.each([
+    'Buy',
+    'buy',
+    'BUY 100',
+    'Sell',
+    'Sell 100',
+    'Sell market',
+    'Place order',
+    'Place an order',
+    'Close position',
+    'Close position AAPL',
+    'Reverse',
+    'Reverse position',
+    'Flatten',
+    'Flatten all',
+  ])('names a trading action: %j', (name) => {
+    expect(trading.test(name)).toBe(true);
+  });
+
+  test.each([
+    'Buyback chart',
+    'Sellers',
+    'Buyer',
+    'Bestsellers',
+    'Close',
+    'Order panel',
+    'Place',
+    'Orders',
+    'Alerts',
+    'Save all charts',
+    '',
+  ])('names no trading action: %j', (name) => {
+    expect(trading.test(name)).toBe(false);
   });
 });

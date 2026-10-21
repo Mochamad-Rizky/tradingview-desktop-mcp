@@ -18,7 +18,8 @@ import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.j
 // user's live, signed-in app, where a click on a trading control could place a real order. So they
 // go through the guarded input helpers (core/tv/input.ts) and nothing else: a trading control (the
 // buy and sell buttons and the trade button), a point where one lies, and a target that a dialog, a
-// menu, a popup or a frame covers are refused before anything is sent, the target is looked at
+// menu, a popup or a frame covers are refused before anything is sent, and so is a click on an
+// element that holds a trading control or is named after a trading action; the target is looked at
 // again once the pointer is on it, and the calls of a page run one at a time.
 //
 // The window chrome, the page with the tab strip, has Node integration. The tools only read its DOM
@@ -177,9 +178,14 @@ export const uiClick = defineTool({
     'ui_find_element reports rect). An element is clicked at the center of its box. target chart ' +
     '(default) is the chart tab; window is the window chrome, the strip with the tabs. ' +
     refusals('clicked') +
-    ' An element that holds a trading control is refused as well. The pointer moves onto the ' +
-    'target first, and the button goes down only if the target still looks the same once the ' +
-    'pointer is there, so a menu that opens on hover stops the click. Also NOT_AVAILABLE: no ' +
+    ' A click is also refused on an element that holds a trading control, a point where such an ' +
+    'element lies included, and on anything named after a trading action, because an order ' +
+    'ticket has no selector to tell it by: a name (the aria-label, or else the text shown) that ' +
+    'starts with Buy or Sell as a word, or that says Place order, Close position, Reverse or ' +
+    'Flatten, of the target, of what lies at the point, or of the button that holds it. The ' +
+    'pointer moves onto the target first, and the button goes down only if the target still ' +
+    'looks the same once the pointer is there, so a menu that opens on hover stops the click. ' +
+    'Also NOT_AVAILABLE: a page that does not report its zoom, no ' +
     'element matches the selector, the element is hidden or out of view, or the page cannot say ' +
     'what lies there. INVALID_INPUT: a text that no visible element has (ui_find_element lists the ' +
     'names), a point outside the visible part, an invalid selector. Returns target, by (selector, ' +
@@ -298,9 +304,14 @@ export const uiFindElement = defineTool({
     'element has selector (one that picks it, by its id, data-qa-id, data-name or aria-label; null ' +
     'when none of those does), tag, role, name, text (at most 200 characters), rect (its box in ' +
     'CSS pixels from the top left of the visible part of the page, the x and y the other tools ' +
-    'take), visible (always true: hidden elements are left out) and unsafe (true for a trading ' +
-    'control or anything inside one, which the other tools refuse). Fields (inputs, text areas, ' +
-    'selects) come without text: what is typed into them is never read. In document order, at ' +
+    'take), visible (always true: hidden elements are left out), unsafe (true for a trading ' +
+    'control or anything inside one, which the other tools refuse) and holdsUnsafe (true for an ' +
+    'element that holds one, which ui_click refuses, at a point on it too, while ui_hover and ' +
+    'ui_scroll do not). ui_click also refuses an element named after a trading action (a name ' +
+    'that starts with Buy or Sell, or says Place order, Close position, Reverse or Flatten). What ' +
+    'is typed into a field (an input, a text area, a select) or an editable region is never read: ' +
+    'such an element comes without text, and its text is no part of the name or the text of the ' +
+    'elements around it. In document order, at ' +
     'most limit (1 to 50, default 10); a warning says when more match. target chart (default) or ' +
     'window, the window chrome. INVALID_INPUT without a selector or a text, and for an invalid ' +
     'selector.',

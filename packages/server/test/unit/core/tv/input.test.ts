@@ -16,9 +16,14 @@ import {
   typeText,
   type InputPage,
   type KeyModifier,
+  type PointerAction,
 } from '../../../../src/core/tv/input.js';
 import { createPageBridge, type PageFunction } from '../../../../src/core/tv/page-bridge.js';
-import { SELECTORS, UNSAFE_SELECTORS } from '../../../../src/core/tv/selectors.js';
+import {
+  SELECTORS,
+  TRADING_ACTION_NAMES,
+  UNSAFE_SELECTORS,
+} from '../../../../src/core/tv/selectors.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
@@ -63,10 +68,17 @@ function overlapRoot(layers: FakeElement[], rect: FakeRect = box(0, 0, 0, 0)): F
   return fakeElement({ matches: [OVERLAP_ROOT], rect, children: layers });
 }
 
-// describeElement as the bridge calls it: with the real lists of selectors to refuse and of the
-// layers that cover a page.
+// describeElement as the bridge calls it for a click: with the real lists of selectors to refuse
+// and of the layers that cover a page, and the names of trading actions.
 function look(win: TvWindow, selector: string) {
-  return describeElement(win, selector, [...UNSAFE_SELECTORS], [OVERLAP_ROOT]);
+  return describeElement(
+    win,
+    selector,
+    [...UNSAFE_SELECTORS],
+    [OVERLAP_ROOT],
+    TRADING_ACTION_NAMES,
+    'click',
+  );
 }
 
 interface SentCommand {
@@ -576,13 +588,17 @@ describe('describeElement', () => {
   test('refuses to judge without the selectors to treat as unsafe', () => {
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
 
-    expect(() => describeElement(win, BUY, [], [OVERLAP_ROOT])).toThrow(/unsafe/);
+    expect(() =>
+      describeElement(win, BUY, [], [OVERLAP_ROOT], TRADING_ACTION_NAMES, 'click'),
+    ).toThrow(/unsafe/);
   });
 
   test('refuses to judge without the selectors of the layers that cover a page', () => {
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
 
-    expect(() => describeElement(win, BUY, [...UNSAFE_SELECTORS], [])).toThrow(/cover/);
+    expect(() =>
+      describeElement(win, BUY, [...UNSAFE_SELECTORS], [], TRADING_ACTION_NAMES, 'click'),
+    ).toThrow(/cover/);
   });
 });
 
@@ -2354,10 +2370,16 @@ const methodsOf = (sent: SentCommand[]) => sent.map(({ method }) => method);
 type ArgsOf<F> = F extends (win: TvWindow, ...args: infer A) => unknown ? A : never;
 
 describe('describeElement with a point', () => {
-  const at = (x: number, y: number): ArgsOf<typeof describeElement> => [
+  const at = (
+    x: number,
+    y: number,
+    action: PointerAction = 'click',
+  ): ArgsOf<typeof describeElement> => [
     { x, y },
     [...UNSAFE_SELECTORS],
     [OVERLAP_ROOT],
+    TRADING_ACTION_NAMES,
+    action,
   ];
 
   test('judges what lies at a point, which is the target itself', async () => {
@@ -2386,21 +2408,47 @@ describe('describeElement with a point', () => {
     });
   });
 
-  test('does not flag a point on a container that holds a trading control somewhere else', async () => {
+  test('flags a point on a container that holds a trading control for a click, and not for a hover or a scroll', async () => {
+    // The element at the point is the target of a click there, and a click is refused on a target
+    // that holds a trading control, as it is when a selector names the container. The pointer over
+    // the container lands on the container, so a hover or a scroll only minds what is at the point.
     const toolbar = () =>
       fakeElement({
         attributes: { 'data-name': 'toolbar' },
         rect: box(0, 0, 1280, 40),
         children: [fakeElement({ matches: [BUY], rect: box(700, 5, 60, 30) })],
       });
+    const make = screen(() => [toolbar()]);
 
+    expect(await bothWays(describeElement, [...at(100, 20)], make)).toMatchObject({
+      unsafe: true,
+      coverage: 'not-checked',
+    });
+    expect(await bothWays(describeElement, [...at(100, 20, 'hover')], make)).toMatchObject({
+      unsafe: false,
+      coverage: 'clear',
+    });
+    expect(await bothWays(describeElement, [...at(100, 20, 'scroll')], make)).toMatchObject({
+      unsafe: false,
+      coverage: 'clear',
+    });
+  });
+
+  test('does not flag a point on the chart canvas, which holds nothing, beside a trading control', async () => {
+    // The buy button lies over the pane, at (300, 250) to (380, 280); (100, 400) is on the canvas.
     const result = await bothWays(
       describeElement,
-      [...at(100, 20)],
-      screen(() => [toolbar()]),
+      [...at(100, 400)],
+      screen(() => [buyButton()]),
     );
 
-    expect(result).toMatchObject({ unsafe: false, coverage: 'clear' });
+    expect(result).toEqual({
+      found: true,
+      visible: true,
+      unsafe: false,
+      coverage: 'clear',
+      obscuredBy: '',
+    });
   });
 
   test('reports a point in a layer of the overlap root as obscured, whatever the layer is', async () => {
@@ -2478,10 +2526,12 @@ describe('describeElement with a point', () => {
 });
 
 describe('describeElement with a text', () => {
-  const named = (text: string, holdsCount = true): ArgsOf<typeof describeElement> => [
-    { text, holdsCount },
+  const named = (text: string, action: PointerAction = 'click'): ArgsOf<typeof describeElement> => [
+    { text },
     [...UNSAFE_SELECTORS],
     [OVERLAP_ROOT],
+    TRADING_ACTION_NAMES,
+    action,
   ];
   const notFound = {
     found: false,
@@ -2617,7 +2667,17 @@ describe('describeElement with a text', () => {
         rect: box(900, 100, 300, 300),
         children: [fakeElement({ matches: [BUY], rect: box(1100, 350, 80, 30) })],
       });
-    const make = screen(() => [buyButton({ 'aria-label': 'Buy' }), panel()]);
+    // A label inside the sell button, which is named "Confirm" and so no trading action by itself.
+    // The button has a name of its own, so the label is the first element named "Confirm".
+    const sellButton = () =>
+      fakeElement({
+        tag: 'button',
+        matches: ['[data-name="sell-order-button"]'],
+        attributes: { 'aria-label': 'Sell order' },
+        rect: box(500, 250, 80, 30),
+        children: [fakeElement({ tag: 'span', text: 'Confirm', rect: box(510, 255, 40, 20) })],
+      });
+    const make = screen(() => [buyButton({ 'aria-label': 'Buy' }), panel(), sellButton()]);
 
     expect(await bothWays(describeElement, [...named('buy')], make)).toMatchObject({
       unsafe: true,
@@ -2626,13 +2686,20 @@ describe('describeElement with a text', () => {
       unsafe: true,
       coverage: 'not-checked',
     });
+    expect(await bothWays(describeElement, [...named('confirm')], make)).toMatchObject({
+      found: true,
+      unsafe: true,
+      rect: box(510, 255, 40, 20),
+    });
     // What the element holds counts only for a click: a hover or a scroll over the panel lands on
     // the panel, and its center is clear of the button.
-    expect(await bothWays(describeElement, [...named('order panel', false)], make)).toMatchObject({
-      unsafe: false,
-      coverage: 'clear',
-    });
-    expect(await bothWays(describeElement, [...named('buy', false)], make)).toMatchObject({
+    expect(await bothWays(describeElement, [...named('order panel', 'hover')], make)).toMatchObject(
+      {
+        unsafe: false,
+        coverage: 'clear',
+      },
+    );
+    expect(await bothWays(describeElement, [...named('buy', 'scroll')], make)).toMatchObject({
       unsafe: true,
     });
   });
@@ -2664,10 +2731,12 @@ describe('describeElement with a text', () => {
 
 describe('describeElement for a hover or a scroll', () => {
   const PANE_QA = '[data-qa-id="pane"]';
-  const of = (selector: string, holdsCount: boolean): ArgsOf<typeof describeElement> => [
-    { selector, holdsCount },
+  const of = (selector: string, action: PointerAction): ArgsOf<typeof describeElement> => [
+    { selector },
     [...UNSAFE_SELECTORS],
     [OVERLAP_ROOT],
+    TRADING_ACTION_NAMES,
+    action,
   ];
 
   test('does not flag an element that only holds a trading control', async () => {
@@ -2675,10 +2744,10 @@ describe('describeElement for a hover or a scroll', () => {
 
     // A click on the pane is refused, because the pane holds the buttons. The pointer over the pane
     // lands on the pane, and its center is clear of them.
-    expect(await bothWays(describeElement, [...of(PANE_QA, true)], make)).toMatchObject({
+    expect(await bothWays(describeElement, [...of(PANE_QA, 'click')], make)).toMatchObject({
       unsafe: true,
     });
-    expect(await bothWays(describeElement, [...of(PANE_QA, false)], make)).toMatchObject({
+    expect(await bothWays(describeElement, [...of(PANE_QA, 'hover')], make)).toMatchObject({
       unsafe: false,
       coverage: 'clear',
     });
@@ -2693,11 +2762,11 @@ describe('describeElement for a hover or a scroll', () => {
       });
     const make = screen(() => [label()]);
 
-    expect(await bothWays(describeElement, [...of(BUY, false)], make)).toMatchObject({
+    expect(await bothWays(describeElement, [...of(BUY, 'scroll')], make)).toMatchObject({
       unsafe: true,
     });
     expect(
-      await bothWays(describeElement, [...of('[data-name="label"]', false)], make),
+      await bothWays(describeElement, [...of('[data-name="label"]', 'hover')], make),
     ).toMatchObject({ unsafe: true });
   });
 });
@@ -2713,13 +2782,66 @@ describe('clickPoint and clickTarget', () => {
 
     expect(error.toPayload()).toEqual({
       code: 'UNSAFE_ACTION_BLOCKED',
-      message: 'Refusing to click at (320, 260): a broker trading control lies there',
+      message:
+        'Refusing to click at (320, 260): what lies there is part of a broker trading control or holds one',
       hint: TRADING_HINT,
       details: { x: 320, y: 260 },
     });
     // The look at the point is all the page saw: not a move, and no press.
     expect(input()).toEqual([]);
     expect(methodsOf(sent)).toEqual(['Runtime.evaluate']);
+  });
+
+  test('clickPoint at a point on a toolbar that holds the trade button sends no mouse event, as a click by selector does not', async () => {
+    const toolbar = () =>
+      fakeElement({
+        matches: ['[data-name="toolbar"]'],
+        rect: box(0, 0, 1280, 40),
+        children: [fakeElement({ matches: [TRADE_BUTTON], rect: box(700, 5, 60, 30) })],
+      });
+    const byPoint = pageOn(screen(() => [toolbar()]));
+    const bySelector = pageOn(screen(() => [toolbar()]));
+
+    const atPoint = await failureOf(clickPoint(byPoint.page, { x: 100, y: 20 }));
+    const onElement = await failureOf(clickElement(bySelector.page, '[data-name="toolbar"]'));
+
+    expect(atPoint.toPayload()).toEqual({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to click at (100, 20): what lies there is part of a broker trading control or holds one',
+      hint: TRADING_HINT,
+      details: { x: 100, y: 20 },
+    });
+    expect(onElement.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(byPoint.input()).toEqual([]);
+    expect(bySelector.input()).toEqual([]);
+  });
+
+  test('clickPoint clicks a point on the chart canvas, which holds nothing', async () => {
+    const { page, input } = pageOn(screen(() => [buyButton()]));
+
+    await clickPoint(page, { x: 100, y: 400 });
+
+    expect(input()).toEqual([
+      mouseEvent('mouseMoved', 100, 400),
+      mouseEvent('mousePressed', 100, 400),
+      mouseEvent('mouseReleased', 100, 400),
+    ]);
+  });
+
+  test('a hover and a scroll at a point on a container that holds a trading control are not refused', async () => {
+    const toolbar = () =>
+      fakeElement({
+        matches: ['[data-name="toolbar"]'],
+        rect: box(0, 0, 1280, 40),
+        children: [fakeElement({ matches: [TRADE_BUTTON], rect: box(700, 5, 60, 30) })],
+      });
+    const { page, types } = pageOn(screen(() => [toolbar()]));
+
+    await hoverPoint(page, { x: 100, y: 20 });
+    await scrollAt(page, { x: 100, y: 20 }, { x: 0, y: 100 });
+
+    expect(types()).toEqual(['mouseMoved', 'mouseMoved', 'mouseWheel']);
   });
 
   test('clickPoint at a point in an open menu of the overlap root refuses with NOT_AVAILABLE', async () => {
@@ -3128,12 +3250,14 @@ describe('scrollAt', () => {
     expect(input()).toEqual([mouseEvent('mouseMoved', 400, 300), wheel(400, 300, 0, 120)]);
   });
 
-  test('scrollAt sends the point and the deltas in device-independent pixels', async () => {
+  test('scrollAt sends the point in device-independent pixels and the deltas in CSS pixels, as given', async () => {
+    // At 125% the center of the pane, (400, 300), is (500, 375) in the window. The protocol takes
+    // the deltas of the wheel in CSS pixels, so they go out as the caller gave them.
     const { page, input } = pageWith(chart(), { zoom: 1.25 });
 
     await scrollAt(page, { selector: PANE }, { x: -20, y: 120 });
 
-    expect(input()).toEqual([mouseEvent('mouseMoved', 500, 375), wheel(500, 375, -25, 150)]);
+    expect(input()).toEqual([mouseEvent('mouseMoved', 500, 375), wheel(500, 375, -20, 120)]);
   });
 
   test('scrollAt scrolls at a point', async () => {
@@ -3245,6 +3369,7 @@ describe('findElements', () => {
           rect: box(300, 250, 80, 30),
           visible: true,
           unsafe: true,
+          holdsUnsafe: false,
         },
         {
           selector: null,
@@ -3255,23 +3380,30 @@ describe('findElements', () => {
           rect: box(10, 600, 50, 20),
           visible: true,
           unsafe: false,
+          holdsUnsafe: false,
         },
       ],
       more: false,
     });
   });
 
-  test('findElements marks an element inside a trading control as unsafe, but not one that only holds one', async () => {
+  test('findElements says whether an element is or sits inside a trading control, and whether it holds one', async () => {
     const make = screen(() => [paneWithTradingButtons()]);
 
     const result = await bothWays(
       findElements,
-      [...find('[data-name="buy-sell-buttons"], [data-qa-id="pane"]', null)],
+      [...find(`[data-name="buy-sell-buttons"], [data-qa-id="pane"], ${SAVE}`, null)],
       make,
     );
 
-    // Listed in document order: the pane, which holds the group, then the group.
-    expect(result.elements.map(({ unsafe }) => unsafe)).toEqual([false, true]);
+    // Listed in document order: the save button, which is neither; the pane, which holds the group
+    // and so refuses a click but not a hover or a scroll; and the group, which is a trading control
+    // and holds the buy button.
+    expect(result.elements.map(({ unsafe, holdsUnsafe }) => ({ unsafe, holdsUnsafe }))).toEqual([
+      { unsafe: false, holdsUnsafe: false },
+      { unsafe: false, holdsUnsafe: true },
+      { unsafe: true, holdsUnsafe: true },
+    ]);
   });
 
   test('findElements by selector lists the visible elements that match, in document order, at most limit of them', async () => {
@@ -3571,5 +3703,259 @@ describe('the pointer calls of one page', () => {
     expect((await refused).code).toBe('UNSAFE_ACTION_BLOCKED');
     await expect(click).resolves.toBeUndefined();
     expect(input()).toHaveLength(3);
+  });
+});
+
+describe('the text of fields and editable regions', () => {
+  // The dialog of an alert whose message the user has typed: a textarea keeps its text as a text
+  // node, which the text content of the dialog includes, and an editable region holds what was
+  // typed into it as text nodes as well.
+  const dialog = () =>
+    fakeElement({
+      matches: ['.dialog'],
+      attributes: { role: 'dialog' },
+      rect: box(400, 200, 400, 300),
+      children: [
+        fakeElement({ tag: 'span', text: 'Alert message', rect: box(410, 210, 200, 20) }),
+        fakeElement({ tag: 'textarea', text: 'a secret note', rect: box(410, 240, 380, 100) }),
+        fakeElement({
+          attributes: { contenteditable: 'true' },
+          rect: box(410, 350, 380, 60),
+          children: [
+            fakeElement({
+              tag: 'p',
+              matches: ['.typed'],
+              text: 'typed words',
+              rect: box(415, 355, 200, 20),
+            }),
+          ],
+        }),
+      ],
+    });
+  const findArgs = (selector: string): ArgsOf<typeof findElements> => [
+    { selector, text: null },
+    10,
+    [...UNSAFE_SELECTORS],
+  ];
+  const nameArgs = (text: string): ArgsOf<typeof describeElement> => [
+    { text },
+    [...UNSAFE_SELECTORS],
+    [OVERLAP_ROOT],
+    TRADING_ACTION_NAMES,
+    'click',
+  ];
+
+  test('findElements leaves what was typed into a field or an editable region out of the elements around it', async () => {
+    const result = await bothWays(
+      findElements,
+      [...findArgs('.dialog, .typed')],
+      screen(() => [dialog()]),
+    );
+
+    // The dialog shows its heading; the paragraph inside the editable region shows nothing.
+    expect(result.elements.map(({ name, text }) => ({ name, text }))).toEqual([
+      { name: 'Alert message', text: 'Alert message' },
+      { name: '', text: '' },
+    ]);
+    expect(JSON.stringify(result)).not.toMatch(/secret|typed words/);
+  });
+
+  test('a target named by its text is named without what was typed into it', async () => {
+    const make = screen(() => [dialog()]);
+
+    // The dialog comes before the heading inside it, and is named by the heading alone.
+    expect(await bothWays(describeElement, [...nameArgs('Alert message')], make)).toMatchObject({
+      found: true,
+      rect: box(400, 200, 400, 300),
+    });
+    for (const typed of ['Alert message a secret note', 'a secret note', 'typed words']) {
+      expect(await bothWays(describeElement, [...nameArgs(typed)], make), typed).toMatchObject({
+        found: false,
+      });
+    }
+  });
+});
+
+describe('a page that does not report its zoom', () => {
+  // Layout metrics whose visual viewport says nothing about the zoom.
+  const withoutZoom = () => {
+    const metrics = layoutMetrics({ width: 1280, height: 720, devicePixelRatio: 1 });
+    return { ...metrics, cssVisualViewport: { ...metrics.cssVisualViewport, zoom: undefined } };
+  };
+
+  test('is refused a click, a hover and a scroll with NOT_AVAILABLE, without any input', async () => {
+    const { page, input } = pageWith(chart(), {}, undefined, withoutZoom);
+
+    const refusals = [
+      await failureOf(clickElement(page, SAVE)),
+      await failureOf(clickPoint(page, { x: 120, y: 60 })),
+      await failureOf(hoverElement(page, SAVE)),
+      await failureOf(scrollAt(page, { selector: PANE }, { x: 0, y: 100 })),
+    ];
+
+    for (const error of refusals) {
+      expect(error.code).toBe('NOT_AVAILABLE');
+      expect(error.message).toBe('The page did not report its zoom');
+    }
+    expect(input()).toEqual([]);
+  });
+
+  test('is refused the move that follows a target that moved, when the zoom is gone by then', async () => {
+    const target = fakeElement({ matches: [SAVE], rect: box(100, 50, 40, 20) });
+    let zoomed = true;
+    const { page, input } = pageOver(
+      createFakeDomWindow([target]),
+      afterTheMove(() => {
+        target.place(box(300, 80, 40, 20));
+        zoomed = false;
+      }),
+      () =>
+        zoomed ? layoutMetrics({ width: 1280, height: 720, devicePixelRatio: 1 }) : withoutZoom(),
+    );
+
+    const error = await failureOf(hoverElement(page, SAVE));
+
+    expect(error.message).toBe('The page did not report its zoom');
+    expect(input()).toEqual([mouseEvent('mouseMoved', 120, 60)]);
+  });
+});
+
+describe('trading actions by name', () => {
+  // Trading buttons that carry no selector of the guard, as those of an order ticket do: they are
+  // known by their names alone. "Sell 100" shows its quantity in a label of its own, and "Place
+  // order" is named by its aria-label and shows a mark.
+  const tradingButtons = (): FakeElement[] => [
+    fakeElement({ tag: 'button', text: 'Buy', rect: box(100, 600, 60, 24) }),
+    fakeElement({
+      tag: 'button',
+      id: 'order-sell',
+      matches: ['#order-sell'],
+      text: 'Sell ',
+      rect: box(200, 600, 80, 24),
+      children: [fakeElement({ tag: 'span', text: '100', rect: box(240, 602, 30, 20) })],
+    }),
+    fakeElement({
+      tag: 'button',
+      attributes: { 'aria-label': 'Place order' },
+      rect: box(300, 600, 100, 24),
+      children: [fakeElement({ tag: 'span', text: 'Go', rect: box(305, 602, 40, 20) })],
+    }),
+    fakeElement({ tag: 'button', text: 'Buyback chart', rect: box(500, 600, 100, 24) }),
+    fakeElement({ tag: 'button', text: 'Sellers', rect: box(650, 600, 80, 24) }),
+  ];
+  const make = screen(tradingButtons);
+  const TRADING_ACTION_HINT = /^Trading actions are never clicked/;
+
+  test('a click by text on a button named "Buy" is refused, although it carries no selector of the guard', async () => {
+    const { page, input } = pageOver(make());
+
+    const error = await failureOf(clickTarget(page, { text: 'buy' }));
+
+    expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(error.message).toBe(
+      'Refusing to click the element named "buy": the click would reach "Buy", a trading action',
+    );
+    expect(error.hint).toMatch(TRADING_ACTION_HINT);
+    expect(error.details).toEqual({ text: 'buy', name: 'Buy' });
+    expect(input()).toEqual([]);
+  });
+
+  test('a click by selector on "Sell 100", and at a point on its label, is refused', async () => {
+    const bySelector = pageOver(make());
+    const atLabel = pageOver(make());
+
+    const onButton = await failureOf(clickElement(bySelector.page, '#order-sell'));
+    // The label shows "100", but a click on it activates the button.
+    const onLabel = await failureOf(clickPoint(atLabel.page, { x: 255, y: 612 }));
+
+    expect(onButton.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { selector: '#order-sell', name: 'Sell 100' },
+    });
+    expect(onLabel.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to click at (255, 612): the click would reach "Sell 100", a trading action',
+      details: { x: 255, y: 612, name: 'Sell 100' },
+    });
+    expect(onLabel.hint).toMatch(TRADING_ACTION_HINT);
+    expect(bySelector.input()).toEqual([]);
+    expect(atLabel.input()).toEqual([]);
+  });
+
+  test('a click at a point on the mark of "Place order" is refused, by the name of its button', async () => {
+    const { page, input } = pageOver(make());
+
+    const error = await failureOf(clickPoint(page, { x: 320, y: 612 }));
+
+    expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(error.details).toEqual({ x: 320, y: 612, name: 'Place order' });
+    expect(input()).toEqual([]);
+  });
+
+  test('a click by selector is refused when a trading action lies at the point it would land on', async () => {
+    // A button of an order ticket floats over the middle of the pane, outside the overlap root.
+    const floating = () => [
+      fakeElement({ tag: 'button', text: 'Buy', rect: box(380, 290, 40, 20) }),
+    ];
+    const { page, input } = pageOver(screen(floating)());
+
+    const error = await failureOf(clickElement(page, PANE));
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { selector: PANE, name: 'Buy' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('"Buyback chart" and "Sellers" are clicked: buy and sell count only as the first word of a name', async () => {
+    const { page, types } = pageOver(make());
+
+    await expect(clickTarget(page, { text: 'Buyback chart' })).resolves.toEqual({
+      x: 550,
+      y: 612,
+    });
+    await expect(clickTarget(page, { text: 'Sellers' })).resolves.toEqual({ x: 690, y: 612 });
+
+    expect(types()).toEqual([
+      'mouseMoved',
+      'mousePressed',
+      'mouseReleased',
+      'mouseMoved',
+      'mousePressed',
+      'mouseReleased',
+    ]);
+  });
+
+  test('a hover and a scroll over a trading action are not refused for its name', async () => {
+    const { page, types } = pageOver(make());
+
+    await expect(hoverTarget(page, { text: 'Buy' })).resolves.toEqual({
+      point: { x: 130, y: 612 },
+      warning: null,
+    });
+    await scrollAt(page, { selector: '#order-sell' }, { x: 0, y: 100 });
+    await hoverPoint(page, { x: 320, y: 612 });
+
+    expect(types()).toEqual(['mouseMoved', 'mouseMoved', 'mouseWheel', 'mouseMoved']);
+  });
+
+  test('describeElement names the trading action a click would reach, and only for a click', async () => {
+    const args = (action: PointerAction): ArgsOf<typeof describeElement> => [
+      { selector: '#order-sell' },
+      [...UNSAFE_SELECTORS],
+      [OVERLAP_ROOT],
+      TRADING_ACTION_NAMES,
+      action,
+    ];
+
+    expect(await bothWays(describeElement, [...args('click')], make)).toMatchObject({
+      unsafe: false,
+      tradingAction: 'Sell 100',
+    });
+    expect(await bothWays(describeElement, [...args('hover')], make)).not.toHaveProperty(
+      'tradingAction',
+    );
   });
 });

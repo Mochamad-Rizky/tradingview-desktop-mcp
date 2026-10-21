@@ -1,7 +1,10 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { describeElement, findElements } from '../../../src/core/tv/input.js';
 import { SELECTORS } from '../../../src/core/tv/selectors.js';
 import { createMcpServer } from '../../../src/server.js';
+import type { JsonValue } from '../../../src/utils/json.js';
+import { layoutMetrics } from '../../helpers/fake-cdp/layout.js';
 import { startFakeCdpServer, type FakeCdpServer } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
 import {
@@ -220,7 +223,8 @@ describe('ui_click', () => {
     expect(onLabel.isError).toBe(true);
     expect(errorOf(onLabel)).toEqual({
       code: 'UNSAFE_ACTION_BLOCKED',
-      message: 'Refusing to click at (320, 260): a broker trading control lies there',
+      message:
+        'Refusing to click at (320, 260): what lies there is part of a broker trading control or holds one',
       hint: expect.stringMatching(/Trading controls are off limits/) as string,
       details: { x: 320, y: 260 },
     });
@@ -228,6 +232,86 @@ describe('ui_click', () => {
     // No mouse press, and not even a move: the looks at the point are all the page saw.
     expect(mouseOf(app).filter(({ type }) => type === 'mousePressed')).toEqual([]);
     expect(methodsOf(app)).toEqual(['Runtime.evaluate', 'Runtime.evaluate']);
+  });
+
+  test('ui_click at a point on a container of a trading control refuses, as a click by selector does', async () => {
+    const toolbar = fakeElement({
+      matches: ['[data-name="toolbar"]'],
+      rect: box(0, 0, VIEWPORT.width, 40),
+      children: [
+        fakeElement({ matches: ['[data-qa-id="trade-button"]'], rect: box(700, 5, 60, 30) }),
+      ],
+    });
+    const { client, app } = await startHarness({ win: chartPage([toolbar]) });
+
+    const atPoint = await callTool(client, 'ui_click', { x: 100, y: 20 });
+    const bySelector = await callTool(client, 'ui_click', { selector: '[data-name="toolbar"]' });
+    const hovered = await callTool(client, 'ui_hover', { x: 100, y: 20 });
+
+    expect(errorOf(atPoint)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      message:
+        'Refusing to click at (100, 20): what lies there is part of a broker trading control or holds one',
+    });
+    expect(errorOf(bySelector)).toMatchObject({ code: 'UNSAFE_ACTION_BLOCKED' });
+    // The pointer over the toolbar lands on the toolbar, so a hover there is no click on it.
+    expect(hovered.isError).not.toBe(true);
+    expect(typesOf(app)).toEqual(['mouseMoved']);
+  });
+
+  test('ui_click refuses a trading action by its name, whatever the target, and ui_hover does not', async () => {
+    // The submit button of an order ticket carries no selector of the guard.
+    const placeOrder = fakeElement({
+      tag: 'button',
+      id: 'ticket-submit',
+      matches: ['#ticket-submit'],
+      text: 'Place order',
+      rect: box(500, 600, 100, 24),
+    });
+    const { client, app } = await startHarness({ win: chartPage([placeOrder]) });
+
+    const byText = await callTool(client, 'ui_click', { text: 'place order' });
+    const bySelector = await callTool(client, 'ui_click', { selector: '#ticket-submit' });
+    const atPoint = await callTool(client, 'ui_click', { x: 550, y: 612 });
+    const hovered = await callTool(client, 'ui_hover', { text: 'Place order' });
+
+    for (const refused of [byText, bySelector, atPoint]) {
+      expect(errorOf(refused)).toMatchObject({
+        code: 'UNSAFE_ACTION_BLOCKED',
+        hint: expect.stringMatching(/^Trading actions are never clicked/) as string,
+        details: { name: 'Place order' },
+      });
+    }
+    expect(errorOf(byText)?.message).toBe(
+      'Refusing to click the element named "place order": the click would reach "Place order", a trading action',
+    );
+    expect(dataOf(hovered)).toEqual({ target: 'chart', by: 'text', point: { x: 550, y: 612 } });
+    // The hover, and no button.
+    expect(typesOf(app)).toEqual(['mouseMoved']);
+  });
+
+  test('ui_click refuses a page that does not report its zoom, before any input', async () => {
+    const metrics = layoutMetrics({
+      width: VIEWPORT.width,
+      height: VIEWPORT.height,
+      devicePixelRatio: 1,
+    });
+    const { client, app } = await startHarness({
+      chartHandlers: {
+        'Page.getLayoutMetrics': () => ({
+          ...metrics,
+          cssVisualViewport: { ...metrics.cssVisualViewport, zoom: undefined },
+        }),
+      },
+    });
+
+    const result = await callTool(client, 'ui_click', { selector: SAVE });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: 'The page did not report its zoom',
+    });
+    expect(inputCountOf(app)).toBe(0);
   });
 
   test('ui_click at a point under an open menu of the overlap root refuses with NOT_AVAILABLE', async () => {
@@ -549,6 +633,7 @@ describe('ui_find_element', () => {
           rect: box(300, 250, 80, 30),
           visible: true,
           unsafe: true,
+          holdsUnsafe: false,
         },
         {
           selector: null,
@@ -559,6 +644,7 @@ describe('ui_find_element', () => {
           rect: box(310, 255, 40, 20),
           visible: true,
           unsafe: true,
+          holdsUnsafe: false,
         },
         {
           selector: null,
@@ -569,6 +655,7 @@ describe('ui_find_element', () => {
           rect: box(10, 600, 50, 20),
           visible: true,
           unsafe: false,
+          holdsUnsafe: false,
         },
       ],
     });
@@ -607,13 +694,29 @@ describe('ui_find_element', () => {
       });
       return element;
     };
+    // The dialog of an alert, whose message the user filled in, and a note typed into an editable
+    // region of it: the textarea keeps its text as a text node of the dialog.
+    const dialog = fakeElement({
+      matches: ['.field'],
+      attributes: { role: 'dialog' },
+      rect: box(400, 520, 400, 190),
+      children: [
+        fakeElement({ tag: 'span', text: 'Alert message', rect: box(410, 525, 200, 20) }),
+        field({ tag: 'textarea', text: 'a secret note', rect: box(410, 550, 380, 60) }),
+        fakeElement({
+          attributes: { contenteditable: 'true' },
+          rect: box(410, 620, 380, 60),
+          children: [fakeElement({ tag: 'p', text: 'a typed note', rect: box(415, 625, 200, 20) })],
+        }),
+      ],
+    });
     const win = chartPage([
       field({
         tag: 'input',
         attributes: { type: 'password', 'aria-label': 'Password' },
         rect: box(10, 600, 100, 20),
       }),
-      field({ tag: 'textarea', text: 'a secret note', rect: box(10, 630, 100, 40) }),
+      dialog,
     ]);
     const { client } = await startHarness({ win });
 
@@ -626,9 +729,10 @@ describe('ui_find_element', () => {
       ),
     ).toEqual([
       { tag: 'input', name: 'Password', text: '' },
+      { tag: 'div', name: 'Alert message', text: 'Alert message' },
       { tag: 'textarea', name: '', text: '' },
     ]);
-    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(JSON.stringify(result)).not.toMatch(/secret|typed note/);
   });
 
   test.each<[string, Record<string, unknown>]>([
@@ -677,6 +781,7 @@ describe('the window chrome', () => {
           rect: box(290, 5, 24, 24),
           visible: true,
           unsafe: false,
+          holdsUnsafe: false,
         },
       ],
     });
@@ -710,12 +815,20 @@ describe('the window chrome', () => {
     expect(new Set(calls.map(({ method }) => method))).toEqual(
       new Set(['Runtime.evaluate', 'Page.getLayoutMetrics', 'Input.dispatchMouseEvent']),
     );
-    for (const { method, params } of calls) {
-      if (method === 'Runtime.evaluate') {
-        expect((params as { expression: string }).expression).toMatch(
-          /function (describeElement|findElements)\(/,
-        );
-      }
+    const sources = [describeElement, findElements].map((fn) => fn.toString());
+    const evaluated = calls.filter(({ method }) => method === 'Runtime.evaluate');
+    expect(evaluated.length).toBeGreaterThan(0);
+    for (const { params } of evaluated) {
+      const { expression } = params as { expression: string };
+      const source = sources.find((candidate) =>
+        expression.startsWith(`(${candidate})(window, ...`),
+      );
+      expect(source, 'one of the page functions that only read the DOM').toBeDefined();
+      const prefix = `(${source ?? ''})(window, ...`;
+      const args = JSON.parse(expression.slice(prefix.length, -1)) as JsonValue[];
+      // Exactly (source)(window, ...args): no page library and nothing else around the function.
+      expect(expression).toBe(`(${source ?? ''})(window, ...${JSON.stringify(args)})`);
+      expect(expression).not.toContain('createPageLib');
     }
   });
 });
