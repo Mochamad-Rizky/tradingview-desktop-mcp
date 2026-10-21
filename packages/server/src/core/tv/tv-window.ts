@@ -27,11 +27,15 @@ export interface TvWindow {
   // library (page-lib.ts) pushes to it.
   webpackChunktradingview?: WebpackChunkListLike;
   // A real page has all of these. The DOM members are optional because the shared fake window
-  // models the chart API and no DOM, so page code checks for a member before it relies on it.
-  // querySelector is declared with the one signature page code uses: the DOM lib types it with a
-  // deprecated overload as well, and the linter reports any reference to a member like that.
+  // models the chart API and, of the DOM, the chart containers only, so page code checks for a
+  // member before it relies on it. querySelector is declared with the one signature page code uses:
+  // the DOM lib types it with a deprecated overload as well, and the linter reports any reference
+  // to a member like that. The same goes for querySelectorAll.
   document: Pick<Document, 'visibilityState'> & {
     querySelector?(selectors: string): Element | null;
+    // Every element that matches, in document order. Page code asks of these where they are on the
+    // screen and nothing else.
+    querySelectorAll?(selectors: string): ArrayLike<BoxElementLike>;
     elementFromPoint?(x: number, y: number): Element | null;
     // The element that fills the screen in the browser's fullscreen mode, or null when none does.
     fullscreenElement?: Element | null;
@@ -44,6 +48,13 @@ export interface TvWindow {
     Location,
     'href' | 'origin' | 'protocol' | 'host' | 'hostname' | 'pathname' | 'search' | 'hash'
   >;
+}
+
+// An element, as far as page code asks where it is: the box it takes up on the screen, in CSS
+// pixels from the top left of the viewport. A real element answers with a DOMRect, which has more
+// members.
+export interface BoxElementLike {
+  getBoundingClientRect(): { x: number; y: number; width: number; height: number };
 }
 
 // window.TradingViewApi, a superset of the Charting Library widget API (notes, section 4.2).
@@ -62,6 +73,8 @@ export interface TradingViewApiLike {
   // this is true.
   isConnected(): boolean;
   getIntervals(): string[];
+  // The collection of the chart widgets of the layout. It is internal, so a build may not have it.
+  readonly _chartWidgetCollection?: ChartWidgetCollectionLike;
   // The replay API (notes, section 4.5) is not described here, so page code can only check that it
   // is there.
   replayApi?(): Promise<unknown>;
@@ -71,6 +84,18 @@ export interface TradingViewApiLike {
   // search service; no data session is involved). It rejects for a type it does not know and for
   // an answer that is not 2xx.
   searchSymbols?(options: SymbolSearchOptionsLike): Promise<SymbolSearchResponseLike>;
+}
+
+// _chartWidgetCollection, as far as page code reads it: one definition for each chart of the
+// layout, in layout order. Its container is a watched value of the element that holds the chart,
+// the div.chart-container[data-qa-id="chart-container"] (seen on TradingView Desktop 3.4.1, where
+// it is the element the document lists too). Typed loosely, because it is the internals of the app.
+export interface ChartWidgetCollectionLike {
+  readonly _chartWidgetsDefs?: readonly ChartWidgetDefLike[];
+}
+
+export interface ChartWidgetDefLike {
+  readonly container?: { value(): unknown };
 }
 
 // The options of searchSymbols that page code passes. The app knows more (paging, language, broker

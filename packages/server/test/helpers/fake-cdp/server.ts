@@ -5,6 +5,7 @@ import { isIP, type AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { fixturePath } from '../fixture-path.js';
+import { layoutMetrics, layoutSizeOf } from './layout.js';
 import { CDP_ERROR, FakeCdpError, isRecord } from './protocol.js';
 import { createPageRuntime, type PageRuntime } from './runtime.js';
 
@@ -26,10 +27,12 @@ export interface FakeTarget {
   behavior: 'page' | 'silent';
   // Set on iframes, to the id of the page that embeds them.
   parentId?: string;
-  // Creates the window Runtime.evaluate runs against. Called on the first evaluation and then
-  // kept for as long as this FakeTarget object stays in the list, so page globals persist
-  // between calls and connections. Passing a new object for the same id gives a fresh page,
-  // the way a reload would. Pages without a factory get a minimal browser window.
+  // Creates the window Runtime.evaluate runs against. Called on the first evaluation, or on the
+  // first question about the layout of the page (Page.getLayoutMetrics, which is answered from the
+  // innerWidth, innerHeight and devicePixelRatio of the window), and then kept for as long as this
+  // FakeTarget object stays in the list, so page globals persist between calls and connections.
+  // Passing a new object for the same id gives a fresh page, the way a reload would. Pages without
+  // a factory get a minimal browser window.
   window?: () => object;
   // Answers for single CDP methods. They win over the defaults, may return a promise, and may
   // throw a FakeCdpError to answer with a protocol error.
@@ -95,11 +98,65 @@ const PAGE_PATH = /^\/devtools\/page\/([^/]+)$/;
 // reaching the debug port through DNS rebinding.
 const HOST_REFUSAL = 'Host header is specified and is not an IP address or localhost.';
 
-let screenshot: string | undefined;
+type ImageFormat = 'png' | 'jpeg';
 
-function screenshotData(): string {
-  screenshot ??= readFileSync(fixturePath('png/1x1.png')).toString('base64');
-  return screenshot;
+const IMAGE_FIXTURES: Record<ImageFormat, string> = { png: 'png/1x1.png', jpeg: 'jpeg/1x1.jpg' };
+const images = new Map<ImageFormat, string>();
+
+// The picture every screenshot shows, whatever the page: one pixel, base64 encoded as the protocol
+// carries it.
+function imageData(format: ImageFormat): string {
+  let data = images.get(format);
+  if (data === undefined) {
+    data = readFileSync(fixturePath(IMAGE_FIXTURES[format])).toString('base64');
+    images.set(format, data);
+  }
+  return data;
+}
+
+interface Viewport {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale: number;
+}
+
+const VIEWPORT_KEYS = ['x', 'y', 'width', 'height', 'scale'] as const;
+
+function isViewport(value: unknown): value is Viewport {
+  return isRecord(value) && VIEWPORT_KEYS.every((key) => typeof value[key] === 'number');
+}
+
+function invalidParams(data: string): FakeCdpError {
+  return new FakeCdpError(CDP_ERROR.invalidParams, 'Invalid parameters', data);
+}
+
+// Page.captureScreenshot as Chrome answers it: the parameters are checked before the page is looked
+// at. A clip needs all five numbers of a viewport, scale included, and Chrome refuses one without
+// an area; a scale of 0 or less would leave no pixels, so it is refused here too. The picture is
+// the same one pixel whatever the clip, which the call records, in the format asked for.
+function captureScreenshot(params: Record<string, unknown>): { data: string } {
+  const format = params.format ?? 'png';
+  if (format !== 'png' && format !== 'jpeg') {
+    throw invalidParams('format: png or jpeg expected');
+  }
+  const { clip } = params;
+  if (clip !== undefined) {
+    if (!isViewport(clip)) {
+      throw invalidParams('clip: Viewport value expected');
+    }
+    if (clip.width <= 0) {
+      throw new FakeCdpError(CDP_ERROR.serverError, 'Cannot take screenshot with 0 width.');
+    }
+    if (clip.height <= 0) {
+      throw new FakeCdpError(CDP_ERROR.serverError, 'Cannot take screenshot with 0 height.');
+    }
+    if (clip.scale <= 0) {
+      throw invalidParams('clip.scale: positive number expected');
+    }
+  }
+  return { data: imageData(format) };
 }
 
 // The host name of a Host header, without its port. An IPv6 literal is bracketed, so the port is
@@ -197,14 +254,26 @@ export async function startFakeCdpServer(options: FakeCdpServerOptions): Promise
   const connections = new Set<Connection>();
   const acceptedTargetIds: string[] = [];
   const refusedSockets = new Set<Duplex>();
+  const windows = new WeakMap<FakeTarget, object>();
   const runtimes = new WeakMap<FakeTarget, PageRuntime>();
   const liveRuntimes = new Set<PageRuntime>();
   const webSocketServer = new WebSocketServer({ noServer: true });
 
+  // The window of a target is made on first use and kept, for the evaluations and for the answers
+  // about the page that Chrome gives from it.
+  const windowFor = (target: FakeTarget): object => {
+    let window = windows.get(target);
+    if (!window) {
+      window = target.window?.() ?? createBlankWindow(target.url);
+      windows.set(target, window);
+    }
+    return window;
+  };
+
   const runtimeFor = (target: FakeTarget): PageRuntime => {
     let runtime = runtimes.get(target);
     if (!runtime) {
-      runtime = createPageRuntime(target.window?.() ?? createBlankWindow(target.url));
+      runtime = createPageRuntime(windowFor(target));
       runtimes.set(target, runtime);
       liveRuntimes.add(runtime);
     }
@@ -252,7 +321,10 @@ export async function startFakeCdpServer(options: FakeCdpServerOptions): Promise
       return runtimeFor(target).evaluate(params);
     }
     if (method === 'Page.captureScreenshot') {
-      return { data: screenshotData() };
+      return captureScreenshot(params);
+    }
+    if (method === 'Page.getLayoutMetrics') {
+      return layoutMetrics(layoutSizeOf(windowFor(target)));
     }
     if (method.startsWith('Input.') || ACKNOWLEDGED_METHODS.has(method)) {
       return {};

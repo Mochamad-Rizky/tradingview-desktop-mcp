@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import { classifyTarget } from '../../../src/core/cdp/targets.js';
 import { fixturePath } from '../fixture-path.js';
 import type { FakeTarget } from './server.js';
 
@@ -22,6 +23,8 @@ const CHART_URL_PREFIX = 'https://www.tradingview.com/chart/';
 export interface TargetsFixtureOptions {
   // Window factory for the chart page, so a test can put a fake TradingView window on it.
   chartWindow?: () => object;
+  // The same for the window chrome, the page that holds the tab strip.
+  chromeWindow?: () => object;
 }
 
 export function loadTargetsFixture(options: TargetsFixtureOptions = {}): FakeTarget[] {
@@ -40,6 +43,11 @@ export function loadTargetsFixture(options: TargetsFixtureOptions = {}): FakeTar
     entry.type === 'page' &&
     entry.url.startsWith(CHART_URL_PREFIX)
       ? { window: options.chartWindow }
+      : {}),
+    ...(options.chromeWindow !== undefined &&
+    classifyTarget({ id: entry.id, type: entry.type, title: entry.title, url: entry.url }) ===
+      'window-chrome'
+      ? { window: options.chromeWindow }
       : {}),
   }));
 }

@@ -4,6 +4,7 @@ import { chartTools } from './chart/index.js';
 import { dataTools } from './data/index.js';
 import { indicatorTools } from './indicator/index.js';
 import { pineTools } from './pine/index.js';
+import { screenshotTools } from './screenshot/index.js';
 import { strategyTools } from './strategy/index.js';
 import type { AnyToolDefinition } from './types.js';
 
@@ -16,5 +17,6 @@ export const allTools: AnyToolDefinition[] = [
   ...indicatorTools,
   ...pineTools,
   ...strategyTools,
+  ...screenshotTools,
   ...batchTools,
 ];

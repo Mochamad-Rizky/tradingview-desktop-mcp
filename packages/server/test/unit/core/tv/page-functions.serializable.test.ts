@@ -180,6 +180,7 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   expect(Object.keys(pageFunctions)).toContain('readUiState');
   expect(Object.keys(pageFunctions)).toContain('reloadTab');
   expect(Object.keys(pageFunctions)).toContain('createPageLib');
+  expect(Object.keys(pageFunctions)).toContain('readChartBox');
   for (const name of [
     'readChartLayout',
     'readChartState',

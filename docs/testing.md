@@ -50,10 +50,19 @@ The fake window models what the real app was seen to do, among others:
 - The compiler reports, in the order of the text and with the messages and codes of the real one,
   every undeclared name and, in a script of version 5 or later, a call of a Pine v4 name without
   its namespace, after which it stops.
+- The window has a screen: a viewport (`innerWidth`, `innerHeight`), a pixel ratio
+  (`devicePixelRatio`) and one container for each chart of the layout, which the chart widget
+  collection of the app and `document.querySelectorAll` hand out in layout order. The fake debug
+  port answers `Page.getLayoutMetrics` from the viewport and the ratio of the window of the target,
+  and `Page.captureScreenshot` with a one pixel picture in the format asked for, after checking the
+  clip the way Chrome does; the calls it receives are recorded, so a test reads the clip and the
+  scale from them.
 - Options model the rest of the real behavior where a test needs it: `sessionOffsetSeconds` (the
   chart reports a daily bar as its day at 00:00 UTC while its row holds the session start),
-  `futurePoints` (the time points the time scale keeps after the last bar), and `feeds` (the chart
-  names a resolved symbol by its data feed, such as `BATS:AAPL` for `NASDAQ:AAPL`).
+  `futurePoints` (the time points the time scale keeps after the last bar), `feeds` (the chart
+  names a resolved symbol by its data feed, such as `BATS:AAPL` for `NASDAQ:AAPL`), `screen` (the
+  viewport, the pixel ratio and the boxes of the chart containers) and `withoutChartCollection` (a
+  build whose API does not name the containers).
 
 No unit or integration test can reach a real app: the test configuration points the debug port at
 port 9, and the suites that could start a program mock `node:child_process`.

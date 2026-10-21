@@ -27,7 +27,7 @@ test('strategyTools lists the three tools in the order of the catalog', () => {
   expect(new Set(strategyTools.map(({ domain }) => domain))).toEqual(new Set(['strategy']));
 });
 
-test('the catalog lists the strategy tools after the Pine tools and before the batch', () => {
+test('the catalog lists the strategy tools right after the Pine tools and before the batch', () => {
   const names = allTools.map(({ name }) => name);
   const lastPine = pineTools.at(-1);
   if (lastPine === undefined) {
@@ -35,7 +35,8 @@ test('the catalog lists the strategy tools after the Pine tools and before the b
   }
 
   expect(names.indexOf('strategy_get_results')).toBe(names.indexOf(lastPine.name) + 1);
-  expect(names.indexOf('batch_run')).toBe(names.indexOf('strategy_get_equity') + 1);
+  expect(names.indexOf('strategy_get_equity')).toBe(names.indexOf('strategy_get_results') + 2);
+  expect(names.indexOf('batch_run')).toBeGreaterThan(names.indexOf('strategy_get_equity'));
 });
 
 test('every strategy tool only reads, and only the results are in the core profile', () => {

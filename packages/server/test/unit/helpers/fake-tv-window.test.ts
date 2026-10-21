@@ -1,5 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import vm from 'node:vm';
+import { SELECTORS } from '../../../src/core/tv/selectors.js';
+import type { FakeRect } from '../../helpers/fake-tv/dom.js';
 import {
   loadTvFixture,
   parseTvStateFixture,
@@ -1089,4 +1091,144 @@ test('with historyEndUnflagged, a request that brings no bar leaves no end flag'
 
   expect([series.isLoading(), series.requestMoreDataAvailable()]).toEqual([false, false]);
   expect([series.endOfData(), series.endOfDataType()]).toEqual([false, null]);
+});
+
+describe('the screen of the window', () => {
+  const fixture = loadTvFixture();
+  const twoCharts: TvStateFixture = { ...fixture, layout: { ...fixture.layout, chartsCount: 2 } };
+  const CONTAINER = SELECTORS.regions.chartContainer;
+
+  function definitionsOf(win: FakeTvWindow) {
+    const collection = apiOf(win)._chartWidgetCollection;
+    if (collection === undefined) {
+      throw new Error('The fake window has no chart widget collection');
+    }
+    return collection._chartWidgetsDefs;
+  }
+
+  function boxOf(element: { getBoundingClientRect(): FakeRect }) {
+    const { x, y, width, height } = element.getBoundingClientRect();
+    return { x, y, width, height };
+  }
+
+  test('a window is 1280 by 720 CSS pixels at a pixel ratio of 1', () => {
+    const win = createFakeTvWindow(fixture);
+
+    expect([win.innerWidth, win.innerHeight, win.devicePixelRatio]).toEqual([1280, 720, 1]);
+  });
+
+  test('the screen option sets the size and the pixel ratio', () => {
+    const win = createFakeTvWindow(fixture, {
+      screen: { width: 1600, height: 1000, devicePixelRatio: 2 },
+    });
+
+    expect([win.innerWidth, win.innerHeight, win.devicePixelRatio]).toEqual([1600, 1000, 2]);
+  });
+
+  test('a layout of one chart has one container in a box of its own, with room around it for the toolbars', () => {
+    const win = createFakeTvWindow(fixture);
+
+    const containers = inspectFakeWindow(win).state.chartContainers;
+
+    expect(containers.map(boxOf)).toEqual([{ x: 50, y: 40, width: 1180, height: 640 }]);
+  });
+
+  test('a layout of several charts has their containers side by side, in layout order', () => {
+    const win = createFakeTvWindow(twoCharts, { screen: { width: 1000, height: 600 } });
+
+    const containers = inspectFakeWindow(win).state.chartContainers;
+
+    expect(containers.map(boxOf)).toEqual([
+      { x: 50, y: 40, width: 450, height: 520 },
+      { x: 500, y: 40, width: 450, height: 520 },
+    ]);
+  });
+
+  test('the charts option gives the box of each container', () => {
+    const boxes = [
+      { x: 1, y: 2, width: 30, height: 40 },
+      { x: 5, y: 6, width: 70, height: 80 },
+    ];
+    const win = createFakeTvWindow(twoCharts, { screen: { charts: boxes } });
+
+    expect(inspectFakeWindow(win).state.chartContainers.map(boxOf)).toEqual(boxes);
+  });
+
+  test('without charts the page has no container at all', () => {
+    const win = createFakeTvWindow(fixture, { screen: { charts: [] } });
+
+    expect(inspectFakeWindow(win).state.chartContainers).toEqual([]);
+    expect(win.document.querySelectorAll(CONTAINER)).toEqual([]);
+    expect(definitionsOf(win)).toEqual([]);
+  });
+
+  test('each container is an element that matches the selector of a chart container', () => {
+    const win = createFakeTvWindow(twoCharts);
+
+    const containers = inspectFakeWindow(win).state.chartContainers;
+
+    expect(containers).toHaveLength(2);
+    for (const container of containers) {
+      expect(container.matches(CONTAINER)).toBe(true);
+      expect(container.getAttribute('data-qa-id')).toBe('chart-container');
+      expect(container.matches('[data-qa-id="pane"]')).toBe(false);
+    }
+  });
+
+  test('the chart widget collection hands out the container of each chart', () => {
+    const win = createFakeTvWindow(twoCharts);
+
+    const containers = inspectFakeWindow(win).state.chartContainers;
+
+    const definitions = definitionsOf(win);
+    expect(definitions).toHaveLength(2);
+    expect(definitions.map(({ container }) => container.value())).toEqual(containers);
+    expect(definitions[1]?.container.value()).toBe(containers[1]);
+  });
+
+  test('querySelectorAll finds the containers in document order, and only for their selector', () => {
+    const win = createFakeTvWindow(twoCharts);
+    const containers = inspectFakeWindow(win).state.chartContainers;
+
+    expect(win.document.querySelectorAll(CONTAINER)).toEqual(containers);
+    expect(win.document.querySelectorAll(CONTAINER)[1]).toBe(containers[1]);
+    expect(win.document.querySelectorAll('[data-qa-id="pane"]')).toEqual([]);
+    expect(win.document.querySelectorAll(`${CONTAINER}, [data-qa-id="pane"]`)).toEqual(containers);
+    expect(() => win.document.querySelectorAll('[')).toThrow(SyntaxError);
+  });
+
+  test('a container moves with place(), and the collection and the document show it', () => {
+    const win = createFakeTvWindow(fixture);
+    const moved = { x: 70, y: 60, width: 400, height: 300 };
+
+    inspectFakeWindow(win).state.chartContainers[0]?.place(moved);
+
+    expect(definitionsOf(win).map(({ container }) => boxOf(container.value()))).toEqual([moved]);
+    expect(win.document.querySelectorAll(CONTAINER).map(boxOf)).toEqual([moved]);
+  });
+
+  test('withoutChartCollection leaves the collection out of the API and the containers in the page', () => {
+    const win = createFakeTvWindow(twoCharts, { withoutChartCollection: true });
+
+    expect(apiOf(win)._chartWidgetCollection).toBeUndefined();
+    expect(win.document.querySelectorAll(CONTAINER)).toHaveLength(2);
+  });
+
+  test('a page whose app has not booted has the containers but no API', () => {
+    const win = createFakeTvWindow(fixture, { withoutApi: true });
+
+    expect(win.TradingViewApi).toBeUndefined();
+    expect(win.document.querySelectorAll(CONTAINER)).toHaveLength(1);
+  });
+
+  test('windows have containers of their own', () => {
+    const first = createFakeTvWindow(fixture);
+    const second = createFakeTvWindow(fixture);
+
+    inspectFakeWindow(first).state.chartContainers[0]?.place({ x: 0, y: 0, width: 1, height: 1 });
+
+    expect(inspectFakeWindow(second).state.chartContainers.map(boxOf)).toEqual([
+      { x: 50, y: 40, width: 1180, height: 640 },
+    ]);
+  });
 });

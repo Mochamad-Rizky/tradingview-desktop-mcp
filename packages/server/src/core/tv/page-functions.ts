@@ -45,6 +45,7 @@ import {
   readSavedPineScripts,
   savePineScript,
 } from '../../tools/pine/page.js';
+import { readChartBox } from '../../tools/screenshot/page.js';
 import { readStrategyReport } from '../../tools/strategy/page.js';
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement } from './input.js';
@@ -71,6 +72,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readAddedPineStudy,
   readAppState,
   readBarRows,
+  readChartBox,
   readChartLayout,
   readChartQuote,
   readChartSnapshot,

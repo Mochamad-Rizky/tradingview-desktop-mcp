@@ -1,4 +1,5 @@
 import type { JsonValue } from '../../../src/utils/json.js';
+import type { FakeElement } from './dom.js';
 import type { TvStateFixture } from './fixture.js';
 import { createFakeHistory } from './history.js';
 import {
@@ -9,6 +10,7 @@ import {
 } from './pine-editor.js';
 import { createFeatureToggleModules, createPlanLimitModules } from './plan-limits.js';
 import { createQuoteModules } from './quotes.js';
+import { createFakeScreen, type FakeChartWidgetDef, type FakeScreenOptions } from './screen.js';
 import { createFakeSearch, type FakeSearchOptions, type FakeSearchResponse } from './search.js';
 import {
   createFakeStudies,
@@ -61,6 +63,13 @@ import { createFakeWebpack } from './webpack.js';
 // scripts of the account, listed by the export requestUserScripts of the cache, and whether the
 // account is signed in, which window.is_authenticated reports. The module of the feature toggles
 // (isFeatureEnabled) is in the default cache too, driven by the featureToggles of the fixture.
+//
+// The screen (screen.ts): the window has an innerWidth, an innerHeight and a devicePixelRatio,
+// which the fake debug port answers Page.getLayoutMetrics from, and the containers that hold the
+// charts of the layout, one for each chart. The chart widget collection of the app hands them out
+// (TradingViewApi._chartWidgetCollection), and document.querySelectorAll lists them in document
+// order, which is all of the DOM the window has. A test moves one with place() on the elements of
+// state.chartContainers.
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -119,6 +128,11 @@ export interface FakeTvOverrides {
   withoutPageLayoutService?: boolean;
   // Leaves TradingView.bottomWidgetBar out.
   withoutBottomWidgetBar?: boolean;
+  // The viewport, its pixel ratio and the boxes of the chart containers (screen.ts).
+  screen?: FakeScreenOptions;
+  // Leaves the chart widget collection out of TradingViewApi, as a build without it. The containers
+  // stay in the page.
+  withoutChartCollection?: boolean;
 }
 
 export interface FakeBars {
@@ -206,6 +220,8 @@ export interface FakeTradingViewApi {
   getIntervals(): string[];
   searchSymbols(options: FakeSearchOptions): Promise<FakeSearchResponse>;
   pineEditorApi(): FakePineEditorApi;
+  // One definition for each chart container (screen.ts).
+  _chartWidgetCollection?: { _chartWidgetsDefs: FakeChartWidgetDef[] };
 }
 
 export interface FakeLocation {
@@ -228,7 +244,15 @@ export interface FakeTvWindow {
   TVD: { reloadTab(): void };
   BUILD_TIME: string;
   webpackChunktradingview: unknown[];
-  document: { readonly visibilityState: VisibilityState };
+  // The size of the viewport in CSS pixels and the device pixels for each of them.
+  readonly innerWidth: number;
+  readonly innerHeight: number;
+  readonly devicePixelRatio: number;
+  document: {
+    readonly visibilityState: VisibilityState;
+    // The chart containers that match, in document order.
+    querySelectorAll(selectors: string): FakeElement[];
+  };
   location: FakeLocation;
 }
 
@@ -268,6 +292,8 @@ export interface FakeTvState {
   removedStudies: { id: string; undoable: boolean }[];
   // The Pine Editor (pine-editor.ts).
   pineEditor: FakePineEditorState;
+  // The containers of the charts, in layout order (screen.ts).
+  chartContainers: FakeElement[];
 }
 
 export interface FakeTvInspector {
@@ -333,6 +359,7 @@ export function createFakeTvWindow(
     canAddStudy: () => chartModel.canCreateStudy?.({ id: '' }).success !== false,
     addStudy: (script) => studies.addUserScript(script),
   });
+  const screen = createFakeScreen(fixture.layout.chartsCount, overrides.screen);
   const state: FakeTvState = {
     symbol: feeds.get(fixture.symbol) ?? fixture.symbol,
     resolution: fixture.resolution,
@@ -347,6 +374,7 @@ export function createFakeTvWindow(
     visibilityState: overrides.visibilityState ?? 'visible',
     removedStudies: [],
     pineEditor: pine.state,
+    chartContainers: screen.containers,
   };
 
   // The bars of the series, which grow at the front as older history loads. A request needs bars
@@ -614,6 +642,9 @@ export function createFakeTvWindow(
     getIntervals: () => [...fixture.intervals],
     searchSymbols: createFakeSearch(fixture.search, record),
     pineEditorApi: () => pine.api,
+    ...(overrides.withoutChartCollection === true
+      ? {}
+      : { _chartWidgetCollection: screen.collection }),
   };
 
   const win: FakeTvWindow = {
@@ -642,10 +673,14 @@ export function createFakeTvWindow(
               ...pine.modules,
             },
           ),
+    innerWidth: screen.width,
+    innerHeight: screen.height,
+    devicePixelRatio: screen.devicePixelRatio,
     document: {
       get visibilityState() {
         return state.visibilityState;
       },
+      querySelectorAll: (selectors) => screen.querySelectorAll(selectors),
     },
     location: createLocation(
       `https://www.tradingview.com/chart/${encodeURIComponent(fixture.layout.id)}/`,

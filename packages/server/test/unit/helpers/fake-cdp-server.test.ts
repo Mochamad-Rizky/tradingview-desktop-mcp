@@ -4,6 +4,7 @@ import { connect as connectSocket } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import vm from 'node:vm';
 import WebSocket, { type RawData } from 'ws';
+import { layoutMetrics } from '../../helpers/fake-cdp/layout.js';
 import { createPageContext, createPageRuntime } from '../../helpers/fake-cdp/runtime.js';
 import {
   FakeCdpError,
@@ -963,6 +964,156 @@ test('captures the 1x1 PNG fixture as a base64 screenshot', async () => {
   expect(png.readUInt32BE(20)).toBe(1);
 });
 
+test('captures a PNG when no format is asked for, as Chrome does', async () => {
+  const server = await start([pageTarget()]);
+  const client = await connect(server, 'PAGE1');
+
+  const reply = await client.send('Page.captureScreenshot');
+
+  const { data } = reply.result as { data: string };
+  expect(Buffer.from(data, 'base64').subarray(1, 4).toString('latin1')).toBe('PNG');
+});
+
+test('captures the 1x1 JPEG fixture as a base64 screenshot when a jpeg is asked for', async () => {
+  const server = await start([pageTarget()]);
+  const client = await connect(server, 'PAGE1');
+
+  const reply = await client.send('Page.captureScreenshot', { format: 'jpeg', quality: 80 });
+
+  const { data } = reply.result as { data: string };
+  const jpeg = Buffer.from(data, 'base64');
+  // From the start-of-image marker to the end-of-image marker.
+  expect(jpeg.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+  expect(jpeg.subarray(-2)).toEqual(Buffer.from([0xff, 0xd9]));
+  // The frame header (SOF0) holds the height and the width, 1 each, after the precision byte.
+  const frame = jpeg.indexOf(Buffer.from([0xff, 0xc0]));
+  expect(frame).toBeGreaterThan(0);
+  expect([jpeg.readUInt16BE(frame + 5), jpeg.readUInt16BE(frame + 7)]).toEqual([1, 1]);
+});
+
+test('records the parameters of a screenshot, so a test can look at the clip and the scale', async () => {
+  const server = await start([pageTarget()]);
+  const client = await connect(server, 'PAGE1');
+  const clip = { x: 52, y: 44, width: 1403, height: 757, scale: 0.25 };
+
+  const reply = await client.send('Page.captureScreenshot', {
+    format: 'jpeg',
+    quality: 80,
+    clip,
+    captureBeyondViewport: false,
+  });
+
+  expect(reply.error).toBeUndefined();
+  expect(server.calls).toEqual([
+    {
+      targetId: 'PAGE1',
+      method: 'Page.captureScreenshot',
+      params: { format: 'jpeg', quality: 80, clip, captureBeyondViewport: false },
+    },
+  ]);
+});
+
+test.each([
+  ['a format Chrome has not got', { format: 'gif' }, -32602, 'format: png or jpeg expected'],
+  ['a format that is not text', { format: 7 }, -32602, 'format: png or jpeg expected'],
+  ['a clip that is not an object', { clip: 'all' }, -32602, 'clip: Viewport value expected'],
+  [
+    'a clip without a scale',
+    { clip: { x: 0, y: 0, width: 10, height: 10 } },
+    -32602,
+    'clip: Viewport value expected',
+  ],
+  [
+    'a clip with a number as text',
+    { clip: { x: 0, y: 0, width: '10', height: 10, scale: 1 } },
+    -32602,
+    'clip: Viewport value expected',
+  ],
+  [
+    'a clip with no width',
+    { clip: { x: 0, y: 0, width: 0, height: 10, scale: 1 } },
+    -32000,
+    undefined,
+  ],
+  [
+    'a clip with no height',
+    { clip: { x: 0, y: 0, width: 10, height: 0, scale: 1 } },
+    -32000,
+    undefined,
+  ],
+  [
+    'a clip with no scale to speak of',
+    { clip: { x: 0, y: 0, width: 10, height: 10, scale: 0 } },
+    -32602,
+    'clip.scale: positive number expected',
+  ],
+])('refuses a screenshot with %s', async (_case, params, code, data) => {
+  const server = await start([pageTarget()]);
+  const client = await connect(server, 'PAGE1');
+
+  const reply = await client.send('Page.captureScreenshot', params);
+
+  expect(reply.result).toBeUndefined();
+  expect(reply.error?.code).toBe(code);
+  expect(reply.error?.data).toBe(data);
+});
+
+test('refuses a screenshot with a clip that has no width in the words of Chrome', async () => {
+  const server = await start([pageTarget()]);
+  const client = await connect(server, 'PAGE1');
+
+  const reply = await client.send('Page.captureScreenshot', {
+    clip: { x: 0, y: 0, width: 0, height: 10, scale: 1 },
+  });
+
+  expect(reply.error?.message).toBe('Cannot take screenshot with 0 width.');
+});
+
+test('answers Page.getLayoutMetrics from the viewport of the window of the target', async () => {
+  const win = createFakeTvWindow(loadTvFixture(), {
+    screen: { width: 1600, height: 1000, devicePixelRatio: 2 },
+  });
+  const server = await start([pageTarget({ window: () => win })]);
+  const client = await connect(server, 'PAGE1');
+
+  const reply = await client.send('Page.getLayoutMetrics');
+
+  expect(reply.result).toEqual(layoutMetrics({ width: 1600, height: 1000, devicePixelRatio: 2 }));
+  const metrics = reply.result as ReturnType<typeof layoutMetrics>;
+  // The metrics in CSS pixels are the viewport, and those in device pixels are twice as big.
+  expect(metrics.cssVisualViewport).toMatchObject({ clientWidth: 1600, clientHeight: 1000 });
+  expect(metrics.visualViewport).toMatchObject({ clientWidth: 3200, clientHeight: 2000 });
+  expect(server.calls).toEqual([
+    { targetId: 'PAGE1', method: 'Page.getLayoutMetrics', params: {} },
+  ]);
+});
+
+test('answers Page.getLayoutMetrics of a page with no window of its own as a blank viewport', async () => {
+  const server = await start([pageTarget()]);
+  const client = await connect(server, 'PAGE1');
+
+  const reply = await client.send('Page.getLayoutMetrics');
+
+  expect(reply.result).toEqual(layoutMetrics({ width: 1280, height: 720, devicePixelRatio: 1 }));
+});
+
+test('answers Page.getLayoutMetrics of every target from its own window', async () => {
+  const wide = (): object => ({ innerWidth: 2000, innerHeight: 34, devicePixelRatio: 3 });
+  const server = await start([
+    pageTarget({ id: 'CHART1', window: wide }),
+    pageTarget({ id: 'OTHER1', url: 'file:///app.asar/app/window/index.html' }),
+  ]);
+  const chart = await connect(server, 'CHART1');
+  const other = await connect(server, 'OTHER1');
+
+  expect((await chart.send('Page.getLayoutMetrics')).result).toEqual(
+    layoutMetrics({ width: 2000, height: 34, devicePixelRatio: 3 }),
+  );
+  expect((await other.send('Page.getLayoutMetrics')).result).toEqual(
+    layoutMetrics({ width: 1280, height: 720, devicePixelRatio: 1 }),
+  );
+});
+
 test('lets a target override default methods and add its own', async () => {
   const seen: unknown[] = [];
   const server = await start([
@@ -1274,6 +1425,18 @@ test('attaches a chart window to the chart page of the fixture only', () => {
     targets.filter((target) => target.window !== undefined).map((target) => target.id),
   ).toEqual([CHART_TARGET_ID]);
   expect(loadTargetsFixture().every((target) => target.window === undefined)).toBe(true);
+});
+
+test('attaches a chrome window to the window chrome page of the fixture only', () => {
+  const chromeWindow = (): object => ({});
+
+  const targets = loadTargetsFixture({ chromeWindow });
+  const both = loadTargetsFixture({ chartWindow: () => ({}), chromeWindow });
+
+  const chrome = targets.find((target) => target.url.includes('/app/window/index.html'));
+  expect(targets.filter((target) => target.window !== undefined)).toEqual([chrome]);
+  expect(chrome?.window).toBe(chromeWindow);
+  expect(both.filter((target) => target.window !== undefined)).toHaveLength(2);
 });
 
 test('serves the whole fixture with WebSocket URLs and answers on the chart page', async () => {

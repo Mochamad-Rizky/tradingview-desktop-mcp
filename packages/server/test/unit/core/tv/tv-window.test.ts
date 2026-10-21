@@ -88,6 +88,25 @@ describe('the TvWindow contract', () => {
     expect(win.location.href).toBe('https://www.tradingview.com/chart/FIXTURE1/');
   });
 
+  test('is satisfied by the shared fake window for the containers of the charts of the layout', () => {
+    const win: TvWindow = createFakeTvWindow(fixture);
+
+    const definitions = win.TradingViewApi?._chartWidgetCollection?._chartWidgetsDefs;
+    const container = definitions?.[0]?.container?.value();
+    const found = win.document.querySelectorAll?.('[data-qa-id="chart-container"]');
+
+    expect(definitions).toHaveLength(1);
+    expect(found).toHaveLength(1);
+    // The chart API and the document name the same element, whose box is where the chart is.
+    expect(found?.[0]).toBe(container);
+    expect(found?.[0]?.getBoundingClientRect()).toMatchObject({
+      x: 50,
+      y: 40,
+      width: 1180,
+      height: 640,
+    });
+  });
+
   test('is satisfied by the shared fake window for a strategy, its report and the active source', () => {
     const win: TvWindow = createFakeTvWindow(
       withStudies(fixture, { ...SAMPLE_STRATEGY, activeStrategy: true }),
