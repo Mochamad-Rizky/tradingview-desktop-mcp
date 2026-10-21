@@ -1,27 +1,9 @@
-// The arithmetic of a screenshot: the viewport of a page as Page.getLayoutMetrics reports it, the
-// part of the page that is on the screen, the clip that asks Chrome for it, the scale that keeps an
-// image within a width, the size of the image that comes out, and where to read that size.
-//
-// Two kinds of pixel are at work. A CSS pixel is what the page lays out in and getBoundingClientRect
-// reports. A DIP, a device-independent pixel, is what the window is made of and what the clip of
-// Page.captureScreenshot is in: a CSS pixel takes `zoom` of them, where zoom is the page zoom of
-// the app (0.2 to 5, 1 at 100%). A device pixel is what the image is made of: the pixel ratio the
-// page reports (window.devicePixelRatio) is the device pixels for each CSS pixel, and has the zoom
-// in it, so the display has that ratio over the zoom of them for each DIP.
+import type { Viewport } from '../../core/tv/viewport.js';
 
-// A page's visible area in CSS pixels, with what is needed to ask Chrome for parts of it.
-export interface Viewport {
-  width: number;
-  height: number;
-  // Device pixels for each CSS pixel.
-  devicePixelRatio: number;
-  // DIPs for each CSS pixel: the page zoom of the app.
-  zoom: number;
-  // Where the visible part starts in the document, in CSS pixels: how far the page is scrolled. 0
-  // for a page that does not scroll, which the chart page does not (seen on the app).
-  pageX: number;
-  pageY: number;
-}
+// The arithmetic of a screenshot: the part of the page that is on the screen, the clip that asks
+// Chrome for it, the scale that keeps an image within a width, the size of the image that comes out,
+// and where to read that size. The viewport of the page, and the kinds of pixel it is measured in,
+// come from the core (core/tv/viewport.ts), which the input helpers share.
 
 // An area of a page in CSS pixels, from the top left of the viewport.
 export interface Box {
@@ -29,54 +11,6 @@ export interface Box {
   y: number;
   width: number;
   height: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function positive(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function finite(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-// The viewport that Page.getLayoutMetrics reports, or null when it does not report a usable one.
-// The answer is read as it comes, not as the protocol types it: the visual viewport is the part of
-// the page that is shown, and it comes twice, in CSS pixels (cssVisualViewport) and in device
-// pixels (visualViewport, which the protocol marks as deprecated, but which the app still answers
-// with and which is the only place that says how many device pixels a CSS pixel takes). The pixel
-// ratio is their quotient. In the chart tab that is what window.devicePixelRatio says (seen on the
-// app), and the window chrome, whose code must not be run, can be asked for it in this way too.
-//
-// The zoom is the one cssVisualViewport carries (seen as 1 at the default zoom of the app on a
-// display with a pixel ratio of 2, so it does not hold the ratio of the display), and the page
-// offset is the position of the visual viewport in the document. A zoom that is missing is 1, and
-// an offset that is missing is 0: a page that does not say is taken as not zoomed and not scrolled.
-export function viewportOf(metrics: unknown): Viewport | null {
-  if (!isRecord(metrics)) {
-    return null;
-  }
-  const { cssVisualViewport: css, visualViewport: device } = metrics;
-  if (!isRecord(css) || !isRecord(device)) {
-    return null;
-  }
-  const width = positive(css.clientWidth);
-  const height = positive(css.clientHeight);
-  const deviceWidth = positive(device.clientWidth);
-  if (width === null || height === null || deviceWidth === null) {
-    return null;
-  }
-  return {
-    width,
-    height,
-    devicePixelRatio: deviceWidth / width,
-    zoom: positive(css.zoom) ?? 1,
-    pageX: finite(css.pageX) ?? 0,
-    pageY: finite(css.pageY) ?? 0,
-  };
 }
 
 // An edge of the box that lies this far out of the viewport, in CSS pixels, is the rounding of the

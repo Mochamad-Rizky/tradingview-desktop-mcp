@@ -1,9 +1,9 @@
 import type { ImageContent } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import type { PageHandle } from '../../core/connection.js';
 import { TvMcpError } from '../../core/errors.js';
 import { readVisibilityState } from '../../core/tv/probes.js';
 import { SELECTORS } from '../../core/tv/selectors.js';
+import { readViewport } from '../../core/tv/viewport.js';
 import { READ_ONLY } from '../annotations.js';
 import { chartIndexInput } from '../chart/index.js';
 import { resolveChartTarget } from '../chart/strategies.js';
@@ -14,9 +14,7 @@ import {
   clipOf,
   imageSizeOf,
   outputSize,
-  viewportOf,
   type Box,
-  type Viewport,
 } from './mappers.js';
 import { readChartBox } from './page.js';
 
@@ -45,19 +43,6 @@ const DEFAULT_MAX_WIDTH = 1920;
 // allows.
 const BYTES_PER_MB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 8 * BYTES_PER_MB;
-
-// The viewport of a page, its zoom and the device pixels for each of its CSS pixels. The page is
-// asked and not evaluated in: the window chrome has Node integration, and no page code is run in it.
-async function viewportOfPage(page: PageHandle): Promise<Viewport> {
-  const metrics: unknown = await page.session.send('Page.getLayoutMetrics');
-  const viewport = viewportOf(metrics);
-  if (viewport === null) {
-    throw new TvMcpError('NOT_AVAILABLE', 'The page did not report the size of its viewport', {
-      hint: 'The tab may be hidden or still loading. Bring it to the front and try again.',
-    });
-  }
-  return viewport;
-}
 
 // The same refusal as readChartBox gives for a chart, for a capture of the page.
 function tabHidden(): TvMcpError {
@@ -176,7 +161,7 @@ export const screenshotCapture = defineTool({
     ) {
       throw tabHidden();
     }
-    const viewport = await viewportOfPage(page);
+    const viewport = await readViewport(page.session);
 
     // A capture does not go beyond the viewport, so a chart that reaches out of it is cut to it.
     const wanted = chartBox ?? { x: 0, y: 0, width: viewport.width, height: viewport.height };
