@@ -128,6 +128,23 @@ export function parseTimeInput(input: string | number): number {
   return NUMERIC_PATTERN.test(text) ? fromTimestamp(Number(text), input) : fromIso(text, input);
 }
 
+// A time TradingView gives in a form that is not known for sure, such as the modified time of a
+// saved script or layout, in whole Unix seconds, or null for what is no time. A number follows the
+// rule of the time inputs (milliseconds above MILLISECONDS_ABOVE), and a text is read as a date.
+export function modifiedToSeconds(value: number | string | null): number | null {
+  let seconds: number;
+  if (typeof value === 'number') {
+    seconds = value > MILLISECONDS_ABOVE ? value / 1000 : value;
+  } else if (typeof value === 'string') {
+    seconds = Date.parse(value) / 1000;
+  } else {
+    return null;
+  }
+  return Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_UNIX_SECONDS
+    ? Math.floor(seconds)
+    : null;
+}
+
 // Throws a RangeError for a value that no Date can hold. That is a bug in the caller, which
 // formats times that came from TradingView or passed parseTimeInput, so it is not an input error.
 export function toIso(seconds: number): string {

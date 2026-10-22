@@ -2,7 +2,6 @@ import {
   countedScripts,
   findSavedScripts,
   isOpenLimited,
-  modifiedToSeconds,
   savedScriptLimit,
   scriptTypeOf,
   toSavedScript,
@@ -24,24 +23,6 @@ function row(overrides: Partial<SavedScriptRow> = {}): SavedScriptRow {
     ...overrides,
   };
 }
-
-describe('modifiedToSeconds', () => {
-  test('reads numbers above 1e11 as milliseconds and the rest as seconds, in whole seconds', () => {
-    expect(modifiedToSeconds(1_729_987_200)).toBe(1_729_987_200);
-    expect(modifiedToSeconds(1_729_987_200_000)).toBe(1_729_987_200);
-    expect(modifiedToSeconds(1_729_987_200_500)).toBe(1_729_987_200);
-  });
-
-  test('reads a date string, and answers null for what is no time', () => {
-    expect(modifiedToSeconds('2024-10-27T00:00:00.000Z')).toBe(1_729_987_200);
-    expect(modifiedToSeconds('yesterday')).toBeNull();
-    expect(modifiedToSeconds(null)).toBeNull();
-    expect(modifiedToSeconds(Number.NaN)).toBeNull();
-    expect(modifiedToSeconds(0)).toBeNull();
-    expect(modifiedToSeconds(-5)).toBeNull();
-    expect(modifiedToSeconds(1e20)).toBeNull();
-  });
-});
 
 test('scriptTypeOf maps the kinds of the app to the script types of the tools', () => {
   expect(scriptTypeOf('study')).toBe('indicator');

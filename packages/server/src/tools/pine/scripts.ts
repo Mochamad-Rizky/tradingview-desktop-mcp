@@ -1,4 +1,4 @@
-import { toIso } from '../../utils/time.js';
+import { modifiedToSeconds, toIso } from '../../utils/time.js';
 import type { SavedScriptRow } from './page.js';
 
 export type { SavedScriptRow } from './page.js';
@@ -24,29 +24,6 @@ export interface SavedScriptLimitContext {
 // The value of UNLIMITED_FEATURE_LIMIT on the captured web build, for when the page does not give
 // it.
 const UNLIMITED_FEATURE_LIMIT = 99999;
-
-// Numbers above this are milliseconds and the rest seconds, the rule of the time inputs (design
-// spec 5.1).
-const MILLISECONDS_ABOVE = 1e11;
-
-// The last second Date can print with a four-digit year, 9999-12-31T23:59:59Z.
-const MAX_SECONDS = 253_402_300_799;
-
-// The modified time of a saved script in whole Unix seconds, or null for what is no time. The unit
-// of a number is not known, so it follows the rule of the time inputs.
-export function modifiedToSeconds(value: number | string | null): number | null {
-  let seconds: number;
-  if (typeof value === 'number') {
-    seconds = value > MILLISECONDS_ABOVE ? value / 1000 : value;
-  } else if (typeof value === 'string') {
-    seconds = Date.parse(value) / 1000;
-  } else {
-    return null;
-  }
-  return Number.isFinite(seconds) && seconds > 0 && seconds <= MAX_SECONDS
-    ? Math.floor(seconds)
-    : null;
-}
 
 // The script type of a kind of the app: "study" is an indicator, and so is a script without a kind
 // or with one the tools do not know.
