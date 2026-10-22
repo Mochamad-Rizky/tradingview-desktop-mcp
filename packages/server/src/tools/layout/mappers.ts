@@ -169,6 +169,17 @@ export function notCreatedError(): TvMcpError {
   });
 }
 
+// The error of layout_new when too little of the time it allows itself is left to send the creation
+// and wait for its answer: nothing was sent.
+export function outOfTimeError(budgetMs: number): TvMcpError {
+  return new TvMcpError(
+    'TIMEOUT',
+    'Too little of the time layout_new allows itself was left to create the layout, so nothing ' +
+      'was created',
+    { hint: 'Nothing was created, so it is safe to call layout_new again.', details: { budgetMs } },
+  );
+}
+
 // The error of the check of the app saying the account may not save another layout, while the
 // limit the tools read leaves room.
 export function permissionRefusedError(limit: number): PlanLimitError {

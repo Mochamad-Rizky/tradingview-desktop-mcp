@@ -2,17 +2,20 @@ import { z } from 'zod';
 import { readPlanLimits } from '../../../../src/core/tv/plan-limits.js';
 import { READ_ONLY } from '../../../../src/tools/annotations.js';
 import { allTools } from '../../../../src/tools/index.js';
-import { layoutNew, layoutTools } from '../../../../src/tools/layout/index.js';
+import { layoutNew, layoutTools, newLayout } from '../../../../src/tools/layout/index.js';
 import {
+  awaitChartData,
   checkLayoutPermission,
   createLayoutViaApi,
+  loadLayoutInPlace,
   readLayoutState,
   readSavedLayouts,
 } from '../../../../src/tools/layout/page.js';
 import { selectTools } from '../../../../src/tools/registry.js';
 import type { AnyToolDefinition, ToolContext } from '../../../../src/tools/types.js';
 import { watchlistTools } from '../../../../src/tools/watchlist/index.js';
-import { capturingLogger, createTestContext } from '../../../helpers/tool-context.js';
+import { failureOf } from '../../../helpers/failure-of.js';
+import { capturingLogger, createTestContext, testConfig } from '../../../helpers/tool-context.js';
 
 // What the model and the client see of the layout tools: their names, annotations, descriptions and
 // input schemas. The behavior behind them is tested through a server in
@@ -160,4 +163,131 @@ test('layout_new reports the layout it created, unopened, when opening it fails 
     }),
   ]);
   expect(JSON.stringify(lines)).not.toContain('Example Layout');
+});
+
+// The time layout_new allows itself, tested with a clock of its own: a scripted page answers each
+// page function at once and moves the clock on by the time the script says the call took.
+describe('the time layout_new allows itself', () => {
+  interface Scripted {
+    value: unknown;
+    takesMs?: number;
+  }
+
+  // The page answers for a layout created as NEW00001 and opened, each at once unless changed.
+  const script = (changes: [unknown, Scripted][] = []): Map<unknown, Scripted> =>
+    new Map<unknown, Scripted>([
+      [
+        readLayoutState,
+        { value: { signedIn: true, id: 'NEW00001', name: 'Example', unsaved: false } },
+      ],
+      [readSavedLayouts, { value: { layouts: [] } }],
+      [readPlanLimits, { value: { CHART_STORAGE: 5 } }],
+      [checkLayoutPermission, { value: { allowed: true } }],
+      [createLayoutViaApi, { value: { url: 'https://www.tradingview.com/chart/NEW00001/' } }],
+      [loadLayoutInPlace, { value: { ended: 'loaded', reason: null } }],
+      [awaitChartData, { value: { ready: true } }],
+      ...changes,
+    ]);
+
+  function scriptedRun(answers: Map<unknown, Scripted>, callTimeoutMs: number) {
+    const clock = { now: 0 };
+    const asked: { fn: unknown; args: unknown[] }[] = [];
+    const answer = (fn: unknown, args: unknown[]): Promise<unknown> => {
+      asked.push({ fn, args });
+      const scripted = answers.get(fn);
+      if (scripted === undefined) {
+        return Promise.reject(new Error('Unexpected page function'));
+      }
+      clock.now += scripted.takesMs ?? 0;
+      return Promise.resolve(scripted.value);
+    };
+    const ctx = {
+      ...createTestContext({ config: testConfig({ callTimeoutMs }) }),
+      connection: {
+        chartPage: () => Promise.resolve({ bridge: { evaluate: answer, evaluateWithLib: answer } }),
+      },
+    } as unknown as ToolContext;
+    const argsOf = (fn: unknown): unknown[][] =>
+      asked.filter((call) => call.fn === fn).map(({ args }) => args);
+    return { clock, ctx, argsOf };
+  }
+
+  // A budget of 4800 ms and a call timeout of 2600 ms make every page wait 1600 ms: what the call
+  // timeout leaves a page call, and a third of the budget.
+  const BUDGET_MS = 4800;
+  const CALL_TIMEOUT_MS = 2600;
+
+  test('answers TIMEOUT, and creates nothing, when less than one page wait of its time is left before the creation', async () => {
+    const run = scriptedRun(
+      script([[readSavedLayouts, { value: { layouts: [] }, takesMs: 3300 }]]),
+      CALL_TIMEOUT_MS,
+    );
+
+    const error = await failureOf(
+      newLayout({ name: 'Example' }, run.ctx, BUDGET_MS, () => run.clock.now),
+    );
+
+    expect(error.toPayload()).toEqual({
+      code: 'TIMEOUT',
+      message: expect.stringContaining('nothing was created') as string,
+      hint: expect.stringContaining('safe to call layout_new again') as string,
+      details: { budgetMs: BUDGET_MS },
+    });
+    expect(run.argsOf(createLayoutViaApi)).toEqual([]);
+  });
+
+  test('gives the opening of the created layout only what is left of its time', async () => {
+    const run = scriptedRun(
+      script([
+        [
+          createLayoutViaApi,
+          { value: { url: 'https://www.tradingview.com/chart/NEW00001/' }, takesMs: 3500 },
+        ],
+      ]),
+      CALL_TIMEOUT_MS,
+    );
+
+    const output = await newLayout({ name: 'Example' }, run.ctx, BUDGET_MS, () => run.clock.now);
+
+    expect(output.data).toEqual({ id: 'NEW00001', name: 'Example', opened: true });
+    // 1300 ms of the budget were left: less than a page wait.
+    expect(run.argsOf(loadLayoutInPlace)).toEqual([['NEW00001', 1300, false]]);
+    const [dataWait] = run.argsOf(awaitChartData);
+    expect(dataWait?.[0]).toBeLessThanOrEqual(1300);
+  });
+
+  test('reports the created layout unopened, and loads nothing, when no time is left to open it', async () => {
+    const run = scriptedRun(
+      script([
+        [
+          createLayoutViaApi,
+          { value: { url: 'https://www.tradingview.com/chart/NEW00001/' }, takesMs: 4000 },
+        ],
+      ]),
+      CALL_TIMEOUT_MS,
+    );
+
+    const output = await newLayout({ name: 'Example' }, run.ctx, BUDGET_MS, () => run.clock.now);
+
+    expect(output).toEqual({
+      data: { id: 'NEW00001', name: 'Example', opened: false },
+      via: 'internal',
+      warnings: [
+        expect.stringMatching(
+          /^TradingView created the layout NEW00001 but did not open it \(no time was left to open it\)\. Open it with layout_switch/,
+        ),
+      ],
+    });
+    expect(run.argsOf(loadLayoutInPlace)).toEqual([]);
+  });
+
+  test('keeps every page wait of layout_new to a third of its 45 s, whatever the call timeout', async () => {
+    const run = scriptedRun(script(), 120_000);
+
+    await layoutNew.handler({ name: 'Example' }, run.ctx);
+
+    expect(run.argsOf(readSavedLayouts)).toEqual([[15_000]]);
+    expect(run.argsOf(checkLayoutPermission)).toEqual([[15_000]]);
+    expect(run.argsOf(createLayoutViaApi)).toEqual([['Example', 15_000]]);
+  });
 });

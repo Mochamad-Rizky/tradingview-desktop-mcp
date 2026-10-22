@@ -5,7 +5,7 @@ import { getPlanLimits, inPlanLimitedTurn, requireBelowLimit } from '../../core/
 import { pollUntil } from '../../utils/poll.js';
 import { READ_ONLY } from '../annotations.js';
 import { pageWaitMs } from '../chart/strategies.js';
-import { defineTool, type AnyToolDefinition, type ToolOutput } from '../types.js';
+import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import {
   CHART_STORAGE_HINT,
   dataNotReadyWarning,
@@ -16,6 +16,7 @@ import {
   notCreatedError,
   notOpenedError,
   notOpenedWarning,
+  outOfTimeError,
   overLimitError,
   permissionRefusedError,
   permissionUnknownError,
@@ -53,8 +54,10 @@ import {
 // dialog does (design spec 5.3, rule 3). A failure TradingView meets after that, a server error say,
 // it shows in a dialog of its own: no check before can foresee it. A layout layout_new created is
 // reported as created even when it could not be opened, so that the client does not create it
-// twice. layout_switch takes its turn as well, and refuses a layout beyond the limit of the plan,
-// which TradingView would answer with its paywall. Layout names go to the client and into no log.
+// twice, and the call keeps to a time below what common clients wait for one, so that none gives up
+// on it after the creation and tries again. layout_switch takes its turn as well, and refuses a
+// layout beyond the limit of the plan, which TradingView would answer with its paywall. Layout names
+// go to the client and into no log.
 
 // The longest name and layout id the schemas take. A name is checked against the limit of the
 // dialog of TradingView once it is trimmed (layoutNameOf).
@@ -65,6 +68,12 @@ const POLL_INTERVAL_MS = 100;
 // The least time the chart of a layout that was loaded is given to report its data, when the call
 // timeout leaves that much to a page call.
 const MIN_DATA_WAIT_MS = 1500;
+// The longest layout_new takes from its start: below the 60 s a common MCP client waits for a call,
+// since a client that gives up after the layout was created would call again and create another.
+const NEW_LAYOUT_BUDGET_MS = 45_000;
+// Less time than this left to open a created layout counts as none: a load the call could not wait
+// for might switch the layout after the call reported it unopened.
+const MIN_OPEN_MS = 1000;
 
 // Switching to a layout, or to a new one, loads it in place of the current layout, which discards its
 // unsaved changes (with confirm: true); doing it again undoes nothing of that.
@@ -92,10 +101,20 @@ type OpenOutcome =
   | { status: 'unopened'; reason: string | null }
   | { status: 'unsaved'; unsaved: true | null };
 
+// How a load of a layout is waited for: waitMs bounds each page call and the wait for the switch,
+// limitMs the whole of it, data included (Infinity when only waitMs counts), and confirm says whether
+// unsaved changes of the layout on the chart may be discarded.
+interface OpenOptions {
+  waitMs: number;
+  limitMs: number;
+  confirm: boolean;
+}
+
 // Loads the saved layout `id` in place and waits, within waitMs, until the layout on the chart is it
 // (polled with plain page functions), and then until its chart has its data, which gets the rest of
-// the wait and at least MIN_DATA_WAIT_MS, but never more than waitMs: a page call that waits longer
-// than that would outlast the call timeout of the bridge. The data is waited for only once the loader
+// the wait and at least MIN_DATA_WAIT_MS, but never more than waitMs, since a page call that waits
+// longer would outlast the call timeout of the bridge, nor more than limitMs allows. The data is
+// waited for only once the loader
 // reported that the content of the layout is in place: before that, the chart may still be the one
 // of the layout before, so a layout switched to without that report comes with a warning instead. A
 // load that ended, loaded or failed, is looked at once: the app switches the layout before its loader
@@ -105,11 +124,12 @@ type OpenOutcome =
 async function openLayout(
   page: PageHandle,
   id: string,
-  waitMs: number,
-  confirm: boolean,
+  { waitMs, limitMs, confirm }: OpenOptions,
 ): Promise<OpenOutcome> {
   const startedAt = performance.now();
-  const left = (): number => Math.max(waitMs - (performance.now() - startedAt), 0);
+  const elapsed = (): number => performance.now() - startedAt;
+  const left = (): number => Math.max(waitMs - elapsed(), 0);
+  const limitLeft = (): number => Math.max(limitMs - elapsed(), 0);
   let load: LoadOutcome;
   try {
     load = await page.bridge.evaluate(loadLayoutInPlace, [id, waitMs, confirm]);
@@ -131,7 +151,7 @@ async function openLayout(
   if (load.ended !== 'loaded') {
     return { status: 'opened', name, warnings: [unfinishedLoadWarning(id)] };
   }
-  const dataWaitMs = Math.round(Math.min(Math.max(left(), MIN_DATA_WAIT_MS), waitMs));
+  const dataWaitMs = Math.round(Math.min(Math.max(left(), MIN_DATA_WAIT_MS), waitMs, limitLeft()));
   const { ready } = await page.bridge.evaluate(awaitChartData, [dataWaitMs]);
   return {
     status: 'opened',
@@ -208,71 +228,101 @@ export const layoutNew = defineTool({
       ),
   },
   annotations: DESTRUCTIVE,
-  async handler({ name, confirm }, ctx) {
-    const wanted = layoutNameOf(name);
-    const page = await ctx.connection.chartPage();
-    const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
-    // From the checks to the end of the creation and of the load, the other actions on plan limits
-    // wait.
-    return inPlanLimitedTurn(async (): Promise<ToolOutput<NewLayout>> => {
-      const state = await page.bridge.evaluate(readLayoutState, []);
-      if (!state.signedIn) {
-        throw signedOutError();
-      }
-      if (state.unsaved !== false && confirm !== true) {
-        throw unsavedChangesError('new', state.unsaved);
-      }
-      const saved = await page.bridge.evaluate(readSavedLayouts, [waitMs]);
-      const { CHART_STORAGE: limit = null } = await getPlanLimits(page, ['CHART_STORAGE']);
-      requireBelowLimit('CHART_STORAGE', saved.layouts.length, limit, CHART_STORAGE_HINT);
-      const permission = await page.bridge.evaluateWithLib(checkLayoutPermission, [waitMs]);
-      if ('failed' in permission) {
-        throw permissionUnknownError(permission.failed);
-      }
-      if (permission.allowed === false) {
-        // requireBelowLimit has refused a limit that is not a number.
-        throw permissionRefusedError(Number(limit));
-      }
-      const created = await page.bridge.evaluateWithLib(createLayoutViaApi, [wanted, waitMs]);
-      if (created.url === null) {
-        throw notCreatedError();
-      }
-      const id = layoutIdFromUrl(created.url);
-      if (id === null) {
-        return {
-          data: { id, name: wanted, opened: false },
-          via: 'internal',
-          warnings: [NO_ID_WARNING],
-        };
-      }
-      let outcome: OpenOutcome;
-      try {
-        outcome = await openLayout(page, id, waitMs, confirm === true);
-      } catch (error) {
-        // The layout exists: whatever fails while it is opened, the call reports it created, since a
-        // failed call invites a retry, which would create another layout. An unexpected error is
-        // logged, as the registry would log it, and its message kept from the client.
-        if (!isTvMcpError(error)) {
-          ctx.logger.error(
-            { err: error, tool: 'layout_new' },
-            'Opening a created layout failed with an unexpected error',
-          );
-        }
-        outcome = { status: 'unopened', reason: isTvMcpError(error) ? error.message : null };
-      }
-      return {
-        data: { id, name: wanted, opened: outcome.status === 'opened' },
-        via: 'internal',
-        warnings:
-          outcome.status === 'opened'
-            ? outcome.warnings
-            : outcome.status === 'unsaved'
-              ? [unsavedNotOpenedWarning(id, outcome.unsaved)]
-              : [notOpenedWarning(id, outcome.reason)],
-      };
-    });
-  },
+  handler: (input, ctx) => newLayout(input, ctx),
 });
+
+// What layout_new does, within budgetMs from its start, timed by now (a test gives its own). Each
+// page call waits at most a third of the budget, so that the checks and the creation fit in it
+// whatever the call timeout. The creation is sent only while a page wait of the budget is left, and
+// the opening of the new layout gets what is left after it.
+export async function newLayout(
+  { name, confirm }: { name: string; confirm?: boolean | undefined },
+  ctx: ToolContext,
+  budgetMs: number = NEW_LAYOUT_BUDGET_MS,
+  now: () => number = () => performance.now(),
+): Promise<ToolOutput<NewLayout>> {
+  const startedAt = now();
+  const remainingMs = (): number => budgetMs - (now() - startedAt);
+  const wanted = layoutNameOf(name);
+  const page = await ctx.connection.chartPage();
+  const waitMs = Math.min(pageWaitMs(ctx.config.callTimeoutMs), Math.floor(budgetMs / 3));
+  // From the checks to the end of the creation and of the load, the other actions on plan limits
+  // wait.
+  return inPlanLimitedTurn(async (): Promise<ToolOutput<NewLayout>> => {
+    const state = await page.bridge.evaluate(readLayoutState, []);
+    if (!state.signedIn) {
+      throw signedOutError();
+    }
+    if (state.unsaved !== false && confirm !== true) {
+      throw unsavedChangesError('new', state.unsaved);
+    }
+    const saved = await page.bridge.evaluate(readSavedLayouts, [waitMs]);
+    const { CHART_STORAGE: limit = null } = await getPlanLimits(page, ['CHART_STORAGE']);
+    requireBelowLimit('CHART_STORAGE', saved.layouts.length, limit, CHART_STORAGE_HINT);
+    const permission = await page.bridge.evaluateWithLib(checkLayoutPermission, [waitMs]);
+    if ('failed' in permission) {
+      throw permissionUnknownError(permission.failed);
+    }
+    if (permission.allowed === false) {
+      // requireBelowLimit has refused a limit that is not a number.
+      throw permissionRefusedError(Number(limit));
+    }
+    // A creation whose answer the call could not wait for might land after the call failed, and a
+    // client would create the layout again.
+    if (remainingMs() < waitMs) {
+      throw outOfTimeError(budgetMs);
+    }
+    const created = await page.bridge.evaluateWithLib(createLayoutViaApi, [wanted, waitMs]);
+    if (created.url === null) {
+      throw notCreatedError();
+    }
+    const id = layoutIdFromUrl(created.url);
+    if (id === null) {
+      return {
+        data: { id, name: wanted, opened: false },
+        via: 'internal',
+        warnings: [NO_ID_WARNING],
+      };
+    }
+    const openMs = Math.floor(remainingMs());
+    if (openMs < MIN_OPEN_MS) {
+      return {
+        data: { id, name: wanted, opened: false },
+        via: 'internal',
+        warnings: [notOpenedWarning(id, 'no time was left to open it')],
+      };
+    }
+    let outcome: OpenOutcome;
+    try {
+      outcome = await openLayout(page, id, {
+        waitMs: Math.min(waitMs, openMs),
+        limitMs: openMs,
+        confirm: confirm === true,
+      });
+    } catch (error) {
+      // The layout exists: whatever fails while it is opened, the call reports it created, since a
+      // failed call invites a retry, which would create another layout. An unexpected error is
+      // logged, as the registry would log it, and its message kept from the client.
+      if (!isTvMcpError(error)) {
+        ctx.logger.error(
+          { err: error, tool: 'layout_new' },
+          'Opening a created layout failed with an unexpected error',
+        );
+      }
+      outcome = { status: 'unopened', reason: isTvMcpError(error) ? error.message : null };
+    }
+    return {
+      data: { id, name: wanted, opened: outcome.status === 'opened' },
+      via: 'internal',
+      warnings:
+        outcome.status === 'opened'
+          ? outcome.warnings
+          : outcome.status === 'unsaved'
+            ? [unsavedNotOpenedWarning(id, outcome.unsaved)]
+            : [notOpenedWarning(id, outcome.reason)],
+    };
+  });
+}
 
 export const layoutSwitch = defineTool({
   name: 'layout_switch',
@@ -326,7 +376,11 @@ export const layoutSwitch = defineTool({
       if (state.unsaved !== false && confirm !== true) {
         throw unsavedChangesError('switch', state.unsaved);
       }
-      const outcome = await openLayout(page, layoutId, waitMs, confirm === true);
+      const outcome = await openLayout(page, layoutId, {
+        waitMs,
+        limitMs: Infinity,
+        confirm: confirm === true,
+      });
       if (outcome.status === 'unsaved') {
         throw unsavedChangesError('switch', outcome.unsaved);
       }
