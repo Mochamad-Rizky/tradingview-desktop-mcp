@@ -3,6 +3,7 @@ import { createPageBridge, type PageBridge } from '../../../../src/core/tv/page-
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import {
   deniedSurface,
+  EVAL_DENIED_NAMES,
   EVAL_DENYLIST,
   EVAL_MAX_RESULT_BYTES,
   EVAL_WITHHELD_GLOBALS,
@@ -19,12 +20,35 @@ import { createFakeDomWindow, fakeElement } from '../../../helpers/fake-tv/dom.j
 // directly, which is what the coverage of the module measures; the two answers must agree.
 
 describe('EVAL_DENYLIST', () => {
-  test('is frozen, and every pattern ignores case', () => {
+  test('is frozen, and every pattern ignores case but the one that reads the capitals of a name', () => {
     expect(Object.isFrozen(EVAL_DENYLIST)).toBe(true);
     expect(EVAL_DENYLIST.length).toBeGreaterThan(0);
-    for (const pattern of EVAL_DENYLIST) {
-      expect(pattern.flags, pattern.source).toContain('i');
-    }
+    const caseSensitive = EVAL_DENYLIST.filter(({ flags }) => !flags.includes('i'));
+    // signIn inside a camelCase name, such as showSignInDialog, is told by its capital S.
+    expect(caseSensitive.map(({ source }) => source)).toEqual(['Sign_?[Ii]n']);
+    expect(Object.isFrozen(EVAL_DENIED_NAMES)).toBe(true);
+  });
+
+  // Forms that hide a denied name from a plain reading of the text.
+  test.each([
+    ['tvd', "window['\\u{00000054}VD']"],
+    ['tvd', 'window["T\\\r\nVD"]'],
+    ['tvd', 'window["T\\\rVD"]'],
+    ['tvd', 'window["T\\\nVD"]'],
+    ['tvd', 'window["T\\\u2028VD"]'],
+    ['tvd', 'window["T\\\u2029VD"]'],
+    ['tvd', "window['T'.concat('VD')]"],
+    ['tvd', "window['T' . concat ('VD')]"],
+    ['cookies', 'document["coo".concat("kie")]'],
+    ['storage', "window['indexed'.concat('DB')]"],
+    ['storage', 'window[`${"local"}${"Storage"}`]'],
+    ['credentials', "bridge['get'.concat('Credentials')]()"],
+    ['credentials', 'showSignInDialog()'],
+    ['credentials', 'openSigninForm()'],
+    ['network', 'import.meta'],
+    ['network', 'import'],
+  ])('refuses %s hidden in %j', (category, expression) => {
+    expect(deniedSurface(expression)?.category).toBe(category);
   });
 
   // One case of every entry, and the forms that hide it: spacing, bracket access, quotes, strings

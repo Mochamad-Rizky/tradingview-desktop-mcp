@@ -18,15 +18,19 @@ export type EvalDeniedCategory =
 
 // A name in a pattern below is a whole word unless it is said otherwise: no letter, digit or $
 // next to it, while an underscore may be, so that __TVD__ and user_id count.
+// The names in `names` are looked for in the squashed reading of the text as they are written in
+// JavaScript, capitals and all (see readings).
 const DENIED: readonly {
   category: EvalDeniedCategory;
   surface: string;
   patterns: readonly RegExp[];
+  names?: readonly string[];
 }[] = [
   {
     category: 'tvd',
     surface: 'the desktop bridge of TradingView (TVD), which holds the credentials of the user',
     patterns: [/(?<![a-z0-9$])tvd(?![a-z0-9$])/i],
+    names: ['TVD'],
   },
   {
     category: 'identity',
@@ -37,23 +41,29 @@ const DENIED: readonly {
     category: 'cookies',
     surface: 'the cookies of the page',
     patterns: [/cookie/i],
+    names: ['cookie'],
   },
   {
     category: 'storage',
     surface: 'the storage of the page (localStorage, sessionStorage, indexedDB)',
     patterns: [/localstorage/i, /sessionstorage/i, /indexeddb/i],
+    names: ['localStorage', 'sessionStorage', 'indexedDB'],
   },
   {
     category: 'credentials',
     surface: 'credentials (passwords, tokens, signing in and authentication)',
-    // auth, but not author or authority: authorization and authorise still count.
+    // auth, but not author or authority: authorization and authorise still count. A sign-in inside
+    // a camelCase name, such as showSignInDialog, is told by its capital S, the one pattern that
+    // does not ignore case.
     patterns: [
       /credential/i,
       /(?<![a-z0-9$])sign_?in/i,
+      /Sign_?[Ii]n/,
       /passw(?:or)?d/i,
       /token/i,
       /auth(?!or(?!i[sz]))/i,
     ],
+    names: ['getCredentials', 'setCredentials', 'insertCredentialsText'],
   },
   {
     category: 'network',
@@ -65,7 +75,7 @@ const DENIED: readonly {
       /websocket/i,
       /eventsource/i,
       /sendbeacon/i,
-      /(?<![a-z0-9$])import\s*\(/i,
+      /(?<![a-z0-9$])import(?![a-z0-9$])/i,
     ],
   },
   {
@@ -80,10 +90,17 @@ const DENIED: readonly {
   },
 ];
 
-// What ui_evaluate refuses, as one list of patterns, each matched ignoring case against the text
-// of an expression read three ways (see deniedSurface). Frozen, so that no caller can shorten it.
+// What ui_evaluate refuses, as one list of patterns, each matched against the text of an expression
+// read three ways (see deniedSurface), all of them ignoring case but the one for a sign-in inside a
+// camelCase name. Frozen, so that no caller can shorten it.
 export const EVAL_DENYLIST: readonly RegExp[] = Object.freeze(
   DENIED.flatMap(({ patterns }) => patterns),
+);
+
+// The names of the riskiest surfaces, which ui_evaluate also looks for in the squashed reading of
+// an expression, as JavaScript writes them (see deniedSurface). Frozen as well.
+export const EVAL_DENIED_NAMES: readonly string[] = Object.freeze(
+  DENIED.flatMap(({ names }) => names ?? []),
 );
 
 // The globals of the page whose objects never come back in a value of ui_evaluate: the user object,
@@ -113,24 +130,37 @@ function fromCodePoint(hex: string): string {
   return code <= 0x10ffff ? String.fromCodePoint(code) : '';
 }
 
-// The text of an expression, read three ways, which each pattern is matched against: as it is,
-// with its escapes written as the characters they stand for (\x54, T and \u{54} are T, in a
-// string as in a name, and any other escaped character is itself), and that with the strings that
-// + joins written as one ('T' + 'VD' is 'TVD', comments between them too) and with a string put
-// into a template as its text. The first reading keeps every word of the expression, since writing
-// out the escapes or joining strings could hide one.
-function readings(expression: string): string[] {
+// The text of an expression, read the ways the denylist looks at it:
+// - as it is, which keeps every word of the expression, since the other readings could hide one;
+// - decoded: its escapes written as the characters they stand for (\x54, \u0054 and \u{0054},
+//   with any number of zeros, are T, in a string as in a name; an octal escape likewise; a backslash
+//   that ends a line inside a string, before a CR, an LF, both, or a line or paragraph separator,
+//   stands for nothing; any other escaped character is itself);
+// - joined: the decoded text with the strings that + joins written as one ('T' + 'VD' is 'TVD',
+//   comments between them too) and a string put into a template as its text;
+// - squashed: the decoded text without white space, quotes, backticks, +, brackets, the ${ and }
+//   of templates and .concat(, in which only the names of the riskiest surfaces are looked for:
+//   'T'.concat('VD') reads TVD there.
+function readings(expression: string): {
+  texts: [string, string, string];
+  squashed: string;
+} {
   const decoded = expression
-    .replace(/\\u\{([0-9a-f]{1,6})\}/gi, (_match, hex: string) => fromCodePoint(hex))
+    .replace(/\\u\{0*([0-9a-f]{1,6})\}/gi, (_match, hex: string) => fromCodePoint(hex))
     .replace(/\\u([0-9a-f]{4})/gi, (_match, hex: string) => fromCodePoint(hex))
     .replace(/\\x([0-9a-f]{2})/gi, (_match, hex: string) => fromCodePoint(hex))
     .replace(/\\([0-7]{1,3})/g, (_match, octal: string) =>
       String.fromCharCode(Number.parseInt(octal, 8) & 0xff),
     )
-    .replace(/\\\r?\n/g, '')
+    .replace(/\\(?:\r\n|[\r\n\u2028\u2029])/g, '')
     .replace(/\\([\s\S])/g, '$1');
   const joined = decoded.replace(/\$\{\s*(['"`])([^'"`]*)\1\s*\}/g, '$2').replace(SEAM, '');
-  return [expression, decoded, joined];
+  const squashed = decoded
+    .replace(/\s+/g, '')
+    .replace(/\.concat\(/g, '')
+    .replace(/\$\{/g, '')
+    .replace(/['"`+[\]}]/g, '');
+  return { texts: [expression, decoded, joined], squashed };
 }
 
 // The surface an expression names that ui_evaluate refuses, by its category and in words, or null
@@ -139,9 +169,12 @@ function readings(expression: string): string[] {
 export function deniedSurface(
   expression: string,
 ): { category: EvalDeniedCategory; surface: string } | null {
-  const texts = readings(expression);
-  for (const { category, surface, patterns } of DENIED) {
-    if (patterns.some((pattern) => texts.some((text) => pattern.test(text)))) {
+  const { texts, squashed } = readings(expression);
+  for (const { category, surface, patterns, names = [] } of DENIED) {
+    if (
+      patterns.some((pattern) => texts.some((text) => pattern.test(text))) ||
+      names.some((name) => squashed.includes(name))
+    ) {
       return { category, surface };
     }
   }
@@ -166,8 +199,9 @@ export const uiEvaluate = defineTool({
     'storage of the page (localStorage, sessionStorage, indexedDB), credentials (passwords, ' +
     'tokens, signing in, authentication), requests to the network (fetch, XMLHttpRequest, ' +
     'WebSocket, EventSource, sendBeacon, import()) or Node.js (require, process, child_process, ' +
-    'electron), in any spacing, bracket, quote, joined-string or escaped form. The denylist is ' +
-    'best effort: it reads the text of the expression, and a name built while the code runs gets ' +
+    'electron), in the spacing, bracket, quote, joined-string, concat and escaped forms it ' +
+    'knows. The denylist is best effort: it reads the text of the expression, and a name built ' +
+    'in other ways while the code runs gets ' +
     'past it, so the user object, the desktop bridge and the storage of the page never come back ' +
     'in a value either, whatever the code reached them by: they are [withheld]. Returns value, ' +
     'the result as JSON (undefined becomes null; a function or a DOM node its type, such as ' +
