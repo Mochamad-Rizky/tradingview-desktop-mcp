@@ -38,6 +38,8 @@ export const uiTypeText = defineTool({
     target: targetInput(),
   },
   annotations: ACTS,
+  // The text can be the user's own words: it stays out of the tool events.
+  redactArgs: true,
   async handler({ text, target }, ctx) {
     const page = await uiTargetPage(ctx, target);
     await typeText(page, text);

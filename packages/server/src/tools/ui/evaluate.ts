@@ -227,6 +227,8 @@ export const uiEvaluate = defineTool({
     idempotentHint: false,
     openWorldHint: false,
   },
+  // The expression stays out of the tool events, as it stays out of the logs.
+  redactArgs: true,
   async handler({ expression }, ctx) {
     if (!ctx.config.allowEval) {
       throw new TvMcpError(

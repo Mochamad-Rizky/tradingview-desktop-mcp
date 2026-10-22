@@ -435,6 +435,30 @@ test('registry emits start and end events with the error code', async () => {
   expect(Date.parse(start?.at ?? '')).not.toBeNaN();
 });
 
+test('registry keeps the arguments of a tool that redacts them out of its events', async () => {
+  const { ctx, events } = harness();
+  const secretive = defineTool({
+    name: 'ui_secret',
+    domain: 'ui',
+    title: 'Secret',
+    description: 'Takes what nobody else should see.',
+    inputSchema: { text: z.string().describe('Something private.') },
+    annotations: {},
+    redactArgs: true,
+    handler: () => Promise.resolve({ data: null }),
+  });
+  const registry = createToolRegistry([secretive, failingTool(notAvailable)], ctx);
+
+  await registry.call('ui_secret', { text: 'private words' }, 'mcp');
+  await registry.call('chart_fail', { reason: 'test' }, 'mcp');
+
+  expect(events.filter(({ phase }) => phase === 'start').map(({ args }) => args)).toEqual([
+    { redacted: true },
+    { reason: 'test' },
+  ]);
+  expect(JSON.stringify(events)).not.toContain('private words');
+});
+
 test('registry reports a successful call as ok, with its own id per call', async () => {
   const { ctx, events, inputs } = harness();
   const registry = createToolRegistry([echoTool(inputs)], ctx);

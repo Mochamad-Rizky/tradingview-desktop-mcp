@@ -1,6 +1,7 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Config } from '../../../src/config/schema.js';
+import type { ToolCallEvent } from '../../../src/core/events.js';
 import type { Logger } from '../../../src/core/logger.js';
 import {
   describeElement,
@@ -174,6 +175,8 @@ interface HarnessOptions {
 interface Harness {
   client: Client;
   app: FakeCdpServer;
+  // The tool events the server emitted, the backlog the dashboard reads.
+  events: () => ToolCallEvent[];
 }
 
 // The real server over the real adapters, against a fake debug port.
@@ -193,7 +196,7 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
     logger: options.logger ?? quietLogger,
   });
   cleanups.push(() => ctx.connection.close());
-  return { client: await connect(server), app };
+  return { client: await connect(server), app, events: () => ctx.events.recent() };
 }
 
 interface Envelope {
@@ -1872,6 +1875,27 @@ describe('ui_evaluate', () => {
 
     expect(dataOf(result)).toEqual({ value: ['[withheld]', '[withheld]'], truncated: false });
     expect(JSON.stringify(result)).not.toContain('synthetic-user');
+  });
+
+  test('ui_evaluate and ui_type_text keep what they were given out of the tool events', async () => {
+    const field = fakeElement({ tag: 'input', id: 'search' });
+    const { client, events } = await startHarness({
+      config: ALLOW_EVAL,
+      win: chartPage([field], { focus: field }),
+    });
+
+    await callTool(client, 'ui_evaluate', { expression: '"marker-of-the-code"' });
+    await callTool(client, 'ui_type_text', { text: 'marker-of-the-text' });
+    await callTool(client, 'ui_press_key', { key: 'Escape' });
+
+    const starts = events().filter(({ phase }) => phase === 'start');
+    expect(starts.map(({ tool, args }) => [tool, args])).toEqual([
+      ['ui_evaluate', { redacted: true }],
+      ['ui_type_text', { redacted: true }],
+      // A tool that redacts nothing shows its arguments, with the defaults the SDK filled in.
+      ['ui_press_key', { key: 'Escape', target: 'chart' }],
+    ]);
+    expect(JSON.stringify(events())).not.toMatch(/marker-of-the-(code|text)/);
   });
 
   test('ui_evaluate logs neither the expression nor its value', async () => {

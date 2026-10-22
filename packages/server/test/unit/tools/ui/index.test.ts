@@ -76,6 +76,10 @@ test('ui_type_text, ui_press_key, ui_fullscreen and ui_evaluate can change what 
   });
 });
 
+test('ui_evaluate and ui_type_text keep their arguments out of the tool events, and only they do', () => {
+  expect(uiTools.filter((tool) => tool.redactArgs === true)).toEqual([uiTypeText, uiEvaluate]);
+});
+
 test('ui_open_panel changes the interface, and asking twice changes nothing more', () => {
   expect(uiOpenPanel.annotations).toEqual({
     readOnlyHint: false,

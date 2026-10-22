@@ -265,7 +265,7 @@ export function createToolRegistry(
       origin,
       phase: 'start',
       at: new Date().toISOString(),
-      args: eventArgs(args),
+      args: byName.get(name)?.redactArgs === true ? { redacted: true } : eventArgs(args),
     });
 
     let result: CallToolResult;
