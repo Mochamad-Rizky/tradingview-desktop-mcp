@@ -249,6 +249,17 @@ test('registers the page functions, so the checks below are not vacuous', () => 
     expect(Object.keys(pageLibFunctions)).toContain(name);
   }
   for (const name of [
+    'readLayoutState',
+    'readSavedLayouts',
+    'loadLayoutInPlace',
+    'awaitChartData',
+  ]) {
+    expect(Object.keys(pageFunctions)).toContain(name);
+  }
+  for (const name of ['checkLayoutPermission', 'createLayoutViaApi']) {
+    expect(Object.keys(pageLibFunctions)).toContain(name);
+  }
+  for (const name of [
     'readPineEditorState',
     'openPineEditor',
     'closePineEditor',
@@ -449,6 +460,22 @@ describe('the checks catch what they are meant to', () => {
       return found.includes(null) || services.includes(null) ? null : formatSymbol('x');
     }
     const source = callsModuleHelperAfterWatchlistLookup.toString();
+
+    expect(await referenceErrorsIn(libCall(source))).toEqual([
+      'formatSymbol is not defined',
+      'formatSymbol is not defined',
+    ]);
+  });
+
+  test('the default fake windows carry the layout exports, so a lib function runs past its lookups', async () => {
+    // Looks the layout exports up the way the layout tools do, then calls a helper of its module.
+    function callsModuleHelperAfterLayoutLookup(win: TvWindow, lib: PageLib): string | null {
+      const found = ['createNewChart', 'hasPermissionsToCreateNewChart'].map((name) =>
+        lib.findExport(name),
+      );
+      return found.includes(null) ? null : formatSymbol('x');
+    }
+    const source = callsModuleHelperAfterLayoutLookup.toString();
 
     expect(await referenceErrorsIn(libCall(source))).toEqual([
       'formatSymbol is not defined',

@@ -43,6 +43,14 @@ import {
   removeStudy,
   setStudyVisibility,
 } from '../../tools/indicator/page.js';
+import {
+  awaitChartData,
+  checkLayoutPermission,
+  createLayoutViaApi,
+  loadLayoutInPlace,
+  readLayoutState,
+  readSavedLayouts,
+} from '../../tools/layout/page.js';
 import { readPineGraphics } from '../../tools/pine/outputs-page.js';
 import {
   addPineScriptToChart,
@@ -89,6 +97,7 @@ import type { TvWindow } from './tv-window.js';
 // Called with the window and their arguments: the PageFunctions that evaluate runs, and
 // createPageLib, which the bridge calls with the window alone to build the page library.
 export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
+  awaitChartData,
   createPageLib,
   describeElement,
   describeFocusedElement,
@@ -96,6 +105,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   evaluateExpression,
   findElements,
   insertStudy,
+  loadLayoutInPlace,
   probeCapabilities,
   readAppInfo,
   readAddedPineStudy,
@@ -112,8 +122,10 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readDrawings,
   readFullscreen,
   readHistory,
+  readLayoutState,
   readPanelControls,
   readPineGraphics,
+  readSavedLayouts,
   readStrategyReport,
   readStudies,
   readStudyValues,
@@ -144,10 +156,12 @@ export const pageLibFunctions: Record<
   addPineScriptToChart,
   changePineEditor,
   changeWatchlistViaApi,
+  checkLayoutPermission,
   closePineEditor,
   compilePineSource,
   createAlertViaApi,
   createDrawing,
+  createLayoutViaApi,
   deleteAlertsViaApi,
   openPineEditor,
   readAlertContext,

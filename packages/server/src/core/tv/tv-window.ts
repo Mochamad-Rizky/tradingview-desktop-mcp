@@ -77,6 +77,28 @@ export interface TradingViewApiLike {
   // never saved has no id, and page code checks for a text.
   layoutName(): unknown;
   layoutId(): unknown;
+  // The saved layouts of the account: the request the layouts menu of the app sends (a GET of
+  // /my-charts/), resolving with the records of the server (notes of Plan 3, section 1.1). A record
+  // has url (the short id of the layout), name, modified_iso (Unix seconds, despite its name) and
+  // over_limit for a layout beyond the CHART_STORAGE limit of the plan, with more fields next to
+  // them. Typed loosely: page code checks each field. A build may not have it.
+  getSavedCharts?(): Promise<unknown>;
+  // Whether the layout on the chart has unsaved changes, as a read-only watched value of a boolean
+  // (notes of Plan 3, section 1.3). A build may not have it.
+  hasChartChanges?(): { value(): unknown };
+  // Loads the saved layout whose url is given (notes of Plan 3, section 1.3). With openInNewTab
+  // false it loads it in place, without navigating, and with skipConfirm true it discards unsaved
+  // changes instead of asking about them in a dialog; it resolves once the content of the layout is
+  // in place, and rejects when the layout was not opened. A url the app does not list loads nothing
+  // and resolves all the same, and a layout over the limit of the plan opens the paywall. Page code
+  // calls it with (url, false, true) only. Its neighbors loadChartFromServer, which asks about
+  // unsaved changes in a dialog, and createNewLayout, which rewrites the URL of the page without
+  // loading the new layout, are left out on purpose. A build may not have it.
+  loadLayoutFromServerByLayoutId?(
+    url: string,
+    openInNewTab: boolean,
+    skipConfirm: boolean,
+  ): Promise<unknown>;
   // Whether the app is connected to the TradingView data servers. The app counts as ready once
   // this is true.
   isConnected(): boolean;
@@ -188,6 +210,10 @@ export interface ChartWidgetApiLike {
   setChartType(type: number): unknown;
   // Throws "Not implemented" on the observed build. The core time scale sets ranges instead.
   setVisibleRange(range: { from: number; to: number }): unknown;
+  // Called without an argument, a promise that resolves with true once the main series has data,
+  // at once when it has it (notes of Plan 3, section 1.3). It never settles for a symbol the app
+  // cannot resolve. The form with a callback is deprecated and left out. A build may not have it.
+  dataReady?(): Promise<unknown>;
   // The widget behind the API. It is internal, so a build may not have it.
   readonly _chartWidget?: ChartWidgetLike;
   // The time the chart reports for the bar at an index, the one getVisibleRange speaks in: for
@@ -333,6 +359,9 @@ export interface SeriesLike {
   endOfData(): boolean;
   endOfDataType(): string | null;
   isLoading(): boolean;
+  // The interval of the series, which the Create new layout dialog of the app reads to save with a
+  // new layout. Typed loosely: page code checks that it is a text. A build may not have it.
+  interval?(): unknown;
   // The symbol of the series the way an alert takes it (notes of Plan 3, section 2.3): an encoded
   // extended symbol, ={...} with the keys adjustment, currency-id and symbol on the app, the symbol
   // being the listing. Typed loosely: page code checks that it is a text. A build may not have it.
@@ -925,3 +954,34 @@ export interface WatchlistLimitsLike {
   MAX_WATCHLIST_LENGTH?: unknown;
   getWatchlistSymbolsLimit?(): unknown;
 }
+
+// The options of the export createNewChart (notes of Plan 3, section 1.2, and the web build), as the
+// Create new layout dialog of the app passes them: the name, and the symbol (pro_name of the symbol
+// info), the ticker (name), the symbol type (type), the exchange and the interval of the main series
+// of the chart. A field left out is sent with a default of the app (BATS:AAPL on 1D); these fields
+// only describe the layout in the list of saved layouts. The app also takes content, which page code
+// never passes: the layout is saved with the content "null", which TradingView loads as its default
+// chart.
+export interface NewChartOptionsLike {
+  name: string;
+  symbol?: string;
+  short_name?: string;
+  symbol_type?: string;
+  exchange?: string;
+  interval?: string;
+}
+
+// The export createNewChart: it saves a new layout (a POST to the layouts server, which counts
+// against the CHART_STORAGE limit of the plan) and resolves with the URL of the new layout,
+// /chart/<url>/, leaving the page as it is. On a failure it resolves with undefined after it opened a
+// dialog itself: the paywall when the limit is reached or the account is signed out, a warning
+// otherwise. Its neighbor openNewChart, which navigates the tab to the new layout, is left out on
+// purpose.
+export type CreateNewChartLike = (options: NewChartOptionsLike) => Promise<unknown>;
+
+// The export hasPermissionsToCreateNewChart, the check the Create new layout dialog of the app runs
+// before it opens: false while signed out, else whether the CHART_STORAGE limit of the plan is above
+// the count of saved layouts, which it asks the layouts server for (true without asking when the app
+// does not restrict the count). It rejects when that request fails, other than with a 403, which
+// counts as false.
+export type HasPermissionsToCreateNewChartLike = () => Promise<unknown>;

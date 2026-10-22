@@ -39,7 +39,7 @@ test('watchlistTools lists the watchlist tools in the order of the catalog', () 
   expect(new Set(watchlistTools.map(({ domain }) => domain))).toEqual(new Set(['watchlist']));
 });
 
-test('the catalog lists the watchlist tools after the alert tools and before the screenshot', () => {
+test('the catalog lists the watchlist tools after the alert tools and before the layout tools', () => {
   const names = allTools.map(({ name }) => name);
   const lastAlert = alertTools.at(-1);
   if (lastAlert === undefined) {
@@ -47,7 +47,7 @@ test('the catalog lists the watchlist tools after the alert tools and before the
   }
 
   expect(names.indexOf('watchlist_list')).toBe(names.indexOf(lastAlert.name) + 1);
-  expect(names.indexOf('watchlist_remove')).toBe(names.indexOf('screenshot_capture') - 1);
+  expect(names.indexOf('watchlist_remove')).toBe(names.indexOf('layout_list') - 1);
 });
 
 test('watchlist_list and watchlist_get only read, so the readonly profile offers them and no other watchlist tool', () => {

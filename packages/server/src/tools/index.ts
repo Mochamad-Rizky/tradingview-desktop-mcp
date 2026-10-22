@@ -5,6 +5,7 @@ import { chartTools } from './chart/index.js';
 import { dataTools } from './data/index.js';
 import { drawingTools } from './drawing/index.js';
 import { indicatorTools } from './indicator/index.js';
+import { layoutTools } from './layout/index.js';
 import { pineTools } from './pine/index.js';
 import { screenshotTools } from './screenshot/index.js';
 import { strategyTools } from './strategy/index.js';
@@ -24,6 +25,7 @@ export const allTools: AnyToolDefinition[] = [
   ...drawingTools,
   ...alertTools,
   ...watchlistTools,
+  ...layoutTools,
   ...screenshotTools,
   ...uiTools,
   ...batchTools,
