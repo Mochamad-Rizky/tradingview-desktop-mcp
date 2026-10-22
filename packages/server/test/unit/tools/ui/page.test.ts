@@ -359,8 +359,19 @@ describe('readPineEditorShown', () => {
       });
     });
     const withoutRegistry = () => createFakeTvWindow(fixture, { withoutWebpackRuntime: true });
+    const throwingRegistry = () =>
+      createFakeTvWindow(fixture, {
+        webpackModules: {
+          1: {
+            getOpenPineEditor: () => {
+              throw new Error('No registry yet');
+            },
+          },
+        },
+      });
 
     expect(await shownOf(throwingBar)).toEqual({ shown: false, placement: 'bottom' });
     expect(await shownOf(withoutRegistry)).toEqual({ shown: false, placement: null });
+    expect(await shownOf(throwingRegistry)).toEqual({ shown: false, placement: null });
   });
 });

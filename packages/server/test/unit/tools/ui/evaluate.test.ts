@@ -8,6 +8,9 @@ import {
   EVAL_MAX_RESULT_BYTES,
   EVAL_WITHHELD_GLOBALS,
 } from '../../../../src/tools/ui/evaluate.js';
+import { TvMcpError } from '../../../../src/core/errors.js';
+import type { ToolContext } from '../../../../src/tools/types.js';
+import { uiEvaluate } from '../../../../src/tools/ui/evaluate.js';
 import { evaluateExpression } from '../../../../src/tools/ui/page.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
@@ -499,5 +502,54 @@ describe('evaluateExpression', () => {
     expect(await evaluateExpression(win, '1', 1000, WITHHELD)).toMatchObject({
       __tvmcpError: { code: 'CAPABILITY_UNAVAILABLE' },
     });
+  });
+});
+
+describe('ui_evaluate on a failure of the page', () => {
+  // A context whose chart page fails every evaluation with `error`.
+  const failingWith = (error: TvMcpError): ToolContext =>
+    ({
+      config: { allowEval: true, callTimeoutMs: 5000 },
+      connection: {
+        chartPage: () => Promise.resolve({ bridge: { evaluate: () => Promise.reject(error) } }),
+      },
+    }) as unknown as ToolContext;
+
+  test('adds why to a failure without a hint, with its details or without any', async () => {
+    const bare = await failureOf(
+      uiEvaluate.handler(
+        { expression: 'while (true) {}' },
+        failingWith(new TvMcpError('PAGE_EVALUATION_FAILED', 'Execution was terminated')),
+      ),
+    );
+    const detailed = await failureOf(
+      uiEvaluate.handler(
+        { expression: 'while (true) {}' },
+        failingWith(
+          new TvMcpError('PAGE_EVALUATION_FAILED', 'Execution was terminated', {
+            details: { method: 'Runtime.evaluate' },
+          }),
+        ),
+      ),
+    );
+
+    expect(bare.toPayload()).toEqual({
+      code: 'PAGE_EVALUATION_FAILED',
+      message: 'Execution was terminated',
+      hint: expect.stringMatching(/after 4000 ms/) as string,
+    });
+    expect(detailed.toPayload()).toMatchObject({ details: { method: 'Runtime.evaluate' } });
+  });
+
+  test('passes on a failure that has a hint, or of another code, as it is', async () => {
+    const threw = new TvMcpError('PAGE_EVALUATION_FAILED', 'The expression threw x', {
+      hint: 'Check it.',
+    });
+    const timeout = new TvMcpError('TIMEOUT', 'CDP Runtime.evaluate timed out');
+
+    await expect(uiEvaluate.handler({ expression: 'x' }, failingWith(threw))).rejects.toBe(threw);
+    await expect(uiEvaluate.handler({ expression: 'x' }, failingWith(timeout))).rejects.toBe(
+      timeout,
+    );
   });
 });
