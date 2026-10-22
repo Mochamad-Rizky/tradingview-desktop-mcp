@@ -102,20 +102,21 @@ export function readPanelControls(
 // toolbar says it with aria-pressed, which app_get_ui_state reads too, and its word goes first.
 // Where the button does not say, an editor in the side panel is shown while TradingView registers
 // it, as the panel leaves the registry when it closes, and an editor at the bottom while the bottom
-// bar shows it: closing the bar hides that editor and keeps it registered. What cannot be read
-// counts as not shown. Changes nothing.
+// bar shows it (isVisible): closing the bar hides that editor and keeps it registered. A bar that
+// does not say makes shown null, unknown. A page whose button does not say and that has no
+// registry of open editors answers CAPABILITY_UNAVAILABLE. Changes nothing.
 export function readPineEditorShown(
   win: TvWindow,
   lib: PageLib,
   buttonSelector: string,
-): { shown: boolean; placement: 'dialog' | 'bottom' | null } {
+): { shown: boolean | null; placement: 'dialog' | 'bottom' | null } | PageErrorSentinel {
   const button =
     typeof win.document.querySelector === 'function'
       ? win.document.querySelector(buttonSelector)
       : null;
   const pressed = button?.getAttribute('aria-pressed') ?? null;
-  let placement: 'dialog' | 'bottom' | null = null;
   const getOpenPineEditor = lib.findExport('getOpenPineEditor');
+  let placement: 'dialog' | 'bottom' | null = null;
   if (typeof getOpenPineEditor === 'function') {
     for (const candidate of ['dialog', 'bottom'] as const) {
       let found: unknown;
@@ -133,14 +134,23 @@ export function readPineEditorShown(
   if (pressed === 'true' || pressed === 'false') {
     return { shown: pressed === 'true', placement };
   }
+  if (typeof getOpenPineEditor !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no registry of open Pine editors',
+        hint: 'Check app_health: the app may still be loading, or the tab does not show a chart.',
+      },
+    };
+  }
   if (placement === 'bottom') {
     let visible: unknown;
     try {
       visible = win.TradingView?.bottomWidgetBar?.isVisible?.().value();
     } catch {
-      visible = false;
+      visible = null;
     }
-    return { shown: visible === true, placement };
+    return { shown: typeof visible === 'boolean' ? visible : null, placement };
   }
   return { shown: placement === 'dialog', placement };
 }

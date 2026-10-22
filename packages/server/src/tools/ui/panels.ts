@@ -223,10 +223,23 @@ async function setToolbarPanel(
 // shows it again is known. Closing goes through the close path of the Pine tools (closePineEditor),
 // which never discards the text: TradingView keeps unsaved text and shows it again on the next
 // open. The side panel leaves the registry when it closes; the editor at the bottom only hides.
+// An editor at the bottom whose bar does not say whether it shows it is refused either way, as
+// nothing could tell whether a change is needed or confirm it.
 async function setPineEditor(page: PageHandle, open: boolean, waitMs: number): Promise<boolean> {
   const read = () =>
     page.bridge.evaluateWithLib(readPineEditorShown, [SELECTORS.buttons.pineEditor]);
   const before = await read();
+  if (before.shown === null) {
+    // Nothing could confirm a change, nor tell whether one is needed.
+    throw new TvMcpError(
+      'CAPABILITY_UNAVAILABLE',
+      'The page cannot say whether the Pine Editor at the bottom of the chart is shown',
+      {
+        hint: `${open ? 'Open' : 'Close'} the Pine Editor in TradingView yourself.`,
+        details: { panel: 'pine_editor', placement: before.placement },
+      },
+    );
+  }
   if (before.shown === open) {
     return false;
   }
@@ -290,9 +303,11 @@ export const uiOpenPanel = defineTool({
     'toolbar has no button for ' +
     'the panel or its button does not say whether it is pressed, when the panel of the object ' +
     'tree has no tab for the data window (the panel is collapsed again if it was opened to look), ' +
-    'or when the Pine Editor has no way to close here or is hidden at the bottom; NOT_AVAILABLE ' +
-    'while the toolbar is hidden, as in fullscreen mode; TIMEOUT when the panel does not change ' +
-    'after the click. Returns ' +
+    'or when the Pine Editor has no way to close here, is hidden at the bottom, sits at the ' +
+    'bottom where the page cannot say whether it is shown, or the page has no registry of open ' +
+    'Pine editors; NOT_AVAILABLE while the toolbar is hidden, as in fullscreen mode, and when ' +
+    'TradingView shows the Pine Editor but has no open editor to close; TIMEOUT when the panel ' +
+    'does not change after the click. Returns ' +
     'panel, open and changed.',
   inputSchema: {
     panel: z

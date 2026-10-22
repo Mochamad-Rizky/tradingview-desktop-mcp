@@ -345,20 +345,34 @@ describe('readPineEditorShown', () => {
     expect(await shownOf(tab(null))).toEqual({ shown: false, placement: null });
   });
 
-  test('counts what it cannot read as not shown', async () => {
-    const throwingBar = tab('bottom', undefined, (win) => {
-      Object.assign(win, {
-        TradingView: {
-          bottomWidgetBar: {
-            close: () => undefined,
-            isVisible: () => {
-              throw new Error('No bar yet');
-            },
-          },
-        },
+  test('says it cannot tell whether an editor at the bottom is shown when the bar does not say', async () => {
+    const barWithout = (visible?: () => unknown) =>
+      tab('bottom', undefined, (win) => {
+        const bar = win.TradingView?.bottomWidgetBar as { isVisible?: unknown } | undefined;
+        if (bar !== undefined) {
+          if (visible === undefined) {
+            delete bar.isVisible;
+          } else {
+            bar.isVisible = visible;
+          }
+        }
       });
+
+    expect(await shownOf(barWithout())).toEqual({ shown: null, placement: 'bottom' });
+    expect(
+      await shownOf(
+        barWithout(() => {
+          throw new Error('No bar yet');
+        }),
+      ),
+    ).toEqual({ shown: null, placement: 'bottom' });
+    expect(await shownOf(barWithout(() => ({ value: () => 'yes' })))).toEqual({
+      shown: null,
+      placement: 'bottom',
     });
-    const withoutRegistry = () => createFakeTvWindow(fixture, { withoutWebpackRuntime: true });
+  });
+
+  test('takes a registry lookup that throws as no editor', async () => {
     const throwingRegistry = () =>
       createFakeTvWindow(fixture, {
         webpackModules: {
@@ -370,8 +384,34 @@ describe('readPineEditorShown', () => {
         },
       });
 
-    expect(await shownOf(throwingBar)).toEqual({ shown: false, placement: 'bottom' });
-    expect(await shownOf(withoutRegistry)).toEqual({ shown: false, placement: null });
     expect(await shownOf(throwingRegistry)).toEqual({ shown: false, placement: null });
+  });
+
+  test('says CAPABILITY_UNAVAILABLE with neither a button that says nor a registry, and takes the button without one', async () => {
+    const bare = () => createFakeTvWindow(fixture, { withoutWebpackRuntime: true });
+    const pressedWithoutRegistry = () => {
+      const win = bare();
+      const button = fakeElement({
+        tag: 'button',
+        matches: [PINE_BUTTON],
+        attributes: { 'aria-pressed': 'true' },
+      });
+      Object.assign(win, { document: createFakeDomWindow([button]).document });
+      return win;
+    };
+
+    const error = await failureOf(
+      bridgeTo(bare()).evaluateWithLib(readPineEditorShown, [PINE_BUTTON]),
+    );
+    const other = bare() as TvWindow;
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      message: 'This page has no registry of open Pine editors',
+    });
+    expect(readPineEditorShown(other, createPageLib(other), PINE_BUTTON)).toEqual({
+      __tvmcpError: error.toPayload(),
+    });
+    expect(await shownOf(pressedWithoutRegistry)).toEqual({ shown: true, placement: null });
   });
 });

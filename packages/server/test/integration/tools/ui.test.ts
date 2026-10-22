@@ -1522,6 +1522,42 @@ describe('ui_open_panel for the Pine Editor', () => {
     expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
   });
 
+  test('ui_open_panel refuses either way a Pine Editor at the bottom whose bar does not say whether it shows it', async () => {
+    const { client, win } = await pineHarness(atBottom());
+    const bar = win.TradingView?.bottomWidgetBar as { isVisible?: unknown } | undefined;
+    if (bar !== undefined) {
+      delete bar.isVisible;
+    }
+
+    const closed = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+    const opened = await callTool(client, 'ui_open_panel', { panel: 'pine_editor' });
+
+    for (const result of [closed, opened]) {
+      expect(errorOf(result)).toMatchObject({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: expect.stringMatching(/cannot say whether the Pine Editor/) as string,
+        details: { panel: 'pine_editor', placement: 'bottom' },
+      });
+    }
+    // Nothing was closed or opened.
+    expect(callsOf(win, 'bottomWidgetBar.close')).toEqual([]);
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+  });
+
+  test('ui_open_panel says CAPABILITY_UNAVAILABLE for the Pine Editor on a page without its registry', async () => {
+    const { client } = await pineHarness(fixture, { withoutWebpackRuntime: true });
+
+    const opened = await callTool(client, 'ui_open_panel', { panel: 'pine_editor' });
+    const closed = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    for (const result of [opened, closed]) {
+      expect(errorOf(result)).toMatchObject({
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'This page has no registry of open Pine editors',
+      });
+    }
+  });
+
   test('ui_open_panel checks that the bottom bar hid the Pine Editor after the close', async () => {
     const { client, win } = await pineHarness(atBottom(), { pineEditorCloseIgnored: true });
 

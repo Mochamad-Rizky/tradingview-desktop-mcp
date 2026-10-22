@@ -349,6 +349,8 @@ describe('the descriptions of the keyboard, panel, fullscreen and evaluate tools
     }
     expect(description).toMatch(/changed false/);
     expect(description).toMatch(/without discarding its text/);
+    expect(description).toMatch(/shows the Pine Editor but has no open editor to close/);
+    expect(description).toMatch(/cannot say whether it is shown/);
     expect(description).toMatch(/app_get_ui_state/);
   });
 
