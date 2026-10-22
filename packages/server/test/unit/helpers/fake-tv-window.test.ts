@@ -232,7 +232,7 @@ describe('createFakeTvWindow', () => {
     expect(() => api.chart(0.5)).toThrow(new Error('Incorrect index: 0.5'));
   });
 
-  test('setActiveChart sets and records the index, and refuses an index outside the layout', () => {
+  test('setActiveChart sets and records the index, and ignores an index outside the layout, as the app does', () => {
     const twoCharts: TvStateFixture = {
       ...fixture,
       layout: { ...fixture.layout, chartsCount: 2 },
@@ -245,10 +245,9 @@ describe('createFakeTvWindow', () => {
 
     expect(api.chartsCount()).toBe(2);
     expect(api.activeChartIndex()).toBe(1);
+    // The fixture declares no other chart, so chart 0 stays the one the API answers.
     expect(api.activeChart()).toBe(widget);
-    expect(() => {
-      api.setActiveChart(2);
-    }).toThrow(new Error('Incorrect index: 2'));
+    api.setActiveChart(2);
     expect(api.activeChartIndex()).toBe(1);
     expect(inspectFakeWindow(win).callsTo('TradingViewApi.setActiveChart')).toEqual([[1], [2]]);
   });
@@ -798,6 +797,7 @@ describe('createFakeTvWindow', () => {
         ['requestBuiltinScripts'],
         ['SYMBOL_LIST_REPOSITORY_BACKEND_SERVICE'],
         ['ChartAlertsFacade'],
+        ['isMultipleLayout', 'isSupportedLayout', 'layouts', 'tryGuessingTheMostSuitableLayout'],
         ['getPersistedValue', 'getPersistenceKey'],
         ['getQuoteSessionInstance', 'getQuoteSessionNoEnsure'],
       ]);

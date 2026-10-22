@@ -5,6 +5,13 @@ import {
   type FakeAlertsOptions,
   type FakeAlertsState,
 } from './alerts.js';
+import {
+  createFakeCharts,
+  type FakeChartsApi,
+  type FakeChartsOptions,
+  type FakeChartsState,
+  type FakePaneApi,
+} from './charts.js';
 import type { FakeElement } from './dom.js';
 import {
   createFakeDrawings,
@@ -55,9 +62,19 @@ import { createFakeWebpack } from './webpack.js';
 // A stand-in for the window of a TradingView chart tab, built from a TvStateFixture. It models
 // only the members of TradingViewApi, the chart widget API and the chart model that the server
 // uses (reverse-engineering notes, sections 4.2 to 4.4), with the quirks of the real build:
-// setVisibleRange throws, chart(i) only knows index 0, and an unknown symbol is accepted but
-// flags the series as invalid and never reports data ready. While the series is flagged it has no
-// bars and no symbol info, and getVisibleRange answers zeros, as the real app does.
+// setVisibleRange throws, chart(i) throws for an index the layout does not show, and an unknown
+// symbol is accepted but flags the series as invalid and never reports data ready. While the series
+// is flagged it has no bars and no symbol info, and getVisibleRange answers zeros, as the real app
+// does. The chart of the fixture is chart 0, the one everything below describes.
+//
+// The charts of the layout (charts.ts) come from the layout and the charts of the fixture: the
+// other charts from chart 1 on, with their symbols, studies, drawings and panes, the panes of chart
+// 0, the active chart, setActiveChart, layout() and setLayout, which changes the layout the way the
+// app does, the MULTIPLE_CHARTS paywall included, and the table of the layouts of the app, which is
+// in the default webpack cache. A fixture without other charts reaches chart 0 alone, whatever its
+// chartsCount, as before the other charts were modeled. state.charts holds the layout and the other
+// charts; the charts option sets how long a change of the layout and the data of a new chart take,
+// and leaves codes or the table out.
 //
 // Data is static per fixture. Bars are the same series whatever the symbol or resolution, and
 // symbolInfo() and quotes() describe the fixture symbol, apart from the names in the symbol info,
@@ -222,6 +239,9 @@ export interface FakeTvOverrides {
   watchlists?: FakeWatchlistsOptions;
   // How long a load of a layout and its data take, and the layout exports left out (layouts.ts).
   layouts?: FakeLayoutsOptions;
+  // How long a change of the layout and the data of a chart it adds take, and the codes of the
+  // table of layouts, or the table, left out (charts.ts).
+  charts?: FakeChartsOptions;
 }
 
 export interface FakeBars {
@@ -305,20 +325,17 @@ export interface FakeChartWidgetApi {
   // Resolves with true once the chart has its data, at once when it has it; never while the symbol
   // is unknown (layouts.ts).
   dataReady(): Promise<true>;
+  // The panes of the chart, top to bottom (charts.ts).
+  getPanes(): FakePaneApi[];
   // The time the chart reports for the time point at an index, or null for an index without one.
   _convertIndexToPublicTime(index: number): number | null;
   readonly _chartWidget: { model(): FakeChartModel };
 }
 
 // The members that concern layouts (layoutName, layoutId, getSavedCharts, hasChartChanges and the
-// loaders) come from layouts.ts.
-export interface FakeTradingViewApi extends FakeLayoutsApi {
-  activeChart(): FakeChartWidgetApi;
-  chart(index?: number): FakeChartWidgetApi;
-  chartsCount(): number;
-  activeChartIndex(): number;
-  setActiveChart(index: number): void;
-  layout(): string;
+// loaders) come from layouts.ts, and those that concern the charts of the layout (chart,
+// activeChart, chartsCount, activeChartIndex, setActiveChart, layout and setLayout) from charts.ts.
+export interface FakeTradingViewApi extends FakeLayoutsApi, FakeChartsApi {
   isConnected(): boolean;
   getIntervals(): string[];
   searchSymbols(options: FakeSearchOptions): Promise<FakeSearchResponse>;
@@ -372,7 +389,10 @@ export interface FakeTvWindow {
 }
 
 // One mutating call, by the dotted name of the member: TradingViewApi.setActiveChart,
-// chart.setSymbol, chart.setResolution, chart.setChartType, chart.setVisibleRange,
+// TradingViewApi.setLayout (with its arguments as given), chart.setSymbol, chart.setResolution
+// (chart(i).setSymbol and chart(i).setResolution on another chart i of the layout, and the
+// paywall a change of the layout opens, dialog.paywall, charts.ts), chart.setChartType,
+// chart.setVisibleRange,
 // timeScale.zoomToBarsRange, timeScale.scrollToBar, series.requestMoreData, TVD.reloadTab, and
 // TradingViewApi.startFullscreen and TradingViewApi.exitFullscreen.
 // Calls that send a request are recorded too: TradingViewApi.searchSymbols, the members of the
@@ -446,6 +466,9 @@ export interface FakeTvState {
   // The saved layouts of the server, the layout on the chart, its unsaved changes, whether its chart
   // has its data, whether a load hangs and the errors staged for the requests (layouts.ts).
   layouts: FakeLayoutsState;
+  // The type of the layout, how many charts it shows, the charts after chart 0 and whether the
+  // layout syncs their symbol (charts.ts).
+  charts: FakeChartsState;
 }
 
 export interface FakeTvInspector {
@@ -569,6 +592,8 @@ export function createFakeTvWindow(
       loadHangs: false,
       errors: {},
     },
+    // Filled with the layout and the charts of the fixture (charts.ts).
+    charts: { layout: 's', count: 1, others: [], symbolSync: false },
   };
 
   // The bars of the series, which grow at the front as older history loads. A request needs bars
@@ -598,10 +623,26 @@ export function createFakeTvWindow(
   const publicTimes = (): number[] => pointTimes().map((time) => time - offset);
 
   // setSymbol and setResolution make their chart the active one unless told not to, as the app
-  // does. The fake has one chart, at index 0.
+  // does. This is chart 0; the other charts of the layout are in charts.ts.
   const activate = (options: FakeSetOptions | undefined): void => {
     if (options?.doNotActivateChart !== true) {
       state.activeChartIndex = 0;
+    }
+  };
+
+  // The requested symbol sticks even when it is unknown; only the series flag and the missing
+  // dataReady tell the page it did not resolve. Once resolved, the chart shows the symbol by its
+  // data feed, before dataReady runs. setSymbol does this, and so does symbol sync, without a call.
+  const takeSymbol = (symbol: string): void => {
+    state.symbol = symbol;
+    state.symbolInvalid = !knownSymbols.has(symbol);
+    const feed = state.symbolInvalid ? undefined : feeds.get(symbol);
+    if (feed !== undefined) {
+      queueMicrotask(() => {
+        if (state.symbol === symbol) {
+          state.symbol = feed;
+        }
+      });
     }
   };
 
@@ -799,6 +840,33 @@ export function createFakeTvWindow(
     interval: fixture.resolution,
     options: overrides.layouts,
   });
+  const charts = createFakeCharts({
+    state: state.charts,
+    record,
+    // Chart 0 is built below; the charts reach it when they are asked.
+    main: {
+      chart: () => chart,
+      studies: () => studies.getAllStudies(),
+      shapes: () => drawings.getAllShapes(),
+      syncSymbol: takeSymbol,
+    },
+    active: {
+      get: () => state.activeChartIndex,
+      set: (index) => {
+        state.activeChartIndex = index;
+      },
+    },
+    isKnown: (symbol) => knownSymbols.has(symbol),
+    feedOf: (symbol) => feeds.get(symbol),
+    listingOf,
+    bars: () => history.bars(),
+    symbolInfo: () => fixture.symbolInfo,
+    planLimit: fixture.planLimits.MULTIPLE_CHARTS,
+    planConfig: fixture.planConfigs?.MULTIPLE_CHARTS,
+    layout: fixture.layout,
+    fixture: fixture.charts,
+    options: overrides.charts,
+  });
 
   const chart: FakeChartWidgetApi = {
     symbol: () => state.symbol,
@@ -826,20 +894,9 @@ export function createFakeTvWindow(
     setSymbol(symbol, options) {
       record('chart.setSymbol', options === undefined ? [symbol] : [symbol, options]);
       activate(options);
-      // The requested symbol sticks even when it is unknown; only the series flag and the
-      // missing dataReady tell the page it did not resolve.
-      state.symbol = symbol;
-      state.symbolInvalid = !knownSymbols.has(symbol);
+      takeSymbol(symbol);
+      charts.syncFromMain(symbol);
       if (!state.symbolInvalid) {
-        // Once resolved, the chart shows the symbol by its data feed, before dataReady runs.
-        const feed = feeds.get(symbol);
-        if (feed !== undefined) {
-          queueMicrotask(() => {
-            if (state.symbol === symbol) {
-              state.symbol = feed;
-            }
-          });
-        }
         notifyDataReady(options);
       }
       return Promise.resolve(true);
@@ -863,31 +920,14 @@ export function createFakeTvWindow(
     // The series of an unknown symbol never gets data, so the promise never settles then.
     dataReady: () =>
       state.symbolInvalid ? new Promise<true>(() => undefined) : layouts.whenDataReady(),
+    getPanes: () => charts.mainPanes(),
     _convertIndexToPublicTime: (index) =>
       Number.isInteger(index) ? (points()[index] ?? null) : null,
     _chartWidget: { model: () => chartModel },
   };
 
   const api: FakeTradingViewApi = {
-    activeChart: () => chart,
-    // The real build builds one widget per layout slot; the fake models a single chart and
-    // refuses the rest with the message of the real build.
-    chart(index = 0) {
-      if (index !== 0) {
-        throw new Error(`Incorrect index: ${String(index)}`);
-      }
-      return chart;
-    },
-    chartsCount: () => fixture.layout.chartsCount,
-    activeChartIndex: () => state.activeChartIndex,
-    setActiveChart(index) {
-      record('TradingViewApi.setActiveChart', [index]);
-      if (!Number.isInteger(index) || index < 0 || index >= fixture.layout.chartsCount) {
-        throw new Error(`Incorrect index: ${String(index)}`);
-      }
-      state.activeChartIndex = index;
-    },
-    layout: () => fixture.layout.type,
+    ...charts.api,
     ...layouts.api,
     isConnected: () => state.connected,
     getIntervals: () => [...fixture.intervals],
@@ -932,6 +972,7 @@ export function createFakeTvWindow(
               ...alerts.modules,
               ...watchlists.modules,
               ...layouts.modules,
+              ...charts.modules,
             },
           ),
     innerWidth: screen.width,

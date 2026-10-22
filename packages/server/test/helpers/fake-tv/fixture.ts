@@ -34,6 +34,9 @@ export interface TvStateFixture {
   watchlists?: FixtureWatchlists | undefined;
   // The saved layouts of the account (layouts.ts). None when left out.
   savedLayouts?: FixtureSavedLayout[] | undefined;
+  // The panes of the chart of the fixture and the other charts of the layout (charts.ts). Left out,
+  // the layout shows the chart of the fixture alone, in one pane.
+  charts?: FixtureCharts | undefined;
   // The feature toggles of the app by name, which the export isFeatureEnabled answers
   // (plan-limits.ts). A toggle not listed is off.
   featureToggles: Record<string, boolean>;
@@ -184,6 +187,34 @@ export interface FixtureSavedLayout {
   name: string;
   modified: number;
   overLimit?: boolean | undefined;
+}
+
+// A pane of a chart (charts.ts), top to bottom: its height in CSS pixels and the ids of the studies
+// of the chart in it. The first pane of a chart holds the main series, the drawings and every study
+// no other pane lists.
+export interface FixturePane {
+  height: number;
+  studies: string[];
+}
+
+// A chart of the layout other than the chart of the fixture (charts.ts): its symbol, resolution,
+// studies and drawings ({ id, name } as the chart API lists them), and its panes, one pane that
+// holds everything when left out.
+export interface FixtureChart {
+  symbol: string;
+  resolution: string;
+  studies: { id: string; name: string }[];
+  shapes: { id: string; name: string }[];
+  panes?: FixturePane[] | undefined;
+}
+
+// The charts of the layout (charts.ts): the panes of the chart of the fixture (chart 0; one pane
+// that holds everything when left out), the other charts from chart 1 on, of which those beyond the
+// chartsCount of the layout are hidden, and whether the layout syncs the symbol of its charts.
+export interface FixtureCharts {
+  panes?: FixturePane[] | undefined;
+  others?: FixtureChart[] | undefined;
+  symbolSync?: boolean | undefined;
 }
 
 // A study on the chart (studies.ts). Optional fields admit undefined, which is what the schema
@@ -475,6 +506,8 @@ const fixtureGraphicsSchema = z.strictObject({
     .optional(),
 });
 
+const fixturePaneSchema = z.strictObject({ height: z.number(), studies: z.array(z.string()) });
+
 // Strict, so a field a recording adds but this interface lacks fails loudly instead of being
 // ignored by every fake.
 const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
@@ -606,6 +639,23 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
         overLimit: z.boolean().optional(),
       }),
     )
+    .optional(),
+  charts: z
+    .strictObject({
+      panes: z.array(fixturePaneSchema).optional(),
+      others: z
+        .array(
+          z.strictObject({
+            symbol: z.string(),
+            resolution: z.string(),
+            studies: z.array(z.strictObject({ id: z.string(), name: z.string() })),
+            shapes: z.array(z.strictObject({ id: z.string(), name: z.string() })),
+            panes: z.array(fixturePaneSchema).optional(),
+          }),
+        )
+        .optional(),
+      symbolSync: z.boolean().optional(),
+    })
     .optional(),
   featureToggles: z.record(z.string(), z.boolean()),
   bars: z.strictObject({
