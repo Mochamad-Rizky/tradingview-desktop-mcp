@@ -131,6 +131,17 @@ describe('the saved layouts', () => {
     expect(api.activeChart()._chartWidget.model().mainSeries().interval()).toBe('1D');
   });
 
+  test('shouldBeSaved answers whether the layout has unsaved changes, as a plain boolean', () => {
+    const win = windowWith();
+    const api = apiOf(win);
+
+    expect(api.shouldBeSaved?.()).toBe(false);
+    stateOf(win).unsaved = true;
+    expect(api.shouldBeSaved?.()).toBe(true);
+    // It reads, so it is not recorded.
+    expect(inspectFakeWindow(win).calls).toEqual([]);
+  });
+
   test('a layout that was never saved has no id and no name', () => {
     const win = windowWith();
     stateOf(win).current = { id: null, uid: null, name: null };

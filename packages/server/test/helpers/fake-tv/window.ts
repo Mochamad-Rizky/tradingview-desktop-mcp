@@ -332,9 +332,10 @@ export interface FakeChartWidgetApi {
   readonly _chartWidget: { model(): FakeChartModel };
 }
 
-// The members that concern layouts (layoutName, layoutId, getSavedCharts, hasChartChanges and the
-// loaders) come from layouts.ts, and those that concern the charts of the layout (chart,
-// activeChart, chartsCount, activeChartIndex, setActiveChart, layout and setLayout) from charts.ts.
+// The members that concern layouts (layoutName, layoutId, getSavedCharts, hasChartChanges,
+// shouldBeSaved and the loaders) come from layouts.ts, and those that concern the charts of the
+// layout (chart, activeChart, chartsCount, activeChartIndex, setActiveChart, layout and setLayout)
+// from charts.ts.
 export interface FakeTradingViewApi extends FakeLayoutsApi, FakeChartsApi {
   isConnected(): boolean;
   getIntervals(): string[];

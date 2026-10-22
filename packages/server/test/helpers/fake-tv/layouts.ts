@@ -13,7 +13,9 @@ import type { FixtureSavedLayout } from './fixture.js';
 // - The layout on the chart is the meta info of the collection of the charts (state.layouts.current:
 //   its server id, its uid, which layoutId() answers, and its name, which layoutName() answers),
 //   the layout of the fixture at first. hasChartChanges() answers a read-only watched value of
-//   state.layouts.unsaved.
+//   state.layouts.unsaved, and shouldBeSaved(), what the shell asks before it closes the tab of the
+//   layout (notes of Plan 3, section 3.4), answers state.layouts.unsaved itself: the layout is not
+//   read-only.
 // - loadLayoutFromServerByLayoutId(url, openInNewTab, skipConfirm) loads a saved layout the way
 //   loadChartByUrl of the app does, and records itself with its arguments as given. A url the server
 //   does not hold loads nothing and resolves. A truthy openInNewTab opens the layout in a new tab
@@ -115,6 +117,8 @@ export interface FakeLayoutsApi {
   layoutId(): string | null;
   getSavedCharts(...args: unknown[]): Promise<Record<string, unknown>[]>;
   hasChartChanges(): { value(): boolean; subscribe(): void; unsubscribe(): void };
+  // Optional, so that a test can delete it, as on a build without it.
+  shouldBeSaved?: () => boolean;
   loadLayoutFromServerByLayoutId(...args: unknown[]): Promise<void>;
   loadChartFromServer(...args: unknown[]): Promise<void>;
   createNewLayout(...args: unknown[]): Promise<null>;
@@ -254,6 +258,7 @@ export function createFakeLayouts(
       subscribe: () => undefined,
       unsubscribe: () => undefined,
     }),
+    shouldBeSaved: () => state.unsaved,
     loadLayoutFromServerByLayoutId(...args) {
       deps.record('TradingViewApi.loadLayoutFromServerByLayoutId', args);
       const [url, openInNewTab, skipConfirm] = args;
