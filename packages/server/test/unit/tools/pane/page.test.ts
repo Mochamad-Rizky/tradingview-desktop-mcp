@@ -28,39 +28,14 @@ import {
   type FakeTvOverrides,
   type FakeTvWindow,
 } from '../../../helpers/fake-tv/window.js';
+import { withTwoCharts } from '../../../helpers/pane-fixtures.js';
 
 // The page functions of the pane tools, run the way the server runs them, as source text in a page
 // through the real page bridge, and called directly on a second window built the same way, which is
 // what the coverage of the module measures. The two answers must agree. Values are synthetic.
 
 const fixture = loadTvFixture();
-// Two charts side by side; the chart of the fixture has its RSI in a pane of its own, and chart 1
-// shows another symbol with a study in each of its two panes and a drawing.
-const twoCharts: TvStateFixture = {
-  ...fixture,
-  layout: { ...fixture.layout, type: '2h', chartsCount: 2 },
-  charts: {
-    panes: [
-      { height: 420, studies: ['STUDY01'] },
-      { height: 180, studies: ['STUDY02'] },
-    ],
-    others: [
-      {
-        symbol: 'NASDAQ:MSFT',
-        resolution: '60',
-        studies: [
-          { id: 'C1STUDY1', name: 'Volume' },
-          { id: 'C1STUDY2', name: 'Relative Strength Index' },
-        ],
-        shapes: [{ id: 'C1SHAPE1', name: 'trend_line' }],
-        panes: [
-          { height: 400, studies: ['C1STUDY1'] },
-          { height: 200, studies: ['C1STUDY2'] },
-        ],
-      },
-    ],
-  },
-};
+const twoCharts = withTwoCharts(fixture);
 const WAIT_MS = 1000;
 // For the waits that are meant to give up.
 const SHORT_WAIT_MS = 60;

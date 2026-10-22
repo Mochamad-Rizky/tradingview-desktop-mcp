@@ -5,7 +5,6 @@ import { inPlanLimitedTurn } from '../../../src/core/tv/plan-limits.js';
 import { createMcpServer } from '../../../src/server.js';
 import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
-import type { FixtureChart } from '../../helpers/fake-tv/fixture.js';
 import { loadTvFixture, type TvStateFixture } from '../../helpers/fake-tv/fixture.js';
 import {
   createFakeTvWindow,
@@ -15,6 +14,7 @@ import {
   type FakeTvWindow,
 } from '../../helpers/fake-tv/window.js';
 import { callTool, connectInMemoryClient, textOf } from '../../helpers/mcp-client.js';
+import { withChartLimit, withLockedTwoCharts, withTwoCharts } from '../../helpers/pane-fixtures.js';
 import { quietLogger, refusingLauncher, testConfig } from '../../helpers/tool-context.js';
 
 // The pane tools through the whole server: an SDK client over the in-memory transport, the real
@@ -33,40 +33,14 @@ vi.mock('node:child_process', () => ({
 
 const fixture = loadTvFixture();
 
-// The second chart of the layouts below: another symbol, a study in each of its two panes and a
-// drawing in the first.
-const SECOND_CHART: FixtureChart = {
-  symbol: 'NASDAQ:MSFT',
-  resolution: '60',
-  studies: [
-    { id: 'C1STUDY1', name: 'Volume' },
-    { id: 'C1STUDY2', name: 'Relative Strength Index' },
-  ],
-  shapes: [{ id: 'C1SHAPE1', name: 'trend_line' }],
-  panes: [
-    { height: 400, studies: ['C1STUDY1'] },
-    { height: 200, studies: ['C1STUDY2'] },
-  ],
-};
-
-// Two charts side by side on a plan of one chart, as a layout saved on a larger plan can be. The
-// chart of the fixture has its RSI in a pane of its own.
-const twoCharts: TvStateFixture = {
-  ...fixture,
-  layout: { ...fixture.layout, type: '2h', chartsCount: 2 },
-  charts: {
-    panes: [
-      { height: 420, studies: ['STUDY01'] },
-      { height: 180, studies: ['STUDY02'] },
-    ],
-    others: [SECOND_CHART],
-  },
-};
-
-// A plan that allows `limit` charts in a layout.
-function withChartLimit(limit: number, from: TvStateFixture = fixture): TvStateFixture {
-  return { ...from, planLimits: { ...from.planLimits, MULTIPLE_CHARTS: limit } };
-}
+// Two charts side by side, both shown, on the plan of the fixture, which allows one chart: the
+// tests that change the layout give it a plan of their own (withChartLimit). The way TradingView
+// loads a layout of two charts on a plan of one is lockedTwoCharts.
+const twoCharts = withTwoCharts(fixture);
+// A layout of two charts saved on a larger plan, as TradingView loads it on a plan of one chart,
+// which is the plan of the real account (MULTIPLE_CHARTS on, with a limit of 1): it keeps the type
+// 2h and shows one chart.
+const lockedTwoCharts = withChartLimit(1, withLockedTwoCharts(fixture));
 
 // A plan that configures MULTIPLE_CHARTS with `config` and no limit of the plan limits.
 function withChartConfig(config: Record<string, number>): TvStateFixture {
@@ -288,7 +262,8 @@ describe('pane_list', () => {
 
 describe('pane_set_layout', () => {
   test('pane_set_layout to a multi-chart layout returns PLAN_LIMIT MULTIPLE_CHARTS on a one-chart plan and changes nothing', async () => {
-    const { client, win } = await startHarness();
+    // The plan of the real account: MULTIPLE_CHARTS on, with a limit of 1.
+    const { client, win } = await startHarness(withChartLimit(1, fixture));
 
     const result = await callTool(client, 'pane_set_layout', { layout: '2h' });
 
@@ -319,7 +294,9 @@ describe('pane_set_layout', () => {
   });
 
   test('pane_set_layout changes the layout within the plan, and waits until it shows its charts with their data', async () => {
-    const { client, win } = await startHarness(withChartLimit(2), { charts: { dataMs: 50 } });
+    const { client, win } = await startHarness(withChartLimit(2, fixture), {
+      charts: { dataMs: 50 },
+    });
 
     const result = await callTool(client, 'pane_set_layout', { layout: '2h' });
 
@@ -339,7 +316,7 @@ describe('pane_set_layout', () => {
   test.each([
     ['the plan has MULTIPLE_CHARTS off', fixture],
     ['the plan configures MULTIPLE_CHARTS without a limit', withChartConfig({})],
-    ['the plan limits MULTIPLE_CHARTS to 0', withChartLimit(0)],
+    ['the plan limits MULTIPLE_CHARTS to 0', withChartLimit(0, fixture)],
   ])(
     'pane_set_layout counts one chart as the limit, as TradingView does, when %s',
     async (_case, from) => {
@@ -357,7 +334,7 @@ describe('pane_set_layout', () => {
   );
 
   test('pane_set_layout refuses a 3-chart layout on a plan of 2 charts, and takes a 2-chart one', async () => {
-    const { client, win } = await startHarness(withChartLimit(2));
+    const { client, win } = await startHarness(withChartLimit(2, fixture));
 
     const refused = await callTool(client, 'pane_set_layout', { layout: '3h' });
     const taken = await callTool(client, 'pane_set_layout', { layout: '2v' });
@@ -375,7 +352,7 @@ describe('pane_set_layout', () => {
   });
 
   test('pane_set_layout takes the count of a layout from the table of TradingView, which can differ from the counts of the server', async () => {
-    const win = createFakeTvWindow(withChartLimit(2));
+    const win = createFakeTvWindow(withChartLimit(2, fixture));
     // A build whose 3h holds two charts.
     const table = moduleWith(win, 'layouts').layouts as Record<string, { count: number }>;
     table['3h'] = { ...table['3h'], count: 2 };
@@ -385,10 +362,11 @@ describe('pane_set_layout', () => {
 
     expect(errorOf(result)).toBeUndefined();
     expect(calls(win, 'TradingViewApi.setLayout')).toEqual([['3h', { withUndo: true }]]);
+    expect(dialogs(win)).toEqual([]);
   });
 
   test('pane_set_layout refuses NOT_AVAILABLE a layout this TradingView build does not know, which it cannot change to', async () => {
-    const { client, win } = await startHarness(withChartLimit(4), {
+    const { client, win } = await startHarness(withChartLimit(4, fixture), {
       charts: { withoutCodes: ['2-2-l'] },
     });
 
@@ -403,7 +381,7 @@ describe('pane_set_layout', () => {
   });
 
   test('pane_set_layout refuses NOT_AVAILABLE a layout whose count TradingView does not say', async () => {
-    const win = createFakeTvWindow(withChartLimit(4));
+    const win = createFakeTvWindow(withChartLimit(4, fixture));
     const table = moduleWith(win, 'layouts').layouts as Record<string, unknown>;
     table['2v'] = { title: '2 charts', layoutType: '2v' };
     const { client } = await startHarnessWith(win);
@@ -415,7 +393,7 @@ describe('pane_set_layout', () => {
   });
 
   test('pane_set_layout counts the charts of a layout itself when TradingView has no table of layouts to find', async () => {
-    const { client, win } = await startHarness(withChartLimit(2), {
+    const { client, win } = await startHarness(withChartLimit(2, fixture), {
       charts: { withoutLayoutTable: true },
     });
 
@@ -425,10 +403,11 @@ describe('pane_set_layout', () => {
     expect(errorOf(refused)).toMatchObject({ code: 'PLAN_LIMIT', details: { limit: 2 } });
     expect(dataOf(taken)).toEqual({ layout: '2h', chartsCount: 2, changed: true });
     expect(calls(win, 'TradingViewApi.setLayout')).toEqual([['2h', { withUndo: true }]]);
+    expect(dialogs(win)).toEqual([]);
   });
 
   test('pane_set_layout refuses NOT_AVAILABLE when the plan module cannot be read, and changes nothing', async () => {
-    const win = createFakeTvWindow(withChartLimit(4));
+    const win = createFakeTvWindow(withChartLimit(4, fixture));
     Reflect.deleteProperty(moduleWith(win, 'getConfig'), 'enabled');
     const { client } = await startHarnessWith(win);
 
@@ -443,7 +422,7 @@ describe('pane_set_layout', () => {
   });
 
   test('pane_set_layout refuses NOT_AVAILABLE when no module of the app can be read', async () => {
-    const { client, win } = await startHarness(withChartLimit(4), { webpackModules: {} });
+    const { client, win } = await startHarness(withChartLimit(4, fixture), { webpackModules: {} });
 
     const result = await callTool(client, 'pane_set_layout', { layout: '2h' });
 
@@ -482,7 +461,7 @@ describe('pane_set_layout', () => {
     expect(dialogs(win)).toEqual([]);
   });
 
-  test('pane_set_layout to s on a one-chart plan needs no plan check, so it reduces a layout saved on a larger plan', async () => {
+  test('pane_set_layout to s needs no plan check, so a plan module that cannot be read does not stop two charts from becoming one', async () => {
     const win = createFakeTvWindow(twoCharts);
     Reflect.deleteProperty(moduleWith(win, 'getConfig'), 'enabled');
     const { client } = await startHarnessWith(win);
@@ -515,7 +494,7 @@ describe('pane_set_layout', () => {
 
   test('pane_set_layout warns about each chart whose data does not load in time', async () => {
     const { client, win } = await startHarness(
-      withChartLimit(4),
+      withChartLimit(4, fixture),
       { charts: { dataMs: Infinity } },
       { callTimeoutMs: 2000 },
     );
@@ -527,11 +506,12 @@ describe('pane_set_layout', () => {
       expect.stringMatching(/^The data of charts 1 and 2 did not load within \d+ ms/),
     ]);
     expect(layoutOf(win)).toEqual({ layout: '3h', chartsCount: 3, active: 0 });
+    expect(dialogs(win)).toEqual([]);
   });
 
   test('pane_set_layout fails TIMEOUT when TradingView does not show the layout in time', async () => {
-    const { client } = await startHarness(
-      withChartLimit(2),
+    const { client, win } = await startHarness(
+      withChartLimit(2, fixture),
       { charts: { layoutMs: 10_000 } },
       { callTimeoutMs: 2000 },
     );
@@ -543,10 +523,12 @@ describe('pane_set_layout', () => {
       details: { layout: '2h', chartsCount: 2, shownLayout: 's', shownChartsCount: 1 },
     });
     expect(errorOf(result)?.hint).toMatch(/pane_list/);
+    // The checks of the app come before its change, so a paywall would show already.
+    expect(dialogs(win)).toEqual([]);
   });
 
   test('pane_set_layout is CAPABILITY_UNAVAILABLE on a build without setLayout', async () => {
-    const win = createFakeTvWindow(withChartLimit(2));
+    const win = createFakeTvWindow(withChartLimit(2, fixture));
     Reflect.deleteProperty(apiOf(win), 'setLayout');
     const { client } = await startHarnessWith(win);
 
@@ -572,7 +554,7 @@ describe('pane_set_layout', () => {
   ])(
     'pane_set_layout refuses NOT_AVAILABLE when the layout reports %s, and changes nothing',
     async (_case, change) => {
-      const win = createFakeTvWindow(withChartLimit(2));
+      const win = createFakeTvWindow(withChartLimit(2, fixture));
       change(apiOf(win));
       const { client } = await startHarnessWith(win);
 
@@ -591,7 +573,7 @@ describe('pane_set_layout', () => {
   ])(
     'pane_set_layout answers changed: false for a layout the tab showed by the time of the change, with %s',
     async (_case, laterCount, reported) => {
-      const win = createFakeTvWindow(withChartLimit(2));
+      const win = createFakeTvWindow(withChartLimit(2, fixture));
       const api = apiOf(win);
       // The user picks 2h in TradingView while the server reads the plan.
       let looks = 0;
@@ -614,7 +596,7 @@ describe('pane_set_layout', () => {
   );
 
   test('pane_set_layout waits for the turn of the plan-limited actions', async () => {
-    const { client, win } = await startHarness(withChartLimit(2));
+    const { client, win } = await startHarness(withChartLimit(2, fixture));
     const letGo = holdPlanLimitedTurn();
 
     const call = callTool(client, 'pane_set_layout', { layout: '2h' });
@@ -623,16 +605,71 @@ describe('pane_set_layout', () => {
     expect(calls(win, 'TradingViewApi.setLayout')).toEqual([]);
     letGo();
     expect(dataOf(await call)).toEqual({ layout: '2h', chartsCount: 2, changed: true });
+    expect(dialogs(win)).toEqual([]);
   });
 
   test('pane_set_layout refuses a layout code it does not know before it looks at the app', async () => {
-    const { client, win } = await startHarness(withChartLimit(4));
+    const { client, win } = await startHarness(withChartLimit(4, fixture));
 
     const result = await callTool(client, 'pane_set_layout', { layout: '5x' });
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/layout/);
     expect(inspectFakeWindow(win).calls).toEqual([]);
+  });
+});
+
+describe('a layout of two charts saved on a larger plan, which TradingView shows with one chart', () => {
+  test('pane_list reports its type, 2h, with the one chart it shows', async () => {
+    const { client } = await startHarness(lockedTwoCharts);
+
+    const { layout, charts } = dataOf(await callTool(client, 'pane_list')) as {
+      layout: string;
+      charts: { index: number; symbol: string }[];
+    };
+
+    expect(layout).toBe('2h');
+    expect(charts.map(({ index, symbol }) => [index, symbol])).toEqual([[0, 'NASDAQ:AAPL']]);
+  });
+
+  test('pane_set_layout to s changes it without confirm: the layout shows no fewer charts, and the hidden chart stays to be saved', async () => {
+    const { client, win } = await startHarness(lockedTwoCharts);
+
+    const result = await callTool(client, 'pane_set_layout', { layout: 's' });
+
+    expect(dataOf(result)).toEqual({ layout: 's', chartsCount: 1, changed: true });
+    expect(calls(win, 'TradingViewApi.setLayout')).toEqual([['s', { withUndo: true }]]);
+    expect(inspectFakeWindow(win).state.charts.others.map(({ symbol }) => symbol)).toEqual([
+      'NASDAQ:MSFT',
+    ]);
+    expect(dialogs(win)).toEqual([]);
+  });
+
+  test('pane_set_layout to another layout of two charts is PLAN_LIMIT, and changes nothing', async () => {
+    const { client, win } = await startHarness(lockedTwoCharts);
+
+    const result = await callTool(client, 'pane_set_layout', { layout: '2v' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PLAN_LIMIT',
+      details: { feature: 'MULTIPLE_CHARTS', limit: 1 },
+    });
+    expect(calls(win, 'TradingViewApi.setLayout')).toEqual([]);
+    expect(dialogs(win)).toEqual([]);
+    expect(layoutOf(win)).toEqual({ layout: '2h', chartsCount: 1, active: 0 });
+  });
+
+  test('pane_focus of the hidden chart is INVALID_INPUT naming the one chart shown', async () => {
+    const { client, win } = await startHarness(lockedTwoCharts);
+
+    const result = await callTool(client, 'pane_focus', { chartIndex: 1 });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'INVALID_INPUT',
+      message: 'chartIndex 1 is out of range: the layout has 1 chart, so chartIndex must be 0',
+      details: { chartIndex: 1, chartsCount: 1 },
+    });
+    expect(calls(win, 'TradingViewApi.setActiveChart')).toEqual([]);
   });
 });
 
@@ -880,6 +917,7 @@ describe('pane_set_symbol', () => {
     });
 
     expect(dataOf(result)).toMatchObject({ chartIndex: 1, symbol: 'NYSE:IBM', changed: true });
+    expect(envelopeOf(result).meta.via).toBe('api');
     expect(apiOf(win).activeChartIndex()).toBe(1);
   });
 });

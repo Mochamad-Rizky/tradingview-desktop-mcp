@@ -54,8 +54,9 @@ import type {
 //   charts beyond its count, and makes the last chart it shows the active one when the active chart
 //   is hidden.
 // - The table of the layouts of the app, the export layouts of a module that also exports
-//   isMultipleLayout, isSupportedLayout and tryGuessingTheMostSuitableLayout, is in the default
-//   webpack cache: code → { title, count, layoutType } for the 55 codes of the app, in its order.
+//   isMultipleLayout, isSupportedLayout and tryGuessingTheMostSuitableLayout (a stub that throws:
+//   only its name is looked for), is in the default webpack cache: code → { title, count,
+//   layoutType } for the 55 codes of the app, in its order.
 // - The containers of the charts stay those of the fixture (screen.ts), whatever the layout shows.
 
 export interface FakeChartsOptions {
@@ -270,21 +271,6 @@ function barsOf(rows: readonly SyntheticBar[]): FakeBars {
       return bar ? [bar[0], bar[1], bar[2], bar[3], bar[4], bar[5]] : null;
     },
   };
-}
-
-// The guess of the app at the layout a code stands for: the first layout with as many charts as
-// the code adds up to, or fewer, down to a single chart.
-function guessLayout(table: Readonly<Record<string, LayoutEntry>>, code: string): string {
-  const parts = /(\d)-(\d)/.exec(code);
-  let count = parts?.length === 3 ? Number(parts[1]) + Number(parts[2]) : Number.parseInt(code);
-  for (; count > 1; count -= 1) {
-    const wanted = count;
-    const found = Object.keys(table).find((key) => key !== 's' && table[key]?.count === wanted);
-    if (found !== undefined) {
-      return found;
-    }
-  }
-  return 's';
 }
 
 export function createFakeCharts(deps: FakeChartsDeps): FakeCharts {
@@ -637,7 +623,10 @@ export function createFakeCharts(deps: FakeChartsDeps): FakeCharts {
           isMultipleLayout: (code: unknown) => code !== 's',
           isSupportedLayout: (code: unknown) =>
             code === 's' || (typeof code === 'string' && Object.hasOwn(table, code)),
-          tryGuessingTheMostSuitableLayout: (code: unknown) => guessLayout(table, String(code)),
+          // Only its name is looked for, so that the module is found: it is not modeled.
+          tryGuessingTheMostSuitableLayout: (): never => {
+            throw new Error('tryGuessingTheMostSuitableLayout is not modeled by the fake');
+          },
         },
       };
 

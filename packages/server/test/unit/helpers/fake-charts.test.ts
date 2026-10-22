@@ -9,45 +9,15 @@ import {
   type FakeTvOverrides,
   type FakeTvWindow,
 } from '../../helpers/fake-tv/window.js';
+import { withChartLimit, withTwoCharts } from '../../helpers/pane-fixtures.js';
 
 // The charts of the layout, their panes and the layout functions of the fake app (charts.ts),
 // checked against what the reverse-engineering notes of Plan 3 (section 2) and the web build record
 // for the app. Values are synthetic.
 
 const fixture = loadTvFixture();
-
-// A plan that allows `limit` charts in a layout.
-function withChartLimit(limit: number, from: TvStateFixture = fixture): TvStateFixture {
-  return { ...from, planLimits: { ...from.planLimits, MULTIPLE_CHARTS: limit } };
-}
-
-// Two charts side by side. The chart of the fixture has its RSI in a pane of its own; chart 1 shows
-// another symbol, with a study in each of its two panes and a drawing.
-const twoCharts: TvStateFixture = {
-  ...fixture,
-  layout: { ...fixture.layout, type: '2h', chartsCount: 2 },
-  charts: {
-    panes: [
-      { height: 420, studies: ['STUDY01'] },
-      { height: 180, studies: ['STUDY02'] },
-    ],
-    others: [
-      {
-        symbol: 'NASDAQ:MSFT',
-        resolution: '60',
-        studies: [
-          { id: 'C1STUDY1', name: 'Volume' },
-          { id: 'C1STUDY2', name: 'Relative Strength Index' },
-        ],
-        shapes: [{ id: 'C1SHAPE1', name: 'trend_line' }],
-        panes: [
-          { height: 400, studies: ['C1STUDY1'] },
-          { height: 200, studies: ['C1STUDY2'] },
-        ],
-      },
-    ],
-  },
-};
+// Two charts side by side, on the plan of the fixture, which allows one chart.
+const twoCharts = withTwoCharts(fixture);
 
 // A layout of one chart that keeps a second one hidden, as the app does after a layout of two
 // charts became a layout of one until the layout is saved.
@@ -372,7 +342,7 @@ describe('the symbol of an other chart', () => {
 
 describe('setLayout', () => {
   test('records itself with its arguments as given and returns nothing', () => {
-    const win = windowWith(withChartLimit(2));
+    const win = windowWith(withChartLimit(2, fixture));
     // Typed to answer something, so that what it answers can be looked at.
     const api: { setLayout(...args: unknown[]): unknown } = apiOf(win);
 
@@ -382,7 +352,7 @@ describe('setLayout', () => {
   });
 
   test('a layout within the plan is shown a moment later, with new charts on the symbol of the active chart that get their data after that', async () => {
-    const win = windowWith(withChartLimit(2), { charts: { layoutMs: 10, dataMs: 30 } });
+    const win = windowWith(withChartLimit(2, fixture), { charts: { layoutMs: 10, dataMs: 30 } });
     const api = apiOf(win);
 
     api.setLayout('2h', { withUndo: true });
@@ -409,7 +379,7 @@ describe('setLayout', () => {
   });
 
   test('the data of a new chart never comes with a data time of Infinity', async () => {
-    const win = windowWith(withChartLimit(2), { charts: { dataMs: Infinity } });
+    const win = windowWith(withChartLimit(2, fixture), { charts: { dataMs: Infinity } });
 
     apiOf(win).setLayout('2h', { withUndo: true });
     await delay(SETTLE_MS);
@@ -439,7 +409,7 @@ describe('setLayout', () => {
   });
 
   test('with withUndo a layout beyond the plan opens the paywall and shows the largest layout the plan allows instead', async () => {
-    const win = windowWith(withChartLimit(2));
+    const win = windowWith(withChartLimit(2, fixture));
 
     apiOf(win).setLayout('3h', { withUndo: true });
     await delay(SETTLE_MS);
@@ -463,7 +433,7 @@ describe('setLayout', () => {
       ...fixture,
       planConfigs: { ...fixture.planConfigs, MULTIPLE_CHARTS: config },
     });
-    for (const from of [fixture, configured({}), withChartLimit(0)]) {
+    for (const from of [fixture, configured({}), withChartLimit(0, fixture)]) {
       const win = windowWith(from);
 
       apiOf(win).setLayout('2v', { withUndo: true });
@@ -479,7 +449,7 @@ describe('setLayout', () => {
   });
 
   test('with withUndo a type the table does not know changes nothing', async () => {
-    const win = windowWith(withChartLimit(4));
+    const win = windowWith(withChartLimit(4, fixture));
 
     apiOf(win).setLayout('nope', { withUndo: true });
     await delay(SETTLE_MS);
@@ -507,7 +477,7 @@ describe('setLayout', () => {
   });
 
   test('without withUndo a layout beyond the plan otherwise opens the paywall and shows the largest one the plan allows', async () => {
-    const win = windowWith(withChartLimit(2));
+    const win = windowWith(withChartLimit(2, fixture));
 
     apiOf(win).setLayout('4');
     await delay(SETTLE_MS);
@@ -555,14 +525,12 @@ describe('the table of layouts', () => {
     expect(typeof found.tryGuessingTheMostSuitableLayout).toBe('function');
     const isMultiple = found.isMultipleLayout as (code: string) => boolean;
     const isSupported = found.isSupportedLayout as (code: string) => boolean;
-    const guess = found.tryGuessingTheMostSuitableLayout as (code: string) => string;
     expect([isMultiple('s'), isMultiple('2h'), isSupported('2h'), isSupported('nope')]).toEqual([
       false,
       true,
       true,
       false,
     ]);
-    expect([guess('2-3'), guess('4'), guess('s'), guess('99')]).toEqual(['1-4', '4', 's', '16c8']);
   });
 
   test('the charts option leaves codes out of the table, which setLayout then does not know either', async () => {
