@@ -1,7 +1,7 @@
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
 import { loadTvFixture } from '../../../helpers/fake-tv/fixture.js';
 import { syntheticBars } from '../../../helpers/fake-tv/synthetic-bars.js';
-import { createFakeTvWindow } from '../../../helpers/fake-tv/window.js';
+import { createFakeTvWindow, inspectFakeWindow } from '../../../helpers/fake-tv/window.js';
 import { SAMPLE_STRATEGY, withStudies } from '../../../helpers/strategy-fixtures.js';
 
 // Page functions are written against TvWindow and tested against the shared fake window. These
@@ -142,6 +142,41 @@ describe('the TvWindow contract', () => {
         .getInputsInfo()
         .find(({ id }) => id === 'in_1')?.internalID,
     ).toBe('initial_capital');
+  });
+
+  test('is satisfied by the shared fake window for the charts of a layout, their panes and its type', () => {
+    const win: TvWindow = createFakeTvWindow({
+      ...fixture,
+      layout: { ...fixture.layout, type: '2h', chartsCount: 2 },
+      charts: {
+        others: [{ symbol: 'NASDAQ:MSFT', resolution: '60', studies: [], shapes: [] }],
+      },
+    });
+    const api = win.TradingViewApi;
+
+    const panes = api?.chart(0).getPanes?.();
+    const pane = panes?.[0];
+    expect(panes).toHaveLength(1);
+    expect([pane?.paneIndex(), pane?.getHeight(), pane?.hasMainSeries()]).toEqual([0, 600, true]);
+    expect(pane?.getAllEntities().map(({ id }) => id)).toEqual([
+      'MAINSERIES',
+      'STUDY01',
+      'STUDY02',
+      'SHAPE01',
+      'SHAPE02',
+      'SHAPE03',
+    ]);
+    expect([api?.chart(1).symbol(), api?.layout(), api?.chartsCount()]).toEqual([
+      'NASDAQ:MSFT',
+      '2h',
+      2,
+    ]);
+    api?.setActiveChart(1);
+    expect(api?.activeChartIndex()).toBe(1);
+    api?.setLayout?.('s', { withUndo: true });
+    expect(inspectFakeWindow(win).callsTo('TradingViewApi.setLayout')).toEqual([
+      ['s', { withUndo: true }],
+    ]);
   });
 
   test('is satisfied by a fake tab whose app has not booted', () => {

@@ -40,7 +40,7 @@ test('layoutTools lists the layout tools in the order of the catalog', () => {
   expect(new Set(layoutTools.map(({ domain }) => domain))).toEqual(new Set(['layout']));
 });
 
-test('the catalog lists the layout tools after the watchlist tools and before the screenshot', () => {
+test('the catalog lists the layout tools after the watchlist tools and before the pane tools', () => {
   const names = allTools.map(({ name }) => name);
   const lastWatchlist = watchlistTools.at(-1);
   if (lastWatchlist === undefined) {
@@ -48,7 +48,7 @@ test('the catalog lists the layout tools after the watchlist tools and before th
   }
 
   expect(names.indexOf('layout_list')).toBe(names.indexOf(lastWatchlist.name) + 1);
-  expect(names.indexOf('layout_switch')).toBe(names.indexOf('screenshot_capture') - 1);
+  expect(names.indexOf('layout_switch')).toBe(names.indexOf('pane_list') - 1);
 });
 
 test('layout_list only reads, so the readonly profile offers it and no other layout tool', () => {

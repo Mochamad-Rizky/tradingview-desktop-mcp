@@ -21,6 +21,7 @@ import { dataTools } from '../../src/tools/data/index.js';
 import { drawingTools } from '../../src/tools/drawing/index.js';
 import { indicatorTools } from '../../src/tools/indicator/index.js';
 import { layoutTools } from '../../src/tools/layout/index.js';
+import { paneTools } from '../../src/tools/pane/index.js';
 import { pineTools } from '../../src/tools/pine/index.js';
 import { screenshotTools } from '../../src/tools/screenshot/index.js';
 import { strategyTools } from '../../src/tools/strategy/index.js';
@@ -90,6 +91,7 @@ describe('startStdioTransport', () => {
       ...alertTools.map(({ name }) => name),
       ...watchlistTools.map(({ name }) => name),
       ...layoutTools.map(({ name }) => name),
+      ...paneTools.map(({ name }) => name),
       ...screenshotTools.map(({ name }) => name),
       ...uiTools.map(({ name }) => name),
       'batch_run',

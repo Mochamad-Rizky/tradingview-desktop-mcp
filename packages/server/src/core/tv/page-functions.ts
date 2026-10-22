@@ -51,6 +51,15 @@ import {
   readLayoutState,
   readSavedLayouts,
 } from '../../tools/layout/page.js';
+import {
+  awaitChartsData,
+  focusChart,
+  readChartSymbols,
+  readLayoutCount,
+  readPaneLayout,
+  readPanes,
+  setLayoutViaApi,
+} from '../../tools/pane/page.js';
 import { readPineGraphics } from '../../tools/pine/outputs-page.js';
 import {
   addPineScriptToChart,
@@ -98,12 +107,14 @@ import type { TvWindow } from './tv-window.js';
 // createPageLib, which the bridge calls with the window alone to build the page library.
 export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   awaitChartData,
+  awaitChartsData,
   createPageLib,
   describeElement,
   describeFocusedElement,
   editStudyInputs,
   evaluateExpression,
   findElements,
+  focusChart,
   insertStudy,
   loadLayoutInPlace,
   probeCapabilities,
@@ -117,13 +128,16 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readChartSnapshot,
   readChartState,
   readChartSymbolInfo,
+  readChartSymbols,
   readDrawing,
   readDrawingIds,
   readDrawings,
   readFullscreen,
   readHistory,
   readLayoutState,
+  readPaneLayout,
   readPanelControls,
+  readPanes,
   readPineGraphics,
   readSavedLayouts,
   readStrategyReport,
@@ -141,6 +155,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   searchSymbolsViaApi,
   setChartTypeViaApi,
   setFullscreen,
+  setLayoutViaApi,
   setResolutionViaApi,
   setStudyVisibility,
   setSymbolViaApi,
@@ -167,6 +182,7 @@ export const pageLibFunctions: Record<
   readAlertContext,
   readAlerts,
   readCachedQuote,
+  readLayoutCount,
   readPineConsole,
   readPineConsoleDiagnostics,
   readPineEditorState,

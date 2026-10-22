@@ -260,6 +260,17 @@ test('registers the page functions, so the checks below are not vacuous', () => 
     expect(Object.keys(pageLibFunctions)).toContain(name);
   }
   for (const name of [
+    'readPanes',
+    'readPaneLayout',
+    'setLayoutViaApi',
+    'awaitChartsData',
+    'focusChart',
+    'readChartSymbols',
+  ]) {
+    expect(Object.keys(pageFunctions)).toContain(name);
+  }
+  expect(Object.keys(pageLibFunctions)).toContain('readLayoutCount');
+  for (const name of [
     'readPineEditorState',
     'openPineEditor',
     'closePineEditor',
@@ -476,6 +487,25 @@ describe('the checks catch what they are meant to', () => {
       return found.includes(null) ? null : formatSymbol('x');
     }
     const source = callsModuleHelperAfterLayoutLookup.toString();
+
+    expect(await referenceErrorsIn(libCall(source))).toEqual([
+      'formatSymbol is not defined',
+      'formatSymbol is not defined',
+    ]);
+  });
+
+  test('the default fake windows carry the table of layouts, so a lib function runs past its lookup', async () => {
+    // Looks the table up the way the pane tools do, then calls a helper of its module.
+    function callsModuleHelperAfterTableLookup(win: TvWindow, lib: PageLib): string | null {
+      const found = lib.findModuleWith([
+        'layouts',
+        'isMultipleLayout',
+        'isSupportedLayout',
+        'tryGuessingTheMostSuitableLayout',
+      ]);
+      return found === null ? null : formatSymbol('x');
+    }
+    const source = callsModuleHelperAfterTableLookup.toString();
 
     expect(await referenceErrorsIn(libCall(source))).toEqual([
       'formatSymbol is not defined',

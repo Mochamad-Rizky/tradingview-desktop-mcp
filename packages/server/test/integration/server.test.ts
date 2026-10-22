@@ -16,6 +16,7 @@ import { drawingTools } from '../../src/tools/drawing/index.js';
 import { allTools } from '../../src/tools/index.js';
 import { indicatorTools } from '../../src/tools/indicator/index.js';
 import { layoutTools } from '../../src/tools/layout/index.js';
+import { paneTools } from '../../src/tools/pane/index.js';
 import { pineTools } from '../../src/tools/pine/index.js';
 import { screenshotTools } from '../../src/tools/screenshot/index.js';
 import { strategyTools } from '../../src/tools/strategy/index.js';
@@ -41,7 +42,7 @@ import {
 const HEALTH_URI = 'tradingview://app/health';
 // What a server offers when nothing narrows its tools: the tools of the app, of the chart, of
 // market data, of indicators, of Pine, of the Strategy Tester, of drawings, of alerts, of
-// watchlists, of layouts, of screenshots and of the low-level interface, then the batch.
+// watchlists, of layouts, of panes, of screenshots and of the low-level interface, then the batch.
 // The core profile keeps the tools that say they are core, in the same order; which tools those
 // are is pinned by test/unit/tools/registry.test.ts.
 const APP_TOOL_NAMES = appTools.map(({ name }) => name);
@@ -74,6 +75,10 @@ const READ_WATCHLIST_TOOL_NAMES = watchlistTools
   .map(({ name }) => name);
 const LAYOUT_TOOL_NAMES = layoutTools.map(({ name }) => name);
 const READ_LAYOUT_TOOL_NAMES = layoutTools
+  .filter(({ annotations }) => annotations.readOnlyHint === true)
+  .map(({ name }) => name);
+const PANE_TOOL_NAMES = paneTools.map(({ name }) => name);
+const READ_PANE_TOOL_NAMES = paneTools
   .filter(({ annotations }) => annotations.readOnlyHint === true)
   .map(({ name }) => name);
 const SCREENSHOT_TOOL_NAMES = screenshotTools.map(({ name }) => name);
@@ -184,6 +189,7 @@ test('lists registered tools with descriptions and input schemas', async () => {
     ...ALERT_TOOL_NAMES,
     ...WATCHLIST_TOOL_NAMES,
     ...LAYOUT_TOOL_NAMES,
+    ...PANE_TOOL_NAMES,
     ...SCREENSHOT_TOOL_NAMES,
     ...UI_TOOL_NAMES,
     'batch_run',
@@ -641,6 +647,7 @@ test('createMcpServer creates the dependencies it is not given', () => {
     ...ALERT_TOOL_NAMES,
     ...WATCHLIST_TOOL_NAMES,
     ...LAYOUT_TOOL_NAMES,
+    ...PANE_TOOL_NAMES,
     ...SCREENSHOT_TOOL_NAMES,
     ...UI_TOOL_NAMES,
     'batch_run',
@@ -678,6 +685,7 @@ test('createMcpServer registers the tools of the profile and the tool filter onl
     ...READ_ALERT_TOOL_NAMES,
     ...READ_WATCHLIST_TOOL_NAMES,
     ...READ_LAYOUT_TOOL_NAMES,
+    ...READ_PANE_TOOL_NAMES,
     ...READ_SCREENSHOT_TOOL_NAMES,
     ...READ_UI_TOOL_NAMES,
   ]);

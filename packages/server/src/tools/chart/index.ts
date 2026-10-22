@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { PageHandle } from '../../core/connection.js';
 import { TvMcpError } from '../../core/errors.js';
 import type { Tier } from '../../core/result.js';
 import { SELECTORS } from '../../core/tv/selectors.js';
@@ -28,6 +29,7 @@ import {
   symbolStrategies,
   timeframeStrategies,
   unknownSymbolPrevious,
+  type ChartTarget,
   type DateRangePreset,
   type SymbolChange,
 } from './strategies.js';
@@ -133,6 +135,90 @@ export const chartGetState = defineTool({
   },
 });
 
+// The symbol a client asked for, trimmed. A blank one fails with INVALID_INPUT, before the app is
+// looked at.
+export function requestedSymbol(written: string): string {
+  const symbol = written.trim();
+  if (symbol === '') {
+    throw new TvMcpError('INVALID_INPUT', 'The symbol is blank', {
+      hint: 'Give a symbol such as NASDAQ:AAPL.',
+    });
+  }
+  return symbol;
+}
+
+// What a change of the symbol of a chart comes to, as chart_set_symbol reports it. A type alias, not
+// an interface: it goes to the client as JSON.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+export type SymbolResult = {
+  symbol: string | null;
+  previous: string | null;
+  changed: boolean | null;
+};
+
+// Switches the chart `target` names to `symbol`, the way chart_set_symbol does it, for the tools
+// that change the symbol of a chart (chart_set_symbol, and pane_set_symbol for a chart named by its
+// index): through the chart API, and else through the interface, which reaches the active chart
+// only. A symbol TradingView does not know is reported as INVALID_INPUT once the chart has been
+// switched back. A warning says when the change could not be checked, when TradingView did not
+// confirm the symbol, and when the chart shows another symbol than the one asked for.
+export async function setChartSymbol(
+  ctx: ToolContext,
+  page: PageHandle,
+  target: ChartTarget,
+  symbol: string,
+): Promise<{ data: SymbolResult; via: Tier; warnings: string[] }> {
+  const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
+  let outcome: { value: SymbolChange; via: Tier };
+  try {
+    outcome = await runStrategies(
+      symbolStrategies(page, target, symbol, waitMs),
+      ctx.logger,
+      'Neither the chart API, nor the symbol search, nor typing on the chart could be used. ' +
+        'Check app_health: the chart may still be loading or be covered by a dialog. The ' +
+        'interface reaches the active chart only, and it is not used while a text field, such as ' +
+        'the Pine Editor, has the focus.',
+    );
+  } catch (error) {
+    // The chart has been switched to a symbol that does not exist, and is switched back before
+    // the error is reported.
+    const previous = unknownSymbolPrevious(error, symbol);
+    if (previous === undefined) {
+      throw error;
+    }
+    throw await revertUnknownSymbol(page, target, symbol, previous, waitMs, ctx.logger);
+  }
+  const { value, via } = outcome;
+  const warnings: string[] = [];
+  if (value.symbol === null) {
+    warnings.push(UNCHECKED);
+  } else {
+    if (!value.confirmed) {
+      warnings.push(
+        `The chart shows ${value.symbol}, but TradingView did not confirm within the wait that ` +
+          'it found the symbol and loaded its data. It may still be loading, or the symbol may ' +
+          'be unknown; call chart_get_state to see what the chart shows.',
+      );
+    }
+    // The chart may show the symbol through the exchange of its data feed (BATS:AAPL for
+    // NASDAQ:AAPL), in which case the listing the series resolved names the one asked for.
+    const listed = value.listing !== null && sameSymbol(symbol, value.listing);
+    if (!sameSymbol(symbol, value.symbol) && !listed) {
+      // Enter in the symbol search applies the highlighted result, which need not be the one
+      // asked for, and the chart API resolves a symbol its own way too.
+      warnings.push(
+        `The chart shows ${value.symbol} instead of ${symbol}; TradingView may have chosen ` +
+          'another match. Give the symbol in the EXCHANGE:SYMBOL form to pick one.',
+      );
+    }
+  }
+  return {
+    data: { symbol: value.symbol, previous: value.previous, changed: value.changed },
+    via,
+    warnings,
+  };
+}
+
 export const chartSetSymbol = defineTool({
   name: 'chart_set_symbol',
   domain: 'chart',
@@ -168,63 +254,10 @@ export const chartSetSymbol = defineTool({
   },
   core: true,
   async handler({ symbol: written, chartIndex }, ctx) {
-    const symbol = written.trim();
-    if (symbol === '') {
-      throw new TvMcpError('INVALID_INPUT', 'The symbol is blank', {
-        hint: 'Give a symbol such as NASDAQ:AAPL.',
-      });
-    }
+    const symbol = requestedSymbol(written);
     const page = await ctx.connection.chartPage();
     const target = await resolveChartTarget(page, chartIndex);
-    const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
-    let outcome: { value: SymbolChange; via: Tier };
-    try {
-      outcome = await runStrategies(
-        symbolStrategies(page, target, symbol, waitMs),
-        ctx.logger,
-        'Neither the chart API, nor the symbol search, nor typing on the chart could be used. ' +
-          'Check app_health: the chart may still be loading or be covered by a dialog. The ' +
-          'interface reaches the active chart only, and it is not used while a text field, such as ' +
-          'the Pine Editor, has the focus.',
-      );
-    } catch (error) {
-      // The chart has been switched to a symbol that does not exist, and is switched back before
-      // the error is reported.
-      const previous = unknownSymbolPrevious(error, symbol);
-      if (previous === undefined) {
-        throw error;
-      }
-      throw await revertUnknownSymbol(page, target, symbol, previous, waitMs, ctx.logger);
-    }
-    const { value, via } = outcome;
-    const warnings: string[] = [];
-    if (value.symbol === null) {
-      warnings.push(UNCHECKED);
-    } else {
-      if (!value.confirmed) {
-        warnings.push(
-          `The chart shows ${value.symbol}, but TradingView did not confirm within the wait that ` +
-            'it found the symbol and loaded its data. It may still be loading, or the symbol may ' +
-            'be unknown; call chart_get_state to see what the chart shows.',
-        );
-      }
-      // The chart may show the symbol through the exchange of its data feed (BATS:AAPL for
-      // NASDAQ:AAPL), in which case the listing the series resolved names the one asked for.
-      const listed = value.listing !== null && sameSymbol(symbol, value.listing);
-      if (!sameSymbol(symbol, value.symbol) && !listed) {
-        // Enter in the symbol search applies the highlighted result, which need not be the one
-        // asked for, and the chart API resolves a symbol its own way too.
-        warnings.push(
-          `The chart shows ${value.symbol} instead of ${symbol}; TradingView may have chosen ` +
-            'another match. Give the symbol in the EXCHANGE:SYMBOL form to pick one.',
-        );
-      }
-    }
-    return {
-      data: { symbol: value.symbol, previous: value.previous, changed: value.changed },
-      via,
-      warnings,
-    };
+    return setChartSymbol(ctx, page, target, symbol);
   },
 });
 

@@ -65,13 +65,23 @@ export interface BoxElementLike {
 // window.TradingViewApi, a superset of the Charting Library widget API (notes, section 4.2).
 export interface TradingViewApiLike {
   activeChart(): ChartWidgetApiLike;
-  // The charts of a multi-chart layout, counted from 0.
+  // The charts of a multi-chart layout, counted from 0. chart(i) throws "Incorrect index: i" outside
+  // [0, chartsCount()), which counts the charts the layout shows (limited to the plan's count for a
+  // layout the plan keeps locked; notes of Plan 3, section 2.3).
   chart(index?: number): ChartWidgetApiLike;
   chartsCount(): number;
   activeChartIndex(): number;
+  // Ignores an index outside the layout. When the active chart is maximized, it maximizes chart i
+  // instead.
   setActiveChart(index: number): void;
   // The layout type, such as "s" for a single chart.
   layout(): string;
+  // Changes the layout type and returns nothing; layout() shows the change once it is made (notes of
+  // Plan 3, section 2.2). With withUndo it is a step the user can undo, and the type shown already
+  // changes nothing. On both paths the app opens its MULTIPLE_CHARTS paywall itself for a type with
+  // more charts than the plan allows, and the path without withUndo shows a single chart for a type
+  // it does not know, so page code checks both first and passes withUndo. A build may not have it.
+  setLayout?(type: string, options?: { withUndo?: boolean }): void;
   // The name and the short id (the url of its saved record, as in /chart/<url>/) of the layout on
   // the chart: its meta info (notes of Plan 3, section 1.1). Typed loosely, because a layout that was
   // never saved has no id, and page code checks for a text.
@@ -214,6 +224,8 @@ export interface ChartWidgetApiLike {
   // at once when it has it (notes of Plan 3, section 1.3). It never settles for a symbol the app
   // cannot resolve. The form with a callback is deprecated and left out. A build may not have it.
   dataReady?(): Promise<unknown>;
+  // The panes of the chart, top to bottom (notes of Plan 3, section 2.3). A build may not have it.
+  getPanes?(): PaneApiLike[];
   // The widget behind the API. It is internal, so a build may not have it.
   readonly _chartWidget?: ChartWidgetLike;
   // The time the chart reports for the bar at an index, the one getVisibleRange speaks in: for
@@ -221,6 +233,21 @@ export interface ChartWidgetApiLike {
   // session (13:30 UTC for a US stock). It answers for the time points after the last bar too, and
   // null while the series has no symbol info (seen on the app). Internal as well.
   _convertIndexToPublicTime?(index: number): number | null;
+}
+
+// A pane of a chart, from getPanes() (notes of Plan 3, section 2.3). Only the readers page code
+// uses are described; the members that change the pane (setHeight, collapse, restore,
+// setMaximized, moveTo) are left out on purpose.
+export interface PaneApiLike {
+  paneIndex(): number;
+  // In CSS pixels.
+  getHeight(): number;
+  // Whether the main series of the chart is in the pane.
+  hasMainSeries(): boolean;
+  // What the pane holds: the main series ({ name: "Main Series" }), the studies ({ id, name } as
+  // getAllStudies lists them) and the drawings ({ id, name: the API name of the tool }), drawings of
+  // tools without an API name left out.
+  getAllEntities(): { id: string; name: string }[];
 }
 
 // A point of a drawing as createShape takes it: the time in Unix seconds, which lands on the bar
@@ -985,3 +1012,10 @@ export type CreateNewChartLike = (options: NewChartOptionsLike) => Promise<unkno
 // does not restrict the count). It rejects when that request fails, other than with a 403, which
 // counts as false.
 export type HasPermissionsToCreateNewChartLike = () => Promise<unknown>;
+
+// The export layouts (notes of Plan 3, section 2.1), found with the exports isMultipleLayout,
+// isSupportedLayout and tryGuessingTheMostSuitableLayout of its module: the table of the layout
+// types the app knows, from a code such as 2h to a description of the layout, whose count is how
+// many charts it shows (title, layoutType, expression and its sizers next to it). Typed loosely:
+// page code checks each count.
+export type LayoutTableLike = Readonly<Record<string, { readonly count?: unknown } | undefined>>;
