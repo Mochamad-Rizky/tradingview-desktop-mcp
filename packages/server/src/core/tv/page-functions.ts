@@ -68,6 +68,12 @@ import {
   readPineEditorShown,
   setFullscreen,
 } from '../../tools/ui/page.js';
+import {
+  changeWatchlistViaApi,
+  readWatchlist,
+  readWatchlistLimits,
+  readWatchlists,
+} from '../../tools/watchlist/page.js';
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement, findElements } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
@@ -137,6 +143,7 @@ export const pageLibFunctions: Record<
 > = {
   addPineScriptToChart,
   changePineEditor,
+  changeWatchlistViaApi,
   closePineEditor,
   compilePineSource,
   createAlertViaApi,
@@ -158,5 +165,8 @@ export const pageLibFunctions: Record<
   readSavedPineScripts,
   readStudyCatalog,
   readStudyInsertContext,
+  readWatchlist,
+  readWatchlistLimits,
+  readWatchlists,
   savePineScript,
 };

@@ -86,6 +86,7 @@ export function createTestContext(
       createdScriptIds: new Set(),
       lastPineCompile: null,
       lastWrittenPineText: null,
+      addedWatchlistSymbols: new Map(),
     },
     ...overrides,
   };

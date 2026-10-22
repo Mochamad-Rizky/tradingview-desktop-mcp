@@ -798,10 +798,11 @@ export interface BottomWidgetBarLike {
 
 // The service locator of the app, a module whose exports are found together (hasService, service
 // and four more). service throws for a descriptor nothing is registered for, so page code asks
-// hasService first, as the app does.
+// hasService first, as the app does, or calls serviceOrNull, which answers null for it.
 export interface ServiceLocatorLike {
   hasService(descriptor: unknown): boolean;
   service(descriptor: unknown): unknown;
+  serviceOrNull?(descriptor: unknown): unknown;
 }
 
 // The page layout service, service(PAGE_LAYOUT_SERVICE), whose descriptor is the export
@@ -866,4 +867,58 @@ export interface EditableAlertStateLike {
 export interface AlertConfigLike {
   maxAlertExpiration?: unknown;
   defaultAlertExpiration?: unknown;
+}
+
+// The symbol list service of the app, serviceOrNull(SYMBOL_LIST_SERVICE) with the descriptor that is
+// the export SYMBOL_LIST_SERVICE of its own module (notes of Plan 3, section 3.1). The app creates
+// and registers it at the boot of the chart page; only its store is described. Its actions and the
+// initSymbolListService that creates it are left out on purpose: the actions open dialogs, and the
+// server never creates the service.
+export interface SymbolListServiceLike {
+  store?: SymbolListStoreLike;
+}
+
+// The Redux store of the symbol list service. Its state holds the custom lists (customLists, whose
+// timestamp is null until every list is loaded), the flag lists by color (markedLists), the hot
+// lists the app has loaded (hotLists) and the active list (activeSymbolList, { type, id } with type
+// custom, color or hot). dispatch runs a thunk and answers what it answers, a promise for the
+// refresh thunk. Typed loosely: page code checks each value.
+export interface SymbolListStoreLike {
+  getState(): unknown;
+  dispatch(action: unknown): unknown;
+}
+
+// The selectors of the watchlists the app exports (notes of Plan 3, section 3.2), as far as page code
+// uses them, each over the state of the store. A custom list is { type: 'custom', id, name,
+// description, symbols, shared, persistedState }, with symbols the entries of the list: symbols as
+// EXCHANGE:TICKER and section markers, which start with ###. getCustomListById reads byId[id] of the
+// state, so it is asked for a number only. getGlobalActiveSymbolList answers the active list of any
+// kind: a custom list, a flag list ({ type: 'colored', id: color, name, symbols, ... }) or a hot list
+// ({ type: 'hot', id, name, symbols, ... }), or null. Typed loosely: page code checks each value.
+export interface SymbolListSelectorsLike {
+  getCustomLists(state: unknown): unknown;
+  getCustomListById(state: unknown, id: number): unknown;
+  getGlobalActiveSymbolList(state: unknown): unknown;
+  getIsReadyCustomLists(state: unknown): unknown;
+}
+
+// The backend of the watchlists, serviceOrNull(SYMBOL_LIST_REPOSITORY_BACKEND_SERVICE) (notes of Plan
+// 3, section 3.4), as far as page code uses it: the append and remove requests of the app for a
+// custom list, which leave the store alone and open nothing. Each resolves with the entries of the
+// list on the server, and rejects with an Error whose name is ApiError:<code> for a refusal of the
+// server, such as plan_symbols_limit_reached. The thunks that wrap them (addWatchlistSymbolsThunk,
+// removeSymbolsThunk and the others), which open warning, paywall or confirmation dialogs, are left
+// out on purpose.
+export interface SymbolListBackendLike {
+  addSymbols(list: { id: number }, symbols: string[]): Promise<unknown>;
+  removeSymbols(list: { id: number }, symbols: string[]): Promise<unknown>;
+}
+
+// The module of the watchlist limits of the app (notes of Plan 3, section 3.6): MAX_WATCHLIST_LENGTH,
+// beyond which the app refuses an addition with a warning dialog, and getWatchlistSymbolsLimit(),
+// beyond which it opens the paywall. Its showMaxLimitError, the warning dialog, is left out on
+// purpose. Typed loosely: page code checks each value.
+export interface WatchlistLimitsLike {
+  MAX_WATCHLIST_LENGTH?: unknown;
+  getWatchlistSymbolsLimit?(): unknown;
 }

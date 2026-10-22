@@ -20,11 +20,11 @@ import {
   unreachableConnection,
 } from '../helpers/tool-context.js';
 
-// The resources of the data and Pine domains (design spec 7) through the whole server: an SDK
-// client over the in-memory transport, the real registry, connection manager and CDP adapter, and
-// the fake debug port of the app with a fake chart, Pine Editor and Strategy Tester behind it. The
-// resources of the app health and the chart state are tested with the domains they belong to.
-// Prices and sources are synthetic.
+// The resources of the data, Pine, strategy and watchlist domains (design spec 7) through the whole
+// server: an SDK client over the in-memory transport, the real registry, connection manager and CDP
+// adapter, and the fake debug port of the app with a fake chart, Pine Editor, Strategy Tester and
+// watchlists behind it. The resources of the app health and the chart state are tested with the
+// domains they belong to. Prices, sources and watchlists are synthetic.
 
 // Nothing in this file may run a real program or start TradingView.
 vi.mock('node:child_process', () => ({
@@ -43,6 +43,7 @@ const URIS = {
   source: 'tradingview://pine/source',
   errors: 'tradingview://pine/errors',
   report: 'tradingview://strategy/report',
+  watchlist: 'tradingview://watchlist/active',
 } as const;
 
 const fixture = loadTvFixture();
@@ -125,6 +126,7 @@ test('lists every resource', async () => {
     'pine_source',
     'pine_errors',
     'strategy_report',
+    'watchlist_active',
   ]);
   for (const resource of resources) {
     expect(resource.mimeType, resource.uri).toBe('application/json');
@@ -167,16 +169,24 @@ describe('the resources follow the tools', () => {
     ]);
   });
 
-  test.each(['readonly', 'core'] as const)(
-    'offers every resource under the %s profile, which keeps their tools',
-    async (profile) => {
-      const client = await startOffline({ profile });
+  test('offers every resource under the readonly profile, which keeps their tools', async () => {
+    const client = await startOffline({ profile: 'readonly' });
 
-      const { resources } = await client.listResources();
+    const { resources } = await client.listResources();
 
-      expect(resources.map(({ uri }) => uri)).toEqual(Object.values(URIS));
-    },
-  );
+    expect(resources.map(({ uri }) => uri)).toEqual(Object.values(URIS));
+  });
+
+  test('offers the resources of the core tools under the core profile', async () => {
+    const client = await startOffline({ profile: 'core' });
+
+    const { resources } = await client.listResources();
+
+    // watchlist_get is not a core tool, so the core profile offers no watchlist resource.
+    expect(resources.map(({ uri }) => uri)).toEqual(
+      Object.values(URIS).filter((uri) => uri !== URIS.watchlist),
+    );
+  });
 
   test('offers no resource when no tool of one is selected', async () => {
     const client = await startOffline({ toolPatterns: ['indicator_*'] });
@@ -349,7 +359,68 @@ describe('the strategy report resource', () => {
   });
 });
 
-test.each([URIS.ohlcv, URIS.source, URIS.report])(
+describe('the watchlist resource', () => {
+  test('the watchlist/active resource equals watchlist_get without listId and is absent without that tool', async () => {
+    const { client, win } = await startHarness();
+    const withoutGet = await startOffline({ toolPatterns: ['watchlist_list', 'watchlist_add*'] });
+    const getOnly = await startOffline({ toolPatterns: ['watchlist_get'] });
+
+    const resource = await readJson(client, URIS.watchlist);
+    const tool = await callTool(client, 'watchlist_get');
+
+    expect(resource).toStrictEqual(dataOf(tool));
+    expect(resource).toEqual({
+      id: '101',
+      name: 'Fixture List',
+      editable: true,
+      symbols: ['NASDAQ:AAPL', 'NASDAQ:MSFT', 'BINANCE:BTCUSDT'],
+      sections: [
+        { name: 'Tech', symbols: ['NASDAQ:AAPL', 'NASDAQ:MSFT'] },
+        { name: 'Crypto', symbols: ['BINANCE:BTCUSDT'] },
+      ],
+    });
+    // Reading it changed nothing: the store was only loaded, once, as the watchlist panel loads it.
+    expect(inspectFakeWindow(win).callsTo('symbolListBackend.getCustomWatchLists')).toEqual([[]]);
+    expect(
+      inspectFakeWindow(win)
+        .calls.map(({ name }) => name)
+        .filter((name) => /^symbolListBackend\.(add|remove)/.test(name)),
+    ).toEqual([]);
+    // A server with no resource to offer has no resources at all.
+    expect(withoutGet.getServerCapabilities()?.resources).toBeUndefined();
+    await expect(withoutGet.readResource({ uri: URIS.watchlist })).rejects.toThrow();
+    expect((await getOnly.listResources()).resources.map(({ uri }) => uri)).toEqual([
+      URIS.watchlist,
+    ]);
+  });
+
+  test('the watchlist resource fails NOT_AVAILABLE while the symbol list service is not set up', async () => {
+    const win = createFakeTvWindow(fixture, { watchlists: { withoutService: true } });
+    const app = await startFakeCdpServer({
+      targets: loadTargetsFixture({ chartWindow: () => win }),
+    });
+    cleanups.push(() => app.close());
+    const { server, ctx } = createMcpServer(
+      testConfig({ cdpPort: app.port, callTimeoutMs: 5000 }),
+      {
+        launcher: refusingLauncher(),
+        logger: quietLogger,
+      },
+    );
+    cleanups.push(() => ctx.connection.close());
+    const client = await connect(server);
+
+    await expect(client.readResource({ uri: URIS.watchlist })).rejects.toMatchObject({
+      code: -32603,
+      data: {
+        code: 'NOT_AVAILABLE',
+        hint: expect.stringContaining('ui_open_panel') as string,
+      },
+    });
+  });
+});
+
+test.each([URIS.ohlcv, URIS.source, URIS.report, URIS.watchlist])(
   'the resource %s fails with the code of the failure when TradingView is down',
   async (uri) => {
     const client = await startOffline();

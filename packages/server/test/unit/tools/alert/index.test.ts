@@ -31,7 +31,7 @@ test('alertTools lists the alert tools in the order of the catalog', () => {
   expect(new Set(alertTools.map(({ domain }) => domain))).toEqual(new Set(['alert']));
 });
 
-test('the catalog lists the alert tools after the drawing tools and before the screenshot', () => {
+test('the catalog lists the alert tools after the drawing tools and before the watchlist tools', () => {
   const names = allTools.map(({ name }) => name);
   const lastDrawing = drawingTools.at(-1);
   if (lastDrawing === undefined) {
@@ -39,7 +39,7 @@ test('the catalog lists the alert tools after the drawing tools and before the s
   }
 
   expect(names.indexOf('alert_create')).toBe(names.indexOf(lastDrawing.name) + 1);
-  expect(names.indexOf('alert_delete')).toBe(names.indexOf('screenshot_capture') - 1);
+  expect(names.indexOf('alert_delete')).toBe(names.indexOf('watchlist_list') - 1);
 });
 
 test('alert_list only reads, so the readonly profile offers it and no other alert tool', () => {

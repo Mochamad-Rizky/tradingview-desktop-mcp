@@ -24,6 +24,7 @@ import { pineTools } from '../../src/tools/pine/index.js';
 import { screenshotTools } from '../../src/tools/screenshot/index.js';
 import { strategyTools } from '../../src/tools/strategy/index.js';
 import { uiTools } from '../../src/tools/ui/index.js';
+import { watchlistTools } from '../../src/tools/watchlist/index.js';
 import { startStdioTransport } from '../../src/transports/stdio.js';
 import { startFakeCdpServer, type FakeCdpServer } from '../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
@@ -86,6 +87,7 @@ describe('startStdioTransport', () => {
       ...strategyTools.map(({ name }) => name),
       ...drawingTools.map(({ name }) => name),
       ...alertTools.map(({ name }) => name),
+      ...watchlistTools.map(({ name }) => name),
       ...screenshotTools.map(({ name }) => name),
       ...uiTools.map(({ name }) => name),
       'batch_run',

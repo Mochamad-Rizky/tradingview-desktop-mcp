@@ -241,6 +241,14 @@ test('registers the page functions, so the checks below are not vacuous', () => 
     expect(Object.keys(pageLibFunctions)).toContain(name);
   }
   for (const name of [
+    'readWatchlists',
+    'readWatchlist',
+    'readWatchlistLimits',
+    'changeWatchlistViaApi',
+  ]) {
+    expect(Object.keys(pageLibFunctions)).toContain(name);
+  }
+  for (const name of [
     'readPineEditorState',
     'openPineEditor',
     'closePineEditor',
@@ -413,6 +421,34 @@ describe('the checks catch what they are meant to', () => {
       return found.includes(null) ? null : formatSymbol('x');
     }
     const source = callsModuleHelperAfterAlertLookup.toString();
+
+    expect(await referenceErrorsIn(libCall(source))).toEqual([
+      'formatSymbol is not defined',
+      'formatSymbol is not defined',
+    ]);
+  });
+
+  test('the default fake windows carry the watchlist modules and services, so a lib function runs past its lookups', async () => {
+    // Looks the watchlist modules and services up the way the watchlist tools do, then calls a
+    // helper of its module.
+    function callsModuleHelperAfterWatchlistLookup(win: TvWindow, lib: PageLib): string | null {
+      const locator = lib.findModuleWith(['hasService', 'service', 'serviceOrNull']);
+      const found = [
+        'SYMBOL_LIST_SERVICE',
+        'SYMBOL_LIST_REPOSITORY_BACKEND_SERVICE',
+        'getCustomLists',
+        'getCustomWatchlistsThunk',
+        'getWatchlistSymbolsLimit',
+        'pendingOpenSeparators',
+      ].map((name) => lib.findExport(name));
+      const serviceOrNull = locator?.serviceOrNull as
+        ((descriptor: unknown) => unknown) | undefined;
+      const services = [found[0], found[1]].map(
+        (descriptor) => serviceOrNull?.(descriptor) ?? null,
+      );
+      return found.includes(null) || services.includes(null) ? null : formatSymbol('x');
+    }
+    const source = callsModuleHelperAfterWatchlistLookup.toString();
 
     expect(await referenceErrorsIn(libCall(source))).toEqual([
       'formatSymbol is not defined',

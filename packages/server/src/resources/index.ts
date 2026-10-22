@@ -9,6 +9,7 @@ import { readPineErrorsData } from '../tools/pine/compile.js';
 import { readPineSourceData } from '../tools/pine/index.js';
 import { readStrategyResultsData } from '../tools/strategy/index.js';
 import type { ToolContext } from '../tools/types.js';
+import { readWatchlistData } from '../tools/watchlist/index.js';
 
 const JSON_MIME_TYPE = 'application/json';
 
@@ -143,6 +144,18 @@ function resourcesOf(ctx: ToolContext): JsonResource[] {
         'changes nothing.',
       tool: 'strategy_get_results',
       read: async () => (await readStrategyResultsData(ctx)).data,
+    },
+    {
+      name: 'watchlist_active',
+      uri: 'tradingview://watchlist/active',
+      title: 'Active TradingView watchlist',
+      description:
+        'What watchlist_get reports for the active watchlist: its id, its name, whether the ' +
+        'watchlist tools can change it, its symbols and its sections. Reading it changes nothing; ' +
+        'when TradingView has not loaded the watchlists yet, it loads them as opening its ' +
+        'watchlist panel does.',
+      tool: 'watchlist_get',
+      read: async () => (await readWatchlistData(ctx)).data,
     },
   ];
 }

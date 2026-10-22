@@ -53,6 +53,10 @@ export interface SessionState {
   // confirmation. It never makes a text count as saved: saving and adding the script go by the flag
   // as ever. Kept in memory only: never logged or returned.
   lastWrittenPineText: string | null;
+  // The symbols watchlist_add and watchlist_add_bulk added, by the id of the watchlist they were
+  // added to, as the list holds them, until watchlist_remove removes them. Removing them needs no
+  // confirmation; removing any other symbol of a list does.
+  addedWatchlistSymbols: Map<string, Set<string>>;
 }
 
 // What a handler works with. Over HTTP the connection, the launcher, the logger and the event bus
