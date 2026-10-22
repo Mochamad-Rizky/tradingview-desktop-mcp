@@ -457,6 +457,27 @@ describe('layout_switch', () => {
     ]);
   });
 
+  test('the wait for the data of a layout stays inside the call timeout, so a slow chart is a warning and no TIMEOUT', async () => {
+    // 1000 ms is the smallest call timeout the configuration allows.
+    const { client } = await startHarness(
+      withChartStorage(5),
+      { layouts: { dataMs: Infinity } },
+      { callTimeoutMs: 1000 },
+    );
+
+    const switched = await callTool(client, 'layout_switch', { layoutId: 'FIXTURE2' });
+    const created = await callTool(client, 'layout_new', { name: NEW_NAME });
+
+    expect(dataOf(switched)).toEqual({ id: 'FIXTURE2', name: 'Second Layout', changed: true });
+    expect(warningsOf(switched)).toEqual([
+      expect.stringMatching(/did not report its data as loaded within 500 ms/) as string,
+    ]);
+    expect(dataOf(created)).toEqual({ id: 'NEW00001', name: NEW_NAME, opened: true });
+    expect(warningsOf(created)).toEqual([
+      expect.stringMatching(/did not report its data as loaded within 500 ms/) as string,
+    ]);
+  });
+
   test('layout_switch reports a layout TradingView switched to but did not finish loading, with a warning', async () => {
     const { client, win } = await startHarness(
       fixture,

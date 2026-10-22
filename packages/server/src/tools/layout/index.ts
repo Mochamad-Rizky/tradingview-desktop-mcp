@@ -62,7 +62,8 @@ const MAX_NAME_INPUT = 200;
 const MAX_LAYOUT_ID = 100;
 // How often the page is asked whether the layout on the chart became the one being loaded.
 const POLL_INTERVAL_MS = 100;
-// The least time the chart of a layout that was loaded is given to report its data.
+// The least time the chart of a layout that was loaded is given to report its data, when the call
+// timeout leaves that much to a page call.
 const MIN_DATA_WAIT_MS = 1500;
 
 // Switching to a layout, or to a new one, loads it in place of the current layout, which discards its
@@ -93,11 +94,12 @@ type OpenOutcome =
 
 // Loads the saved layout `id` in place and waits, within waitMs, until the layout on the chart is it
 // (polled with plain page functions), and then until its chart has its data, which gets the rest of
-// the wait and at least MIN_DATA_WAIT_MS. The data is waited for only once the loader reported that
-// the content of the layout is in place: before that, the chart may still be the one of the layout
-// before, so a layout switched to without that report comes with a warning instead. A loader that
-// failed is looked at once. The unsaved changes are looked at again right before the load, which
-// discards them only with confirm.
+// the wait and at least MIN_DATA_WAIT_MS, but never more than waitMs: a page call that waits longer
+// than that would outlast the call timeout of the bridge. The data is waited for only once the loader
+// reported that the content of the layout is in place: before that, the chart may still be the one
+// of the layout before, so a layout switched to without that report comes with a warning instead. A
+// loader that failed is looked at once. The unsaved changes are looked at again right before the
+// load, which discards them only with confirm.
 async function openLayout(
   page: PageHandle,
   id: string,
@@ -127,7 +129,7 @@ async function openLayout(
   if (load.ended !== 'loaded') {
     return { status: 'opened', name, warnings: [unfinishedLoadWarning(id)] };
   }
-  const dataWaitMs = Math.round(Math.max(left(), MIN_DATA_WAIT_MS));
+  const dataWaitMs = Math.round(Math.min(Math.max(left(), MIN_DATA_WAIT_MS), waitMs));
   const { ready } = await page.bridge.evaluate(awaitChartData, [dataWaitMs]);
   return {
     status: 'opened',
