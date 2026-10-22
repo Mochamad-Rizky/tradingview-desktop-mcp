@@ -6,6 +6,7 @@ import { failureOf } from '../../../helpers/failure-of.js';
 import {
   ENDPOINT,
   MAC_BINARY,
+  behindReport,
   connectingReport,
   createMachine,
   downReport,
@@ -470,6 +471,29 @@ describe('launch readiness', () => {
     const result = await launcherFor(machine).launch({ restart: false });
 
     expect(result).toMatchObject({ status: 'launched', waitedMs: 0, endpoint: ENDPOINT });
+  });
+
+  test('counts a chart tab behind a tab that shows no chart as ready enough', async () => {
+    // A restored session can put TradingView's New tab page in front: the health check says that no
+    // chart tab is in front. The app itself is up, and the chart tools say what to do about the tab.
+    const machine = createMachine({ reports: [downReport(), behindReport()] });
+
+    const result = await launcherFor(machine).launch({ restart: false });
+
+    expect(result).toMatchObject({ status: 'launched', waitedMs: 0, endpoint: ENDPOINT });
+  });
+
+  test('restarts into a window whose tab in front shows no chart', async () => {
+    const machine = createMachine({
+      files: [MAC_BINARY],
+      running: true,
+      stays: 1,
+      reports: [downReport(), downReport(), behindReport()],
+    });
+
+    const result = await launcherFor(machine).launch({ restart: true });
+
+    expect(result).toMatchObject({ status: 'restarted', executable: MAC_BINARY });
   });
 
   test('does not count a single chart tab that is not ready as ready enough', async () => {

@@ -192,6 +192,22 @@ export function unfocusedReport(tabs = 2): HealthReport {
   };
 }
 
+// A chart tab is open behind a tab that shows no chart, TradingView's New tab page, in a window in
+// view: no chart tab is in front, so the health check says that the app is not ready, and that the
+// chart tabs are in the background.
+export function behindReport(): HealthReport {
+  return {
+    cdp: { reachable: true, endpoint: ENDPOINT, browser: 'Chrome/134.0.0.0' },
+    chart: {
+      found: true,
+      tabs: 1,
+      url: 'https://www.tradingview.com/chart/',
+      inBackground: true,
+    },
+    app: { ready: false },
+  };
+}
+
 export function readyReport(): HealthReport {
   return {
     cdp: { reachable: true, endpoint: ENDPOINT, browser: 'Chrome/134.0.0.0' },

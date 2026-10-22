@@ -326,7 +326,7 @@ describe('health', () => {
 
     const report = await manager.health();
 
-    expect(report.chart).toEqual({ found: true, tabs: 1, url: chart('A').url });
+    expect(report.chart).toEqual({ found: true, tabs: 1, url: chart('A').url, inBackground: true });
     expect(report.app).toEqual({ ready: false });
     expect(app.connects).toEqual(['A', 'CHROME']);
     expect(openSessions(app).map(({ targetId }) => targetId)).toEqual(['CHROME']);

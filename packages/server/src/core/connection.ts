@@ -4,6 +4,7 @@ import {
   findChartTargets,
   findWindowChromeTarget,
   isNewTabPage,
+  isNoChartInFrontError,
   isTradingViewUserAgent,
   pickChartTarget,
   type Visibility,
@@ -37,6 +38,8 @@ export interface PageHandle {
 //   since TradingView cannot be reached there, and nothing of that browser is listed or read.
 // - chart.tabs: the chart tabs open, whichever of them is in use. chart.url is the url of the tab
 //   that was read, or of the only tab; it is absent when several are open and none was chosen.
+// - chart.inBackground: true when the chart tabs are all behind a tab that shows no chart, such as
+//   TradingView's New tab page, in a window in view (isNoChartInFrontError); absent otherwise.
 // - app.ready: the tab has the app's API and the API says it is connected. app.connected is what
 //   the API said, and is absent when there is no API or it could not say. app.buildTime is null
 //   when the page does not state its build.
@@ -48,7 +51,7 @@ export interface HealthReport {
     userAgent?: string;
     otherBrowser?: boolean;
   };
-  chart: { found: boolean; tabs: number; url?: string };
+  chart: { found: boolean; tabs: number; url?: string; inBackground?: boolean };
   app: { ready: boolean; connected?: boolean; buildTime?: string | null };
 }
 
@@ -501,7 +504,15 @@ export class ConnectionManager {
 
     // The tab is chosen the way any call chooses it, over the session any call uses; another
     // session to read the app would be a second one to the same target.
-    const page = await this.chartPage();
+    let page: PageHandle;
+    try {
+      page = await this.chartPage();
+    } catch (error) {
+      if (isNoChartInFrontError(error)) {
+        report.chart = { ...report.chart, inBackground: true };
+      }
+      throw error;
+    }
     const listed = tabs.find(({ id }) => id === page.target.id) ?? page.target;
     report.chart = { found: true, tabs: tabs.length, url: listed.url };
 

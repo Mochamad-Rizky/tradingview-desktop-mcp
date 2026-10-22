@@ -719,6 +719,21 @@ describe('tab_close', () => {
   });
 });
 
+describe('app_health while a New tab page is in front', () => {
+  test('app_health says that the chart tabs are behind a tab that shows no chart, and what to do', async () => {
+    const { client } = await startHarness({ tabs: [chartA, newTabPage], active: N });
+
+    const result = await callTool(client, 'app_health');
+
+    expect(dataOf(result)).toMatchObject({
+      chart: { found: true, tabs: 1, inBackground: true },
+      app: { ready: false },
+      capabilities: null,
+    });
+    expect(warningsOf(result)).toEqual([expect.stringMatching(/shows no chart.*tab_switch/)]);
+  });
+});
+
 describe('the chart tools while the window is out of view', () => {
   // Covered by other windows or minimized, as it is while the user works in another app: every page
   // of the window reports hidden, the chart in front and the window chrome too.

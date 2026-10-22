@@ -59,9 +59,13 @@ export interface LauncherDeps {
 
 // Several chart tabs and none in front is how a healthy app looks while its window is behind
 // another one, and the health check then says that the app is not ready, because it cannot tell
-// which tab to read. For the launcher the app is up: the user only has to bring a tab forward.
+// which tab to read. So does a session that comes back with a tab in front that shows no chart, such
+// as the New tab page, with the chart tabs behind it (chart.inBackground). For the launcher the app
+// is up: the user only has to bring a chart tab forward, which the chart tools say.
 function isReady({ cdp, chart, app }: HealthReport): boolean {
-  return cdp.reachable && chart.found && (app.ready || chart.tabs > 1);
+  return (
+    cdp.reachable && chart.found && (app.ready || chart.tabs > 1 || chart.inBackground === true)
+  );
 }
 
 function restartRequired(port: number): TvMcpError {

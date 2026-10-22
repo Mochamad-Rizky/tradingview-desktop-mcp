@@ -19,6 +19,13 @@ const UNFOCUSED_TABS =
   'Several TradingView chart tabs are open and none of them is in front, so the app cannot tell ' +
   'which one to use. Focus one TradingView tab (click it), then call app_health again.';
 
+// The chart tabs are all behind a tab that shows no chart, such as TradingView's New tab page: the
+// app is up, and the chart tools wait for a chart tab in front.
+const CHARTS_IN_BACKGROUND =
+  'The tab in front of TradingView shows no chart (its New tab page, say), so the chart tools ' +
+  'refuse until a chart tab is in front: bring one forward with tab_switch (tab_list lists the ' +
+  'tabs), then call app_health again.';
+
 // What frees the debug port when another browser holds it, such as a Chrome started with a debug
 // port of its own.
 const FREE_THE_PORT =
@@ -177,7 +184,9 @@ export const appHealth = defineTool({
     'registry, the desktop bridge); every flag is false on a page whose app has not started, and ' +
     'capabilities is null when no chart tab could be read. It is a report, so it succeeds when ' +
     'TradingView is down. With several chart tabs open and none in front, chart.tabs is above 1 ' +
-    'and a warning asks you to focus one TradingView tab. When another browser holds the debug ' +
+    'and a warning asks you to focus one TradingView tab. When the tab in front shows no chart, ' +
+    "such as TradingView's New tab page, chart.inBackground is true and a warning names " +
+    'tab_switch. When another browser holds the debug ' +
     'port, cdp.reachable is false, cdp.otherBrowser is true and a warning says how to free it.',
   inputSchema: {},
   annotations: {
@@ -201,11 +210,15 @@ export const appHealth = defineTool({
     if (unfocused) {
       warnings.push(UNFOCUSED_TABS);
     }
+    const inBackground = report.chart.inBackground === true;
+    if (inBackground) {
+      warnings.push(CHARTS_IN_BACKGROUND);
+    }
 
     let capabilities: Capabilities | null = null;
     // A report that already failed to choose a tab would only fail the same way, and each try
     // opens a session to every tab to ask which one is in front.
-    if (report.chart.found && !unfocused) {
+    if (report.chart.found && !unfocused && !inBackground) {
       try {
         capabilities = await readCapabilities(await ctx.connection.chartPage());
       } catch (error) {
