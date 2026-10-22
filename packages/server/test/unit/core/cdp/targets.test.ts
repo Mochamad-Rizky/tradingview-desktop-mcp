@@ -322,38 +322,67 @@ test('findNewTabPages returns every New tab page in list order, and none of the 
 });
 
 describe('pickChartTarget while a New tab page is open', () => {
+  // The window chrome reports itself visible while the window is in view.
+  const inView = { newTabPageOpen: true, chromeVisibility: 'visible' } as const;
+
   test('reads even a lone tab, and takes it when it reports visible', () => {
     const only = chartTab('ONLY');
 
-    expect(pickChartTarget([only], visibilities({ ONLY: 'visible' }), true)).toBe(only);
+    expect(pickChartTarget([only], visibilities({ ONLY: 'visible' }), inView)).toBe(only);
+    expect(
+      pickChartTarget([only], visibilities({ ONLY: 'visible' }), { newTabPageOpen: true }),
+    ).toBe(only);
   });
 
   test.each<[string, Visibility | undefined]>([
     ['hidden', 'hidden'],
     ['unknown', 'unknown'],
     ['not read', undefined],
-  ])('refuses a lone tab that is %s: the active tab shows no chart', (_label, state) => {
-    const only = chartTab('ONLY');
+  ])(
+    'refuses a lone tab that is %s while the window is in view: the active tab shows no chart',
+    (_label, state) => {
+      const only = chartTab('ONLY');
 
-    const error = thrownBy(() =>
-      pickChartTarget([only], visibilities(state === undefined ? {} : { ONLY: state }), true),
-    );
+      const error = thrownBy(() =>
+        pickChartTarget([only], visibilities(state === undefined ? {} : { ONLY: state }), inView),
+      );
 
-    expect(error).toBeInstanceOf(TvMcpError);
-    expect(error).toMatchObject({
-      code: 'TARGET_NOT_FOUND',
-      message: 'The active tab of TradingView shows no chart',
-      details: {
-        newTabPage: true,
-        tabs: [{ id: 'ONLY', url: only.url, visibility: state ?? 'unknown' }],
-      },
-    });
-    expect((error as TvMcpError).hint).toMatch(/tab_switch/);
-    expect(isNoChartInFrontError(error)).toBe(true);
-  });
+      expect(error).toBeInstanceOf(TvMcpError);
+      expect(error).toMatchObject({
+        code: 'TARGET_NOT_FOUND',
+        message: 'The active tab of TradingView shows no chart',
+        details: {
+          newTabPage: true,
+          tabs: [{ id: 'ONLY', url: only.url, visibility: state ?? 'unknown' }],
+        },
+      });
+      expect((error as TvMcpError).hint).toMatch(/tab_switch/);
+      expect(isNoChartInFrontError(error)).toBe(true);
+    },
+  );
+
+  test.each<[string, Visibility | undefined]>([
+    ['hidden', 'hidden'],
+    ['unknown', 'unknown'],
+    ['not read', undefined],
+  ])(
+    'takes a lone tab that is %s while the window is covered, minimized or cannot say: then visibility tells nothing about the tab in front',
+    (_label, state) => {
+      const only = chartTab('ONLY');
+      const seen = visibilities(state === undefined ? {} : { ONLY: state });
+
+      expect(
+        pickChartTarget([only], seen, { newTabPageOpen: true, chromeVisibility: 'hidden' }),
+      ).toBe(only);
+      expect(
+        pickChartTarget([only], seen, { newTabPageOpen: true, chromeVisibility: 'unknown' }),
+      ).toBe(only);
+      expect(pickChartTarget([only], seen, { newTabPageOpen: true })).toBe(only);
+    },
+  );
 
   test('refuses when no chart tab is open at all', () => {
-    const error = thrownBy(() => pickChartTarget([], new Map(), true));
+    const error = thrownBy(() => pickChartTarget([], new Map(), { newTabPageOpen: true }));
 
     expect(error).toMatchObject({
       code: 'TARGET_NOT_FOUND',
@@ -367,11 +396,24 @@ describe('pickChartTarget while a New tab page is open', () => {
     const second = chartTab('SECOND');
 
     expect(
-      pickChartTarget([first, second], visibilities({ FIRST: 'hidden', SECOND: 'visible' }), true),
+      pickChartTarget(
+        [first, second],
+        visibilities({ FIRST: 'hidden', SECOND: 'visible' }),
+        inView,
+      ),
     ).toBe(second);
     const error = thrownBy(() =>
-      pickChartTarget([first, second], visibilities({ FIRST: 'hidden', SECOND: 'hidden' }), true),
+      pickChartTarget([first, second], visibilities({ FIRST: 'hidden', SECOND: 'hidden' }), inView),
     );
+    // A window chrome that cannot say keeps that refusal too.
+    expect(
+      thrownBy(() =>
+        pickChartTarget([first, second], visibilities({ FIRST: 'hidden', SECOND: 'hidden' }), {
+          newTabPageOpen: true,
+          chromeVisibility: 'unknown',
+        }),
+      ),
+    ).toMatchObject({ message: 'The active tab of TradingView shows no chart' });
     expect(error).toMatchObject({
       code: 'TARGET_NOT_FOUND',
       details: {
@@ -388,7 +430,7 @@ describe('pickChartTarget while a New tab page is open', () => {
     const tabs = [chartTab('FIRST'), chartTab('SECOND')];
 
     const error = thrownBy(() =>
-      pickChartTarget(tabs, visibilities({ FIRST: 'visible', SECOND: 'visible' }), true),
+      pickChartTarget(tabs, visibilities({ FIRST: 'visible', SECOND: 'visible' }), inView),
     );
 
     expect(error).toMatchObject({
@@ -396,6 +438,72 @@ describe('pickChartTarget while a New tab page is open', () => {
       details: { tabs: tabs.map(({ id, url }) => ({ id, url })) },
     });
     expect(isNoChartInFrontError(error)).toBe(false);
+  });
+});
+
+describe('pickChartTarget while the window is out of view', () => {
+  // Covered by other windows or minimized: every page of the window reports hidden, the window
+  // chrome too.
+  const covered = { chromeVisibility: 'hidden' } as const;
+
+  test.each([false, true])(
+    'refuses several hidden tabs saying the window is covered or minimized (New tab page open: %s)',
+    (newTabPageOpen) => {
+      const tabs = [chartTab('FIRST'), chartTab('SECOND')];
+
+      const error = thrownBy(() =>
+        pickChartTarget(tabs, visibilities({ FIRST: 'hidden', SECOND: 'unknown' }), {
+          ...covered,
+          newTabPageOpen,
+        }),
+      );
+
+      expect(error).toBeInstanceOf(TvMcpError);
+      expect(error).toMatchObject({
+        code: 'TARGET_NOT_FOUND',
+        message: "TradingView's window is covered or minimized, so the tab in front cannot be told",
+        details: { tabs: tabs.map(({ id, url }) => ({ id, url })) },
+      });
+      expect((error as TvMcpError).hint).toMatch(/Bring TradingView to the front/);
+      expect((error as TvMcpError).hint).toMatch(/one chart tab/);
+      expect(isNoChartInFrontError(error)).toBe(false);
+    },
+  );
+
+  test("keeps Plan 1's message when the window chrome reports itself visible or cannot say", () => {
+    const tabs = [chartTab('FIRST'), chartTab('SECOND')];
+    const hidden = visibilities({ FIRST: 'hidden', SECOND: 'hidden' });
+
+    for (const chromeVisibility of ['visible', 'unknown'] as const) {
+      expect(thrownBy(() => pickChartTarget(tabs, hidden, { chromeVisibility }))).toMatchObject({
+        code: 'TARGET_NOT_FOUND',
+        message: '2 chart tabs are open and it is unclear which one to use',
+      });
+    }
+  });
+
+  test('leaves alone a lone tab without a New tab page, a visible tab, and several visible tabs', () => {
+    const only = chartTab('ONLY');
+    const first = chartTab('FIRST');
+    const second = chartTab('SECOND');
+
+    expect(pickChartTarget([only], visibilities({ ONLY: 'hidden' }), covered)).toBe(only);
+    expect(
+      pickChartTarget(
+        [first, second],
+        visibilities({ FIRST: 'hidden', SECOND: 'visible' }),
+        covered,
+      ),
+    ).toBe(second);
+    expect(
+      thrownBy(() =>
+        pickChartTarget(
+          [first, second],
+          visibilities({ FIRST: 'visible', SECOND: 'visible' }),
+          covered,
+        ),
+      ),
+    ).toMatchObject({ message: '2 chart tabs are open and it is unclear which one to use' });
   });
 });
 
@@ -420,7 +528,10 @@ test('isNoChartInFrontError tells the refusal of a New tab page in front from ev
 test('isEveryChartTabHidden tells a refusal whose chart tabs all reported hidden from one that has a tab it could not read', () => {
   const refusal = (states: Record<string, Visibility>) =>
     thrownBy(() =>
-      pickChartTarget(Object.keys(states).map(chartTab), visibilities(states), true),
+      pickChartTarget(Object.keys(states).map(chartTab), visibilities(states), {
+        newTabPageOpen: true,
+        chromeVisibility: 'visible',
+      }),
     ) as TvMcpError;
 
   expect(isEveryChartTabHidden(refusal({ A: 'hidden', B: 'hidden' }))).toBe(true);

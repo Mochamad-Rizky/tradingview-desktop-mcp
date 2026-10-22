@@ -398,10 +398,17 @@ test('refuses to choose when no tab is visible', async () => {
 
   const error = await failureOf(manager.chartPage());
 
+  // The window chrome of the recorded list reports itself visible: the window is in view.
   expect(error.code).toBe('TARGET_NOT_FOUND');
+  expect(error.message).toBe('2 chart tabs are open and it is unclear which one to use');
+  // The sessions opened to look at the tabs are closed again. The window chrome, asked whether the
+  // window is in view, keeps its session, which the tools of the tab strip share.
   await vi.waitFor(() => {
-    expect(server.openConnectionCount()).toBe(0);
+    expect(server.openConnectionCount(TAB_A)).toBe(0);
+    expect(server.openConnectionCount(TAB_B)).toBe(0);
   });
+  expect(server.openConnectionCount(WINDOW_CHROME_ID)).toBe(1);
+  expect(server.openConnectionCount()).toBe(1);
 });
 
 test('counts a tab that does not answer as unknown and chooses the visible one', async () => {

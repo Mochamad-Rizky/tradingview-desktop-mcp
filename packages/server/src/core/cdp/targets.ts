@@ -81,11 +81,10 @@ export function findNewTabPages(list: CdpTargetInfo[]): CdpTargetInfo[] {
   return list.filter(isNewTabPage);
 }
 
-// The refusal of a chart tool while a New tab page is open and no chart tab reports itself visible:
-// the tab in front shows no chart, and the chart tabs behind it are not the one the user looks at,
-// unless the window is out of view, when no page of it reports itself visible (seen on the app). It
-// lists the chart tabs with what each reported, and says newTabPage, which isNoChartInFrontError
-// reads.
+// The refusal of a chart tool while a New tab page is open, the window is in view, and no chart tab
+// reports itself visible: the tab in front shows no chart, and the chart tabs behind it are not the
+// one the user looks at. It lists the chart tabs with what each reported, and says newTabPage, which
+// isNoChartInFrontError reads.
 function noChartInFront(
   candidates: CdpTargetInfo[],
   visibility: ReadonlyMap<string, Visibility>,
@@ -94,8 +93,7 @@ function noChartInFront(
     hint:
       'Bring a tab that shows a chart to the front with tab_switch (tab_list lists the tabs). ' +
       "A tab on TradingView's New tab page shows none: open a layout there, or close it with " +
-      'tab_close. Keep the TradingView window in view: while it is covered by other windows or ' +
-      'minimized, no tab reports itself in front.',
+      'tab_close.',
     details: {
       newTabPage: true,
       tabs: candidates.map(({ id, url }) => ({
@@ -131,21 +129,55 @@ export function isEveryChartTabHidden(error: TvMcpError): boolean {
   );
 }
 
+// What pickChartTarget weighs beside the chart tabs: whether a New tab page is among the targets,
+// and what the window chrome reports of its own visibility ('unknown' when it was not read, or
+// could not be). While the window is covered by other windows or minimized, every page of it
+// reports hidden, the chart tab in front and the window chrome too (seen on the app), so a chart tab
+// that is not visible may still be the one in front then.
+export interface PickContext {
+  newTabPageOpen?: boolean;
+  chromeVisibility?: Visibility;
+}
+
+// Several chart tabs and none reports itself visible, while the window chrome reports itself hidden:
+// the window is out of view, and nothing tells which tab is in front.
+function windowOutOfView(candidates: CdpTargetInfo[]): TvMcpError {
+  return new TvMcpError(
+    'TARGET_NOT_FOUND',
+    "TradingView's window is covered or minimized, so the tab in front cannot be told",
+    {
+      hint: 'Bring TradingView to the front, or keep one chart tab open, then try again.',
+      details: { tabs: candidates.map(({ id, url }) => ({ id, url })) },
+    },
+  );
+}
+
 // Chooses the tab to control among the chart tabs. Guessing would send commands such as a symbol
 // change to the wrong chart, so anything but a single visible tab is an error that lists the tabs
 // for the caller to resolve.
 //
-// A lone chart tab needs no tie-break, unless a New tab page is open (newTabPageOpen): that page may
-// be the tab in front, and only one tab is in front, so the lone chart tab counts only when it
-// reports itself visible. Then no chart tab that reports itself visible means that the tab in front
-// shows no chart, which is refused as such (isNoChartInFrontError), with or without chart tabs.
+// A lone chart tab needs no tie-break, unless a New tab page is open: that page may be the tab in
+// front, and only one tab is in front, so the lone chart tab counts when it reports itself visible.
+// When it does not, the window chrome decides: in view (visible), the tab in front shows no chart,
+// which is refused as such (isNoChartInFrontError); covered, minimized or unable to say, visibility
+// tells nothing about the tab in front, and the lone tab is taken, as without a New tab page.
+//
+// Several chart tabs, of which none reports itself visible, are refused, saying that the window is
+// covered or minimized when the window chrome reports itself hidden, that the tab in front shows no
+// chart when a New tab page is open, and else that it is unclear which one to use. No chart tab at
+// all with a New tab page open means that the tab in front shows none.
 export function pickChartTarget(
   candidates: CdpTargetInfo[],
   visibility: ReadonlyMap<string, Visibility>,
-  newTabPageOpen = false,
+  context: PickContext = {},
 ): CdpTargetInfo {
+  const newTabPageOpen = context.newTabPageOpen === true;
+  const chrome = context.chromeVisibility ?? 'unknown';
   const [first, ...others] = candidates;
-  if (first === undefined && !newTabPageOpen) {
+  if (first === undefined) {
+    if (newTabPageOpen) {
+      throw noChartInFront(candidates, visibility);
+    }
     throw new TvMcpError('TARGET_NOT_FOUND', 'No TradingView chart tab is open', {
       hint:
         'Open a chart tab in TradingView Desktop (a tab that shows a chart, not the home page), ' +
@@ -153,7 +185,7 @@ export function pickChartTarget(
     });
   }
   // A lone tab needs no tie-break, and its visibility may not have been read at all.
-  if (first !== undefined && others.length === 0 && !newTabPageOpen) {
+  if (others.length === 0 && !newTabPageOpen) {
     return first;
   }
   const [onlyVisible, ...moreVisible] = candidates.filter(
@@ -162,8 +194,19 @@ export function pickChartTarget(
   if (onlyVisible !== undefined && moreVisible.length === 0) {
     return onlyVisible;
   }
-  if (newTabPageOpen && onlyVisible === undefined) {
-    throw noChartInFront(candidates, visibility);
+  if (onlyVisible === undefined) {
+    if (others.length === 0) {
+      if (chrome === 'visible') {
+        throw noChartInFront(candidates, visibility);
+      }
+      return first;
+    }
+    if (chrome === 'hidden') {
+      throw windowOutOfView(candidates);
+    }
+    if (newTabPageOpen) {
+      throw noChartInFront(candidates, visibility);
+    }
   }
   throw new TvMcpError(
     'TARGET_NOT_FOUND',

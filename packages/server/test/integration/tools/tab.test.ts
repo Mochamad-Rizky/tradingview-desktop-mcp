@@ -596,24 +596,29 @@ describe('tab_close', () => {
         details: { tabId, reason: 'window-out-of-view' },
       });
     }
-    // tab_close of N brought it to the front first; nothing was closed, and no dialog opened.
-    expect(presses(world)).toEqual([
-      { type: 'mousePressed', button: 'left', clickCount: 1, on: 'title', tabId: N },
-    ]);
-    expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: N }]);
+    // Refused before anything was clicked: no tab was brought to the front, none closed, and no
+    // dialog opened.
+    expect(world.chrome.clicks).toEqual([]);
+    expect(world.chrome.actions).toEqual([]);
     expect(tabIds(world)).toEqual([A, B, N]);
   });
 
-  test('the chart tools refuse while a New tab page is open and the window is out of view, and say to bring it into view', async () => {
-    const { client } = await startHarness({ tabs: [chartA, newTabPage], active: A, inView: false });
-
-    const result = await callTool(client, 'chart_get_state');
-
-    expect(errorOf(result)).toMatchObject({
-      code: 'TARGET_NOT_FOUND',
-      hint: expect.stringMatching(/in view/) as string,
-      details: { newTabPage: true },
+  test('tab_close of a lone chart tab refuses while the window is out of view, though the chart tools use that tab then', async () => {
+    const { client, world } = await startHarness({
+      tabs: [chartA, newTabPage],
+      active: A,
+      inView: false,
     });
+
+    const state = await callTool(client, 'chart_get_state');
+    const closed = await callTool(client, 'tab_close', { tabId: A, confirm: true });
+
+    expect(dataOf(state)).toMatchObject({ symbol: 'NASDAQ:AAPL' });
+    expect(errorOf(closed)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { tabId: A, reason: 'window-out-of-view' },
+    });
+    expect(world.chrome.clicks).toEqual([]);
   });
 
   test('tab_close refuses when it cannot tell which page the tab shows, and clicks nothing', async () => {
@@ -711,6 +716,53 @@ describe('tab_close', () => {
     expect(presses(world)).toEqual([
       { type: 'mousePressed', button: 'left', clickCount: 1, on: 'close', tabId: A },
     ]);
+  });
+});
+
+describe('the chart tools while the window is out of view', () => {
+  // Covered by other windows or minimized, as it is while the user works in another app: every page
+  // of the window reports hidden, the chart in front and the window chrome too.
+
+  test.each([A, N])(
+    'use the lone chart tab, with a New tab page open, whichever tab is in front (%s)',
+    async (front) => {
+      const { client, world, app } = await startHarness({
+        tabs: [chartA, newTabPage],
+        active: front,
+        inView: false,
+      });
+
+      const result = await callTool(client, 'chart_get_state');
+
+      expect(dataOf(result)).toMatchObject({ symbol: 'NASDAQ:AAPL' });
+      // The window chrome was asked whether the window is in view, by its document alone.
+      expect(ran(app, WINDOW_CHROME_TARGET_ID, readVisibilityState)).toBe(true);
+      expect(world.chrome.clicks).toEqual([]);
+    },
+  );
+
+  test('refuse several chart tabs, saying the window is covered or minimized', async () => {
+    const { client } = await startHarness({ tabs: [chartA, chartB], active: A, inView: false });
+
+    const result = await callTool(client, 'chart_get_state');
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      message: "TradingView's window is covered or minimized, so the tab in front cannot be told",
+      hint: expect.stringMatching(/Bring TradingView to the front/) as string,
+    });
+  });
+
+  test('app_health reports TradingView ready, with a lone chart tab and a New tab page', async () => {
+    const { client } = await startHarness({ tabs: [chartA, newTabPage], active: N, inView: false });
+
+    const result = await callTool(client, 'app_health');
+
+    expect(dataOf(result)).toMatchObject({
+      chart: { found: true, tabs: 1 },
+      app: { ready: true, connected: true },
+    });
+    expect(warningsOf(result)).toEqual([]);
   });
 });
 

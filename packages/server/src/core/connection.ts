@@ -288,7 +288,12 @@ export class ConnectionManager {
   private async resolveChart(): Promise<PageHandle> {
     this.assertOpen();
     const listed = await this.targets();
-    return this.page(await this.chooseChart(findChartTargets(listed), listed.some(isNewTabPage)));
+    return this.page(
+      await this.chooseChart(findChartTargets(listed), {
+        newTabPageOpen: listed.some(isNewTabPage),
+        chrome: findWindowChromeTarget(listed),
+      }),
+    );
   }
 
   private async resolveWindowChrome(): Promise<PageHandle> {
@@ -306,12 +311,16 @@ export class ConnectionManager {
   // Only the tab in front of the window has its page shown, and its page alone reports itself
   // visible, at least on macOS (notes of Plan 3, section 3.3). TradingView's New tab page shows no
   // chart and has no chart tab, so while one is open (newTabPageOpen), a lone chart tab may be behind
-  // it: then the visibility of even a lone tab is read, and only a tab that reports itself visible
-  // is taken (pickChartTarget). The New tab page itself is never connected to.
+  // it: then the visibility of even a lone tab is read. The New tab page itself is never connected
+  // to. While the window is covered by other windows or minimized, every page of it reports hidden,
+  // the chart tab in front too, and so does the window chrome (seen on the app): so when no chart tab
+  // reports itself visible, the window chrome is asked as well, and pickChartTarget weighs its
+  // answer.
   private async chooseChart(
     candidates: CdpTargetInfo[],
-    newTabPageOpen: boolean,
+    around: { newTabPageOpen: boolean; chrome: CdpTargetInfo | undefined },
   ): Promise<CdpTargetInfo> {
+    const { newTabPageOpen } = around;
     if (candidates.length < 2 && !newTabPageOpen) {
       // Hands back the lone tab, and refuses an empty list with the advice to open a chart.
       return pickChartTarget(candidates, new Map());
@@ -326,13 +335,25 @@ export class ConnectionManager {
           candidates.map(async (candidate) => [candidate.id, await this.probe(candidate)] as const),
         ),
       );
+      const anyVisible = [...visibility.values()].includes('visible');
+      const chromeVisibility =
+        candidates.length > 0 && !anyVisible
+          ? await this.windowVisibility(around.chrome)
+          : 'unknown';
       // Closing the manager made every probe fail, and "unclear which tab" would not say why.
       this.assertOpen();
-      chosen = pickChartTarget(candidates, visibility, newTabPageOpen);
-      this.logger.debug(
-        { targetId: chosen.id, candidates: candidates.length },
-        'Chose a chart tab by its visibility',
-      );
+      chosen = pickChartTarget(candidates, visibility, { newTabPageOpen, chromeVisibility });
+      if (visibility.get(chosen.id) === 'visible') {
+        this.logger.debug(
+          { targetId: chosen.id, candidates: candidates.length },
+          'Chose a chart tab by its visibility',
+        );
+      } else {
+        this.logger.debug(
+          { targetId: chosen.id, window: chromeVisibility },
+          'Chose the lone chart tab, as the window is not known to be in view',
+        );
+      }
       return chosen;
     } finally {
       await this.release(withoutSession.filter(({ id }) => id !== chosen?.id));
@@ -351,6 +372,28 @@ export class ConnectionManager {
       this.logger.debug(
         { targetId: target.id, code: failureCode(error) },
         'Could not read whether a chart tab is visible',
+      );
+      return 'unknown';
+    }
+  }
+
+  // The visibility of the window chrome, hidden while the window is covered by other windows or
+  // minimized: one read of a property of its document, as for a chart tab. It is unknown without a
+  // window chrome or when the page does not answer. The session stays open, as the tools of the tab
+  // strip share it, and one that would close under them is worse than one that stays idle.
+  private async windowVisibility(chrome: CdpTargetInfo | undefined): Promise<Visibility> {
+    if (chrome === undefined) {
+      return 'unknown';
+    }
+    try {
+      const { bridge } = await this.page(chrome);
+      return await bridge.evaluate(readVisibilityState, [], {
+        timeoutMs: VISIBILITY_PROBE_TIMEOUT_MS,
+      });
+    } catch (error) {
+      this.logger.debug(
+        { targetId: chrome.id, code: failureCode(error) },
+        'Could not read whether the window is in view',
       );
       return 'unknown';
     }

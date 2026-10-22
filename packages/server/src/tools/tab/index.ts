@@ -160,7 +160,8 @@ async function newTabPageIds(ctx: ToolContext): Promise<string[] | null> {
 // that the tab is a New tab page, which has no layout to save, but only while the window is in
 // view: while it is covered by other windows or minimized, every page of it reports hidden, the
 // chart in front too, and so does the window chrome (seen on the app), whose own visibility tells
-// the two apart. Anything else cannot be told, and is refused.
+// the two apart. It is asked again here, as the window may have gone out of view since the tool
+// first asked. Anything else cannot be told, and is refused.
 async function assertClosesWithoutDialog(ctx: ToolContext, tabId: string): Promise<void> {
   let page: PageHandle;
   try {
@@ -293,7 +294,9 @@ export const tabNew = defineTool({
     'page: no chart and no saved layout, so nothing counts against the limit of saved layouts of ' +
     'the plan (CHART_STORAGE). While it is in front, the chart tools fail with TARGET_NOT_FOUND, ' +
     'since the tab shows no chart: bring a chart tab back with tab_switch, or close the new tab ' +
-    'with tab_close, which needs no confirm for a tab this session opened. Returns id and index ' +
+    'with tab_close, which needs no confirm for a tab this session opened. (While the TradingView ' +
+    'window is covered or minimized, which tab is in front cannot be told, and the chart tools use ' +
+    'the only chart tab, if there is just one.) Returns id and index ' +
     'of the new tab, and a warning when its page did not open in time. TIMEOUT when no new tab ' +
     'shows in time: check tab_list before trying again, as the tab may still open.',
   inputSchema: {},
@@ -400,9 +403,10 @@ export const tabClose = defineTool({
     'changes. A tab in the background is brought to the front first, as its close button may ' +
     'show only there. A tab whose layout has unsaved changes is refused with NOT_AVAILABLE, ' +
     'confirm or not, since TradingView would ask in a dialog whether to save them: save the ' +
-    'layout, or wait for autosave, first. NOT_AVAILABLE as well when the server cannot tell which ' +
-    'page the tab shows, as while the TradingView window is covered or minimized, or the tab ' +
-    'shows no close button (a pinned tab). INVALID_INPUT for ' +
+    'layout, or wait for autosave, first. NOT_AVAILABLE as well, before anything is clicked, while ' +
+    'the TradingView window is covered or minimized, since which page the tab in front shows ' +
+    'cannot be told then, and when the server cannot tell it otherwise, or the tab shows no close ' +
+    'button (a pinned tab). INVALID_INPUT for ' +
     'neither or both of tabId and index, and for a tab the window does not have. TIMEOUT when the ' +
     'tab does not close in time.',
   inputSchema: {
@@ -457,6 +461,9 @@ export const tabClose = defineTool({
     if (tab.active && !tab.closable) {
       throw noCloseButton(tab.id);
     }
+    // The page in front can be told only while the window is in view (assertClosesWithoutDialog),
+    // so a covered or minimized window is refused before anything is clicked.
+    await assertWindowInView(ctx, tab.id);
     if (!tab.active) {
       await bringToFront(ctx, strip, tab);
     }

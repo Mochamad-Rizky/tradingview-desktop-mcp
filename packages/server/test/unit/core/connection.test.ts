@@ -485,7 +485,9 @@ describe('choosing among several chart tabs', () => {
 describe('a New tab page in front', () => {
   // TradingView's New tab page shows no chart. While it is in front, the chart tabs are all in the
   // background, so a lone chart tab is not the one the user looks at, and is read before it is
-  // used (notes of Plan 3, section 3.3).
+  // used (notes of Plan 3, section 3.3). While the window is covered by other windows or minimized,
+  // every page of it reports hidden, the chart in front and the window chrome too (seen on the
+  // app): the visibility of the window chrome tells the two apart.
 
   test('reads the visibility of a lone chart tab while a New tab page is open, and takes it when it is visible', async () => {
     const app = createApp([CHROME, chart('A'), NEW_TAB]);
@@ -498,12 +500,14 @@ describe('a New tab page in front', () => {
     expect(evaluationsOf(firstSessionOf(app, 'A')).map(({ options }) => options)).toEqual([
       { timeoutMs: PROBE_TIMEOUT_MS },
     ]);
+    // A chart tab in front says the window is in view: the window chrome is not asked.
     expect(app.connects).toEqual(['A']);
   });
 
-  test('refuses the lone chart tab hidden behind a New tab page, naming tab_switch', async () => {
+  test('refuses the lone chart tab hidden behind a New tab page while the window is in view, naming tab_switch', async () => {
     const app = createApp([CHROME, chart('A'), NEW_TAB]);
     setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'CHROME', 'visible');
     const { manager, delays } = createManager(app);
 
     const error = await failureOf(manager.chartPage());
@@ -517,22 +521,82 @@ describe('a New tab page in front', () => {
         tabs: [{ id: 'A', url: chart('A').url, visibility: 'hidden' }],
       },
     });
-    // The session opened to look at the tab is closed again, and the New tab page never had one.
-    expect(openSessions(app)).toEqual([]);
-    expect(app.connects).toEqual(['A']);
+    // The window chrome was asked as the chart tabs are, with one read of its visibility.
+    expect(evaluationsOf(firstSessionOf(app, 'CHROME')).map(({ options }) => options)).toEqual([
+      { timeoutMs: PROBE_TIMEOUT_MS },
+    ]);
+    // The session opened to look at the chart tab is closed again; the window chrome keeps its own,
+    // which the tools of the tab strip share; the New tab page never had one.
+    expect(openSessions(app)).toEqual([firstSessionOf(app, 'CHROME')]);
+    expect(app.connects).toEqual(['A', 'CHROME']);
     // A choice that needs the user is not a fault that waiting would cure.
     expect(delays).toEqual([]);
   });
 
+  test('takes the lone chart tab hidden behind a New tab page while the window is covered or minimized', async () => {
+    const app = createApp([CHROME, chart('A'), NEW_TAB]);
+    setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'CHROME', 'hidden');
+    const { manager } = createManager(app);
+
+    const page = await manager.chartPage();
+
+    expect(page.target.id).toBe('A');
+    expect(page.session).toBe(firstSessionOf(app, 'A'));
+    expect(page.session.isClosed).toBe(false);
+    expect(app.connects).toEqual(['A', 'CHROME']);
+    expect(app.connects).not.toContain('NEWTAB');
+  });
+
+  test.each<[string, (app: ReturnType<typeof createApp>) => void]>([
+    [
+      'there is no window chrome',
+      (app) => {
+        app.listing = [chart('A'), NEW_TAB];
+      },
+    ],
+    [
+      'the window chrome does not answer',
+      (app) => {
+        app.onEvaluate = (targetId, params) =>
+          targetId === 'CHROME'
+            ? Promise.reject(new TimeoutError('CDP Runtime.evaluate on CHROME', PROBE_TIMEOUT_MS))
+            : app.evaluate(targetId, params);
+      },
+    ],
+    [
+      'the window chrome cannot be reached',
+      (app) => {
+        app.onConnect = (target) =>
+          target.id === 'CHROME' ? Promise.reject(unreachable(404)) : Promise.resolve();
+      },
+    ],
+  ])(
+    'takes the lone chart tab hidden behind a New tab page when %s, as nothing says the window is in view',
+    async (_case, stage) => {
+      const app = createApp([CHROME, chart('A'), NEW_TAB]);
+      setVisibility(app, 'A', 'hidden');
+      stage(app);
+      const { manager, delays } = createManager(app);
+
+      const page = await manager.chartPage();
+
+      expect(page.target.id).toBe('A');
+      expect(delays).toEqual([]);
+    },
+  );
+
   test('keeps the path of a lone chart tab without a New tab page: it is used without a look, hidden or not', async () => {
     const app = createApp([CHROME, HELPER, chart('A')]);
     setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'CHROME', 'hidden');
     const { manager } = createManager(app);
 
     const page = await manager.chartPage();
 
     expect(page.target.id).toBe('A');
     expect(evaluationsOf(firstSessionOf(app, 'A'))).toEqual([]);
+    expect(app.connects).toEqual(['A']);
   });
 
   test('chooses the visible one of several chart tabs while a New tab page is open', async () => {
@@ -559,13 +623,16 @@ describe('a New tab page in front', () => {
       message: 'The active tab of TradingView shows no chart',
       details: { newTabPage: true, tabs: [] },
     });
+    // With no chart tab to fall back to, the window is not asked.
     expect(app.connects).toEqual([]);
   });
 
-  test('refuses a lone chart tab whose visibility cannot be read while a New tab page is open', async () => {
-    const app = createApp([chart('A'), NEW_TAB]);
-    app.onEvaluate = () =>
-      Promise.reject(new TimeoutError('CDP Runtime.evaluate on A', PROBE_TIMEOUT_MS));
+  test('refuses a lone chart tab whose visibility cannot be read while a New tab page is open and the window is in view', async () => {
+    const app = createApp([CHROME, chart('A'), NEW_TAB]);
+    app.onEvaluate = (targetId, params) =>
+      targetId === 'A'
+        ? Promise.reject(new TimeoutError('CDP Runtime.evaluate on A', PROBE_TIMEOUT_MS))
+        : app.evaluate(targetId, params);
     const { manager } = createManager(app);
 
     const error = await failureOf(manager.chartPage());
@@ -577,7 +644,7 @@ describe('a New tab page in front', () => {
   });
 
   test('follows the tab in front once the New tab page goes to the background or closes', async () => {
-    const app = createApp([chart('A'), NEW_TAB]);
+    const app = createApp([CHROME, chart('A'), NEW_TAB]);
     setVisibility(app, 'A', 'hidden');
     const { manager } = createManager(app);
     await failureOf(manager.chartPage());
@@ -586,12 +653,66 @@ describe('a New tab page in front', () => {
     setVisibility(app, 'A', 'visible');
     const front = await manager.chartPage();
     // The New tab page closed: a lone tab is used without a look again.
-    app.listing = [chart('A')];
+    app.listing = [CHROME, chart('A')];
     const lone = await manager.chartPage();
 
     expect([front.target.id, lone.target.id]).toEqual(['A', 'A']);
     expect(lone).toBe(front);
     expect(app.connects).not.toContain('NEWTAB');
+  });
+});
+
+describe('several chart tabs while the window is out of view', () => {
+  test('refuses, saying that the window is covered or minimized, and closes the sessions it opened to look', async () => {
+    const app = createApp([CHROME, chart('A'), chart('B')]);
+    setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'B', 'hidden');
+    setVisibility(app, 'CHROME', 'hidden');
+    const { manager, delays } = createManager(app);
+
+    const error = await failureOf(manager.chartPage());
+
+    expect(error.toPayload()).toEqual({
+      code: 'TARGET_NOT_FOUND',
+      message: "TradingView's window is covered or minimized, so the tab in front cannot be told",
+      hint: expect.stringMatching(
+        /^Bring TradingView to the front, or keep one chart tab open/,
+      ) as string,
+      details: {
+        tabs: [
+          { id: 'A', url: chart('A').url },
+          { id: 'B', url: chart('B').url },
+        ],
+      },
+    });
+    expect(firstSessionOf(app, 'A').isClosed).toBe(true);
+    expect(firstSessionOf(app, 'B').isClosed).toBe(true);
+    expect(openSessions(app)).toEqual([firstSessionOf(app, 'CHROME')]);
+    expect(delays).toEqual([]);
+  });
+
+  test("keeps Plan 1's refusal while the window is in view", async () => {
+    const app = createApp([CHROME, chart('A'), chart('B')]);
+    setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'B', 'hidden');
+    const { manager } = createManager(app);
+
+    const error = await failureOf(manager.chartPage());
+
+    expect(error.message).toBe('2 chart tabs are open and it is unclear which one to use');
+  });
+
+  test('does not ask the window when a chart tab reports itself visible', async () => {
+    const app = createApp([CHROME, chart('A'), chart('B')]);
+    setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'B', 'visible');
+    setVisibility(app, 'CHROME', 'hidden');
+    const { manager } = createManager(app);
+
+    const page = await manager.chartPage();
+
+    expect(page.target.id).toBe('B');
+    expect(app.connects).not.toContain('CHROME');
   });
 });
 

@@ -318,17 +318,28 @@ describe('health', () => {
     expect(openSessions(app)).toEqual([]);
   });
 
-  test('reports the app as not ready while a New tab page is in front, and never connects to that page', async () => {
+  test('reports the app as not ready while a New tab page is in front of a window in view, and never connects to that page', async () => {
     const app = createApp([CHROME, chart('A'), NEW_TAB]);
     setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'CHROME', 'visible');
     const { manager } = createManager(app);
 
     const report = await manager.health();
 
     expect(report.chart).toEqual({ found: true, tabs: 1, url: chart('A').url });
     expect(report.app).toEqual({ ready: false });
-    expect(app.connects).toEqual(['A']);
-    expect(openSessions(app)).toEqual([]);
+    expect(app.connects).toEqual(['A', 'CHROME']);
+    expect(openSessions(app).map(({ targetId }) => targetId)).toEqual(['CHROME']);
+  });
+
+  test('reports the app as ready while its window is covered or minimized, with a lone chart tab and a New tab page', async () => {
+    const app = createApp([CHROME, chart('A'), NEW_TAB]);
+    setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'CHROME', 'hidden');
+    const { manager } = createManager(app);
+
+    await expect(manager.health()).resolves.toEqual(READY);
+    expect(app.connects).not.toContain('NEWTAB');
   });
 
   test('names the url the targets list now for the tab it read', async () => {
@@ -425,6 +436,22 @@ describe('logging', () => {
     const chosen = records().filter(({ msg }) => /chose/i.test(msg));
     expect(chosen).toHaveLength(1);
     expect(chosen[0]).toMatchObject({ targetId: 'B', candidates: 2 });
+  });
+
+  test('logs the choice of the lone chart tab while the window is out of view, by ids alone', async () => {
+    const app = createApp([CHROME, chart('A'), NEW_TAB]);
+    setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'CHROME', 'hidden');
+    const { logger, records, lines } = capture();
+    const { manager } = createManager(app, { logger });
+
+    await manager.chartPage();
+
+    const chosen = records().filter(({ msg }) => /chose/i.test(msg));
+    expect(chosen).toHaveLength(1);
+    expect(chosen[0]).toMatchObject({ level: 20, targetId: 'A', window: 'hidden' });
+    expect(chosen[0]?.msg).toMatch(/lone chart tab/);
+    expect(lines.join('')).not.toContain(PRIVATE_TITLE);
   });
 
   test('logs a target that left the list', async () => {
