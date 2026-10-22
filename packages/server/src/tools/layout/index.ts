@@ -4,7 +4,7 @@ import { isTvMcpError } from '../../core/errors.js';
 import { getPlanLimits, inPlanLimitedTurn, requireBelowLimit } from '../../core/tv/plan-limits.js';
 import { pollUntil } from '../../utils/poll.js';
 import { READ_ONLY } from '../annotations.js';
-import { pageWaitMs } from '../chart/strategies.js';
+import { dataWaitMs, pageWaitMs, POLL_INTERVAL_MS } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import {
   CHART_STORAGE_HINT,
@@ -63,11 +63,6 @@ import {
 // dialog of TradingView once it is trimmed (layoutNameOf).
 const MAX_NAME_INPUT = 200;
 const MAX_LAYOUT_ID = 100;
-// How often the page is asked whether the layout on the chart became the one being loaded.
-const POLL_INTERVAL_MS = 100;
-// The least time the chart of a layout that was loaded is given to report its data, when the call
-// timeout leaves that much to a page call.
-const MIN_DATA_WAIT_MS = 1500;
 // The longest layout_new takes from its start: below the 60 s a common MCP client waits for a call,
 // since a client that gives up after the layout was created would call again and create another.
 const NEW_LAYOUT_BUDGET_MS = 45_000;
@@ -110,14 +105,12 @@ interface OpenOptions {
   confirm: boolean;
 }
 
-// Loads the saved layout `id` in place and waits, within waitMs, until the layout on the chart is it
-// (polled with plain page functions), and then until its chart has its data, which gets the rest of
-// the wait and at least MIN_DATA_WAIT_MS, but never more than waitMs, since a page call that waits
-// longer would outlast the call timeout of the bridge, nor more than limitMs allows. The data is
-// waited for only once the loader
-// reported that the content of the layout is in place: before that, the chart may still be the one
-// of the layout before, so a layout switched to without that report comes with a warning instead. A
-// load that ended, loaded or failed, is looked at once: the app switches the layout before its loader
+// Loads the saved layout `id` in place and waits, within waitMs, until the layout on the chart is
+// it (polled with plain page functions), and then until its chart has its data, for what dataWaitMs
+// allows within waitMs and limitMs. The data is waited for only once the loader reported that the
+// content of the layout is in place: before that, the chart may still be the one of the layout
+// before, so a layout switched to without that report comes with a warning instead. A load that
+// ended, loaded or failed, is looked at once: the app switches the layout before its loader
 // resolves, and resolves without loading anything for a layout it does not find, so waiting longer
 // would not change the answer. The unsaved changes are looked at again right before the load, which
 // discards them only with confirm.
@@ -151,12 +144,12 @@ async function openLayout(
   if (load.ended !== 'loaded') {
     return { status: 'opened', name, warnings: [unfinishedLoadWarning(id)] };
   }
-  const dataWaitMs = Math.round(Math.min(Math.max(left(), MIN_DATA_WAIT_MS), waitMs, limitLeft()));
-  const { ready } = await page.bridge.evaluate(awaitChartData, [dataWaitMs]);
+  const dataWait = dataWaitMs(left(), waitMs, limitLeft());
+  const { ready } = await page.bridge.evaluate(awaitChartData, [dataWait]);
   return {
     status: 'opened',
     name,
-    warnings: ready ? [] : [dataNotReadyWarning(id, dataWaitMs)],
+    warnings: ready ? [] : [dataNotReadyWarning(id, dataWait)],
   };
 }
 

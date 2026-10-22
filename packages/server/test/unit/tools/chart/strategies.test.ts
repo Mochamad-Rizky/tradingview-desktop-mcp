@@ -5,6 +5,8 @@ import { describeElement, describeFocusedElement } from '../../../../src/core/tv
 import type { PageBridge } from '../../../../src/core/tv/page-bridge.js';
 import { readChartSnapshot, setSymbolViaApi } from '../../../../src/tools/chart/page.js';
 import {
+  dataWaitMs,
+  MIN_DATA_WAIT_MS,
   pageWaitMs,
   revertUnknownSymbol,
   runStrategies,
@@ -140,6 +142,21 @@ test('pageWaitMs leaves the page a second to answer, and at least half a second 
   expect(pageWaitMs(15_000)).toBe(14_000);
   expect(pageWaitMs(1000)).toBe(500);
   expect(pageWaitMs(1200)).toBe(500);
+});
+
+test('dataWaitMs gives the data what is left of the wait, and at least 1.5 s, in whole milliseconds', () => {
+  expect(MIN_DATA_WAIT_MS).toBe(1500);
+  expect(dataWaitMs(3000.4, 4000)).toBe(3000);
+  expect(dataWaitMs(200, 4000)).toBe(1500);
+  expect(dataWaitMs(0, 14_000)).toBe(1500);
+});
+
+test('dataWaitMs never waits longer than the page wait, nor than the limit of the caller', () => {
+  expect(dataWaitMs(200, 1000)).toBe(1000);
+  expect(dataWaitMs(5000, 4000)).toBe(4000);
+  expect(dataWaitMs(3000, 4000, 2500.6)).toBe(2501);
+  expect(dataWaitMs(200, 4000, 900)).toBe(900);
+  expect(dataWaitMs(200, 4000, 0)).toBe(0);
 });
 
 describe('runStrategies', () => {

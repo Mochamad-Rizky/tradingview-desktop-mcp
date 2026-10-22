@@ -38,8 +38,12 @@ import {
 // instead of letting the bridge give up with a bare timeout.
 const PAGE_ANSWER_MARGIN_MS = 1000;
 const MIN_PAGE_WAIT_MS = 500;
-// How often the page is asked while waiting for a dialog to take the focus or for a change to show.
-const POLL_INTERVAL_MS = 100;
+// How often the page is asked while a tool waits for something to show: a dialog to take the focus,
+// a change of the chart, a layout or a chart to be the one asked for.
+export const POLL_INTERVAL_MS = 100;
+// The least time the charts of a layout that was loaded or changed are given to report their data,
+// when the page wait leaves that much (dataWaitMs).
+export const MIN_DATA_WAIT_MS = 1500;
 // A dialog opens within a moment of the key or click that opens it.
 const DIALOG_WAIT_MS = 3000;
 // A preset changes the range at once, or after the data of a new timeframe, which this allows for.
@@ -50,6 +54,14 @@ const SETTLE_MIN_MS = 1500;
 
 export function pageWaitMs(callTimeoutMs: number): number {
   return Math.max(callTimeoutMs - PAGE_ANSWER_MARGIN_MS, MIN_PAGE_WAIT_MS);
+}
+
+// How long one page call waits for the data of the charts once a layout shows: what is left of the
+// wait of the change (leftMs), and at least MIN_DATA_WAIT_MS, but never more than the page wait
+// (pageWait), since a page call that waits longer would outlast the call timeout of the bridge, nor
+// more than a limit of the caller's own (limitMs), in whole milliseconds.
+export function dataWaitMs(leftMs: number, pageWait: number, limitMs = Infinity): number {
+  return Math.round(Math.min(Math.max(leftMs, MIN_DATA_WAIT_MS), pageWait, limitMs));
 }
 
 // Which chart a call works on: `index` is the chart the caller named, or null for the active chart,

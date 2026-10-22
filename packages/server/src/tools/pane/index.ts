@@ -11,7 +11,13 @@ import { pollUntil } from '../../utils/poll.js';
 import { READ_ONLY } from '../annotations.js';
 import { chartSetSymbol, requestedSymbol, setChartSymbol } from '../chart/index.js';
 import { readChartLayout } from '../chart/page.js';
-import { pageWaitMs, resolveChartTarget, type ChartTarget } from '../chart/strategies.js';
+import {
+  dataWaitMs,
+  pageWaitMs,
+  POLL_INTERVAL_MS,
+  resolveChartTarget,
+  type ChartTarget,
+} from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolOutput } from '../types.js';
 import {
   chartsNotReadyWarning,
@@ -52,12 +58,6 @@ import {
 // saved, and TradingView saves only the charts a layout shows, so its next save, which autosave makes
 // by itself, drops them: that needs confirm: true (rule 2).
 
-// How often the page is asked whether the layout shows the charts asked for, or the chart asked for
-// is the active one.
-const POLL_INTERVAL_MS = 100;
-// The least time the charts of a new layout are given to report their data, when the call timeout
-// leaves that much to a page call.
-const MIN_DATA_WAIT_MS = 1500;
 // TradingView makes a chart the active one at once, or, while the active chart is maximized, as it
 // maximizes the chosen one; a chart that is not active by this time is not going to be.
 const FOCUS_WAIT_MS = 1000;
@@ -256,13 +256,12 @@ export const paneSetLayout = defineTool({
       if (!shown.satisfied) {
         throw layoutNotShownError(code, count, waitMs, shown.last);
       }
-      // A page call that waited longer than the page wait would outlast the call timeout.
-      const dataWaitMs = Math.round(Math.min(Math.max(left(), MIN_DATA_WAIT_MS), waitMs));
-      const { notReady } = await page.bridge.evaluate(awaitChartsData, [count, dataWaitMs]);
+      const dataWait = dataWaitMs(left(), waitMs);
+      const { notReady } = await page.bridge.evaluate(awaitChartsData, [count, dataWait]);
       return {
         data: { layout: code, chartsCount: count, changed: true },
         via: 'api',
-        warnings: notReady.length === 0 ? [] : [chartsNotReadyWarning(notReady, dataWaitMs)],
+        warnings: notReady.length === 0 ? [] : [chartsNotReadyWarning(notReady, dataWait)],
       };
     });
   },
