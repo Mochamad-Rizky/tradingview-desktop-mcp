@@ -58,10 +58,14 @@ export const uiPressKey = defineTool({
     'reaches the shortcuts of the app. Trading actions are never keyed, because this server ' +
     'places no orders: a key is refused with UNSAFE_ACTION_BLOCKED, before anything is sent, ' +
     'while the focus is on or inside a trading control (the buy and sell buttons and the trade ' +
-    'button), or on an element named after a trading action, by its aria-label, input button ' +
-    `value or text shown, or inside a button or link named so (${TRADING_NAMES}, as words), ` +
-    'since Enter or Space clicks a focused button; Enter is also refused in a field of a form ' +
-    'whose default button is named so, since Enter submits the form through it. With the focus ' +
+    `button), and while a trading action (${TRADING_NAMES}, as words) is named by the ` +
+    'aria-label or the input button value of the focused element, or by the aria-label, the input ' +
+    'button value or the text shown of the control it belongs to: its closest button, link or ' +
+    'element with the role of one, which can be the focused element itself, or the element around ' +
+    'it, up to six levels up, that the pointer cursor shows as clickable. Enter or Space clicks a ' +
+    'focused control. The text a focused element that is no control shows is not read, since a ' +
+    'key does not reach what it holds. Enter is also refused in a field of a form whose default ' +
+    'button is named so, since Enter submits the form through it. With the focus ' +
     'inside a frame or a shadow root, or on a page that cannot say what has the focus, it fails ' +
     'with NOT_AVAILABLE. Whether TradingView binds a trading action to a key chord is not known, ' +
     'so prefer keys that close, confirm or move. target chart (default) or window, the window ' +

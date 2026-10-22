@@ -269,8 +269,11 @@ export function describeElement(
   // pointer cursor it shows tells: a div without a role is clickable that way. The cursor is
   // inherited, so what lies inside such an element shows the pointer too, and the clickable one is
   // where the run of elements that show it ends: from the element, or the first ancestor that shows
-  // it, up to the last one that does, six levels above the element at most. A page that cannot say
-  // which cursor an element shows (no getComputedStyle, or one that throws) has none of these.
+  // it, up to the last one that does, six levels above the element at most. So the nearest ancestor
+  // that shows the pointer is read as the outermost one of that run within the six levels: through
+  // the inheritance, the nearest would be the element itself, or a wrapper inside the clickable
+  // one. A page that cannot say which cursor an element shows (no getComputedStyle, or one that
+  // throws) has none of these.
   const clickableOf = (element: Element): Element | null => {
     if (typeof win.getComputedStyle !== 'function') {
       return null;
@@ -844,8 +847,9 @@ export function describeFocusedElement(
     return null;
   };
   // The element a handler of the page makes clickable around an element, which only the pointer
-  // cursor tells: the last of the run of elements that show it, six levels above the element at
-  // most. None on a page that cannot say which cursor an element shows.
+  // cursor tells: the last, the outermost, of the run of elements that show it, six levels above the
+  // element at most, as describeElement reads it, since the cursor is inherited. None on a page that
+  // cannot say which cursor an element shows.
   const clickableOf = (element: Element): Element | null => {
     if (typeof win.getComputedStyle !== 'function') {
       return null;
