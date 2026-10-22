@@ -290,7 +290,9 @@ export const appGetUiState = defineTool({
     "reported as closed when the page does not show it. fullscreen is TradingView's own " +
     'fullscreen mode, as the app reports it, which fills the tab with the chart and leaves the ' +
     'window as it is; it is also true while an element of the page is in the full screen of the ' +
-    'browser. Fails with NOT_AVAILABLE on a page without a DOM.',
+    'browser, or while the fullscreen button says it is pressed, which TradingView was not seen ' +
+    'to do. Where the app cannot say, fullscreen reads false unless one of those holds. Fails ' +
+    'with NOT_AVAILABLE on a page without a DOM.',
   inputSchema: {},
   annotations: {
     readOnlyHint: true,

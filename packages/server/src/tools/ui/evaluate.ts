@@ -203,8 +203,10 @@ export const uiEvaluate = defineTool({
     'electron), in the spacing, bracket, quote, joined-string, concat and escaped forms it ' +
     'knows. The denylist is best effort: it reads the text of the expression, and a name built ' +
     'in other ways while the code runs gets ' +
-    'past it, so the user object, the desktop bridge and the storage of the page never come back ' +
-    'in a value either, whatever the code reached them by: they are [withheld]. Returns value, ' +
+    'past it, so those objects themselves, the user object, the desktop bridge and the storage ' +
+    'of the page, never come back in a value either, whatever the code reached them by: they ' +
+    'are [withheld]. Only the objects are known: what the code reads out of them or copies is not ' +
+    'recognised. Returns value, ' +
     'the result as JSON (undefined becomes null; a function or a DOM node its type, such as ' +
     '[object Function]; a date its ISO time; a map, a set or an error what they hold; [circular] ' +
     'where an object comes back into itself), at most 100 kB of it, and truncated, true when the ' +

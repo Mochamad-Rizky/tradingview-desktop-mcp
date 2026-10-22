@@ -139,6 +139,9 @@ test("app_get_ui_state reads TradingView's own fullscreen mode and the panels of
     /panels \(watchlist, alerts, object_tree, data_window and pine_editor/,
   );
   expect(description).toMatch(/never both true/);
+  // What fullscreen falls back on, and what it reads when the app cannot say.
+  expect(description).toMatch(/fullscreen button/);
+  expect(description).toMatch(/Where the app cannot say, fullscreen reads false/);
 });
 
 test('the tools that take nothing have an empty input', () => {

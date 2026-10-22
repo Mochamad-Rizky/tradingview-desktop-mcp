@@ -372,6 +372,9 @@ describe('the descriptions of the keyboard, panel, fullscreen and evaluate tools
     expect(description).toMatch(/never in the window chrome/);
     expect(description).toMatch(/100 kB/);
     expect(description).toMatch(/UNSAFE_ACTION_BLOCKED/);
+    // The objects themselves are withheld, not what the code copies out of them.
+    expect(description).toMatch(/those objects themselves/);
+    expect(description).toMatch(/what the code reads out of them or copies is not recognised/);
   });
 });
 
