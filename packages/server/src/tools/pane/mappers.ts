@@ -148,13 +148,15 @@ export function fewerChartsError(
   });
 }
 
-// The error of a code the table of layouts of TradingView does not have: setLayout would show a
-// single chart instead, without a word.
+// The error of a code the table of layouts of TradingView does not have. The change the tool asks
+// for, with the undo step of the app, fails on such a code inside the app and changes nothing (the
+// undo step reads the title of the layout from the table); without the undo step, the app would show
+// a single chart instead.
 export function unknownLayoutError(layout: string): TvMcpError {
   return new TvMcpError(
     'NOT_AVAILABLE',
-    `This TradingView build does not know the layout ${layout}, and would show a single chart ` +
-      'instead, so nothing was changed',
+    `This TradingView build does not know the layout ${layout}, so it cannot change to it, and ` +
+      'nothing was changed',
     { hint: 'Choose another layout; pane_list reports the one shown now.', details: { layout } },
   );
 }
@@ -216,8 +218,9 @@ export function notFocusedError(chartIndex: number, active: number | null): TvMc
       (active === null ? '' : `; chart ${String(active)} is`),
     {
       hint:
-        'The chart may still be loading, or a dialog may hold the focus. pane_list shows which ' +
-        'chart is active.',
+        'The chart may still be loading, or a dialog may hold the focus. While a chart is ' +
+        'maximized, TradingView may maximize the chosen chart instead of making it the active ' +
+        'one. pane_list shows which chart is active.',
       details: { chartIndex, activeChartIndex: active },
     },
   );

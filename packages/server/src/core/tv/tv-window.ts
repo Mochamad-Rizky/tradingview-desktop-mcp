@@ -77,10 +77,12 @@ export interface TradingViewApiLike {
   // The layout type, such as "s" for a single chart.
   layout(): string;
   // Changes the layout type and returns nothing; layout() shows the change once it is made (notes of
-  // Plan 3, section 2.2). With withUndo it is a step the user can undo, and the type shown already
-  // changes nothing. On both paths the app opens its MULTIPLE_CHARTS paywall itself for a type with
-  // more charts than the plan allows, and the path without withUndo shows a single chart for a type
-  // it does not know, so page code checks both first and passes withUndo. A build may not have it.
+  // Plan 3, section 2.2). With withUndo it is a step the user can undo, the type shown already
+  // changes nothing, and a type the app does not know fails inside the app (its undo step reads the
+  // title of the type) and changes nothing; without withUndo such a type becomes a single chart. On
+  // both paths the app opens its MULTIPLE_CHARTS paywall itself for a type with more charts than the
+  // plan allows, so page code checks the type and the plan first and passes withUndo. A build may
+  // not have it.
   setLayout?(type: string, options?: { withUndo?: boolean }): void;
   // The name and the short id (the url of its saved record, as in /chart/<url>/) of the layout on
   // the chart: its meta info (notes of Plan 3, section 1.1). Typed loosely, because a layout that was

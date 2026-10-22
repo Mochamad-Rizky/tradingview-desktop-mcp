@@ -148,8 +148,8 @@ describe('the errors', () => {
     expect(unknownLayoutError('2-2-l').toPayload()).toEqual({
       code: 'NOT_AVAILABLE',
       message:
-        'This TradingView build does not know the layout 2-2-l, and would show a single chart ' +
-        'instead, so nothing was changed',
+        'This TradingView build does not know the layout 2-2-l, so it cannot change to it, and ' +
+        'nothing was changed',
       hint: 'Choose another layout; pane_list reports the one shown now.',
       details: { layout: '2-2-l' },
     });
@@ -196,8 +196,9 @@ describe('the errors', () => {
       code: 'NOT_AVAILABLE',
       message: 'TradingView did not make chart 1 the active chart; chart 0 is',
       hint:
-        'The chart may still be loading, or a dialog may hold the focus. pane_list shows which ' +
-        'chart is active.',
+        'The chart may still be loading, or a dialog may hold the focus. While a chart is ' +
+        'maximized, TradingView may maximize the chosen chart instead of making it the active ' +
+        'one. pane_list shows which chart is active.',
       details: { chartIndex: 1, activeChartIndex: 0 },
     });
     expect(notFocusedError(2, null).message).toBe(

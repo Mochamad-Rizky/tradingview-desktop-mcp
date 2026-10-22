@@ -104,8 +104,9 @@ async function resolvePaneTarget(page: PageHandle, chartIndex: number): Promise<
 }
 
 // How many charts the layout `code` shows: what the table of layouts of TradingView says, or else,
-// without the table, PANE_LAYOUTS. A code the table does not have would become a single chart
-// without a word, and a code it does not count cannot be checked against the plan: both refuse.
+// without the table, PANE_LAYOUTS. TradingView cannot change to a code its table does not have (its
+// undo step of the change fails on it, and nothing changes), and a code the table does not count
+// cannot be checked against the plan: both refuse.
 async function chartsOf(page: PageHandle, code: PaneLayout): Promise<number> {
   const table = await page.bridge.evaluateWithLib(readLayoutCount, [code]);
   if (!table.found) {

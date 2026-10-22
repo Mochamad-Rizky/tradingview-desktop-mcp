@@ -387,7 +387,7 @@ describe('pane_set_layout', () => {
     expect(calls(win, 'TradingViewApi.setLayout')).toEqual([['3h', { withUndo: true }]]);
   });
 
-  test('pane_set_layout refuses NOT_AVAILABLE a layout this TradingView build does not know, which it would show as a single chart', async () => {
+  test('pane_set_layout refuses NOT_AVAILABLE a layout this TradingView build does not know, which it cannot change to', async () => {
     const { client, win } = await startHarness(withChartLimit(4), {
       charts: { withoutCodes: ['2-2-l'] },
     });
