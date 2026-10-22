@@ -43,7 +43,6 @@ import {
   focusChart,
   readChartSymbols,
   readLayoutCount,
-  readPaneLayout,
   readPanes,
   setLayoutViaApi,
 } from './page.js';
@@ -214,7 +213,7 @@ export const paneSetLayout = defineTool({
     const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
     // From the checks to the end of the change, the other actions on plan limits wait.
     return inPlanLimitedTurn(async (): Promise<ToolOutput<ShownLayout>> => {
-      const before = await page.bridge.evaluate(readPaneLayout, []);
+      const before = await page.bridge.evaluate(readChartLayout, []);
       if (before.layout === null || before.chartsCount === null) {
         throw unreadableLayoutError();
       }
@@ -249,7 +248,7 @@ export const paneSetLayout = defineTool({
         throw fewerChartsError(code, count, change.chartsCount);
       }
       const shown = await pollUntil(
-        () => page.bridge.evaluate(readPaneLayout, []),
+        () => page.bridge.evaluate(readChartLayout, []),
         (state) => state.layout === code && state.chartsCount === count,
         { intervalMs: POLL_INTERVAL_MS, timeoutMs: left() },
       );

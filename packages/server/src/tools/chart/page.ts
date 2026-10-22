@@ -22,11 +22,18 @@ import type {
 // Members of the app are read defensively: another web build can drop or reshape any of them, and a
 // read that throws (a getter of an app that is half built) counts as no answer.
 
-// How many charts the layout has and which of them is active, for checking a chartIndex. A value the
-// API does not answer with a number is null, for the caller to refuse.
+// The layout of the chart tab: its type (layout(), a text that is not empty), how many charts it
+// shows (chartsCount(), a whole number from 1, the count of the plan for a layout the plan keeps
+// locked) and which of them is active (activeChartIndex(), a whole number from 0), each null when
+// the API does not answer it so, or its read throws, for the caller to refuse. resolveChartTarget
+// checks a chartIndex against it, and the pane tools read the layout with it and poll it after they
+// changed the layout: one reader, so that every tool reads the layout the same way. It changes
+// nothing. CAPABILITY_UNAVAILABLE on a page without chartsCount().
 export function readChartLayout(
   win: TvWindow,
-): { chartsCount: number | null; activeChartIndex: number | null } | PageErrorSentinel {
+):
+  | { layout: string | null; chartsCount: number | null; activeChartIndex: number | null }
+  | PageErrorSentinel {
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
   if (typeof api?.chartsCount !== 'function') {
     return {
@@ -37,12 +44,26 @@ export function readChartLayout(
       },
     };
   }
-  const count: unknown = api.chartsCount();
-  const active: unknown =
-    typeof api.activeChartIndex === 'function' ? api.activeChartIndex() : null;
+  const attempt = (read: () => unknown): unknown => {
+    try {
+      return read();
+    } catch {
+      return undefined;
+    }
+  };
+  const whole = (value: unknown, least: number): number | null =>
+    typeof value === 'number' && Number.isInteger(value) && value >= least ? value : null;
+  const type = attempt(() => api.layout?.());
   return {
-    chartsCount: typeof count === 'number' ? count : null,
-    activeChartIndex: typeof active === 'number' ? active : null,
+    layout: typeof type === 'string' && type !== '' ? type : null,
+    chartsCount: whole(
+      attempt(() => api.chartsCount?.()),
+      1,
+    ),
+    activeChartIndex: whole(
+      attempt(() => api.activeChartIndex?.()),
+      0,
+    ),
   };
 }
 

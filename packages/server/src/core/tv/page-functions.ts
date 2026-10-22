@@ -56,7 +56,6 @@ import {
   focusChart,
   readChartSymbols,
   readLayoutCount,
-  readPaneLayout,
   readPanes,
   setLayoutViaApi,
 } from '../../tools/pane/page.js';
@@ -135,7 +134,6 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readFullscreen,
   readHistory,
   readLayoutState,
-  readPaneLayout,
   readPanelControls,
   readPanes,
   readPineGraphics,

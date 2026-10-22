@@ -175,18 +175,40 @@ const NO_API: [string, Make][] = [
 ];
 
 describe('readChartLayout', () => {
-  test('readChartLayout reads how many charts the layout has and which one is active', async () => {
+  test('readChartLayout reads the type of the layout, how many charts it shows and which one is active', async () => {
     const { result } = await resultOf(readChartLayout, [], chart());
 
-    expect(result).toStrictEqual({ chartsCount: 1, activeChartIndex: 0 });
+    expect(result).toStrictEqual({ layout: 's', chartsCount: 1, activeChartIndex: 0 });
   });
 
-  test('readChartLayout reports null for what the API does not answer with a number', async () => {
+  test('readChartLayout reports null for what the API does not answer, or answers with no number', async () => {
     const win = { TradingViewApi: { chartsCount: () => '2' } };
 
     const { result } = await resultOf(readChartLayout, [], plain(win));
 
-    expect(result).toStrictEqual({ chartsCount: null, activeChartIndex: null });
+    expect(result).toStrictEqual({ layout: null, chartsCount: null, activeChartIndex: null });
+  });
+
+  const failing = (): never => {
+    throw new Error('Not ready');
+  };
+
+  const answers: [string, Record<string, () => unknown>][] = [
+    [
+      'an empty type, no chart and an active chart below 0',
+      { layout: () => '', chartsCount: () => 0, activeChartIndex: () => -1 },
+    ],
+    [
+      'a type that is no text and counts that are no whole numbers',
+      { layout: () => 2, chartsCount: () => 1.5, activeChartIndex: () => 0.5 },
+    ],
+    ['reads that throw', { layout: failing, chartsCount: failing, activeChartIndex: failing }],
+  ];
+
+  test.each(answers)('readChartLayout reports null for %s', async (_case, api) => {
+    const { result } = await resultOf(readChartLayout, [], plain({ TradingViewApi: api }));
+
+    expect(result).toStrictEqual({ layout: null, chartsCount: null, activeChartIndex: null });
   });
 
   test.each([

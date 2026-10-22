@@ -44,15 +44,6 @@ export type ChartRow = {
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type PaneListing = { layout: string | null; charts: ChartRow[] };
 
-// The layout on the chart: its type (a code such as 2h), how many charts it shows and the active
-// one, each null when the app does not answer it.
-// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
-export type PaneLayoutState = {
-  layout: string | null;
-  chartsCount: number | null;
-  activeChartIndex: number | null;
-};
-
 // What the table of layouts of the app says of a code: whether the table was found, whether it has
 // the code, and how many charts the layout shows (null when it does not say).
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
@@ -70,7 +61,7 @@ export type LayoutChange = { outcome: 'same' | 'fewer' | 'set'; chartsCount: num
 export type ChartFocus = { wasActive: boolean; activeChartIndex: number | null };
 
 // Each chart of the layout as a ChartRow, with the type of the layout (null unless a text that is
-// not empty, as readPaneLayout reads it). A pane reports its index (paneIndex(), or its place when
+// not empty, as readChartLayout reads it). A pane reports its index (paneIndex(), or its place when
 // that is no whole number), its height (getHeight()), whether it holds the main series, and the ids
 // of the studies in it: what getAllEntities() lists that the chart also lists as a study
 // (getAllStudies()), since getAllEntities() lists the main series and the drawings of the pane as
@@ -156,44 +147,6 @@ export function readPanes(win: TvWindow): PaneListing | PageErrorSentinel {
   return { layout: typeof type === 'string' && type !== '' ? type : null, charts };
 }
 
-// The layout on the chart as a PaneLayoutState: layout() (a text that is not empty), chartsCount()
-// (a whole number from 1) and activeChartIndex() (a whole number from 0), each null otherwise. It
-// changes nothing. CAPABILITY_UNAVAILABLE on a page without layout() or chartsCount().
-export function readPaneLayout(win: TvWindow): PaneLayoutState | PageErrorSentinel {
-  const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
-  if (typeof api?.layout !== 'function' || typeof api.chartsCount !== 'function') {
-    return {
-      __tvmcpError: {
-        code: 'CAPABILITY_UNAVAILABLE',
-        message: 'This page has no layout API of TradingView to read the layout from',
-        hint: 'Check app_health: the chart may still be loading, or the tab does not show a chart.',
-      },
-    };
-  }
-  const layout = api as TradingViewApiLike;
-  const attempt = (read: () => unknown): unknown => {
-    try {
-      return read();
-    } catch {
-      return undefined;
-    }
-  };
-  const whole = (value: unknown, least: number): number | null =>
-    typeof value === 'number' && Number.isInteger(value) && value >= least ? value : null;
-  const type = attempt(() => layout.layout());
-  return {
-    layout: typeof type === 'string' && type !== '' ? type : null,
-    chartsCount: whole(
-      attempt(() => layout.chartsCount()),
-      1,
-    ),
-    activeChartIndex: whole(
-      attempt(() => layout.activeChartIndex()),
-      0,
-    ),
-  };
-}
-
 // How many charts the layout `code` shows, as the table of layouts of the app says: the export
 // layouts of the module that also exports isMultipleLayout, isSupportedLayout and
 // tryGuessingTheMostSuitableLayout. A code is known when the table has it as an own member; its
@@ -232,7 +185,7 @@ export function readLayoutCount(_win: TvWindow, lib: PageLib, code: string): Lay
 
 // Asks TradingView for the layout `code`, which shows `count` charts, with setLayout(code, {
 // withUndo: true }): a step the user can undo, which also leaves the layout shown already alone. It
-// returns at once: the change comes a moment later, which the caller waits for with readPaneLayout.
+// returns at once: the change comes a moment later, which the caller waits for with readChartLayout.
 // The layout is read again right before, in the same turn as the call, since the user may change it
 // while the caller checks the plan: the layout shown already is left alone (same), and a layout of
 // fewer charts than the layout shows, or a count TradingView does not tell, is left without confirm

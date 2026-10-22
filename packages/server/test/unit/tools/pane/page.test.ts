@@ -14,7 +14,6 @@ import {
   focusChart,
   readChartSymbols,
   readLayoutCount,
-  readPaneLayout,
   readPanes,
   setLayoutViaApi,
 } from '../../../../src/tools/pane/page.js';
@@ -363,48 +362,8 @@ describe('readPanes', () => {
       { index: 1, height: null, studyIds: null, hasMainSeries: null },
     ]);
     expect(result.charts[1]?.panes).toBeNull();
-    // An empty type is no type, as readPaneLayout reads it.
+    // An empty type is no type, as readChartLayout reads it.
     expect(result.layout).toBeNull();
-  });
-});
-
-describe('readPaneLayout', () => {
-  test('reads the type of the layout, how many charts it shows and the active one', async () => {
-    expect((await resultOf(readPaneLayout, [], chart(twoCharts))).result).toEqual({
-      layout: '2h',
-      chartsCount: 2,
-      activeChartIndex: 0,
-    });
-  });
-
-  test('an answer that is no text or no whole number is null', async () => {
-    const { result } = await resultOf(
-      readPaneLayout,
-      [],
-      withApi((api) => {
-        api.layout = () => 2 as unknown as string;
-        api.chartsCount = failing('No count');
-        api.activeChartIndex = () => 0.5;
-      }),
-    );
-
-    expect(result).toEqual({ layout: null, chartsCount: null, activeChartIndex: null });
-  });
-
-  test('a page without the layout API is CAPABILITY_UNAVAILABLE', async () => {
-    for (const make of [
-      chart(fixture, { withoutApi: true }),
-      withApi((api) => {
-        Reflect.deleteProperty(api, 'layout');
-      }),
-      withApi((api) => {
-        Reflect.deleteProperty(api, 'chartsCount');
-      }),
-    ]) {
-      expect((await failureOfBoth(readPaneLayout, [], make)).error.code).toBe(
-        'CAPABILITY_UNAVAILABLE',
-      );
-    }
   });
 });
 

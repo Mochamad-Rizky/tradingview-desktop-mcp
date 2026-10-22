@@ -261,7 +261,6 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   }
   for (const name of [
     'readPanes',
-    'readPaneLayout',
     'setLayoutViaApi',
     'awaitChartsData',
     'focusChart',
