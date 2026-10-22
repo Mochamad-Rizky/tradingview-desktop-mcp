@@ -721,6 +721,8 @@ export interface TradingViewGlobalLike {
 // it shows, a Pine Editor at the bottom placement among them, and keeps the widget with its text.
 export interface BottomWidgetBarLike {
   close(): void;
+  // Whether the bar shows a widget, as a watched value of a boolean.
+  isVisible?(): { value(): unknown };
 }
 
 // The service locator of the app, a module whose exports are found together (hasService, service

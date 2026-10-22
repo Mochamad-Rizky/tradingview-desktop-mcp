@@ -1,4 +1,5 @@
 import type { PageErrorSentinel } from '../../core/tv/page-bridge.js';
+import type { PageLib } from '../../core/tv/page-lib.js';
 import { SELECTORS } from '../../core/tv/selectors.js';
 import type { TvWindow } from '../../core/tv/tv-window.js';
 import type { JsonValue } from '../../utils/json.js';
@@ -94,6 +95,54 @@ export function readPanelControls(
       data_window: tab(controls.tabs.data_window),
     },
   };
+}
+
+// Whether the Pine Editor is shown, as ui_open_panel counts it, and where TradingView registers it
+// (placement: "dialog" for the side panel, "bottom", or null for none). Its button in the right
+// toolbar says it with aria-pressed, which app_get_ui_state reads too, and its word goes first.
+// Where the button does not say, an editor in the side panel is shown while TradingView registers
+// it, as the panel leaves the registry when it closes, and an editor at the bottom while the bottom
+// bar shows it: closing the bar hides that editor and keeps it registered. What cannot be read
+// counts as not shown. Changes nothing.
+export function readPineEditorShown(
+  win: TvWindow,
+  lib: PageLib,
+  buttonSelector: string,
+): { shown: boolean; placement: 'dialog' | 'bottom' | null } {
+  const button =
+    typeof win.document.querySelector === 'function'
+      ? win.document.querySelector(buttonSelector)
+      : null;
+  const pressed = button?.getAttribute('aria-pressed') ?? null;
+  let placement: 'dialog' | 'bottom' | null = null;
+  const getOpenPineEditor = lib.findExport('getOpenPineEditor');
+  if (typeof getOpenPineEditor === 'function') {
+    for (const candidate of ['dialog', 'bottom'] as const) {
+      let found: unknown;
+      try {
+        found = (getOpenPineEditor as (at: string) => unknown)(candidate);
+      } catch {
+        found = null;
+      }
+      if (found !== null && found !== undefined) {
+        placement = candidate;
+        break;
+      }
+    }
+  }
+  if (pressed === 'true' || pressed === 'false') {
+    return { shown: pressed === 'true', placement };
+  }
+  if (placement === 'bottom') {
+    let visible: unknown;
+    try {
+      visible = win.TradingView?.bottomWidgetBar?.isVisible?.().value();
+    } catch {
+      visible = false;
+    }
+    return { shown: visible === true, placement };
+  }
+  return { shown: placement === 'dialog', placement };
 }
 
 // Enters TradingView's own fullscreen mode of the charts (`enabled`), or leaves it, the way its

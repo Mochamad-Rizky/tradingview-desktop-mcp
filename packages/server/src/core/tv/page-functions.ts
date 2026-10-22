@@ -51,6 +51,7 @@ import {
   evaluateExpression,
   readFullscreen,
   readPanelControls,
+  readPineEditorShown,
   setFullscreen,
 } from '../../tools/ui/page.js';
 import { probeCapabilities } from './capabilities.js';
@@ -125,6 +126,7 @@ export const pageLibFunctions: Record<
   readPineConsoleDiagnostics,
   readPineEditorState,
   readPineOwnEdit,
+  readPineEditorShown,
   readPineSource,
   readPlanLimits,
   readSavedPineScripts,

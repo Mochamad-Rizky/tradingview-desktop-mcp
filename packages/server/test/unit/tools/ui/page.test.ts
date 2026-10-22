@@ -4,19 +4,21 @@ import {
   type PageBridge,
   type PageErrorSentinel,
 } from '../../../../src/core/tv/page-bridge.js';
-import { UNSAFE_SELECTORS } from '../../../../src/core/tv/selectors.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
+import { createPageLib } from '../../../../src/core/tv/page-lib.js';
+import { SELECTORS, UNSAFE_SELECTORS } from '../../../../src/core/tv/selectors.js';
 import {
   PANEL_CONTROLS,
   readFullscreen,
   readPanelControls,
+  readPineEditorShown,
   setFullscreen,
 } from '../../../../src/tools/ui/page.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
-import { createFakeDomWindow } from '../../../helpers/fake-tv/dom.js';
-import { loadTvFixture } from '../../../helpers/fake-tv/fixture.js';
+import { createFakeDomWindow, fakeElement } from '../../../helpers/fake-tv/dom.js';
+import { loadTvFixture, type TvStateFixture } from '../../../helpers/fake-tv/fixture.js';
 import {
   createFakeRightToolbar,
   type FakeRightToolbarOptions,
@@ -289,5 +291,76 @@ describe('setFullscreen and readFullscreen', () => {
     ]) {
       expect(await bothWays(readFullscreen, [], make)).toEqual({ on: null });
     }
+  });
+});
+
+describe('readPineEditorShown', () => {
+  const PINE_BUTTON = SELECTORS.buttons.pineEditor;
+  // The shared fake of a chart whose Pine Editor is `open` (and opens) at a placement, with the Pine
+  // Editor button in its DOM when `pressed` is given (null: a button without aria-pressed).
+  const tab =
+    (
+      open: 'dialog' | 'bottom' | null,
+      pressed?: string | null,
+      change: (win: FakeTvWindow) => void = () => undefined,
+    ) =>
+    () => {
+      const from: TvStateFixture = {
+        ...fixture,
+        pineEditor: { ...fixture.pineEditor, open, opensAt: open ?? 'dialog' },
+      };
+      const win = createFakeTvWindow(from);
+      if (pressed !== undefined) {
+        const button = fakeElement({
+          tag: 'button',
+          matches: [PINE_BUTTON],
+          attributes: pressed === null ? {} : { 'aria-pressed': pressed },
+        });
+        Object.assign(win, { document: createFakeDomWindow([button]).document });
+      }
+      change(win);
+      return win;
+    };
+
+  async function shownOf(make: () => object) {
+    const viaPage = await bridgeTo(make()).evaluateWithLib(readPineEditorShown, [PINE_BUTTON]);
+    const other = make() as TvWindow;
+    expect(readPineEditorShown(other, createPageLib(other), PINE_BUTTON)).toEqual(viaPage);
+    return viaPage;
+  }
+
+  test('takes the word of the Pine Editor button when it says', async () => {
+    expect(await shownOf(tab(null, 'true'))).toEqual({ shown: true, placement: null });
+    expect(await shownOf(tab('dialog', 'false'))).toEqual({ shown: false, placement: 'dialog' });
+  });
+
+  test('where the button does not say, counts a registered side panel, and an editor at the bottom while the bar shows it', async () => {
+    const hiddenAtBottom = tab('bottom', null, (win) => {
+      win.TradingView?.bottomWidgetBar?.close();
+    });
+
+    expect(await shownOf(tab('dialog'))).toEqual({ shown: true, placement: 'dialog' });
+    expect(await shownOf(tab('bottom', null))).toEqual({ shown: true, placement: 'bottom' });
+    expect(await shownOf(hiddenAtBottom)).toEqual({ shown: false, placement: 'bottom' });
+    expect(await shownOf(tab(null))).toEqual({ shown: false, placement: null });
+  });
+
+  test('counts what it cannot read as not shown', async () => {
+    const throwingBar = tab('bottom', undefined, (win) => {
+      Object.assign(win, {
+        TradingView: {
+          bottomWidgetBar: {
+            close: () => undefined,
+            isVisible: () => {
+              throw new Error('No bar yet');
+            },
+          },
+        },
+      });
+    });
+    const withoutRegistry = () => createFakeTvWindow(fixture, { withoutWebpackRuntime: true });
+
+    expect(await shownOf(throwingBar)).toEqual({ shown: false, placement: 'bottom' });
+    expect(await shownOf(withoutRegistry)).toEqual({ shown: false, placement: null });
   });
 });

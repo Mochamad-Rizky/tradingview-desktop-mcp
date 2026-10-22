@@ -3,12 +3,19 @@ import type { PageHandle } from '../../core/connection.js';
 import { TvMcpError } from '../../core/errors.js';
 import type { Tier } from '../../core/result.js';
 import { clickElement } from '../../core/tv/input.js';
+import { SELECTORS } from '../../core/tv/selectors.js';
 import { pollUntil } from '../../utils/poll.js';
 import { pageWaitMs } from '../chart/strategies.js';
-import { ensureEditorOpen, readEditorState } from '../pine/editor.js';
+import { ensureEditorOpen } from '../pine/editor.js';
 import { closePineEditor } from '../pine/page.js';
 import { defineTool, type ToolContext } from '../types.js';
-import { PANEL_CONTROLS, readFullscreen, readPanelControls, setFullscreen } from './page.js';
+import {
+  PANEL_CONTROLS,
+  readFullscreen,
+  readPanelControls,
+  readPineEditorShown,
+  setFullscreen,
+} from './page.js';
 
 // The panel and fullscreen tools of the low-level interface (design spec 7, domain Low-level UI).
 //
@@ -208,35 +215,55 @@ async function setToolbarPanel(
   return true;
 }
 
-// Opens or closes the Pine Editor, and answers whether it did anything. Opening is what the Pine
-// tools do (ensureEditorOpen), the way the button of TradingView opens it. Closing goes through the
-// close path of the Pine tools (closePineEditor), which never discards the text: TradingView keeps
-// unsaved text and shows it again on the next open. The side panel leaves the registry of open
-// editors when it closes, which is waited for; the editor at the bottom only hides, and stays in it.
+// Opens or closes the Pine Editor, and answers whether it did anything. It counts as open while it
+// is shown (readPineEditorShown), which is checked first, so an editor already as asked is left
+// alone, and again until it shows as asked. Opening is what the Pine tools do (ensureEditorOpen),
+// the way the button of TradingView opens it; an editor TradingView keeps registered but hidden at
+// the bottom is refused, since that open would answer at once without showing it and no call that
+// shows it again is known. Closing goes through the close path of the Pine tools (closePineEditor),
+// which never discards the text: TradingView keeps unsaved text and shows it again on the next
+// open. The side panel leaves the registry when it closes; the editor at the bottom only hides.
 async function setPineEditor(page: PageHandle, open: boolean, waitMs: number): Promise<boolean> {
-  if (open) {
-    if ((await readEditorState(page)).open) {
-      return false;
-    }
-    await ensureEditorOpen(page, waitMs);
-    return true;
-  }
-  const { closed, placement } = await page.bridge.evaluateWithLib(closePineEditor, []);
-  if (!closed) {
+  const read = () =>
+    page.bridge.evaluateWithLib(readPineEditorShown, [SELECTORS.buttons.pineEditor]);
+  const before = await read();
+  if (before.shown === open) {
     return false;
   }
-  if (placement === 'dialog') {
-    const { satisfied } = await pollUntil(
-      () => readEditorState(page),
-      (state) => !state.open,
-      { intervalMs: POLL_INTERVAL_MS, timeoutMs: Math.min(PANEL_WAIT_MS, waitMs) },
-    );
-    if (!satisfied) {
-      throw new TvMcpError('TIMEOUT', 'The Pine Editor did not close', {
-        hint: 'Check app_get_ui_state, and close the Pine Editor in TradingView itself.',
-        details: { panel: 'pine_editor', open: false },
-      });
+  if (open) {
+    if (before.placement === 'bottom') {
+      throw new TvMcpError(
+        'CAPABILITY_UNAVAILABLE',
+        'The Pine Editor is open at the bottom of the chart, where TradingView hides it, and this server knows no call that shows it again',
+        {
+          hint: 'Open the Pine Editor in TradingView yourself.',
+          details: { panel: 'pine_editor', placement: 'bottom' },
+        },
+      );
     }
+    await ensureEditorOpen(page, waitMs);
+  } else {
+    const { closed } = await page.bridge.evaluateWithLib(closePineEditor, []);
+    if (!closed) {
+      throw new TvMcpError(
+        'NOT_AVAILABLE',
+        'TradingView shows the Pine Editor, but has no open editor to close',
+        {
+          hint: 'Close the Pine Editor in TradingView itself.',
+          details: { panel: 'pine_editor' },
+        },
+      );
+    }
+  }
+  const { satisfied } = await pollUntil(read, (state) => state.shown === open, {
+    intervalMs: POLL_INTERVAL_MS,
+    timeoutMs: Math.min(PANEL_WAIT_MS, waitMs),
+  });
+  if (!satisfied) {
+    throw new TvMcpError('TIMEOUT', `The Pine Editor did not ${open ? 'open' : 'close'}`, {
+      hint: `Check app_get_ui_state, and ${open ? 'open' : 'close'} the Pine Editor in TradingView itself.`,
+      details: { panel: 'pine_editor', open },
+    });
   }
   return true;
 }
@@ -255,12 +282,17 @@ export const uiOpenPanel = defineTool({
     'pine_editor opens the Pine Editor the way its button in TradingView does, showing the script ' +
     'it last held or a new one, and any unsaved text TradingView kept, and closes it without ' +
     'discarding its text: TradingView keeps unsaved text and shows it again on the next open. A ' +
-    'panel that already is as asked is left alone, which changed false says. app_get_ui_state ' +
-    'reports the panels the same way. CAPABILITY_UNAVAILABLE when the toolbar has no button for ' +
+    'panel that already is as asked is left alone, which changed false says. A panel counts as ' +
+    'open while its button in the right toolbar shows it pressed, which is how app_get_ui_state ' +
+    'reads its panels; for the Pine Editor, where its button does not say, while TradingView ' +
+    'holds it in the side panel, or shows it at the bottom. An editor TradingView keeps hidden at ' +
+    'the bottom is not shown again: open it in TradingView. CAPABILITY_UNAVAILABLE when the ' +
+    'toolbar has no button for ' +
     'the panel or its button does not say whether it is pressed, when the panel of the object ' +
     'tree has no tab for the data window (the panel is collapsed again if it was opened to look), ' +
-    'or when the Pine Editor has no way to close here; NOT_AVAILABLE while the toolbar is hidden, ' +
-    'as in fullscreen mode; TIMEOUT when the panel does not change after the click. Returns ' +
+    'or when the Pine Editor has no way to close here or is hidden at the bottom; NOT_AVAILABLE ' +
+    'while the toolbar is hidden, as in fullscreen mode; TIMEOUT when the panel does not change ' +
+    'after the click. Returns ' +
     'panel, open and changed.',
   inputSchema: {
     panel: z

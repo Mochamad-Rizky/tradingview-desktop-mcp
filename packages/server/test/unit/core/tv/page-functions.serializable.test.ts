@@ -190,6 +190,7 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   ]) {
     expect(Object.keys(pageFunctions)).toContain(name);
   }
+  expect(Object.keys(pageLibFunctions)).toContain('readPineEditorShown');
   for (const name of [
     'readChartLayout',
     'readChartState',

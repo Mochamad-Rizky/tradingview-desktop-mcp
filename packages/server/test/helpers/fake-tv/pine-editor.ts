@@ -326,8 +326,8 @@ export interface FakePineEditorOptions {
   // Leaves the page layout service out of the service locator, as on a build without the side
   // panel.
   withoutPageLayoutService?: boolean | undefined;
-  // Makes closeSidePanel("pine") record itself and change nothing, as a close the app does not
-  // carry out.
+  // Makes closeSidePanel("pine") and bottomWidgetBar.close() record themselves and change
+  // nothing, as a close the app does not carry out.
   closeIgnored?: boolean | undefined;
   // The SAVED_PINE_SCRIPTS limit of the plan, and whether a toggle of the app is on: the paywall
   // check of saveNewScript applies the limit only while pine_free_saved_scripts_limit is on.
@@ -837,7 +837,7 @@ export function createFakePineEditor(
   const bottomWidgetBar: FakeBottomWidgetBar = {
     close() {
       record('bottomWidgetBar.close', []);
-      if (state.placement === 'bottom') {
+      if (state.placement === 'bottom' && options.closeIgnored !== true) {
         state.visible = false;
       }
     },

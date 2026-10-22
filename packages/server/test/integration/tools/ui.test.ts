@@ -1486,6 +1486,106 @@ describe('ui_open_panel for the Pine Editor', () => {
     expect(callsOf(win, 'bottomWidgetBar.close')).toEqual([[]]);
   });
 
+  const atBottom = (): TvStateFixture => ({
+    ...fixture,
+    pineEditor: { ...fixture.pineEditor, open: 'bottom', opensAt: 'bottom' },
+  });
+
+  test('ui_open_panel closes the Pine Editor at the bottom once: a second close changes nothing and calls nothing', async () => {
+    const { client, win } = await pineHarness(atBottom());
+
+    const first = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+    const second = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    expect(dataOf(first)).toEqual({ panel: 'pine_editor', open: false, changed: true });
+    expect(dataOf(second)).toEqual({ panel: 'pine_editor', open: false, changed: false });
+    // The editor stays registered at the bottom, hidden: one close, and no second one.
+    expect(callsOf(win, 'bottomWidgetBar.close')).toEqual([[]]);
+    expect(editorOf(win).placement).toBe('bottom');
+  });
+
+  test('ui_open_panel refuses to show a Pine Editor that TradingView keeps hidden at the bottom', async () => {
+    const { client, win } = await pineHarness(atBottom());
+    await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    const reopened = await callTool(client, 'ui_open_panel', { panel: 'pine_editor' });
+
+    expect(errorOf(reopened)).toMatchObject({
+      code: 'CAPABILITY_UNAVAILABLE',
+      hint: expect.stringMatching(/Open the Pine Editor in TradingView/) as string,
+      details: { panel: 'pine_editor', placement: 'bottom' },
+    });
+    // Nothing was asked to open it, which would answer at once over the registered editor.
+    expect(callsOf(win, 'pineEditorApi.open')).toEqual([]);
+  });
+
+  test('ui_open_panel checks that the bottom bar hid the Pine Editor after the close', async () => {
+    const { client, win } = await pineHarness(atBottom(), { pineEditorCloseIgnored: true });
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'TIMEOUT',
+      message: 'The Pine Editor did not close',
+    });
+    expect(callsOf(win, 'bottomWidgetBar.close')).toEqual([[]]);
+  });
+
+  // The shared fake of a chart, with a DOM that holds the Pine Editor button of the right toolbar.
+  async function withPineButton(pressed: string | null, from: TvStateFixture = fixture) {
+    const win = createFakeTvWindow(from);
+    const button = fakeElement({
+      tag: 'button',
+      matches: [SELECTORS.buttons.pineEditor],
+      attributes: pressed === null ? {} : { 'aria-pressed': pressed },
+    });
+    const dom = createFakeDomWindow([button]) as unknown as FakeDomWindow;
+    Object.assign(win, { document: dom.document });
+    return { ...(await startHarness({ win })), win };
+  }
+
+  test('ui_open_panel reads the Pine Editor from its button in the right toolbar when the button says', async () => {
+    // The button says the editor is shown, though no editor is registered.
+    const shown = await withPineButton('true');
+    // The button says it is not, though one is registered in the side panel.
+    const hidden = await withPineButton('false', withEditor());
+
+    const opened = await callTool(shown.client, 'ui_open_panel', { panel: 'pine_editor' });
+    const closed = await callTool(hidden.client, 'ui_open_panel', {
+      panel: 'pine_editor',
+      open: false,
+    });
+
+    expect(dataOf(opened)).toEqual({ panel: 'pine_editor', open: true, changed: false });
+    expect(dataOf(closed)).toEqual({ panel: 'pine_editor', open: false, changed: false });
+    expect(callsOf(shown.win, 'pineEditorApi.open')).toEqual([]);
+    expect(callsOf(hidden.win, 'pageLayout.closeSidePanel')).toEqual([]);
+  });
+
+  test('ui_open_panel reports TIMEOUT when the button never shows the Pine Editor it opened', async () => {
+    const { client, win } = await withPineButton('false');
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'pine_editor' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'TIMEOUT',
+      message: 'The Pine Editor did not open',
+      details: { panel: 'pine_editor', open: true },
+    });
+    expect(callsOf(win, 'pineEditorApi.open')).toHaveLength(1);
+  });
+
+  test('ui_open_panel says NOT_AVAILABLE when the button shows a Pine Editor that no registered editor is', async () => {
+    const { client } = await withPineButton('true');
+
+    const result = await callTool(client, 'ui_open_panel', { panel: 'pine_editor', open: false });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: 'Close the Pine Editor in TradingView itself.',
+    });
+  });
+
   test('ui_open_panel reports TIMEOUT when the side panel of the Pine Editor does not close', async () => {
     const { client, win } = await pineHarness(withEditor(), { pineEditorCloseIgnored: true });
 

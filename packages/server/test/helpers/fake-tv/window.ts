@@ -136,7 +136,8 @@ export interface FakeTvOverrides {
   pineEditorOpenError?: string;
   // Leaves the page layout service out of the service locator, so the side panel cannot be closed.
   withoutPageLayoutService?: boolean;
-  // Makes the page layout service ignore a close of the side panel (pine-editor.ts).
+  // Makes a close of the Pine Editor change nothing, in the side panel or at the bottom
+  // (pine-editor.ts).
   pineEditorCloseIgnored?: boolean;
   // Leaves TradingView.bottomWidgetBar out.
   withoutBottomWidgetBar?: boolean;
