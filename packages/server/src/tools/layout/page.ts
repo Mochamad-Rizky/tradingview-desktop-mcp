@@ -225,15 +225,20 @@ export function readSavedLayouts(
 }
 
 // Loads the saved layout url in place, with loadLayoutFromServerByLayoutId(url, false, true): no new
-// tab, and unsaved changes of the layout on the chart discarded without the dialog of the app. Answers
-// how the load ended within waitMs (LoadOutcome). The loader resolves without loading anything for a
-// url TradingView does not list, so the caller checks the id first and then that the layout on the
-// chart became url. Before anything is loaded, a page without the loader is CAPABILITY_UNAVAILABLE,
-// a signed-out account AUTH_REQUIRED and an id that is no text INVALID_INPUT.
+// tab, and unsaved changes of the layout on the chart discarded without the dialog of the app, which
+// confirm must allow. Answers how the load ended within waitMs (LoadOutcome). The loader resolves
+// without loading anything for a url TradingView does not list, so the caller checks the id first and
+// then that the layout on the chart became url. Before anything is loaded, a page without the loader
+// is CAPABILITY_UNAVAILABLE, a signed-out account AUTH_REQUIRED and an id that is no text
+// INVALID_INPUT; and without confirm, a layout on the chart that has unsaved changes, or whose changes
+// TradingView does not tell, is CONFIRMATION_REQUIRED (details.unsavedChanges true or null). The
+// changes are read in the same turn as the load, since the user may change the chart while the caller
+// waits for its requests.
 export function loadLayoutInPlace(
   win: TvWindow,
   url: string,
   waitMs: number,
+  confirm: boolean,
 ): Promise<LoadOutcome | PageErrorSentinel> | PageErrorSentinel {
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
   if (typeof api?.loadLayoutFromServerByLayoutId !== 'function') {
@@ -309,6 +314,33 @@ export function loadLayoutInPlace(
       return outcome;
     });
   };
+
+  // A read-only watched value, whose value() is read as a method of it; null when it does not tell.
+  let changes: unknown;
+  try {
+    const watched = api.hasChartChanges?.() as { value?: unknown } | null | undefined;
+    changes =
+      typeof watched?.value === 'function' ? (watched as { value(): unknown }).value() : undefined;
+  } catch {
+    changes = undefined;
+  }
+  const unsaved = typeof changes === 'boolean' ? changes : null;
+  if (unsaved !== false && !confirm) {
+    return {
+      __tvmcpError: {
+        code: 'CONFIRMATION_REQUIRED',
+        message:
+          unsaved === true
+            ? 'The layout on the chart has unsaved changes, which loading the layout would discard'
+            : 'TradingView does not tell whether the layout on the chart has unsaved changes, ' +
+              'which loading the layout would discard',
+        hint:
+          'Nothing was loaded. Save the layout in TradingView first, or call again with ' +
+          'confirm: true if the user wants the changes discarded.',
+        details: { unsavedChanges: unsaved },
+      },
+    };
+  }
 
   return settle(() => loader.loadLayoutFromServerByLayoutId(url, false, true)).then(
     (outcome): LoadOutcome =>

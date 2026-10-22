@@ -222,6 +222,21 @@ export function notOpenedWarning(layoutId: string, reason: string | null): strin
   );
 }
 
+// The warning for a layout layout_new created and did not open because the layout on the chart had
+// unsaved changes by then, or TradingView did not tell (unsaved null), which opening it would have
+// discarded without confirm.
+export function unsavedNotOpenedWarning(layoutId: string, unsaved: boolean | null): string {
+  return (
+    `TradingView created the layout ${layoutId} but did not open it: ` +
+    (unsaved === true
+      ? 'the current layout has unsaved changes by now'
+      : 'TradingView does not tell whether the current layout has unsaved changes by now') +
+    ', which opening it would discard. Save the layout in TradingView first, or open the new one ' +
+    `with layout_switch (layoutId ${layoutId}, confirm: true) if the user wants the changes ` +
+    'discarded; do not call layout_new again, which would create another layout.'
+  );
+}
+
 export const NO_ID_WARNING =
   'TradingView created the layout but did not say its id, so it was not opened. layout_list lists ' +
   'it; open it with layout_switch rather than calling layout_new again, which would create ' +

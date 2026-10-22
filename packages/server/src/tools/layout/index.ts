@@ -25,6 +25,7 @@ import {
   unknownLayoutError,
   unreadableLayoutsWarning,
   unsavedChangesError,
+  unsavedNotOpenedWarning,
 } from './mappers.js';
 import {
   awaitChartData,
@@ -33,6 +34,7 @@ import {
   loadLayoutInPlace,
   readLayoutState,
   readSavedLayouts,
+  type LoadOutcome,
 } from './page.js';
 
 // The layout tools (design spec 7, domain Layouts and panes). Saved layouts are the user's data on
@@ -80,44 +82,57 @@ type NewLayout = { id: string | null; name: string; opened: boolean };
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 type ShownLayout = { id: string; name: string | null; changed: boolean };
 
-// What a load of a saved layout came to: whether the layout on the chart became it, its name as the
-// chart names it then, the warnings, and why it did not open when TradingView said.
-interface OpenOutcome {
-  opened: boolean;
-  name: string | null;
-  warnings: string[];
-  reason: string | null;
-}
+// What a load of a saved layout came to: opened, with the name the chart gives the layout then and
+// the warnings; unopened, with why when TradingView said; or refused before anything was loaded,
+// because the layout on the chart had unsaved changes by then, or TradingView did not tell (unsaved
+// null), and confirm was not given.
+type OpenOutcome =
+  | { status: 'opened'; name: string | null; warnings: string[] }
+  | { status: 'unopened'; reason: string | null }
+  | { status: 'unsaved'; unsaved: true | null };
 
 // Loads the saved layout `id` in place and waits, within waitMs, until the layout on the chart is it
 // (polled with plain page functions), and then until its chart has its data, which gets the rest of
 // the wait and at least MIN_DATA_WAIT_MS. The data is waited for only once the loader reported that
 // the content of the layout is in place: before that, the chart may still be the one of the layout
 // before, so a layout switched to without that report comes with a warning instead. A loader that
-// failed is looked at once.
-async function openLayout(page: PageHandle, id: string, waitMs: number): Promise<OpenOutcome> {
+// failed is looked at once. The unsaved changes are looked at again right before the load, which
+// discards them only with confirm.
+async function openLayout(
+  page: PageHandle,
+  id: string,
+  waitMs: number,
+  confirm: boolean,
+): Promise<OpenOutcome> {
   const startedAt = performance.now();
   const left = (): number => Math.max(waitMs - (performance.now() - startedAt), 0);
-  const load = await page.bridge.evaluate(loadLayoutInPlace, [id, waitMs]);
+  let load: LoadOutcome;
+  try {
+    load = await page.bridge.evaluate(loadLayoutInPlace, [id, waitMs, confirm]);
+  } catch (error) {
+    if (isTvMcpError(error) && error.code === 'CONFIRMATION_REQUIRED') {
+      return { status: 'unsaved', unsaved: error.details?.unsavedChanges === true ? true : null };
+    }
+    throw error;
+  }
   const switched = await pollUntil(
     () => page.bridge.evaluate(readLayoutState, []),
     (state) => state.id === id,
     { intervalMs: POLL_INTERVAL_MS, timeoutMs: load.ended === 'failed' ? 0 : left() },
   );
   if (!switched.satisfied) {
-    return { opened: false, name: null, warnings: [], reason: load.reason };
+    return { status: 'unopened', reason: load.reason };
   }
   const { name } = switched.last;
   if (load.ended !== 'loaded') {
-    return { opened: true, name, warnings: [unfinishedLoadWarning(id)], reason: null };
+    return { status: 'opened', name, warnings: [unfinishedLoadWarning(id)] };
   }
   const dataWaitMs = Math.round(Math.max(left(), MIN_DATA_WAIT_MS));
   const { ready } = await page.bridge.evaluate(awaitChartData, [dataWaitMs]);
   return {
-    opened: true,
+    status: 'opened',
     name,
     warnings: ready ? [] : [dataNotReadyWarning(id, dataWaitMs)],
-    reason: null,
   };
 }
 
@@ -228,19 +243,24 @@ export const layoutNew = defineTool({
       }
       let outcome: OpenOutcome;
       try {
-        outcome = await openLayout(page, id, waitMs);
+        outcome = await openLayout(page, id, waitMs, confirm === true);
       } catch (error) {
         // The layout exists: a failure to open it is no failure of the call, which a client would
         // retry, creating another layout.
         if (!isTvMcpError(error)) {
           throw error;
         }
-        outcome = { opened: false, name: null, warnings: [], reason: error.message };
+        outcome = { status: 'unopened', reason: error.message };
       }
       return {
-        data: { id, name: wanted, opened: outcome.opened },
+        data: { id, name: wanted, opened: outcome.status === 'opened' },
         via: 'internal',
-        warnings: outcome.opened ? outcome.warnings : [notOpenedWarning(id, outcome.reason)],
+        warnings:
+          outcome.status === 'opened'
+            ? outcome.warnings
+            : outcome.status === 'unsaved'
+              ? [unsavedNotOpenedWarning(id, outcome.unsaved)]
+              : [notOpenedWarning(id, outcome.reason)],
       };
     });
   },
@@ -298,8 +318,11 @@ export const layoutSwitch = defineTool({
       if (state.unsaved !== false && confirm !== true) {
         throw unsavedChangesError('switch', state.unsaved);
       }
-      const outcome = await openLayout(page, layoutId, waitMs);
-      if (!outcome.opened) {
+      const outcome = await openLayout(page, layoutId, waitMs, confirm === true);
+      if (outcome.status === 'unsaved') {
+        throw unsavedChangesError('switch', outcome.unsaved);
+      }
+      if (outcome.status === 'unopened') {
         throw notOpenedError(layoutId, outcome.reason);
       }
       return {

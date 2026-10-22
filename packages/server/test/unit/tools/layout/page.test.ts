@@ -383,12 +383,12 @@ describe('readSavedLayouts', () => {
 });
 
 describe('loadLayoutInPlace', () => {
-  test('loads the layout in place, discarding unsaved changes without a dialog, and says when it has loaded', async () => {
+  test('loads the layout in place, with confirm discarding unsaved changes without a dialog, and says when it has loaded', async () => {
     const make = changed((win) => {
       layoutsOf(win).unsaved = true;
     });
 
-    const { result, win } = await resultOf(loadLayoutInPlace, ['FIXTURE2', WAIT_MS], make);
+    const { result, win } = await resultOf(loadLayoutInPlace, ['FIXTURE2', WAIT_MS, true], make);
 
     expect(result).toEqual({ ended: 'loaded', reason: null });
     expect(calls(win, 'TradingViewApi.loadLayoutFromServerByLayoutId')).toEqual([
@@ -396,6 +396,51 @@ describe('loadLayoutInPlace', () => {
     ]);
     expect(layoutsOf(win).current.uid).toBe('FIXTURE2');
     expect(calls(win, 'dialog.unsavedChanges')).toEqual([]);
+    // Without unsaved changes it needs no confirm.
+    expect(
+      (await resultOf(loadLayoutInPlace, ['FIXTURE2', WAIT_MS, false], chart())).result,
+    ).toEqual({ ended: 'loaded', reason: null });
+  });
+
+  test('looks at the unsaved changes again right before it loads, and refuses CONFIRMATION_REQUIRED without confirm', async () => {
+    const unsaved = changed((win) => {
+      layoutsOf(win).unsaved = true;
+    });
+    const unreadable = withApi((api) => {
+      api.hasChartChanges = () => {
+        throw new Error('Not ready');
+      };
+    });
+    const without = withApi((api) => {
+      Reflect.deleteProperty(api, 'hasChartChanges');
+    });
+
+    for (const [make, unsavedChanges] of [
+      [unsaved, true],
+      [unreadable, null],
+      [without, null],
+    ] as const) {
+      const { error, win } = await failureOfBoth(
+        loadLayoutInPlace,
+        ['FIXTURE2', WAIT_MS, false],
+        make,
+      );
+
+      expect(error.toPayload()).toEqual({
+        code: 'CONFIRMATION_REQUIRED',
+        message: expect.stringMatching(
+          /unsaved changes, which loading the layout would discard$/,
+        ) as string,
+        hint: expect.stringContaining('confirm: true') as string,
+        details: { unsavedChanges },
+      });
+      expect(calls(win, 'TradingViewApi.loadLayoutFromServerByLayoutId')).toEqual([]);
+      expect(layoutsOf(win).current.uid).toBe('FIXTURE1');
+    }
+    // With confirm, changes TradingView does not tell about are discarded too.
+    expect(
+      (await resultOf(loadLayoutInPlace, ['FIXTURE2', WAIT_MS, true], unreadable)).result,
+    ).toEqual({ ended: 'loaded', reason: null });
   });
 
   test('says why a load failed', async () => {
@@ -414,7 +459,9 @@ describe('loadLayoutInPlace', () => {
       };
     });
 
-    expect((await resultOf(loadLayoutInPlace, ['FIXTURE2', WAIT_MS], failing)).result).toEqual({
+    expect(
+      (await resultOf(loadLayoutInPlace, ['FIXTURE2', WAIT_MS, false], failing)).result,
+    ).toEqual({
       ended: 'failed',
       reason: 'Server error (status 500)',
     });
@@ -424,7 +471,9 @@ describe('loadLayoutInPlace', () => {
       [rejecting(17), '17'],
       [throwing, 'Broken'],
     ] as const) {
-      expect((await resultOf(loadLayoutInPlace, ['FIXTURE2', WAIT_MS], make)).result).toEqual({
+      expect(
+        (await resultOf(loadLayoutInPlace, ['FIXTURE2', WAIT_MS, false], make)).result,
+      ).toEqual({
         ended: 'failed',
         reason,
       });
@@ -437,7 +486,7 @@ describe('loadLayoutInPlace', () => {
     });
 
     expect(
-      (await resultOf(loadLayoutInPlace, ['FIXTURE2', SHORT_WAIT_MS], hanging)).result,
+      (await resultOf(loadLayoutInPlace, ['FIXTURE2', SHORT_WAIT_MS, false], hanging)).result,
     ).toEqual({ ended: 'late', reason: null });
   });
 
@@ -448,18 +497,18 @@ describe('loadLayoutInPlace', () => {
 
     const { error, win } = await failureOfBoth(
       loadLayoutInPlace,
-      ['FIXTURE2', WAIT_MS],
+      ['FIXTURE2', WAIT_MS, true],
       changed(signedOut),
     );
     expect(error.code).toBe('AUTH_REQUIRED');
     expect(calls(win, 'TradingViewApi.loadLayoutFromServerByLayoutId')).toEqual([]);
-    const blank = await failureOfBoth(loadLayoutInPlace, ['', WAIT_MS], chart());
+    const blank = await failureOfBoth(loadLayoutInPlace, ['', WAIT_MS, true], chart());
     expect(blank.error.code).toBe('INVALID_INPUT');
     expect(calls(blank.win, 'TradingViewApi.loadLayoutFromServerByLayoutId')).toEqual([]);
     for (const make of [chart(fixture, { withoutApi: true }), withoutLoader]) {
-      expect((await failureOfBoth(loadLayoutInPlace, ['FIXTURE2', WAIT_MS], make)).error.code).toBe(
-        'CAPABILITY_UNAVAILABLE',
-      );
+      expect(
+        (await failureOfBoth(loadLayoutInPlace, ['FIXTURE2', WAIT_MS, true], make)).error.code,
+      ).toBe('CAPABILITY_UNAVAILABLE');
     }
   });
 });

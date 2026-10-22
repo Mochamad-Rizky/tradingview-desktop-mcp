@@ -18,6 +18,7 @@ import {
   unknownLayoutError,
   unreadableLayoutsWarning,
   unsavedChangesError,
+  unsavedNotOpenedWarning,
 } from '../../../../src/tools/layout/mappers.js';
 import type { SavedLayoutRow } from '../../../../src/tools/layout/page.js';
 
@@ -238,6 +239,12 @@ describe('errors and warnings', () => {
       /^TradingView created the layout NEW00001 but did not open it in time\. .*layout_switch \(layoutId NEW00001\); do not call layout_new again/,
     );
     expect(notOpenedWarning('NEW00001', 'Server error')).toContain('(Server error)');
+    expect(unsavedNotOpenedWarning('NEW00001', true)).toMatch(
+      /^TradingView created the layout NEW00001 but did not open it: the current layout has unsaved changes by now, .*layout_switch \(layoutId NEW00001, confirm: true\).*do not call layout_new again/,
+    );
+    expect(unsavedNotOpenedWarning('NEW00001', null)).toContain(
+      'TradingView does not tell whether the current layout has unsaved changes by now',
+    );
     expect(NO_ID_WARNING).toMatch(/did not say its id.*layout_list.*layout_switch/s);
     expect(unreadableLayoutsWarning(1)).toBe('1 saved layout came without an id and is left out.');
     expect(unreadableLayoutsWarning(2)).toBe(

@@ -327,6 +327,48 @@ describe('layout_switch', () => {
     expectNothingElseTouched(win);
   });
 
+  test('layout_switch refuses CONFIRMATION_REQUIRED and loads nothing when unsaved changes appear before the load', async () => {
+    const win = createFakeTvWindow(fixture);
+    const listSavedCharts = apiOf(win).getSavedCharts.bind(apiOf(win));
+    apiOf(win).getSavedCharts = (...args: unknown[]) => {
+      // The user changes the chart while the list of saved layouts is on its way.
+      layoutsOf(win).unsaved = true;
+      return listSavedCharts(...args);
+    };
+    const { client } = await startHarnessWith(win);
+
+    expect(errorOf(await callTool(client, 'layout_switch', { layoutId: 'FIXTURE2' }))).toEqual({
+      code: 'CONFIRMATION_REQUIRED',
+      message: 'The current layout has unsaved changes, which switching layouts would discard',
+      hint: expect.stringContaining('confirm: true') as string,
+      details: { unsavedChanges: true },
+    });
+    expect(loads(win)).toEqual([]);
+    expect(apiOf(win).layoutId()).toBe('FIXTURE1');
+    expect(
+      dataOf(await callTool(client, 'layout_switch', { layoutId: 'FIXTURE2', confirm: true })),
+    ).toEqual({ id: 'FIXTURE2', name: 'Second Layout', changed: true });
+    expectNothingElseTouched(win);
+
+    // Changes TradingView stops telling about by then count as changes too.
+    const unclear = createFakeTvWindow(fixture);
+    const listOfUnclear = apiOf(unclear).getSavedCharts.bind(apiOf(unclear));
+    apiOf(unclear).getSavedCharts = (...args: unknown[]) => {
+      apiOf(unclear).hasChartChanges = () => {
+        throw new Error('Not ready');
+      };
+      return listOfUnclear(...args);
+    };
+    const { client: other } = await startHarnessWith(unclear);
+    expect(errorOf(await callTool(other, 'layout_switch', { layoutId: 'FIXTURE2' }))).toMatchObject(
+      {
+        code: 'CONFIRMATION_REQUIRED',
+        details: { unsavedChanges: null },
+      },
+    );
+    expect(loads(unclear)).toEqual([]);
+  });
+
   test('layout_switch requires confirm when TradingView does not tell whether the layout has unsaved changes', async () => {
     const win = createFakeTvWindow(fixture);
     apiOf(win).hasChartChanges = () => {
@@ -618,6 +660,39 @@ describe('layout_new', () => {
 
     expect(dataOf(confirmed)).toEqual({ id: 'NEW00001', name: NEW_NAME, opened: true });
     expect(layoutsOf(win).unsaved).toBe(false);
+    expectNothingElseTouched(win);
+  });
+
+  test('layout_new reports the layout it created unopened, and loads nothing, when unsaved changes appear before the load', async () => {
+    const win = createFakeTvWindow(withChartStorage(5));
+    const exports = moduleWith(win, 'createNewChart');
+    const create = exports.createNewChart as (...args: unknown[]) => Promise<unknown>;
+    exports.createNewChart = async (...args: unknown[]) => {
+      const url = await create(...args);
+      // The user changes the chart while the layout is being created.
+      layoutsOf(win).unsaved = true;
+      return url;
+    };
+    const { client } = await startHarnessWith(win);
+
+    const result = await callTool(client, 'layout_new', { name: NEW_NAME });
+
+    expect(envelopeOf(result)).toStrictEqual({
+      ok: true,
+      data: { id: 'NEW00001', name: NEW_NAME, opened: false },
+      meta: {
+        via: 'internal',
+        durationMs: expect.any(Number) as number,
+        warnings: [
+          expect.stringMatching(
+            /NEW00001 but did not open it: the current layout has unsaved changes.*layout_switch \(layoutId NEW00001, confirm: true\)/s,
+          ),
+        ],
+      },
+    });
+    expect(loads(win)).toEqual([]);
+    expect(apiOf(win).layoutId()).toBe('FIXTURE1');
+    expect(layoutsOf(win).saved.map(({ url }) => url)).toContain('NEW00001');
     expectNothingElseTouched(win);
   });
 
