@@ -1,3 +1,9 @@
+import {
+  createAlertViaApi,
+  deleteAlertsViaApi,
+  readAlertContext,
+  readAlerts,
+} from '../../tools/alert/page.js';
 import { readAppInfo, readUiState, reloadTab } from '../../tools/app/page.js';
 import {
   readChartLayout,
@@ -65,7 +71,7 @@ import {
 import { probeCapabilities } from './capabilities.js';
 import { describeElement, describeFocusedElement, findElements } from './input.js';
 import { createPageLib, type PageLib } from './page-lib.js';
-import { readPlanLimits } from './plan-limits.js';
+import { readPlanConfig, readPlanFeaturesEnabled, readPlanLimits } from './plan-limits.js';
 import { readAppState, readVisibilityState } from './probes.js';
 import type { TvWindow } from './tv-window.js';
 
@@ -133,8 +139,12 @@ export const pageLibFunctions: Record<
   changePineEditor,
   closePineEditor,
   compilePineSource,
+  createAlertViaApi,
   createDrawing,
+  deleteAlertsViaApi,
   openPineEditor,
+  readAlertContext,
+  readAlerts,
   readCachedQuote,
   readPineConsole,
   readPineConsoleDiagnostics,
@@ -142,6 +152,8 @@ export const pageLibFunctions: Record<
   readPineOwnEdit,
   readPineEditorShown,
   readPineSource,
+  readPlanConfig,
+  readPlanFeaturesEnabled,
   readPlanLimits,
   readSavedPineScripts,
   readStudyCatalog,

@@ -79,12 +79,99 @@ export async function getPlanLimits(
   return page.bridge.evaluateWithLib(readPlanLimits, [[...features]]);
 }
 
+// A page function like readPlanLimits, found the same way: the numeric fields of the configuration
+// the plan holds for one feature, which has more than limit for some features, such as
+// primitive_limit and overall_limit next to limit for SERVER_SIDE_ALERTS (reverse-engineering notes
+// of Plan 3, section 2.4). A field that is not a number is null, and so is every field of a feature
+// the app does not know or the plan does not configure, and every field when a module is not
+// loaded. It changes nothing in the app.
+export function readPlanConfig(
+  _win: TvWindow,
+  lib: PageLib,
+  feature: string,
+  fields: string[],
+): Record<string, number | null> {
+  const productFeatures = lib.findExport('ProductFeatures');
+  const configModule = lib.findModuleWith(['getConfig', 'getProductFeaturesConfig']);
+  const answer: Record<string, number | null> = {};
+  let config: unknown = null;
+  try {
+    const value =
+      typeof productFeatures === 'object' && productFeatures !== null
+        ? (productFeatures as Record<string, unknown>)[feature]
+        : undefined;
+    const getConfig = configModule?.getConfig;
+    if (value !== undefined && typeof getConfig === 'function') {
+      config = (getConfig as (value: unknown) => unknown).call(configModule, value);
+    }
+  } catch {
+    // getConfig throws for a value it has no configuration for: no field is known.
+  }
+  for (const field of fields) {
+    const read =
+      typeof config === 'object' && config !== null
+        ? (config as Record<string, unknown>)[field]
+        : undefined;
+    answer[field] = typeof read === 'number' && Number.isFinite(read) ? read : null;
+  }
+  return answer;
+}
+
+// The numeric fields of the configuration of `feature`, null for one the app does not report.
+export async function getPlanConfig(
+  page: PageHandle,
+  feature: PlanFeature,
+  fields: readonly string[],
+): Promise<Record<string, number | null>> {
+  return page.bridge.evaluateWithLib(readPlanConfig, [feature, [...fields]]);
+}
+
+// A page function like readPlanLimits: whether the plan has each of `features`, a feature that is
+// on or off rather than counted, such as ALERTS_ON_SECONDS, as the export enabled of the module of
+// getConfig answers it (true when the plan configures the feature). A feature the app does not know,
+// an answer that is not a boolean, an enabled that throws or is missing, and every feature when a
+// module is not loaded, give null: not known. It changes nothing in the app.
+export function readPlanFeaturesEnabled(
+  _win: TvWindow,
+  lib: PageLib,
+  features: string[],
+): Record<string, boolean | null> {
+  const productFeatures = lib.findExport('ProductFeatures');
+  const configModule = lib.findModuleWith(['getConfig', 'getProductFeaturesConfig']);
+  const answer: Record<string, boolean | null> = {};
+  for (const feature of features) {
+    answer[feature] = null;
+    try {
+      const value =
+        typeof productFeatures === 'object' && productFeatures !== null
+          ? (productFeatures as Record<string, unknown>)[feature]
+          : undefined;
+      const enabled = configModule?.enabled;
+      if (value !== undefined && typeof enabled === 'function') {
+        const read: unknown = (enabled as (value: unknown) => unknown).call(configModule, value);
+        answer[feature] = typeof read === 'boolean' ? read : null;
+      }
+    } catch {
+      // Not known.
+    }
+  }
+  return answer;
+}
+
+// Whether the plan has each of `features`, null for one the app does not tell.
+export async function getPlanFeaturesEnabled(
+  page: PageHandle,
+  features: readonly string[],
+): Promise<Record<string, boolean | null>> {
+  return page.bridge.evaluateWithLib(readPlanFeaturesEnabled, [[...features]]);
+}
+
 // The actions that use up a plan limit (adding a study, adding a script to the chart, saving a
-// script) take turns within the process, each from its check of the limit to its end: tool calls
-// run concurrently (several calls of one client, several HTTP sessions), and two that checked the
-// same free slot would both act, the second one into the check of the app and its paywall. The
-// turn after a failed action still comes. A turn is not re-entrant: an action that started another
-// one would wait for itself, so none does.
+// script, creating an alert) take turns within the process, each from its check of the limit to its
+// end: tool calls run concurrently (several calls of one client, several HTTP sessions), and two
+// that checked the same free slot would both act, the second one into the check of the app and its
+// paywall. The turn after a failed action still comes. A turn is not re-entrant: an action that
+// started another one would wait for itself, so none does.
 let planLimitedTurns: Promise<void> = Promise.resolve();
 
 export function inPlanLimitedTurn<T>(action: () => Promise<T>): Promise<T> {

@@ -14,6 +14,7 @@ import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 import pkg from '../../package.json' with { type: 'json' };
 import { ToolEventBus } from '../../src/core/events.js';
 import { createMcpServer } from '../../src/server.js';
+import { alertTools } from '../../src/tools/alert/index.js';
 import { appTools } from '../../src/tools/app/index.js';
 import { chartTools } from '../../src/tools/chart/index.js';
 import { dataTools } from '../../src/tools/data/index.js';
@@ -84,6 +85,7 @@ describe('startStdioTransport', () => {
       ...pineTools.map(({ name }) => name),
       ...strategyTools.map(({ name }) => name),
       ...drawingTools.map(({ name }) => name),
+      ...alertTools.map(({ name }) => name),
       ...screenshotTools.map(({ name }) => name),
       ...uiTools.map(({ name }) => name),
       'batch_run',

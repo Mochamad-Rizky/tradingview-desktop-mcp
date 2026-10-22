@@ -2,9 +2,13 @@ import { PlanLimitError, TvMcpError } from '../../../../src/core/errors.js';
 import { createPageBridge } from '../../../../src/core/tv/page-bridge.js';
 import { createPageLib } from '../../../../src/core/tv/page-lib.js';
 import {
+  getPlanConfig,
+  getPlanFeaturesEnabled,
   getPlanLimits,
   inPlanLimitedTurn,
   PLAN_FEATURES,
+  readPlanConfig,
+  readPlanFeaturesEnabled,
   readPlanLimits,
   requireBelowLimit,
   unreadableLimitError,
@@ -104,6 +108,123 @@ describe('readPlanLimits', () => {
   });
 });
 
+describe('readPlanConfig', () => {
+  const ALERT_FIELDS = ['limit', 'primitive_limit', 'overall_limit'];
+
+  test('reads the numeric fields of the configuration of one feature', () => {
+    const { win, lib } = libOf();
+
+    expect(readPlanConfig(win, lib, 'SERVER_SIDE_ALERTS', ALERT_FIELDS)).toEqual({
+      limit: 3,
+      primitive_limit: 3,
+      overall_limit: 50,
+    });
+    expect(readPlanConfig(win, lib, 'INDICATORS_ON_CHART', ['limit', 'overall_limit'])).toEqual({
+      limit: 2,
+      overall_limit: null,
+    });
+  });
+
+  test('reports null for every field of a feature the plan does not configure, or the app does not know', () => {
+    const { win, lib } = libOf();
+
+    for (const feature of ['CHART_STORAGE', 'NO_SUCH_FEATURE']) {
+      expect(readPlanConfig(win, lib, feature, ALERT_FIELDS)).toEqual({
+        limit: null,
+        primitive_limit: null,
+        overall_limit: null,
+      });
+    }
+  });
+
+  test('reports null for every field when the modules are missing', () => {
+    for (const overrides of [{ webpackModules: {} }, { withoutWebpackRuntime: true }]) {
+      const { win, lib } = libOf(overrides);
+
+      expect(readPlanConfig(win, lib, 'SERVER_SIDE_ALERTS', ['limit'])).toEqual({ limit: null });
+    }
+  });
+
+  test('reports null for a field that is not a number, and for a config that is no object', () => {
+    const modules = {
+      1: { ProductFeatures: { A: 'a', B: 'b' } },
+      2: {
+        getProductFeaturesConfig: () => ({}),
+        getConfig: (value: string) =>
+          value === 'a' ? { limit: '3', overall_limit: Number.NaN, primitive_limit: 2 } : null,
+      },
+    };
+    const { win, lib } = libOf({ webpackModules: modules });
+
+    expect(readPlanConfig(win, lib, 'A', ALERT_FIELDS)).toEqual({
+      limit: null,
+      primitive_limit: 2,
+      overall_limit: null,
+    });
+    expect(readPlanConfig(win, lib, 'B', ['limit'])).toEqual({ limit: null });
+  });
+});
+
+describe('readPlanFeaturesEnabled', () => {
+  test('answers whether the plan has each feature, as the app tells it', () => {
+    const seconds = libOf();
+    const { win, lib } = libOf();
+    const withSeconds = createFakeTvWindow({
+      ...fixture,
+      planConfigs: { ...fixture.planConfigs, ALERTS_ON_SECONDS: {} },
+    }) as unknown as TvWindow;
+
+    expect(readPlanFeaturesEnabled(win, lib, ['ALERTS_ON_SECONDS', 'SERVER_SIDE_ALERTS'])).toEqual({
+      ALERTS_ON_SECONDS: false,
+      SERVER_SIDE_ALERTS: true,
+    });
+    expect(
+      readPlanFeaturesEnabled(withSeconds, createPageLib(withSeconds), ['ALERTS_ON_SECONDS']),
+    ).toEqual({ ALERTS_ON_SECONDS: true });
+    expect(readPlanFeaturesEnabled(seconds.win, seconds.lib, ['NO_SUCH_FEATURE'])).toEqual({
+      NO_SUCH_FEATURE: null,
+    });
+  });
+
+  test('answers null for every feature when it cannot ask', () => {
+    const [features, config] = Object.values(createPlanLimitModules({ SERVER_SIDE_ALERTS: 3 }));
+    const throwing = {
+      1: { ProductFeatures: { A: 'a' } },
+      2: {
+        getConfig: () => ({}),
+        getProductFeaturesConfig: () => ({}),
+        enabled: () => {
+          throw new Error('No user');
+        },
+      },
+    };
+    const odd = {
+      1: { ProductFeatures: { A: 'a' } },
+      2: { getConfig: () => ({}), getProductFeaturesConfig: () => ({}), enabled: () => 'yes' },
+    };
+    const withoutEnabled = {
+      1: { ProductFeatures: { A: 'a' } },
+      2: { getConfig: () => ({}), getProductFeaturesConfig: () => ({}) },
+    };
+
+    for (const modules of [
+      {},
+      { 1: features ?? {} },
+      { 1: config ?? {} },
+      throwing,
+      odd,
+      withoutEnabled,
+    ]) {
+      const { win, lib } = libOf({ webpackModules: modules });
+
+      expect(
+        readPlanFeaturesEnabled(win, lib, ['A']),
+        JSON.stringify(Object.keys(modules)),
+      ).toEqual({ A: null });
+    }
+  });
+});
+
 describe('getPlanLimits', () => {
   function pageOn(win: object): PageHandle {
     const runtime = createPageRuntime(win);
@@ -127,6 +248,17 @@ describe('getPlanLimits', () => {
     const limits = await getPlanLimits(pageOn(win), ['INDICATORS_ON_CHART', 'HISTORICAL_BARS']);
 
     expect(limits).toEqual({ INDICATORS_ON_CHART: 2, HISTORICAL_BARS: null });
+  });
+
+  test('getPlanConfig and getPlanFeaturesEnabled run in the page as well', async () => {
+    const win = createFakeTvWindow(fixture);
+
+    expect(
+      await getPlanConfig(pageOn(win), 'SERVER_SIDE_ALERTS', ['primitive_limit', 'overall_limit']),
+    ).toEqual({ primitive_limit: 3, overall_limit: 50 });
+    expect(await getPlanFeaturesEnabled(pageOn(win), ['ALERTS_ON_SECONDS'])).toEqual({
+      ALERTS_ON_SECONDS: false,
+    });
   });
 });
 

@@ -330,6 +330,10 @@ export interface SeriesLike {
   endOfData(): boolean;
   endOfDataType(): string | null;
   isLoading(): boolean;
+  // The symbol of the series the way an alert takes it (notes of Plan 3, section 2.3): an encoded
+  // extended symbol, ={...} with the keys adjustment, currency-id and symbol on the app, the symbol
+  // being the listing. Typed loosely: page code checks that it is a text. A build may not have it.
+  getAlertSymbolString?(): unknown;
 }
 
 // mainSeries().bars(): the loaded bars, oldest first. The real container also has search(),
@@ -806,4 +810,60 @@ export interface ServiceLocatorLike {
 export interface PageLayoutServiceLike {
   hasSidePanel?(id: string): boolean;
   closeSidePanel(id: string): void;
+}
+
+// The alerts REST client of the app, which the export getAlertsRestApi, a call-once factory, hands
+// out (notes of Plan 3, section 2.1). Each call is a request to the alerts server of TradingView
+// and opens nothing: a refusal rejects with an AlertsRestApiError, whose code is the code of the
+// server (unauthorized while signed out, total_alerts_count_exceeded, ...) and whose message is its
+// text. listAlerts resolves with the records of the alerts of the account, createAlert with the
+// record of the new alert and deleteAlerts with nothing. Only the members page code uses are
+// described: the client also stops, restarts, modifies and clones alerts and deletes fires, which
+// the server never does. Records are typed loosely: page code checks each field. The app's alerts
+// service, its actions, its error presenter (which opens the paywall for the limit codes) and the
+// chart alerts facade are left out on purpose: they present errors in dialogs.
+export interface AlertsRestApiLike {
+  listAlerts(signal?: AbortSignal, initiator?: string): Promise<unknown>;
+  createAlert(payload: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+  deleteAlerts(payload: { alert_ids: number[] }, signal?: AbortSignal): Promise<unknown>;
+}
+
+// The state of the alert dialog that the export convertEditableAlertState(state,
+// sendLegacyExpiration) turns into the payload of createAlert (module 534745 of the web build):
+// camelCase, where the payload is snake_case. The converter reads every member below. A condition
+// is { type, frequency, series, resolution }, the series of a price alert a bar set and a value; a
+// range resolution is sent as "1". notificationSchedule must be null for none: an undefined one is
+// sent as a null notification_schedule. The time of a fixed-date expiration must be a Date; it is
+// sent as expiration_policy, or as the legacy expiration when sendLegacyExpiration is true, which
+// the app sets when its feature toggle alerts-on-lollipop is off.
+export interface EditableAlertStateLike {
+  conditions: {
+    type: string;
+    frequency: string;
+    series: Record<string, unknown>[];
+    resolution: string;
+  }[];
+  symbol: string;
+  resolution: string;
+  message: string;
+  soundFile: string | null;
+  soundDuration: number;
+  popup: boolean;
+  autoDeactivate: boolean;
+  email: boolean;
+  smsOverEmail: boolean;
+  mobilePush: boolean;
+  webhook: string | null;
+  name: string | null;
+  notificationSchedule: null;
+  expirationPolicy: { policy: 'fixed_date'; time: Date };
+}
+
+// What the export getAlertConfig, a call-once factory, answers, as far as page code reads it: the
+// longest expiration the alert dialog allows and its default, each { type, count }, such as
+// { type: "days", count: 30 } (both on the free product; 60 days and one month on the others).
+// Typed loosely: page code checks each value.
+export interface AlertConfigLike {
+  maxAlertExpiration?: unknown;
+  defaultAlertExpiration?: unknown;
 }

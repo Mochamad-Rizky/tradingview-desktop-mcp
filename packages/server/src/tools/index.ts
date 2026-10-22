@@ -1,3 +1,4 @@
+import { alertTools } from './alert/index.js';
 import { appTools } from './app/index.js';
 import { batchTools } from './batch/index.js';
 import { chartTools } from './chart/index.js';
@@ -20,6 +21,7 @@ export const allTools: AnyToolDefinition[] = [
   ...pineTools,
   ...strategyTools,
   ...drawingTools,
+  ...alertTools,
   ...screenshotTools,
   ...uiTools,
   ...batchTools,

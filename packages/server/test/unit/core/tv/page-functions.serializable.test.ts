@@ -231,6 +231,16 @@ test('registers the page functions, so the checks below are not vacuous', () => 
   }
   expect(Object.keys(pageLibFunctions)).toContain('createDrawing');
   for (const name of [
+    'readAlerts',
+    'readAlertContext',
+    'createAlertViaApi',
+    'deleteAlertsViaApi',
+    'readPlanConfig',
+    'readPlanFeaturesEnabled',
+  ]) {
+    expect(Object.keys(pageLibFunctions)).toContain(name);
+  }
+  for (const name of [
     'readPineEditorState',
     'openPineEditor',
     'closePineEditor',
@@ -392,6 +402,22 @@ describe('the checks catch what they are meant to', () => {
     expect(await referenceErrorsIn(libCall(source), fakeWindows({ webpackModules: {} }))).toEqual(
       [],
     );
+  });
+
+  test('the default fake windows carry the alert modules, so a lib function runs past its lookups', async () => {
+    // Looks the alert modules up the way the alert tools do, then calls a helper of its module.
+    function callsModuleHelperAfterAlertLookup(win: TvWindow, lib: PageLib): string | null {
+      const found = ['getAlertsRestApi', 'convertEditableAlertState', 'getAlertConfig'].map(
+        (name) => lib.findExport(name),
+      );
+      return found.includes(null) ? null : formatSymbol('x');
+    }
+    const source = callsModuleHelperAfterAlertLookup.toString();
+
+    expect(await referenceErrorsIn(libCall(source))).toEqual([
+      'formatSymbol is not defined',
+      'formatSymbol is not defined',
+    ]);
   });
 
   test('method shorthand, whose source is not an expression', () => {

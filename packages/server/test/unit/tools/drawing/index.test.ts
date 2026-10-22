@@ -38,7 +38,7 @@ test('drawingTools lists the drawing tools in the order of the catalog', () => {
   expect(new Set(drawingTools.map(({ domain }) => domain))).toEqual(new Set(['drawing']));
 });
 
-test('the catalog lists the drawing tools after the strategy tools and before the screenshot', () => {
+test('the catalog lists the drawing tools after the strategy tools and before the alert tools', () => {
   const names = allTools.map(({ name }) => name);
   const lastStrategy = strategyTools.at(-1);
   if (lastStrategy === undefined) {
@@ -46,7 +46,7 @@ test('the catalog lists the drawing tools after the strategy tools and before th
   }
 
   expect(names.indexOf('drawing_create')).toBe(names.indexOf(lastStrategy.name) + 1);
-  expect(names.indexOf('drawing_clear_all')).toBe(names.indexOf('screenshot_capture') - 1);
+  expect(names.indexOf('drawing_clear_all')).toBe(names.indexOf('alert_create') - 1);
 });
 
 test('drawing_list and drawing_get only read, so the readonly profile offers them and no other', () => {
