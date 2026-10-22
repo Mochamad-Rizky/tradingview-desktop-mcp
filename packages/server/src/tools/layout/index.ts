@@ -245,12 +245,16 @@ export const layoutNew = defineTool({
       try {
         outcome = await openLayout(page, id, waitMs, confirm === true);
       } catch (error) {
-        // The layout exists: a failure to open it is no failure of the call, which a client would
-        // retry, creating another layout.
+        // The layout exists: whatever fails while it is opened, the call reports it created, since a
+        // failed call invites a retry, which would create another layout. An unexpected error is
+        // logged, as the registry would log it, and its message kept from the client.
         if (!isTvMcpError(error)) {
-          throw error;
+          ctx.logger.error(
+            { err: error, tool: 'layout_new' },
+            'Opening a created layout failed with an unexpected error',
+          );
         }
-        outcome = { status: 'unopened', reason: error.message };
+        outcome = { status: 'unopened', reason: isTvMcpError(error) ? error.message : null };
       }
       return {
         data: { id, name: wanted, opened: outcome.status === 'opened' },

@@ -212,11 +212,11 @@ export function unfinishedLoadWarning(layoutId: string): string {
   );
 }
 
-// The warning for a layout layout_new created and did not open: a success, so that the client does
-// not create it again.
+// The warning for a layout layout_new created and did not open, with why when that is known: a
+// success, so that the client does not create it again.
 export function notOpenedWarning(layoutId: string, reason: string | null): string {
   return (
-    `TradingView created the layout ${layoutId} but did not open it in time` +
+    `TradingView created the layout ${layoutId} but did not open it` +
     `${reason === null ? '' : ` (${reason})`}. Open it with layout_switch (layoutId ${layoutId}); ` +
     'do not call layout_new again, which would create another layout.'
   );

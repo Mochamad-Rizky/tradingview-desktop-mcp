@@ -12,7 +12,7 @@ import {
 import { selectTools } from '../../../../src/tools/registry.js';
 import type { AnyToolDefinition, ToolContext } from '../../../../src/tools/types.js';
 import { watchlistTools } from '../../../../src/tools/watchlist/index.js';
-import { createTestContext } from '../../../helpers/tool-context.js';
+import { capturingLogger, createTestContext } from '../../../helpers/tool-context.js';
 
 // What the model and the client see of the layout tools: their names, annotations, descriptions and
 // input schemas. The behavior behind them is tested through a server in
@@ -122,7 +122,7 @@ test.each([
   expect(schemaOf(name).safeParse(input).success).toBe(false);
 });
 
-test('layout_new lets through a failure that is no error of the server while it opens the new layout', async () => {
+test('layout_new reports the layout it created, unopened, when opening it fails with an error that is no error of the server, and logs that error', async () => {
   // The page bridge rejects only with errors of the server, so a failure of another kind, a bug,
   // needs a page of its own: the layout is created, and the load of it fails.
   const answers = new Map<unknown, unknown>([
@@ -135,10 +135,29 @@ test('layout_new lets through a failure that is no error of the server while it 
   const answer = (fn: unknown): Promise<unknown> =>
     answers.has(fn) ? Promise.resolve(answers.get(fn)) : Promise.reject(new Error('A bug'));
   const bridge = { evaluate: answer, evaluateWithLib: answer };
+  const { logger, lines } = capturingLogger();
   const ctx = {
-    ...createTestContext(),
+    ...createTestContext({ logger }),
     connection: { chartPage: () => Promise.resolve({ bridge }) },
   } as unknown as ToolContext;
 
-  await expect(layoutNew.handler({ name: 'Example Layout' }, ctx)).rejects.toThrow('A bug');
+  // The layout exists, so the call reports it, rather than fail and have a client create another.
+  expect(await layoutNew.handler({ name: 'Example Layout' }, ctx)).toEqual({
+    data: { id: 'NEW00001', name: 'Example Layout', opened: false },
+    via: 'internal',
+    warnings: [
+      expect.stringMatching(
+        /^TradingView created the layout NEW00001 but did not open it\. Open it with layout_switch/,
+      ),
+    ],
+  });
+  // The client is not told what the error said; the log keeps it, and no layout name.
+  expect(lines).toEqual([
+    expect.objectContaining({
+      level: 50,
+      tool: 'layout_new',
+      err: expect.objectContaining({ message: 'A bug' }) as unknown,
+    }),
+  ]);
+  expect(JSON.stringify(lines)).not.toContain('Example Layout');
 });

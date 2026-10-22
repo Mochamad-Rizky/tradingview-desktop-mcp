@@ -805,9 +805,7 @@ describe('layout_new', () => {
 
     expect(dataOf(result)).toEqual({ id: 'NEW00001', name: NEW_NAME, opened: false });
     expect(warningsOf(result)).toEqual([
-      expect.stringMatching(
-        /NEW00001 but did not open it in time \(This page has no layout API/,
-      ) as string,
+      expect.stringMatching(/NEW00001 but did not open it \(This page has no layout API/) as string,
     ]);
     expect(layoutsOf(win).saved.map(({ url }) => url)).toContain('NEW00001');
   });

@@ -236,7 +236,7 @@ describe('errors and warnings', () => {
       /FIXTURE2 but did not report that it finished loading it/,
     );
     expect(notOpenedWarning('NEW00001', null)).toMatch(
-      /^TradingView created the layout NEW00001 but did not open it in time\. .*layout_switch \(layoutId NEW00001\); do not call layout_new again/,
+      /^TradingView created the layout NEW00001 but did not open it\. .*layout_switch \(layoutId NEW00001\); do not call layout_new again/,
     );
     expect(notOpenedWarning('NEW00001', 'Server error')).toContain('(Server error)');
     expect(unsavedNotOpenedWarning('NEW00001', true)).toMatch(
