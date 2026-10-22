@@ -14,12 +14,15 @@
 
 // Features the enum knows although the fake plan sets no limit for them: getConfig throws for
 // these, as it can for a value the plan does not configure, and enabled() is false for them.
+// BAR_REPLAY_INTRADAY is off on the plan of the real account, which replays daily, weekly and
+// monthly charts only (notes of Plan 3, section 4.4).
 const UNCONFIGURED_FEATURES = [
   'CHART_STORAGE',
   'MULTIPLE_CHARTS',
   'ALERTS_ON_SECONDS',
   'ALERTS_NO_EXPIRATION',
   'ALERTS_WEBHOOK',
+  'BAR_REPLAY_INTRADAY',
 ];
 
 export const UNLIMITED_FEATURE_LIMIT = 99999;

@@ -40,6 +40,14 @@ import {
 } from './pine-editor.js';
 import { createFeatureToggleModules, createPlanLimitModules } from './plan-limits.js';
 import { createQuoteModules } from './quotes.js';
+import {
+  createFakeReplay,
+  initialReplayState,
+  type FakeReplayApi,
+  type FakeReplayCollection,
+  type FakeReplayOptions,
+  type FakeReplayState,
+} from './replay.js';
 import { createFakeScreen, type FakeChartWidgetDef, type FakeScreenOptions } from './screen.js';
 import { createFakeSearch, type FakeSearchOptions, type FakeSearchResponse } from './search.js';
 import { createFakeServiceLocator } from './service-locator.js';
@@ -163,6 +171,15 @@ import { createFakeWebpack } from './webpack.js';
 // the errors a test stages. The layouts option sets how long a load and its data take, or leaves an
 // export out.
 //
+// Bar replay (replay.ts): TradingViewApi.replayApi() resolves the replay API of the app, with its
+// watched values, the selects that start replay, doStep, autoplay and leaveReplay, which saves the
+// replay session in the layout, where the chart widget collection keeps it
+// (_chartWidgetCollection.replaySessionState and updateReplaySessionState); the internal replay
+// controller answers the availability of chart 0 by the id of its chart model (model().id()). An
+// intraday chart replays only on a plan with BAR_REPLAY_INTRADAY, which the plan modules serve as
+// well. state.replay holds replay, its settings and the saved session; the replay option sets how
+// long a start and a step take, or leaves a member out.
+//
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
 // `instanceof Error` for them. Arrays and promises it returns are fine for Array.isArray and
@@ -242,6 +259,9 @@ export interface FakeTvOverrides {
   // How long a change of the layout and the data of a chart it adds take, and the codes of the
   // table of layouts, or the table, left out (charts.ts).
   charts?: FakeChartsOptions;
+  // How long a start of replay, its point and a step take, and the replay members left out
+  // (replay.ts).
+  replay?: FakeReplayOptions;
 }
 
 export interface FakeBars {
@@ -289,6 +309,9 @@ export interface FakeSetOptions {
 // The chart model, _chartWidget.model(). canCreateStudy is optional so that a test can delete it, as
 // on a build without it.
 export interface FakeChartModel {
+  // The id of the chart model, which keys the replay availability of the charts (replay.ts). Only
+  // chart 0 has it.
+  id?: () => string;
   mainSeries(): FakeMainSeries;
   // The core model: the time scale, the cores of the studies by id (null for any other id) and the
   // active strategy source, whose value is the core of the strategy the Strategy Tester shows, or
@@ -344,12 +367,14 @@ export interface FakeTradingViewApi extends FakeLayoutsApi, FakeChartsApi {
   // TradingView's own fullscreen mode (fullscreen.ts).
   startFullscreen?(): void;
   exitFullscreen?(): void;
-  // One definition for each chart container (screen.ts), and the fullscreen mode as a watched
-  // value (fullscreen.ts).
+  // The replay API (replay.ts).
+  replayApi?(): Promise<FakeReplayApi>;
+  // One definition for each chart container (screen.ts), the fullscreen mode as a watched value
+  // (fullscreen.ts) and the replay session saved in the layout (replay.ts).
   _chartWidgetCollection?: {
     _chartWidgetsDefs: FakeChartWidgetDef[];
     fullscreen?(): { value(): boolean };
-  };
+  } & FakeReplayCollection;
 }
 
 export interface FakeLocation {
@@ -428,7 +453,13 @@ export interface FakeTvWindow {
 // getChartsCount, the new tab backend.openLayoutLink, the dialogs dialog.paywall (with the paywall),
 // dialog.warning and dialog.unsavedChanges, and every call of the layout functions the tools must
 // never use, TradingViewApi.loadChartFromServer, TradingViewApi.createNewLayout and openNewChart
-// (layouts.ts).
+// (layouts.ts). So are the calls of the replay API that change replay, replayApi.* (the selects,
+// doStep, toggleAutoplay, changeAutoplayDelay, leaveReplay and stopReplay, each with its arguments
+// as given), the settings they keep, settings.setValue (with the name of the setting and its value),
+// chartWidgetCollection.updateReplaySessionState, the dialogs dialog.signIn, dialog.continueReplay,
+// dialog.paywall and dialog.leaveReplay, the notification notification.replayTimePointCorrected,
+// and every call the tools must never make: replayApi.buy, replayApi.sell, replayApi.closePosition,
+// replayApi.goToRealtime and tradingService (replay.ts).
 // A call is recorded before it is validated, so refused and throwing calls show up too. Reads are
 // not recorded.
 export interface FakeCall {
@@ -470,6 +501,8 @@ export interface FakeTvState {
   // The type of the layout, how many charts it shows, the charts after chart 0 and whether the
   // layout syncs their symbol (charts.ts).
   charts: FakeChartsState;
+  // Bar replay, its settings and the replay session saved in the layout (replay.ts).
+  replay: FakeReplayState;
 }
 
 export interface FakeTvInspector {
@@ -506,6 +539,9 @@ function createLocation(href: string): FakeLocation {
 function copyBar(bar: SyntheticBar): SyntheticBar {
   return [bar[0], bar[1], bar[2], bar[3], bar[4], bar[5]];
 }
+
+// The id of the chart model of chart 0, synthetic.
+export const CHART_MODEL_ID = 'chartmodel0';
 
 export function createFakeTvWindow(
   fixture: TvStateFixture,
@@ -595,6 +631,7 @@ export function createFakeTvWindow(
     },
     // Filled with the layout and the charts of the fixture (charts.ts).
     charts: { layout: 's', count: 1, others: [], symbolSync: false },
+    replay: initialReplayState(),
   };
 
   // The bars of the series, which grow at the front as older history loads. A request needs bars
@@ -792,7 +829,11 @@ export function createFakeTvWindow(
     getStudyById: (id: string) => studies.getStudyCore(id),
     activeStrategySource: () => ({ value: () => studies.getActiveStrategyCore() }),
   };
-  const chartModel: FakeChartModel = { mainSeries: () => mainSeries, model: () => coreModel };
+  const chartModel: FakeChartModel = {
+    id: () => CHART_MODEL_ID,
+    mainSeries: () => mainSeries,
+    model: () => coreModel,
+  };
   const studies = createFakeStudies(fixture, loaded, {
     record,
     canCreateStudy: (spec) => chartModel.canCreateStudy?.(spec),
@@ -868,6 +909,22 @@ export function createFakeTvWindow(
     fixture: fixture.charts,
     options: overrides.charts,
   });
+  const replay = createFakeReplay({
+    state: state.replay,
+    record,
+    signedIn: () => pine.state.signedIn,
+    bars: loaded,
+    chart: () => ({ symbol: state.symbol, interval: state.resolution }),
+    // A plan has the feature when it configures it, as enabled() of the plan modules answers.
+    planIntraday:
+      fixture.planLimits.BAR_REPLAY_INTRADAY !== undefined ||
+      fixture.planConfigs?.BAR_REPLAY_INTRADAY !== undefined,
+    modelId: CHART_MODEL_ID,
+    markLayoutChanged: () => {
+      state.layouts.unsaved = true;
+    },
+    options: overrides.replay,
+  });
 
   const chart: FakeChartWidgetApi = {
     symbol: () => state.symbol,
@@ -935,9 +992,16 @@ export function createFakeTvWindow(
     searchSymbols: createFakeSearch(fixture.search, record),
     pineEditorApi: () => pine.api,
     ...fullscreen.api,
+    ...(replay.replayApi === undefined ? {} : { replayApi: replay.replayApi }),
     ...(overrides.withoutChartCollection === true
       ? {}
-      : { _chartWidgetCollection: { ...screen.collection, ...fullscreen.collection } }),
+      : {
+          _chartWidgetCollection: {
+            ...screen.collection,
+            ...fullscreen.collection,
+            ...replay.collection,
+          },
+        }),
   };
 
   const win: FakeTvWindow = {
@@ -974,6 +1038,7 @@ export function createFakeTvWindow(
               ...watchlists.modules,
               ...layouts.modules,
               ...charts.modules,
+              ...replay.modules,
             },
           ),
     innerWidth: screen.width,

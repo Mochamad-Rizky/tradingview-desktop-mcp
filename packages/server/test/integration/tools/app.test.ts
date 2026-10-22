@@ -165,12 +165,12 @@ describe('app_health', () => {
         },
         chart: { found: true, tabs: 1, url: 'https://www.tradingview.com/chart/FIXTURE1/' },
         app: { ready: true, connected: true, buildTime: fixture.buildTime },
-        // What the shared fake window offers: the replay API is not modeled.
+        // What the shared fake window offers.
         capabilities: {
           tradingViewApi: true,
           activeChart: true,
           chartModel: true,
-          replayApi: false,
+          replayApi: true,
           pineEditorApi: true,
           webpackRegistry: true,
           tvd: true,
