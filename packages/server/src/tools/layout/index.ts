@@ -337,7 +337,11 @@ export const layoutSwitch = defineTool({
     'the current one: while it has any, or TradingView does not tell, the call fails with ' +
     'CONFIRMATION_REQUIRED unless confirm: true, and nothing changes. An id the account does not ' +
     'have fails with INVALID_INPUT, and a layout layout_list marks overLimit, beyond the ' +
-    'CHART_STORAGE limit of the plan, with PLAN_LIMIT. No dialog opens.',
+    'CHART_STORAGE limit of the plan, with PLAN_LIMIT. TradingView may still show an upgrade ' +
+    'prompt where these checks cannot see: for a saved multi-chart layout on a plan with fewer ' +
+    'charts (the list of saved layouts does not say how many charts a layout has), for a layout ' +
+    'its server refuses as beyond the limit, and for a layout the list TradingView keeps for ' +
+    'itself marks over the limit while layout_list does not (that list can be out of date).',
   inputSchema: {
     layoutId: z
       .string()

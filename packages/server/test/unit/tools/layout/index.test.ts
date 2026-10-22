@@ -92,6 +92,12 @@ test('the descriptions name the plan limit, the confirmation, the in-place loadi
   expect(change).toMatch(/discard/);
   expect(change).toMatch(/in place/);
   expect(change).toMatch(/CHART_STORAGE/);
+  // What layout_switch cannot rule out is named, not promised away.
+  expect(change).not.toMatch(/No dialog opens/);
+  expect(change).toMatch(/upgrade prompt/);
+  expect(change).toMatch(/multi-chart layout on a plan with fewer charts/);
+  expect(change).toMatch(/server refuses/);
+  expect(change).toMatch(/out of date/);
   expect(toolNamed('layout_list').description).toMatch(/changes nothing/);
 });
 
