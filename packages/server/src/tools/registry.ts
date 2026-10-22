@@ -221,6 +221,25 @@ export function createToolRegistry(
   };
   const handlerCtx: ToolContext = { ...ctx, registry };
 
+  // Whether a tool keeps its arguments out of the tool events, as its definition says.
+  const redacts = (tool: string): boolean => byName.get(tool)?.redactArgs === true;
+
+  // What the start event of a call shows of its arguments: nothing of a tool that redacts them, and
+  // for a tool that runs others, what it makes of them (eventArgs). A summary that throws is cut.
+  function argsForEvent(tool: AnyToolDefinition | undefined, args: unknown): JsonValue {
+    if (tool?.redactArgs === true) {
+      return { redacted: true };
+    }
+    if (tool?.eventArgs === undefined) {
+      return eventArgs(args);
+    }
+    try {
+      return eventArgs(tool.eventArgs(args, redacts));
+    } catch {
+      return CUT;
+    }
+  }
+
   async function run(name: string, args: unknown): Promise<ToolOutput<JsonValue>> {
     const tool = byName.get(name);
     if (tool === undefined) {
@@ -265,7 +284,7 @@ export function createToolRegistry(
       origin,
       phase: 'start',
       at: new Date().toISOString(),
-      args: byName.get(name)?.redactArgs === true ? { redacted: true } : eventArgs(args),
+      args: argsForEvent(byName.get(name), args),
     });
 
     let result: CallToolResult;

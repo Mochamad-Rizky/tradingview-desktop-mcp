@@ -2,7 +2,10 @@ import type { ImageContent } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { TvMcpError } from '../../../src/core/errors.js';
 import type { ToolCallEvent } from '../../../src/core/events.js';
+import { batchRun } from '../../../src/tools/batch/index.js';
 import { allTools } from '../../../src/tools/index.js';
+import { uiEvaluate } from '../../../src/tools/ui/evaluate.js';
+import { uiTypeText } from '../../../src/tools/ui/keyboard.js';
 import { createToolRegistry, selectTools } from '../../../src/tools/registry.js';
 import {
   defineTool,
@@ -457,6 +460,81 @@ test('registry keeps the arguments of a tool that redacts them out of its events
     { reason: 'test' },
   ]);
   expect(JSON.stringify(events)).not.toContain('private words');
+});
+
+test.each(['mcp', 'dashboard'] as const)(
+  'registry keeps the arguments of redacting steps out of the batch_run event, from the %s',
+  async (origin) => {
+    const { ctx, events } = harness();
+    const registry = createToolRegistry(
+      [batchRun, uiEvaluate, uiTypeText, failingTool(notAvailable)],
+      ctx,
+    );
+
+    await registry.call(
+      'batch_run',
+      {
+        steps: [
+          { tool: 'ui_evaluate', arguments: { expression: '"secret code"' } },
+          { tool: 'ui_type_text', arguments: { text: 'secret text' } },
+          { tool: 'chart_fail', arguments: { reason: 'shown' } },
+        ],
+        stopOnError: false,
+      },
+      origin,
+    );
+
+    const starts = events.filter(({ phase }) => phase === 'start');
+    expect(starts[0]).toMatchObject({
+      tool: 'batch_run',
+      origin,
+      args: {
+        steps: [
+          { tool: 'ui_evaluate', arguments: { redacted: true } },
+          { tool: 'ui_type_text', arguments: { redacted: true } },
+          { tool: 'chart_fail', arguments: { reason: 'shown' } },
+        ],
+        stopOnError: false,
+      },
+    });
+    // The steps run as calls of their own, whose events redact the same way.
+    expect(starts.slice(1).map(({ tool, args }) => [tool, args])).toEqual([
+      ['ui_evaluate', { redacted: true }],
+      ['ui_type_text', { redacted: true }],
+      ['chart_fail', { reason: 'shown' }],
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/secret (code|text)/);
+  },
+);
+
+test('registry shows batch_run arguments that are no list of steps as they are', async () => {
+  const { ctx, events } = harness();
+  const registry = createToolRegistry([batchRun, uiEvaluate], ctx);
+
+  await registry.call('batch_run', { steps: 'not a list' }, 'mcp');
+  await registry.call('batch_run', ['odd'], 'mcp');
+  await registry.call('batch_run', { steps: [null, { tool: 7 }, 'step'] }, 'mcp');
+
+  expect(events.filter(({ phase }) => phase === 'start').map(({ args }) => args)).toEqual([
+    { steps: 'not a list' },
+    ['odd'],
+    { steps: [null, { tool: 7 }, 'step'] },
+  ]);
+});
+
+test('registry cuts the event arguments of a summary that throws, and still runs the call', async () => {
+  const { ctx, events } = harness();
+  const registry = createToolRegistry([batchRun], ctx);
+  const hostile = {
+    get steps(): unknown {
+      throw new Error('No steps to read');
+    },
+  };
+
+  const result = await registry.call('batch_run', hostile, 'dashboard');
+
+  expect(events[0]?.args).toBe('…');
+  expect(result.isError).toBe(true);
 });
 
 test('registry reports a successful call as ok, with its own id per call', async () => {
