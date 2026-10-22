@@ -82,9 +82,10 @@ export function findNewTabPages(list: CdpTargetInfo[]): CdpTargetInfo[] {
 }
 
 // The refusal of a chart tool while a New tab page is open and no chart tab reports itself visible:
-// the tab in front shows no chart, and the chart tabs behind it are not the one the user looks at.
-// It lists the chart tabs with what each reported, and says newTabPage, which
-// isNoChartInFrontError reads.
+// the tab in front shows no chart, and the chart tabs behind it are not the one the user looks at,
+// unless the window is out of view, when no page of it reports itself visible (seen on the app). It
+// lists the chart tabs with what each reported, and says newTabPage, which isNoChartInFrontError
+// reads.
 function noChartInFront(
   candidates: CdpTargetInfo[],
   visibility: ReadonlyMap<string, Visibility>,
@@ -93,7 +94,8 @@ function noChartInFront(
     hint:
       'Bring a tab that shows a chart to the front with tab_switch (tab_list lists the tabs). ' +
       "A tab on TradingView's New tab page shows none: open a layout there, or close it with " +
-      'tab_close.',
+      'tab_close. Keep the TradingView window in view: while it is covered by other windows or ' +
+      'minimized, no tab reports itself in front.',
     details: {
       newTabPage: true,
       tabs: candidates.map(({ id, url }) => ({

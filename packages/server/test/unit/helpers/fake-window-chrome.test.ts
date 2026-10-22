@@ -247,6 +247,17 @@ test('a shell that never answers changes nothing', async () => {
   expect(chrome.actions).toEqual([]);
 });
 
+test('reports itself visible while the window is in view, and hidden while it is not', () => {
+  const visibility = (chrome: Chrome) =>
+    (chrome.window as { document: { visibilityState: string } }).document.visibilityState;
+  const chrome = chromeWith();
+
+  expect(visibility(chrome)).toBe('visible');
+  chrome.state.inView = false;
+  expect(visibility(chrome)).toBe('hidden');
+  expect(visibility(chromeWith({ inView: false }))).toBe('hidden');
+});
+
 test('records every use of require and process in the page, which has Node integration', () => {
   const chrome = chromeWith();
   const win = chrome.window as { require(name: string): unknown; process: unknown };

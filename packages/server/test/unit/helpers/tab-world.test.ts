@@ -116,6 +116,18 @@ test('the chart page of the tab in front is visible and every other one hidden, 
   ]);
 });
 
+test('every page reports hidden while the window is out of view, the tab in front and the window chrome too', () => {
+  const world = worldWith({ inView: false });
+
+  expect([visibilityOf(chartOf(world, A)), visibilityOf(chartOf(world, B))]).toEqual([
+    'hidden',
+    'hidden',
+  ]);
+  expect(
+    (world.chrome.window as { document: { visibilityState: string } }).document.visibilityState,
+  ).toBe('hidden');
+});
+
 test('every chart page reports visible with allVisible, as on Windows and Linux', () => {
   const world = worldWith({ allVisible: true });
 

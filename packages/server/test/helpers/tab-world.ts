@@ -26,8 +26,10 @@ import {
 // frames of the first chart page and a worker.
 //
 // As on macOS, where the app throttles the tabs in the background, the chart page of the tab in
-// front reports itself visible and every other one hidden; allVisible makes every chart page report
-// visible, as on Windows and Linux, where the app does not throttle them. A tab that the shell
+// front reports itself visible and every other one hidden, and while the window is out of view
+// (inView false: covered by other windows or minimized), every page of it reports hidden, the window
+// chrome too (seen on the app); allVisible makes every chart page report visible, as on Windows and
+// Linux, where the app does not throttle them. A tab that the shell
 // opens shows its New tab page among the targets pageMs after it shows in the strip, and a tab the
 // shell closes leaves the list with its page. Closing a chart tab asks its page whether to save
 // its layout (shouldBeSaved), and the shell opens its "Close tab?" dialog instead when the page
@@ -62,6 +64,8 @@ export interface TabWorldOptions {
   active?: string;
   size?: FakeTabSize;
   isLastWindow?: boolean;
+  // Whether the window is in view. Default true.
+  inView?: boolean;
   closeButtonOverTitle?: boolean;
   // How long the strip takes to show a change after a click. Default 5 ms; Infinity: never.
   changeMs?: number;
@@ -167,11 +171,14 @@ export function createTabWorld(options: TabWorldOptions): TabWorld {
     app?.setTargets(world.targets());
   };
 
-  // As on macOS: the chart page of the tab in front is visible, every other one hidden.
+  // As on macOS: the chart page of the tab in front is visible while the window is in view, and
+  // every other one hidden.
   const showFront = (): void => {
     for (const [tabId, win] of charts) {
       inspectFakeWindow(win).state.visibilityState =
-        options.allVisible === true || tabId === chrome.state.active ? 'visible' : 'hidden';
+        options.allVisible === true || (chrome.state.inView && tabId === chrome.state.active)
+          ? 'visible'
+          : 'hidden';
     }
   };
 
@@ -212,6 +219,7 @@ export function createTabWorld(options: TabWorldOptions): TabWorld {
     active: options.active ?? options.tabs[0]?.id ?? '',
     ...(options.size === undefined ? {} : { size: options.size }),
     ...(options.isLastWindow === undefined ? {} : { isLastWindow: options.isLastWindow }),
+    ...(options.inView === undefined ? {} : { inView: options.inView }),
     ...(options.closeButtonOverTitle === undefined
       ? {}
       : { closeButtonOverTitle: options.closeButtonOverTitle }),

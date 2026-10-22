@@ -36,9 +36,11 @@ import {
 // a close button.
 //
 // The page is a DOM page of dom.ts, built again from the state on every change behind a window that
-// stays the same object, which the fake debug port runs page functions in. The renderer of the
-// window chrome has Node integration, so the window also has require and process, which record every
-// use: nothing of the server may reach them.
+// stays the same object, which the fake debug port runs page functions in. It reports itself visible
+// while the window is in view (inView), and hidden while the window is covered by others or
+// minimized, as every page of the window then does (seen on the app). The renderer of the window
+// chrome has Node integration, so the window also has require and process, which record every use:
+// nothing of the server may reach them.
 
 export type FakeTabSize = 'normal' | 'small' | 'xsmall' | 'xxsmall';
 
@@ -56,6 +58,8 @@ export interface FakeWindowChromeState {
   size: FakeTabSize;
   // Whether this is the last window of the app: its only tab then shows no close button.
   isLastWindow: boolean;
+  // Whether the window is in view, neither covered by other windows nor minimized.
+  inView: boolean;
 }
 
 // What the shell did, in order: made a tab active, closed one, opened the "Close tab?" dialog for
@@ -99,6 +103,8 @@ export interface FakeWindowChromeOptions {
   active: string;
   size?: FakeTabSize;
   isLastWindow?: boolean;
+  // Default true.
+  inView?: boolean;
   // Lays the close button of each tab over the middle of its title, as a strip squeezed narrow
   // might, so that a click at the center of a title would land on the close button.
   closeButtonOverTitle?: boolean;
@@ -194,6 +200,7 @@ export function createFakeWindowChrome(options: FakeWindowChromeOptions): FakeWi
     active: options.active,
     size: options.size ?? 'normal',
     isLastWindow: options.isLastWindow ?? true,
+    inView: options.inView ?? true,
   };
   const changeMs = options.changeMs ?? 5;
   const hooks = options.hooks ?? {};
@@ -375,7 +382,9 @@ export function createFakeWindowChrome(options: FakeWindowChromeOptions): FakeWi
       href: 'file:///Applications/TradingView.app/Contents/Resources/app.asar/app/window/index.html',
     },
     document: {
-      visibilityState: 'visible',
+      get visibilityState() {
+        return state.inView ? 'visible' : 'hidden';
+      },
       querySelector: (selectors: string) => current.document.querySelector?.(selectors) ?? null,
       querySelectorAll: (selectors: string) => current.document.querySelectorAll?.(selectors) ?? [],
       elementFromPoint: (x: number, y: number) => current.document.elementFromPoint?.(x, y) ?? null,

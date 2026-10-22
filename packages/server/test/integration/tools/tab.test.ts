@@ -1,6 +1,7 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Config } from '../../../src/config/schema.js';
 import { describeElement } from '../../../src/core/tv/input.js';
+import { readVisibilityState } from '../../../src/core/tv/probes.js';
 import { createMcpServer } from '../../../src/server.js';
 import { readTabs, readUnsavedLayout } from '../../../src/tools/tab/page.js';
 import type { JsonValue } from '../../../src/utils/json.js';
@@ -568,6 +569,53 @@ describe('tab_close', () => {
     expect(world.chrome.clicks).toEqual([]);
   });
 
+  test('tab_close refuses while the window is out of view, where a chart tab in front reports itself hidden too, and clicks nothing', async () => {
+    // The window is behind other windows: every page of it reports hidden, the chart in front too,
+    // so that page cannot be told from a New tab page in front. Closing it would ask about its
+    // unsaved changes in a dialog.
+    const { client, world } = await startHarness({
+      tabs: [chartA, chartB, newTabPage],
+      active: A,
+      inView: false,
+    });
+    inspectFakeWindow(chartOf(world, A)).state.layouts.unsaved = true;
+
+    const chart = await callTool(client, 'tab_close', { tabId: A, confirm: true });
+    const page = await callTool(client, 'tab_close', { tabId: N, confirm: true });
+
+    for (const [result, tabId] of [
+      [chart, A],
+      [page, N],
+    ] as const) {
+      expect(errorOf(result)).toMatchObject({
+        code: 'NOT_AVAILABLE',
+        message:
+          'The TradingView window is out of view, so whether the tab in front shows a chart ' +
+          'cannot be told',
+        hint: expect.stringMatching(/into view/) as string,
+        details: { tabId, reason: 'window-out-of-view' },
+      });
+    }
+    // tab_close of N brought it to the front first; nothing was closed, and no dialog opened.
+    expect(presses(world)).toEqual([
+      { type: 'mousePressed', button: 'left', clickCount: 1, on: 'title', tabId: N },
+    ]);
+    expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: N }]);
+    expect(tabIds(world)).toEqual([A, B, N]);
+  });
+
+  test('the chart tools refuse while a New tab page is open and the window is out of view, and say to bring it into view', async () => {
+    const { client } = await startHarness({ tabs: [chartA, newTabPage], active: A, inView: false });
+
+    const result = await callTool(client, 'chart_get_state');
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      hint: expect.stringMatching(/in view/) as string,
+      details: { newTabPage: true },
+    });
+  });
+
   test('tab_close refuses when it cannot tell which page the tab shows, and clicks nothing', async () => {
     // As on Windows: every chart page reports itself visible.
     const { client, world } = await startHarness({
@@ -700,7 +748,7 @@ describe('the window chrome and the New tab page', () => {
     expect(new Set(calls.map(({ method }) => method))).toEqual(
       new Set(['Runtime.evaluate', 'Page.getLayoutMetrics', 'Input.dispatchMouseEvent']),
     );
-    const sources = [readTabs, describeElement].map((fn) => fn.toString());
+    const sources = [readTabs, describeElement, readVisibilityState].map((fn) => fn.toString());
     const evaluated = evaluatedIn(app, WINDOW_CHROME_TARGET_ID);
     expect(evaluated.length).toBeGreaterThan(0);
     for (const expression of evaluated) {

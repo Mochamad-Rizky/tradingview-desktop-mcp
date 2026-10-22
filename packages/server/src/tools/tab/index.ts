@@ -7,6 +7,7 @@ import {
 import type { PageHandle } from '../../core/connection.js';
 import { isTvMcpError, TvMcpError } from '../../core/errors.js';
 import { clickElement, type ClickOptions } from '../../core/tv/input.js';
+import { readVisibilityState } from '../../core/tv/probes.js';
 import { SELECTORS } from '../../core/tv/selectors.js';
 import { pollUntil } from '../../utils/poll.js';
 import { READ_ONLY } from '../annotations.js';
@@ -156,14 +157,17 @@ async function newTabPageIds(ctx: ToolContext): Promise<string[] | null> {
 // (notes of Plan 3, section 3.4), which no tool may open, so the page of the tab is asked first. The
 // tab is in front by now, so a chart it shows is the chart page the connection manager maps to the
 // tab in front. No chart tab in front while a New tab page is open, every chart tab hidden, means
-// that the tab is a New tab page, which has no layout to save. Anything else cannot be told, and is
-// refused.
+// that the tab is a New tab page, which has no layout to save, but only while the window is in
+// view: while it is covered by other windows or minimized, every page of it reports hidden, the
+// chart in front too, and so does the window chrome (seen on the app), whose own visibility tells
+// the two apart. Anything else cannot be told, and is refused.
 async function assertClosesWithoutDialog(ctx: ToolContext, tabId: string): Promise<void> {
   let page: PageHandle;
   try {
     page = await ctx.connection.chartPage();
   } catch (error) {
     if (isNoChartInFrontError(error) && isEveryChartTabHidden(error)) {
+      await assertWindowInView(ctx, tabId);
       return;
     }
     if (isTvMcpError(error) && error.code === 'TARGET_NOT_FOUND') {
@@ -195,6 +199,25 @@ async function assertClosesWithoutDialog(ctx: ToolContext, tabId: string): Promi
       {
         hint: 'Save the layout in TradingView first, or check app_health.',
         details: { tabId },
+      },
+    );
+  }
+}
+
+// Whether the window is in view, as its window chrome reports it: a property of its document, read
+// like the rest of its DOM.
+async function assertWindowInView(ctx: ToolContext, tabId: string): Promise<void> {
+  const chrome = await ctx.connection.windowChromePage();
+  if ((await chrome.bridge.evaluate(readVisibilityState, [])) !== 'visible') {
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      'The TradingView window is out of view, so whether the tab in front shows a chart cannot ' +
+        'be told',
+      {
+        hint:
+          'Bring the TradingView window into view (it is covered by other windows or minimized), ' +
+          'then try again.',
+        details: { tabId, reason: 'window-out-of-view' },
       },
     );
   }
@@ -378,7 +401,8 @@ export const tabClose = defineTool({
     'show only there. A tab whose layout has unsaved changes is refused with NOT_AVAILABLE, ' +
     'confirm or not, since TradingView would ask in a dialog whether to save them: save the ' +
     'layout, or wait for autosave, first. NOT_AVAILABLE as well when the server cannot tell which ' +
-    'page the tab shows, or the tab shows no close button (a pinned tab). INVALID_INPUT for ' +
+    'page the tab shows, as while the TradingView window is covered or minimized, or the tab ' +
+    'shows no close button (a pinned tab). INVALID_INPUT for ' +
     'neither or both of tabId and index, and for a tab the window does not have. TIMEOUT when the ' +
     'tab does not close in time.',
   inputSchema: {
