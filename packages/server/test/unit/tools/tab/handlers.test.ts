@@ -1,4 +1,5 @@
 import { setImmediate as settle } from 'node:timers/promises';
+import { pickChartTarget } from '../../../../src/core/cdp/targets.js';
 import type { CdpSession, CdpTargetInfo } from '../../../../src/core/cdp/types.js';
 import type { ConnectionManager, PageHandle } from '../../../../src/core/connection.js';
 import { TvMcpError } from '../../../../src/core/errors.js';
@@ -75,10 +76,27 @@ function chromePage(chrome: FakeWindowChrome): PageHandle {
   };
 }
 
+// What the connection manager answers for the chart tools while a New tab page is in front of a
+// window in view and no chart tab is open: no chart in front.
+function noChartInFrontError(): TvMcpError {
+  try {
+    pickChartTarget([], new Map(), { newTabPageOpen: true });
+  } catch (error) {
+    if (error instanceof TvMcpError) {
+      return error;
+    }
+  }
+  throw new Error('Expected a refusal');
+}
+
 function contextWith(connection: Partial<ConnectionManager>): ToolContext {
   return {
     ...createTestContext(),
-    connection: { reset: () => Promise.resolve(), ...connection } as ConnectionManager,
+    connection: {
+      reset: () => Promise.resolve(),
+      chartPage: () => Promise.reject(noChartInFrontError()),
+      ...connection,
+    } as ConnectionManager,
     registry: { list: () => [], call: () => Promise.reject(new Error('No registry here')) },
   };
 }
@@ -168,5 +186,69 @@ test('an index past the only tab of the window names it as one tab', async () =>
     message: 'There is no tab at index 1: the window has 1 tab',
     details: { index: 1, tabs: 1 },
   });
+  expect(chrome.clicks).toEqual([]);
+});
+
+// A handle that names a chart target, as chartPage resolves one: only its target is read.
+function chartHandle(targetId: string): PageHandle {
+  return {
+    target: {
+      id: targetId,
+      type: 'page',
+      title: '',
+      url: `https://www.tradingview.com/chart/${targetId}/`,
+    },
+  } as PageHandle;
+}
+
+test('tab_switch counts a chart tab in front once it lasts, when which page was in front could not be told before the click', async () => {
+  const chrome = createFakeWindowChrome({
+    tabs: [
+      { id: A, title: ['AAPL'] },
+      { id: B, title: ['MSFT'] },
+    ],
+    active: A,
+  });
+  let asked = 0;
+  const startedAt = performance.now();
+  const ctx = contextWith({
+    windowChromePage: () => Promise.resolve(chromePage(chrome)),
+    chartPage: () => {
+      asked += 1;
+      // Before the click, several tabs report themselves visible; then only the one of tab B.
+      return asked === 1
+        ? Promise.reject(
+            new TvMcpError(
+              'TARGET_NOT_FOUND',
+              '2 chart tabs are open and it is unclear which one to use',
+            ),
+          )
+        : Promise.resolve(chartHandle('TARGET-B'));
+    },
+  });
+
+  const result = await tabSwitch.handler({ tabId: B }, ctx);
+
+  expect(result).toEqual({ data: { id: B, index: 1, changed: true }, via: 'dom', warnings: [] });
+  // It kept to tab B for the settle time before it counted.
+  expect(performance.now() - startedAt).toBeGreaterThanOrEqual(600);
+  expect(asked).toBeGreaterThan(3);
+});
+
+test('tab_switch passes on a failure of the mapping that is not one of the connection, and clicks nothing', async () => {
+  const chrome = createFakeWindowChrome({
+    tabs: [
+      { id: A, title: ['AAPL'] },
+      { id: B, title: ['MSFT'] },
+    ],
+    active: A,
+  });
+  const bug = new Error('A bug in the mapping');
+  const ctx = contextWith({
+    windowChromePage: () => Promise.resolve(chromePage(chrome)),
+    chartPage: () => Promise.reject(bug),
+  });
+
+  await expect(tabSwitch.handler({ tabId: B }, ctx)).rejects.toBe(bug);
   expect(chrome.clicks).toEqual([]);
 });

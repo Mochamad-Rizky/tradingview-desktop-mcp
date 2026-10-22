@@ -3,6 +3,7 @@ import {
   findNewTabPages,
   isEveryChartTabHidden,
   isNoChartInFrontError,
+  type Visibility,
 } from '../../core/cdp/targets.js';
 import type { PageHandle } from '../../core/connection.js';
 import { isTvMcpError, TvMcpError } from '../../core/errors.js';
@@ -24,14 +25,21 @@ import { readTabs, readUnsavedLayout, TAB_STRIP, type StripTab } from './page.js
 // menu on a right click.
 //
 // Only the page of the tab in front is shown, and the connection manager maps the chart tools to it
-// by its visibility (connection.ts). So once a tool may have changed the tab in front, it drops
-// every session (reset), and the next tool looks again. A new tab opens on TradingView's New tab
-// page, whose renderer has Node integration too: it is only ever found by its URL among the
-// targets, never connected to.
+// by its visibility (connection.ts). The strip and the pages are separate renderers, so a page can
+// hear of a change of the tab in front later than the strip shows it: a tool that changes the tab
+// in front drops every session (reset) and waits until the mapping shows the change too
+// (awaitPageInFront), so that the next tool acts on the tab in front. A new tab opens on
+// TradingView's New tab page, whose renderer has Node integration too: it is only ever found by its
+// URL among the targets, never connected to.
 
 // The shell answers a click on the strip over IPC, within a moment; a change that has not shown by
 // this time is not going to. Each wait is kept within the page wait of the call timeout as well.
 const TAB_WAIT_MS = 5000;
+
+// How long no chart in front has to last before it counts: on the way from one chart tab to another,
+// the page that leaves the front can report itself hidden before the other one reports itself
+// visible.
+const NO_CHART_SETTLE_MS = 600;
 
 // The clicks on a tab (ClickOptions). Its title shows the names of the user's layouts and symbols,
 // which the test of trading names would take for trading actions ("Sell the rally"), on a page that
@@ -115,9 +123,98 @@ function findTab(tabs: ListedTab[], choice: TabChoice): ListedTab {
   return tab;
 }
 
-// Brings `tab` to the front with a click on its title and waits until the strip shows it there.
-// However that ends, the sessions are dropped, since the click may have changed the tab in front.
-async function bringToFront(ctx: ToolContext, chrome: PageHandle, tab: ListedTab): Promise<void> {
+// The page the connection manager maps the chart tools to: a chart tab, by the id of its target;
+// none, when the tab in front shows no chart while a New tab page is open, every chart tab hidden;
+// or unknown, when it cannot tell (several tabs report themselves visible, the window is out of
+// view, a page does not answer).
+type FrontPage = { kind: 'chart'; targetId: string } | { kind: 'none' } | { kind: 'unknown' };
+
+async function frontPage(ctx: ToolContext): Promise<FrontPage> {
+  try {
+    return { kind: 'chart', targetId: (await ctx.connection.chartPage()).target.id };
+  } catch (error) {
+    if (isNoChartInFrontError(error) && isEveryChartTabHidden(error)) {
+      return { kind: 'none' };
+    }
+    if (isTvMcpError(error)) {
+      return { kind: 'unknown' };
+    }
+    throw error;
+  }
+}
+
+// The visibility of the window chrome, which is hidden while the window is covered by other windows
+// or minimized: a property of its document, read like the rest of its DOM.
+async function windowVisibility(ctx: ToolContext): Promise<Visibility> {
+  const chrome = await ctx.connection.windowChromePage();
+  return chrome.bridge.evaluate(readVisibilityState, []);
+}
+
+// What the mapping showed once the strip showed a tab in front: a chart tab in front, or no chart in
+// front (a New tab page); the window out of view, where pages say nothing about the tab in front
+// (covered); no change within the wait (late); or, when the mapping could not tell either before the
+// click, nothing it kept to for long enough (unconfirmed).
+type Arrival = 'chart' | 'none' | 'covered' | 'late' | 'unconfirmed';
+
+// Waits until the mapping of the chart tools shows the change of the tab in front that the strip
+// shows already: a chart tab other than the one in front before the click (`before`), or no chart in
+// front that lasts NO_CHART_SETTLE_MS. When nothing was known before the click, a chart tab counts
+// only once it lasts as long. The wait is the tab wait, and never shorter than a settle and a few
+// polls, which the call timeout always leaves room for.
+async function awaitPageInFront(ctx: ToolContext, before: FrontPage): Promise<Arrival> {
+  const waitMs = Math.max(tabWaitMs(ctx), NO_CHART_SETTLE_MS + 3 * POLL_INTERVAL_MS);
+  await ctx.connection.reset();
+  let held: { reading: string; since: number } | undefined;
+  const { satisfied, last } = await pollUntil(
+    async (): Promise<Arrival | null> => {
+      if ((await windowVisibility(ctx)) === 'hidden') {
+        return 'covered';
+      }
+      const front = await frontPage(ctx);
+      const now = performance.now();
+      if (
+        front.kind === 'chart' &&
+        before.kind !== 'unknown' &&
+        (before.kind === 'none' || front.targetId !== before.targetId)
+      ) {
+        return 'chart';
+      }
+      // A reading that counts once it lasts: no chart in front, or a chart tab when nothing was
+      // known before the click.
+      const lasting =
+        front.kind === 'none'
+          ? 'none'
+          : front.kind === 'chart' && before.kind === 'unknown'
+            ? front.targetId
+            : undefined;
+      if (lasting === undefined) {
+        held = undefined;
+      } else if (held?.reading !== lasting) {
+        held = { reading: lasting, since: now };
+      } else if (now - held.since >= NO_CHART_SETTLE_MS) {
+        return lasting === 'none' ? 'none' : 'chart';
+      }
+      return null;
+    },
+    (arrival) => arrival !== null,
+    { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
+  );
+  if (satisfied && last !== null) {
+    return last;
+  }
+  return before.kind === 'unknown' ? 'unconfirmed' : 'late';
+}
+
+// Brings `tab` to the front with a click on its title, waits until the strip shows it there, and
+// then until the mapping of the chart tools shows it too (awaitPageInFront), with `before` read
+// before the click. However that ends, the sessions are dropped, since the click may have changed the
+// tab in front.
+async function bringToFront(
+  ctx: ToolContext,
+  chrome: PageHandle,
+  tab: ListedTab,
+  before: FrontPage,
+): Promise<Arrival> {
   const waitMs = tabWaitMs(ctx);
   try {
     await clickElement(chrome, partOf(tab.id, SELECTORS.windowChrome.tabTitle), TAB_CLICK);
@@ -136,6 +233,7 @@ async function bringToFront(ctx: ToolContext, chrome: PageHandle, tab: ListedTab
         },
       );
     }
+    return await awaitPageInFront(ctx, before);
   } finally {
     await ctx.connection.reset();
   }
@@ -205,22 +303,24 @@ async function assertClosesWithoutDialog(ctx: ToolContext, tabId: string): Promi
   }
 }
 
-// Whether the window is in view, as its window chrome reports it: a property of its document, read
-// like the rest of its DOM.
+function windowOutOfView(tabId: string): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    'The TradingView window is out of view, so whether the tab in front shows a chart cannot be ' +
+      'told',
+    {
+      hint:
+        'Bring the TradingView window into view (it is covered by other windows or minimized), ' +
+        'then try again.',
+      details: { tabId, reason: 'window-out-of-view' },
+    },
+  );
+}
+
+// Whether the window is in view, as its window chrome reports it (windowVisibility).
 async function assertWindowInView(ctx: ToolContext, tabId: string): Promise<void> {
-  const chrome = await ctx.connection.windowChromePage();
-  if ((await chrome.bridge.evaluate(readVisibilityState, [])) !== 'visible') {
-    throw new TvMcpError(
-      'NOT_AVAILABLE',
-      'The TradingView window is out of view, so whether the tab in front shows a chart cannot ' +
-        'be told',
-      {
-        hint:
-          'Bring the TradingView window into view (it is covered by other windows or minimized), ' +
-          'then try again.',
-        details: { tabId, reason: 'window-out-of-view' },
-      },
-    );
+  if ((await windowVisibility(ctx)) !== 'visible') {
+    throw windowOutOfView(tabId);
   }
 }
 
@@ -313,6 +413,7 @@ export const tabNew = defineTool({
     const pagesBefore = new Set(
       findNewTabPages(await ctx.connection.targets()).map(({ id }) => id),
     );
+    const frontBefore = await frontPage(ctx);
     const waitMs = tabWaitMs(ctx);
     try {
       await clickElement(chrome, SELECTORS.windowChrome.newTab);
@@ -341,16 +442,30 @@ export const tabNew = defineTool({
         (ids) => ids?.some((id) => !pagesBefore.has(id)) === true,
         { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
       );
+      if (!page.satisfied) {
+        return {
+          data: { id: tab.id, index: tab.index },
+          via: 'dom',
+          warnings: [
+            `The new tab is open, but its page did not show among the pages of TradingView ` +
+              `within ${String(waitMs)} ms: until it does, the chart tools may act on the chart ` +
+              'of a tab behind it.',
+          ],
+        };
+      }
+      // The chart tab it covers may hear of it later than the strip: the chart tools are left to
+      // the mapping once that shows the new tab in front too.
+      const arrival = await awaitPageInFront(ctx, frontBefore);
       return {
         data: { id: tab.id, index: tab.index },
         via: 'dom',
-        warnings: page.satisfied
-          ? []
-          : [
-              `The new tab is open, but its page did not show among the pages of TradingView ` +
-                `within ${String(waitMs)} ms: until it does, the chart tools may act on the ` +
-                'chart of a tab behind it.',
-            ],
+        warnings:
+          arrival === 'late' || arrival === 'unconfirmed'
+            ? [
+                'The new tab is open, but the chart tab it covers did not show yet that it is ' +
+                  'behind it: for a moment, the chart tools may still act on that chart.',
+              ]
+            : [],
       };
     } finally {
       await ctx.connection.reset();
@@ -364,7 +479,10 @@ export const tabSwitch = defineTool({
   title: 'Bring a tab to the front',
   description:
     'Brings a tab of the TradingView window to the front, as a click on it does, and waits until ' +
-    'it is the active tab; the chart tools then act on the chart it shows. Give exactly one of ' +
+    'it is the active tab and its page is in front; the chart tools then act on the chart it ' +
+    'shows. NOT_AVAILABLE when the strip shows the tab but its page does not come to the front ' +
+    'in time (try tab_list or a chart tool again shortly); a warning when that cannot be ' +
+    'confirmed, as while the window is covered or minimized. Give exactly one of ' +
     'tabId or index (tab_list lists both). Returns id, index and changed, which is false for a ' +
     'tab that was in front already: it is left as it is, with no click, as a second click on a ' +
     'tab can duplicate it. The click lands on the title of the tab and nowhere else: when ' +
@@ -379,14 +497,40 @@ export const tabSwitch = defineTool({
     idempotentHint: true,
     openWorldHint: false,
   },
-  async handler({ tabId, index }, ctx) {
+  async handler(
+    { tabId, index },
+    ctx,
+  ): Promise<ToolOutput<{ id: string; index: number; changed: boolean }>> {
     const choice = tabChoiceOf(tabId, index);
     const chrome = await ctx.connection.windowChromePage();
     const tab = findTab(await listTabs(chrome), choice);
-    if (!tab.active) {
-      await bringToFront(ctx, chrome, tab);
+    if (tab.active) {
+      return { data: { id: tab.id, index: tab.index, changed: false }, via: 'dom' };
     }
-    return { data: { id: tab.id, index: tab.index, changed: !tab.active }, via: 'dom' };
+    const arrival = await bringToFront(ctx, chrome, tab, await frontPage(ctx));
+    if (arrival === 'late') {
+      throw new TvMcpError(
+        'NOT_AVAILABLE',
+        'The tab is selected in the tab strip, but its page has not come to the front yet',
+        {
+          hint: 'Try tab_list or a chart tool again shortly.',
+          details: { tabId: tab.id },
+        },
+      );
+    }
+    const warnings: string[] = [];
+    if (arrival === 'covered') {
+      warnings.push(
+        'The tab is selected in the tab strip, but whether its page is in front could not be ' +
+          'confirmed while the TradingView window is covered or minimized.',
+      );
+    } else if (arrival === 'unconfirmed') {
+      warnings.push(
+        'The tab is selected in the tab strip, but whether its page is in front could not be ' +
+          'confirmed: the pages of TradingView do not tell which tab is in front.',
+      );
+    }
+    return { data: { id: tab.id, index: tab.index, changed: true }, via: 'dom', warnings };
   },
 });
 
@@ -465,7 +609,35 @@ export const tabClose = defineTool({
     // so a covered or minimized window is refused before anything is clicked.
     await assertWindowInView(ctx, tab.id);
     if (!tab.active) {
-      await bringToFront(ctx, strip, tab);
+      // Whether the page of the tab came to the front is told by a change of the page in front, so
+      // that must be known before the click.
+      const before = await frontPage(ctx);
+      if (before.kind === 'unknown') {
+        throw new TvMcpError(
+          'NOT_AVAILABLE',
+          'Which page is in front of the window cannot be told, so whether closing a tab in the ' +
+            'background would open the "Close tab?" dialog of TradingView cannot be checked',
+          {
+            hint: 'Try again shortly, or close the tab in TradingView yourself.',
+            details: { tabId: tab.id, reason: 'front-unknown' },
+          },
+        );
+      }
+      const arrival = await bringToFront(ctx, strip, tab, before);
+      if (arrival === 'covered') {
+        throw windowOutOfView(tab.id);
+      }
+      if (arrival === 'late' || arrival === 'unconfirmed') {
+        throw new TvMcpError(
+          'NOT_AVAILABLE',
+          'The tab is selected in the tab strip, but its page has not come to the front yet, so ' +
+            'whether closing it would open the "Close tab?" dialog of TradingView cannot be told',
+          {
+            hint: 'Try again shortly.',
+            details: { tabId: tab.id, reason: 'page-not-in-front' },
+          },
+        );
+      }
     }
     await ctx.connection.reset();
     await assertClosesWithoutDialog(ctx, tab.id);

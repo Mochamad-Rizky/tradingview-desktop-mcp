@@ -766,6 +766,269 @@ describe('the chart tools while the window is out of view', () => {
   });
 });
 
+describe('pages that hear of a switch later than the strip shows it', () => {
+  // The strip and the pages are separate renderers: for a while after the strip shows the tab in
+  // front, the page that left the front may still report itself visible, and the page that came to
+  // the front hidden.
+  const LAG = { hideMs: 300, showMs: 300 };
+
+  test('tab_close of a chart tab in the background asks that tab about unsaved changes, not the tab it left', async () => {
+    const { client, world } = await startHarness({
+      tabs: [chartA, chartB],
+      active: A,
+      pageLag: LAG,
+    });
+    inspectFakeWindow(chartOf(world, B)).state.layouts.unsaved = true;
+
+    const result = await callTool(client, 'tab_close', { tabId: B, confirm: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message:
+        'The layout of the tab has unsaved changes: closing it would open the "Close tab?" ' +
+        'dialog of TradingView',
+      details: { tabId: B },
+    });
+    // Brought to the front, never closed: no "Close tab?" dialog.
+    expect(presses(world)).toEqual([
+      { type: 'mousePressed', button: 'left', clickCount: 1, on: 'title', tabId: B },
+    ]);
+    expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: B }]);
+  });
+
+  test('tab_close of a chart tab behind a New tab page does not take its late page for a New tab page', async () => {
+    const { client, world } = await startHarness({
+      tabs: [newTabPage, chartA],
+      active: N,
+      pageLag: LAG,
+    });
+    inspectFakeWindow(chartOf(world, A)).state.layouts.unsaved = true;
+
+    const result = await callTool(client, 'tab_close', { tabId: A, confirm: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message:
+        'The layout of the tab has unsaved changes: closing it would open the "Close tab?" ' +
+        'dialog of TradingView',
+      details: { tabId: A },
+    });
+    expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: A }]);
+    expect(tabIds(world)).toEqual([N, A]);
+  });
+
+  test('tab_switch answers once the page of the tab is in front, so the next chart call acts on that tab', async () => {
+    const { client } = await startHarness({ tabs: [chartA, chartB], active: A, pageLag: LAG });
+
+    const switched = await callTool(client, 'tab_switch', { tabId: B });
+    const state = await callTool(client, 'chart_get_state');
+
+    expect(dataOf(switched)).toEqual({ id: B, index: 1, changed: true });
+    expect(warningsOf(switched)).toEqual([]);
+    expect(dataOf(state)).toMatchObject({ symbol: 'NASDAQ:MSFT' });
+  });
+
+  test('a batch of tab_switch and a chart call acts on the tab switched to', async () => {
+    const { client } = await startHarness({ tabs: [chartA, chartB], active: A, pageLag: LAG });
+
+    const result = await callTool(client, 'batch_run', {
+      steps: [{ tool: 'tab_switch', arguments: { tabId: B } }, { tool: 'chart_get_state' }],
+    });
+
+    const [switched, state] = (dataOf(result).steps ?? []) as {
+      ok: boolean;
+      data?: Record<string, unknown>;
+    }[];
+    expect(switched?.ok).toBe(true);
+    expect(state?.data).toMatchObject({ symbol: 'NASDAQ:MSFT' });
+  });
+
+  test('tab_switch between chart tabs waits through a moment in which no chart reports itself visible', async () => {
+    // The page that left the front hears at once, the one that came to the front a while later,
+    // while a New tab page is open in a third tab.
+    const { client } = await startHarness({
+      tabs: [chartA, chartB, newTabPage],
+      active: A,
+      pageLag: { hideMs: 0, showMs: 250 },
+    });
+
+    const switched = await callTool(client, 'tab_switch', { tabId: B });
+    const state = await callTool(client, 'chart_get_state');
+
+    expect(dataOf(switched)).toEqual({ id: B, index: 1, changed: true });
+    expect(dataOf(state)).toMatchObject({ symbol: 'NASDAQ:MSFT' });
+  });
+
+  test('tab_switch to a New tab page answers once no chart is in front, so the chart tools refuse after it', async () => {
+    const { client } = await startHarness({ tabs: [chartA, newTabPage], active: A, pageLag: LAG });
+
+    const switched = await callTool(client, 'tab_switch', { tabId: N });
+    const state = await callTool(client, 'chart_get_state');
+
+    expect(dataOf(switched)).toEqual({ id: N, index: 1, changed: true });
+    expect(errorOf(state)).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      message: 'The active tab of TradingView shows no chart',
+    });
+  });
+
+  test('tab_new answers once its New tab page is in front, so the chart tools refuse after it', async () => {
+    const { client } = await startHarness({ tabs: [chartA], pageLag: LAG });
+
+    await callTool(client, 'tab_new');
+    const state = await callTool(client, 'chart_get_state');
+
+    expect(errorOf(state)).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      message: 'The active tab of TradingView shows no chart',
+    });
+  });
+
+  test('tab_switch is NOT_AVAILABLE when the strip shows the tab but its page does not come to the front in time', async () => {
+    const { client, world } = await startHarness(
+      { tabs: [chartA, chartB], active: A, pageLag: { hideMs: 60_000, showMs: 60_000 } },
+      { callTimeoutMs: 1500 },
+    );
+
+    const result = await callTool(client, 'tab_switch', { tabId: B });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: 'The tab is selected in the tab strip, but its page has not come to the front yet',
+      hint: expect.stringMatching(/tab_list.*chart tool.*again/) as string,
+      details: { tabId: B },
+    });
+    expect(world.chrome.state.active).toBe(B);
+    expect(presses(world)).toHaveLength(1);
+  });
+
+  test('tab_close closes nothing when the strip shows the tab but its page does not come to the front in time', async () => {
+    const { client, world } = await startHarness(
+      { tabs: [chartA, chartB], active: A, pageLag: { hideMs: 60_000, showMs: 60_000 } },
+      { callTimeoutMs: 1500 },
+    );
+
+    const result = await callTool(client, 'tab_close', { tabId: B, confirm: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { tabId: B, reason: 'page-not-in-front' },
+    });
+    expect(errorOf(result)?.message).toMatch(/has not come to the front yet/);
+    expect(presses(world)).toEqual([
+      { type: 'mousePressed', button: 'left', clickCount: 1, on: 'title', tabId: B },
+    ]);
+    expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: B }]);
+  });
+
+  test('tab_switch in a covered window succeeds with a warning that the page in front could not be confirmed', async () => {
+    const { client, world } = await startHarness({
+      tabs: [chartA, chartB],
+      active: A,
+      inView: false,
+    });
+
+    const result = await callTool(client, 'tab_switch', { tabId: B });
+
+    expect(dataOf(result)).toEqual({ id: B, index: 1, changed: true });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/could not be confirmed while the TradingView window is covered/),
+    ]);
+    expect(world.chrome.state.active).toBe(B);
+  });
+
+  test('tab_switch where no page says which tab is in front, before or after, succeeds with a warning', async () => {
+    // As on Windows: every chart page reports itself visible.
+    const { client, world } = await startHarness(
+      { tabs: [chartA, chartB], active: A, allVisible: true },
+      { callTimeoutMs: 1500 },
+    );
+
+    const result = await callTool(client, 'tab_switch', { tabId: B });
+
+    expect(dataOf(result)).toEqual({ id: B, index: 1, changed: true });
+    expect(warningsOf(result)).toEqual([expect.stringMatching(/could not be confirmed/)]);
+    expect(world.chrome.state.active).toBe(B);
+  });
+
+  test('tab_close refuses, and closes nothing, when the window goes out of view while its page comes to the front', async () => {
+    const { client, world } = await startHarness({
+      tabs: [chartA, chartB],
+      active: A,
+      pageLag: LAG,
+    });
+    const cover = setInterval(() => {
+      if (world.chrome.state.active === B) {
+        world.chrome.state.inView = false;
+      }
+    }, 1);
+
+    const result = await callTool(client, 'tab_close', { tabId: B, confirm: true });
+    clearInterval(cover);
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { tabId: B, reason: 'window-out-of-view' },
+    });
+    expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: B }]);
+  });
+
+  test('tab_new warns when the chart tab it covers does not show in time that it is behind it', async () => {
+    const { client } = await startHarness(
+      { tabs: [chartA], pageLag: { hideMs: 60_000, showMs: 60_000 } },
+      { callTimeoutMs: 1500 },
+    );
+
+    const result = await callTool(client, 'tab_new');
+
+    expect(dataOf(result)).toEqual({ id: OPENED, index: 1 });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/did not show yet that it is behind it/),
+    ]);
+  });
+
+  test('tab_new warns as well when no page says which tab is in front, before or after', async () => {
+    const { client } = await startHarness(
+      { tabs: [chartA, chartB], active: A, allVisible: true },
+      { callTimeoutMs: 1500 },
+    );
+
+    const result = await callTool(client, 'tab_new');
+
+    expect(dataOf(result)).toEqual({ id: OPENED, index: 2 });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/did not show yet that it is behind it/),
+    ]);
+  });
+
+  test('tab_new in a covered window leaves the chart tools to the lone chart tab, without a warning', async () => {
+    const { client } = await startHarness({ tabs: [chartA], inView: false });
+
+    const result = await callTool(client, 'tab_new');
+    const state = await callTool(client, 'chart_get_state');
+
+    expect(dataOf(result)).toEqual({ id: OPENED, index: 1 });
+    expect(warningsOf(result)).toEqual([]);
+    expect(dataOf(state)).toMatchObject({ symbol: 'NASDAQ:AAPL' });
+  });
+
+  test('tab_close of a tab in the background refuses before any click when no page says which tab is in front', async () => {
+    const { client, world } = await startHarness({
+      tabs: [chartA, chartB],
+      active: A,
+      allVisible: true,
+    });
+
+    const result = await callTool(client, 'tab_close', { tabId: B, confirm: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { tabId: B, reason: 'front-unknown' },
+    });
+    expect(world.chrome.clicks).toEqual([]);
+  });
+});
+
 describe('a tab whose id holds characters a selector must quote', () => {
   test('tab_switch and tab_close reach it by a selector that quotes its id', async () => {
     const odd = 'tab "one" \\ two\u0007';
