@@ -518,9 +518,9 @@ describe('evaluateExpression', () => {
 
 describe('ui_evaluate on a failure of the page', () => {
   // A context whose chart page fails every evaluation with `error`.
-  const failingWith = (error: TvMcpError): ToolContext =>
+  const failingWith = (error: TvMcpError, callTimeoutMs = 5000): ToolContext =>
     ({
-      config: { allowEval: true, callTimeoutMs: 5000 },
+      config: { allowEval: true, callTimeoutMs },
       connection: {
         chartPage: () => Promise.resolve({ bridge: { evaluate: () => Promise.reject(error) } }),
       },
@@ -552,15 +552,32 @@ describe('ui_evaluate on a failure of the page', () => {
     expect(detailed.toPayload()).toMatchObject({ details: { method: 'Runtime.evaluate' } });
   });
 
-  test('passes on a failure that has a hint, or of another code, as it is', async () => {
+  test('passes on a failure that has a hint, of another code, or that is no stop, as it is', async () => {
     const threw = new TvMcpError('PAGE_EVALUATION_FAILED', 'The expression threw x', {
       hint: 'Check it.',
     });
     const timeout = new TvMcpError('TIMEOUT', 'CDP Runtime.evaluate timed out');
-
-    await expect(uiEvaluate.handler({ expression: 'x' }, failingWith(threw))).rejects.toBe(threw);
-    await expect(uiEvaluate.handler({ expression: 'x' }, failingWith(timeout))).rejects.toBe(
-      timeout,
+    // A protocol error of another kind: the stop hint would be wrong for it.
+    const other = new TvMcpError(
+      'PAGE_EVALUATION_FAILED',
+      'CDP Runtime.evaluate failed on target T: Internal error',
+      { details: { method: 'Runtime.evaluate', code: -32603, message: 'Internal error' } },
     );
+
+    for (const error of [threw, timeout, other]) {
+      await expect(uiEvaluate.handler({ expression: 'x' }, failingWith(error))).rejects.toBe(error);
+    }
+  });
+
+  test('states the stop time in whole milliseconds', async () => {
+    const stopped = await failureOf(
+      uiEvaluate.handler(
+        { expression: 'while (true) {}' },
+        failingWith(new TvMcpError('PAGE_EVALUATION_FAILED', 'Execution was terminated'), 1001),
+      ),
+    );
+
+    // 1001 less a quarter of it is 750.75 ms, which the page is asked for as 750.
+    expect(stopped.hint).toMatch(/after 750 ms/);
   });
 });

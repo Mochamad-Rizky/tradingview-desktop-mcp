@@ -1874,6 +1874,19 @@ describe('ui_evaluate', () => {
     expect(evaluatesOf(app)[0]?.params).toMatchObject({ timeout: 900 });
   });
 
+  test('ui_evaluate asks the page for a stop time in whole milliseconds', async () => {
+    // 1001 ms for a call: 750.75 ms is sent as 750, which the timer of the page can take.
+    const { client, app } = await startHarness({ config: { ...ALLOW_EVAL, callTimeoutMs: 1001 } });
+
+    const result = await callTool(client, 'ui_evaluate', { expression: 'while (true) {}' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PAGE_EVALUATION_FAILED',
+      hint: expect.stringMatching(/after 750 ms/) as string,
+    });
+    expect(evaluatesOf(app)[0]?.params).toMatchObject({ timeout: 750 });
+  });
+
   test('ui_evaluate reports an exception as PAGE_EVALUATION_FAILED with its description and no stack', async () => {
     const { client } = await startHarness({ config: ALLOW_EVAL });
 

@@ -263,7 +263,7 @@ export const uiEvaluate = defineTool({
     // The page stops the script a margin before the call would give up on it, so that a script
     // that runs without end comes back as a failure of its own and does not leave the page frozen.
     const callTimeoutMs = ctx.config.callTimeoutMs;
-    const terminateAfterMs = callTimeoutMs - Math.min(1000, callTimeoutMs / 4);
+    const terminateAfterMs = Math.floor(callTimeoutMs - Math.min(1000, callTimeoutMs / 4));
     const result = await page.bridge
       .evaluate(
         evaluateExpression,
@@ -271,12 +271,13 @@ export const uiEvaluate = defineTool({
         { terminateAfterMs },
       )
       .catch((error: unknown) => {
-        // What the page function says has a hint. A failure without one came from the page
-        // itself, most likely a script it stopped.
+        // The page answers a script it stopped with the protocol error "Execution was terminated"
+        // (modelled on Chrome), which is the one failure the hint is for.
         if (
           isTvMcpError(error) &&
           error.code === 'PAGE_EVALUATION_FAILED' &&
-          error.hint === undefined
+          error.hint === undefined &&
+          /execution was terminated/i.test(error.message)
         ) {
           throw new TvMcpError(error.code, error.message, {
             hint:
