@@ -158,6 +158,13 @@ function expectNothingElseTouched(win: FakeTvWindow): void {
   ).toEqual([]);
 }
 
+// Makes the loader of the fake app resolve without loading anything, as the loader of the app does
+// for a layout it does not find in its list after one refresh, or while its load service is not set
+// up.
+function loadNothing(win: FakeTvWindow): void {
+  apiOf(win).loadLayoutFromServerByLayoutId = () => Promise.resolve();
+}
+
 // Holds the turn of the plan-limited actions until the returned function is called, or the test
 // ends: a test that fails before it lets go must not hold up the plan-limited actions of the next.
 function holdPlanLimitedTurn(): () => void {
@@ -546,6 +553,24 @@ describe('layout_switch', () => {
     });
   });
 
+  test('layout_switch fails NOT_AVAILABLE with the hint layout_list, at once, when TradingView answers the load without switching anything', async () => {
+    const win = createFakeTvWindow(fixture);
+    loadNothing(win);
+    const { client } = await startHarnessWith(win);
+
+    const result = await callTool(client, 'layout_switch', { layoutId: 'FIXTURE2' });
+
+    expect(errorOf(result)).toEqual({
+      code: 'NOT_AVAILABLE',
+      message: 'TradingView did not open the layout FIXTURE2',
+      hint: expect.stringContaining('layout_list') as string,
+      details: { layoutId: 'FIXTURE2' },
+    });
+    // A load that ended is looked at once: waiting would not change what it did.
+    expect(envelopeOf(result).meta.durationMs).toBeLessThan(1500);
+    expect(apiOf(win).layoutId()).toBe('FIXTURE1');
+  });
+
   test('layout_switch waits for the turn of the plan-limited actions', async () => {
     const { client, win } = await startHarness();
     const release = holdPlanLimitedTurn();
@@ -829,6 +854,29 @@ describe('layout_new', () => {
       expect.stringMatching(/NEW00001 but did not open it \(This page has no layout API/) as string,
     ]);
     expect(layoutsOf(win).saved.map(({ url }) => url)).toContain('NEW00001');
+  });
+
+  test('layout_new reports the layout it created unopened, at once, when TradingView answers the load without switching anything', async () => {
+    const win = createFakeTvWindow(withChartStorage(5));
+    loadNothing(win);
+    const { client } = await startHarnessWith(win);
+
+    const result = await callTool(client, 'layout_new', { name: NEW_NAME });
+
+    expect(envelopeOf(result)).toStrictEqual({
+      ok: true,
+      data: { id: 'NEW00001', name: NEW_NAME, opened: false },
+      meta: {
+        via: 'internal',
+        durationMs: expect.any(Number) as number,
+        warnings: [
+          expect.stringMatching(/^TradingView created the layout NEW00001 but did not open it\. /),
+        ],
+      },
+    });
+    expect(envelopeOf(result).meta.durationMs).toBeLessThan(1500);
+    expect(layoutsOf(win).saved.map(({ url }) => url)).toContain('NEW00001');
+    expect(apiOf(win).layoutId()).toBe('FIXTURE1');
   });
 
   test('layout_new reports the layout as opened, with a warning, when its chart has no data in time', async () => {

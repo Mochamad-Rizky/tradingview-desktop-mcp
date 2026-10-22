@@ -98,8 +98,10 @@ type OpenOutcome =
 // than that would outlast the call timeout of the bridge. The data is waited for only once the loader
 // reported that the content of the layout is in place: before that, the chart may still be the one
 // of the layout before, so a layout switched to without that report comes with a warning instead. A
-// loader that failed is looked at once. The unsaved changes are looked at again right before the
-// load, which discards them only with confirm.
+// load that ended, loaded or failed, is looked at once: the app switches the layout before its loader
+// resolves, and resolves without loading anything for a layout it does not find, so waiting longer
+// would not change the answer. The unsaved changes are looked at again right before the load, which
+// discards them only with confirm.
 async function openLayout(
   page: PageHandle,
   id: string,
@@ -120,7 +122,7 @@ async function openLayout(
   const switched = await pollUntil(
     () => page.bridge.evaluate(readLayoutState, []),
     (state) => state.id === id,
-    { intervalMs: POLL_INTERVAL_MS, timeoutMs: load.ended === 'failed' ? 0 : left() },
+    { intervalMs: POLL_INTERVAL_MS, timeoutMs: load.ended === 'late' ? left() : 0 },
   );
   if (!switched.satisfied) {
     return { status: 'unopened', reason: load.reason };
