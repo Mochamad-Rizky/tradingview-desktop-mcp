@@ -138,9 +138,11 @@ function fromCodePoint(hex: string): string {
 //   stands for nothing; any other escaped character is itself);
 // - joined: the decoded text with the strings that + joins written as one ('T' + 'VD' is 'TVD',
 //   comments between them too) and a string put into a template as its text;
-// - squashed: the decoded text without white space, quotes, backticks, +, brackets, the ${ and }
-//   of templates and .concat(, in which only the names of the riskiest surfaces are looked for:
-//   'T'.concat('VD') reads TVD there.
+// - squashed: the decoded text without white space, quotes, backticks, +, brackets, parentheses,
+//   commas, the ${ and } of templates and the word concat, in which only the names of the riskiest
+//   surfaces are looked for: ('T')+('VD'), 'T'.concat('V', 'D') and 'T'['concat']('VD') all read
+//   TVD there. A name that only appears once such characters are gone is refused too, which errs on
+//   the side of refusing.
 function readings(expression: string): {
   texts: [string, string, string];
   squashed: string;
@@ -157,9 +159,9 @@ function readings(expression: string): {
   const joined = decoded.replace(/\$\{\s*(['"`])([^'"`]*)\1\s*\}/g, '$2').replace(SEAM, '');
   const squashed = decoded
     .replace(/\s+/g, '')
-    .replace(/\.concat\(/g, '')
+    .replace(/\.?concat/g, '')
     .replace(/\$\{/g, '')
-    .replace(/['"`+[\]}]/g, '');
+    .replace(/['"`+[\](),}]/g, '');
   return { texts: [expression, decoded, joined], squashed };
 }
 

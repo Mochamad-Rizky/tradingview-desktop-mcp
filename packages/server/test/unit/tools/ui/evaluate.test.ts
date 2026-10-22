@@ -50,6 +50,17 @@ describe('EVAL_DENYLIST', () => {
     ['credentials', 'openSigninForm()'],
     ['network', 'import.meta'],
     ['network', 'import'],
+    ['network', 'import/**/("x")'],
+    ['tvd', 'window.\\u{00000054}VD'],
+    ['tvd', "window[('T')+('VD')]"],
+    ['tvd', "('T')+('VD')"],
+    ['tvd', "'T'+[]+'VD'"],
+    ['tvd', '`${"T"+"V"}D`'],
+    ['tvd', "'T'.concat('V').concat('D')"],
+    ['tvd', "'T'.concat('V','D')"],
+    ['tvd', "'T'['concat']('VD')"],
+    ['cookies', "('coo')+('kie')"],
+    ['storage', "('local')+('Storage')"],
   ])('refuses %s hidden in %j', (category, expression) => {
     expect(deniedSurface(expression)?.category).toBe(category);
   });
