@@ -34,7 +34,9 @@ export interface PageContext {
   // Runs `code` as a script of the page, the way Runtime.evaluate runs an expression, and returns
   // its completion value; a promise is returned as it is. A throw passes through unchanged: an
   // error the page code creates comes from the page realm, so `instanceof Error` is false for it.
-  run(code: string): unknown;
+  // Synchronous code that runs longer than `timeoutMs` (at most SYNC_TIMEOUT_MS, the default) is
+  // stopped with the error of node:vm, whose code is ERR_SCRIPT_EXECUTION_TIMEOUT.
+  run(code: string, timeoutMs?: number): unknown;
   // Cancels every pending timer of the window, whichever context of it scheduled the timer.
   dispose(): void;
 }
@@ -51,6 +53,15 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
     (typeof value === 'object' || typeof value === 'function') &&
     value !== null &&
     typeof (value as { then?: unknown }).then === 'function'
+  );
+}
+
+// The error node:vm stops a script with once it has run past its timeout.
+function isScriptTimeout(thrown: unknown): boolean {
+  return (
+    typeof thrown === 'object' &&
+    thrown !== null &&
+    (thrown as { code?: unknown }).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT'
   );
 }
 
@@ -274,10 +285,10 @@ export function createPageContext(window: object): PageContext {
 
   return {
     context,
-    run(code) {
+    run(code, timeoutMs = SYNC_TIMEOUT_MS) {
       const script = new vm.Script(code, { filename: SCRIPT_NAME });
       const value: unknown = script.runInContext(context, {
-        timeout: SYNC_TIMEOUT_MS,
+        timeout: Math.min(timeoutMs, SYNC_TIMEOUT_MS),
         displayErrors: false,
       });
       return value;
@@ -306,10 +317,20 @@ export function createPageRuntime(window: object): PageRuntime {
         );
       }
 
+      // The timeout of Runtime.evaluate stops synchronous code that runs longer, which Chrome
+      // answers with a protocol error (modelled here; not seen on the app).
+      const { timeout } = params;
+      const stopAfter =
+        typeof timeout === 'number' && Number.isFinite(timeout) && timeout > 0
+          ? timeout
+          : undefined;
       let value: unknown;
       try {
-        value = page.run(expression);
+        value = page.run(expression, stopAfter);
       } catch (thrown) {
+        if (stopAfter !== undefined && isScriptTimeout(thrown)) {
+          throw new FakeCdpError(CDP_ERROR.serverError, 'Execution was terminated');
+        }
         return exceptionPayload(thrown, 'Uncaught', ++lastExceptionId);
       }
 

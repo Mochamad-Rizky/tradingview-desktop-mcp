@@ -187,7 +187,7 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   }
   const app = await startFakeCdpServer({ targets });
   cleanups.push(() => app.close());
-  const config = testConfig({ ...options.config, cdpPort: app.port, callTimeoutMs: 5000 });
+  const config = testConfig({ callTimeoutMs: 5000, ...options.config, cdpPort: app.port });
   const { server, ctx } = createMcpServer(config, {
     launcher: refusingLauncher(),
     logger: options.logger ?? quietLogger,
@@ -1743,8 +1743,9 @@ describe('ui_evaluate', () => {
     const evaluated = evaluatesOf(app);
     expect(evaluated).toHaveLength(2);
     for (const { params } of evaluated) {
-      // The page stops the expression once the call would give up on it.
-      expect(params).toMatchObject({ returnByValue: true, awaitPromise: true, timeout: 5000 });
+      // The page stops the expression a margin before the call would give up on it: the call
+      // timeout of 5000 ms less the smaller of 1000 ms and a quarter of it.
+      expect(params).toMatchObject({ returnByValue: true, awaitPromise: true, timeout: 4000 });
     }
     // The window chrome has Node integration: nothing is evaluated there.
     expect(app.calls.filter(({ targetId }) => targetId === CHROME_ID)).toEqual([]);
@@ -1819,6 +1820,19 @@ describe('ui_evaluate', () => {
       expect(warningsOf(result)).toEqual([expect.stringMatching(/100 kB/) as string]);
     }
     expect((dataOf(many) as { value: number[] }).value.slice(0, 3)).toEqual([0, 1, 2]);
+  });
+
+  test('ui_evaluate has the page stop a runaway expression before the call gives up, and says why', async () => {
+    // 1200 ms for a call: the page stops the script after 900 ms.
+    const { client, app } = await startHarness({ config: { ...ALLOW_EVAL, callTimeoutMs: 1200 } });
+
+    const result = await callTool(client, 'ui_evaluate', { expression: 'while (true) {}' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PAGE_EVALUATION_FAILED',
+      hint: expect.stringMatching(/stops synchronous code .* after 900 ms.*await/) as string,
+    });
+    expect(evaluatesOf(app)[0]?.params).toMatchObject({ timeout: 900 });
   });
 
   test('ui_evaluate reports an exception as PAGE_EVALUATION_FAILED with its description and no stack', async () => {

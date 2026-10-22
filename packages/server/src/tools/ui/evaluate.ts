@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TvMcpError } from '../../core/errors.js';
+import { isTvMcpError, TvMcpError } from '../../core/errors.js';
 import { defineTool } from '../types.js';
 import { evaluateExpression } from './page.js';
 
@@ -193,7 +193,8 @@ export const uiEvaluate = defineTool({
     "The code runs in the user's live, signed-in page and can change anything the page can, so " +
     'prefer the other tools, and read rather than change. expression is an expression, or ' +
     'statements whose last value is the result, as the console of the browser runs them; a ' +
-    'promise is awaited, and the page stops code that runs longer than the call timeout. Before ' +
+    'promise is awaited. The page stops synchronous code that runs longer than the call timeout ' +
+    'allows (PAGE_EVALUATION_FAILED), but code that runs after an await is not stopped. Before ' +
     'anything is sent, a denylist refuses with UNSAFE_ACTION_BLOCKED an expression that names ' +
     'the desktop bridge (TVD), the user object, user ids or names or session ids, cookies, the ' +
     'storage of the page (localStorage, sessionStorage, indexedDB), credentials (passwords, ' +
@@ -253,11 +254,34 @@ export const uiEvaluate = defineTool({
       );
     }
     const page = await ctx.connection.chartPage();
-    const result = await page.bridge.evaluate(
-      evaluateExpression,
-      [expression, EVAL_MAX_RESULT_BYTES, [...EVAL_WITHHELD_GLOBALS]],
-      { terminateAfterMs: ctx.config.callTimeoutMs },
-    );
+    // The page stops the script a margin before the call would give up on it, so that a script
+    // that runs without end comes back as a failure of its own and does not leave the page frozen.
+    const callTimeoutMs = ctx.config.callTimeoutMs;
+    const terminateAfterMs = callTimeoutMs - Math.min(1000, callTimeoutMs / 4);
+    const result = await page.bridge
+      .evaluate(
+        evaluateExpression,
+        [expression, EVAL_MAX_RESULT_BYTES, [...EVAL_WITHHELD_GLOBALS]],
+        { terminateAfterMs },
+      )
+      .catch((error: unknown) => {
+        // What the page function says has a hint. A failure without one came from the page
+        // itself, most likely a script it stopped.
+        if (
+          isTvMcpError(error) &&
+          error.code === 'PAGE_EVALUATION_FAILED' &&
+          error.hint === undefined
+        ) {
+          throw new TvMcpError(error.code, error.message, {
+            hint:
+              `The page stops synchronous code of the expression after ${String(terminateAfterMs)} ms ` +
+              'and answers with this failure. Shorten what runs at once; code that runs after an ' +
+              'await is not stopped.',
+            ...(error.details === undefined ? {} : { details: error.details }),
+          });
+        }
+        throw error;
+      });
     return {
       data: result,
       via: 'cdp',

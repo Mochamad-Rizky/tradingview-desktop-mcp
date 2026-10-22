@@ -331,6 +331,26 @@ test('evaluates expressions against the fake window', async () => {
   expect(reply).toEqual({ id: 1, result: { result: { type: 'string', value: fixture.symbol } } });
 });
 
+test('stops a script that runs past the timeout of Runtime.evaluate, and answers that execution was terminated', async () => {
+  const server = await start([pageTarget()]);
+  const client = await connect(server, 'PAGE1');
+
+  const startedAt = performance.now();
+  const stopped = await client.send('Runtime.evaluate', {
+    expression: 'while (true) {}',
+    returnByValue: true,
+    timeout: 100,
+  });
+  const quick = await client.send('Runtime.evaluate', { expression: '2 + 2', timeout: 100 });
+
+  expect(stopped).toEqual({
+    id: 1,
+    error: { code: -32000, message: 'Execution was terminated' },
+  });
+  expect(performance.now() - startedAt).toBeLessThan(2000);
+  expect(quick).toEqual({ id: 2, result: { result: { type: 'number', value: 4 } } });
+});
+
 test('evaluates a plain sum without extra parameters', async () => {
   const server = await start([pageTarget()]);
   const client = await connect(server, 'PAGE1');
