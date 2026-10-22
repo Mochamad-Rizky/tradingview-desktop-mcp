@@ -714,7 +714,7 @@ describe('createFakeTvWindow', () => {
       expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
     });
 
-    test('puts the plan feature, feature toggle, quote cache, indicator catalog, Pine Editor, script list, line tool, alert and watchlist modules of the fixture in the webpack cache by default', () => {
+    test('puts the plan feature, feature toggle, quote cache, indicator catalog, Pine Editor, script list, line tool, alert, watchlist and layout modules of the fixture in the webpack cache by default', () => {
       const win = createFakeTvWindow(fixture);
       let handed: FakeWebpackRequire | undefined;
 
@@ -761,7 +761,9 @@ describe('createFakeTvWindow', () => {
         ['consoleMessagesKey', 'hasScriptModificationsKey', 'lastEditedScriptKey'],
         ['canUpgradePlan', 'enabled', 'getConfig', 'getProductFeaturesConfig'],
         ['isFeatureEnabled', 'onFeaturesStateChanged'],
+        ['hasPermissionsToCreateNewChart'],
         ['getOpenPineEditor', 'registerOpenPineEditor', 'unregisterOpenPineEditor'],
+        ['createNewChart', 'openNewChart'],
         [
           'hasService',
           'registerService',

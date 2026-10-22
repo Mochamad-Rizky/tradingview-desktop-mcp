@@ -72,8 +72,11 @@ export interface TradingViewApiLike {
   setActiveChart(index: number): void;
   // The layout type, such as "s" for a single chart.
   layout(): string;
-  layoutName(): string;
-  layoutId(): string;
+  // The name and the short id (the url of its saved record, as in /chart/<url>/) of the layout on
+  // the chart: its meta info (notes of Plan 3, section 1.1). Typed loosely, because a layout that was
+  // never saved has no id, and page code checks for a text.
+  layoutName(): unknown;
+  layoutId(): unknown;
   // Whether the app is connected to the TradingView data servers. The app counts as ready once
   // this is true.
   isConnected(): boolean;

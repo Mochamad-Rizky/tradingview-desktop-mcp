@@ -20,6 +20,12 @@ import {
 } from './fullscreen.js';
 import { createFakeHistory } from './history.js';
 import {
+  createFakeLayouts,
+  type FakeLayoutsApi,
+  type FakeLayoutsOptions,
+  type FakeLayoutsState,
+} from './layouts.js';
+import {
   createFakePineEditor,
   type FakeBottomWidgetBar,
   type FakePineEditorApi,
@@ -129,6 +135,17 @@ import { createFakeWebpack } from './webpack.js';
 // of the server and the open sections; the watchlists option leaves a service or a module out.
 // TVD.getActiveWatchlistId resolves undefined, as it did on the app, and records itself.
 //
+// The layouts (layouts.ts) come from the savedLayouts and the layout of the fixture: the members of
+// TradingViewApi that list, read and load layouts, layoutId and layoutName among them, follow the
+// layout the chart shows, which loadLayoutFromServerByLayoutId changes in place, and
+// activeChart().dataReady() resolves once its chart has its data (never while the symbol is
+// unknown). The main series reports its interval. createNewChart and hasPermissionsToCreateNewChart,
+// with openNewChart, are in the default webpack cache, backed by the layouts server of state.layouts,
+// which holds the saved layouts to the CHART_STORAGE limit of the plan; state.layouts also holds the
+// layout on the chart, its unsaved changes, whether its chart has its data, whether a load hangs and
+// the errors a test stages. The layouts option sets how long a load and its data take, or leaves an
+// export out.
+//
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
 // `instanceof Error` for them. Arrays and promises it returns are fine for Array.isArray and
@@ -203,6 +220,8 @@ export interface FakeTvOverrides {
   alerts?: FakeAlertsOptions;
   // The watchlist services and modules left out (watchlists.ts).
   watchlists?: FakeWatchlistsOptions;
+  // How long a load of a layout and its data take, and the layout exports left out (layouts.ts).
+  layouts?: FakeLayoutsOptions;
 }
 
 export interface FakeBars {
@@ -235,6 +254,8 @@ export interface FakeMainSeries {
   endOfDataType(): string | null;
   isLoading(): boolean;
   status(): number;
+  // The interval of the series, which the Create new layout dialog of the app reads (layouts.ts).
+  interval(): string;
   // The listing of the chart symbol, encoded the way an alert takes it (alerts.ts). Optional, so
   // that a test can delete it, as on a build without it.
   getAlertSymbolString?: () => string;
@@ -281,20 +302,23 @@ export interface FakeChartWidgetApi {
   setResolution(resolution: string, options?: FakeSetOptions): Promise<true>;
   setChartType(chartType: number): Promise<void>;
   setVisibleRange(range: { from: number; to: number }): never;
+  // Resolves with true once the chart has its data, at once when it has it; never while the symbol
+  // is unknown (layouts.ts).
+  dataReady(): Promise<true>;
   // The time the chart reports for the time point at an index, or null for an index without one.
   _convertIndexToPublicTime(index: number): number | null;
   readonly _chartWidget: { model(): FakeChartModel };
 }
 
-export interface FakeTradingViewApi {
+// The members that concern layouts (layoutName, layoutId, getSavedCharts, hasChartChanges and the
+// loaders) come from layouts.ts.
+export interface FakeTradingViewApi extends FakeLayoutsApi {
   activeChart(): FakeChartWidgetApi;
   chart(index?: number): FakeChartWidgetApi;
   chartsCount(): number;
   activeChartIndex(): number;
   setActiveChart(index: number): void;
   layout(): string;
-  layoutName(): string;
-  layoutId(): string;
   isConnected(): boolean;
   getIntervals(): string[];
   searchSymbols(options: FakeSearchOptions): Promise<FakeSearchResponse>;
@@ -376,7 +400,14 @@ export interface FakeTvWindow {
 // dialog dialog.watchlistMaxLimit, every call of the watchlist
 // functions the tools must never use, watchlistThunks.*, watchlistWidget.*,
 // symbolListService.actions.* and initSymbolListService (watchlists.ts), TVD.getActiveWatchlistId,
-// and registerService and unregisterService of the service locator (service-locator.ts).
+// and registerService and unregisterService of the service locator (service-locator.ts). So are the
+// calls about layouts that send a request, load a layout or open a dialog:
+// TradingViewApi.getSavedCharts, TradingViewApi.loadLayoutFromServerByLayoutId (with its arguments
+// as given), createNewChart, hasPermissionsToCreateNewChart and the request it sends,
+// getChartsCount, the new tab backend.openLayoutLink, the dialogs dialog.paywall (with the paywall),
+// dialog.warning and dialog.unsavedChanges, and every call of the layout functions the tools must
+// never use, TradingViewApi.loadChartFromServer, TradingViewApi.createNewLayout and openNewChart
+// (layouts.ts).
 // A call is recorded before it is validated, so refused and throwing calls show up too. Reads are
 // not recorded.
 export interface FakeCall {
@@ -412,6 +443,9 @@ export interface FakeTvState {
   // The watchlists of the server and of the store, the errors staged for the backend, the limit of
   // the server and the lists with open sections to save (watchlists.ts).
   watchlists: FakeWatchlistsState;
+  // The saved layouts of the server, the layout on the chart, its unsaved changes, whether its chart
+  // has its data, whether a load hangs and the errors staged for the requests (layouts.ts).
+  layouts: FakeLayoutsState;
 }
 
 export interface FakeTvInspector {
@@ -525,6 +559,15 @@ export function createFakeTvWindow(
       errors: {},
       serverLimit: null,
       pendingOpenSeparators: new Set(),
+    },
+    // Filled with the saved layouts and the layout of the fixture (layouts.ts).
+    layouts: {
+      saved: [],
+      current: { id: null, uid: null, name: null },
+      unsaved: false,
+      dataReady: true,
+      loadHangs: false,
+      errors: {},
     },
   };
 
@@ -696,6 +739,7 @@ export function createFakeTvWindow(
     endOfDataType: () => history.endOfDataType(),
     isLoading: () => history.isLoading(),
     status: () => history.status(),
+    interval: () => state.resolution,
     getAlertSymbolString: () => encodeAlertSymbol(listingOf(state.symbol), currency),
   };
 
@@ -744,6 +788,16 @@ export function createFakeTvWindow(
     planLimit: fixture.planLimits.WATCHLIST_SYMBOLS,
     provideService: locator.provide,
     options: overrides.watchlists,
+  });
+  const layouts = createFakeLayouts(fixture.savedLayouts, {
+    state: state.layouts,
+    record,
+    signedIn: () => pine.state.signedIn,
+    planLimit: fixture.planLimits.CHART_STORAGE,
+    layout: fixture.layout,
+    symbol: fixture.symbol,
+    interval: fixture.resolution,
+    options: overrides.layouts,
   });
 
   const chart: FakeChartWidgetApi = {
@@ -806,6 +860,9 @@ export function createFakeTvWindow(
       record('chart.setVisibleRange', [range]);
       throw new Error('Not implemented');
     },
+    // The series of an unknown symbol never gets data, so the promise never settles then.
+    dataReady: () =>
+      state.symbolInvalid ? new Promise<true>(() => undefined) : layouts.whenDataReady(),
     _convertIndexToPublicTime: (index) =>
       Number.isInteger(index) ? (points()[index] ?? null) : null,
     _chartWidget: { model: () => chartModel },
@@ -831,8 +888,7 @@ export function createFakeTvWindow(
       state.activeChartIndex = index;
     },
     layout: () => fixture.layout.type,
-    layoutName: () => fixture.layout.name,
-    layoutId: () => fixture.layout.id,
+    ...layouts.api,
     isConnected: () => state.connected,
     getIntervals: () => [...fixture.intervals],
     searchSymbols: createFakeSearch(fixture.search, record),
@@ -875,6 +931,7 @@ export function createFakeTvWindow(
               ...drawings.modules,
               ...alerts.modules,
               ...watchlists.modules,
+              ...layouts.modules,
             },
           ),
     innerWidth: screen.width,

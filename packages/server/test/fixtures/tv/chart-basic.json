@@ -324,6 +324,17 @@
     ],
     "active": { "type": "custom", "id": 101 }
   },
+  "savedLayouts": [
+    { "id": 9001, "url": "FIXTURE1", "name": "Fixture Layout", "modified": 1767225600 },
+    { "id": 9002, "url": "FIXTURE2", "name": "Second Layout", "modified": 1767312000 },
+    {
+      "id": 9003,
+      "url": "FIXTURE3",
+      "name": "Locked Layout",
+      "modified": 1764547200,
+      "overLimit": true
+    }
+  ],
   "featureToggles": { "pine_free_saved_scripts_limit": true, "alerts-on-lollipop": true },
   "bars": { "count": 300, "startTime": 1704153600, "stepSeconds": 86400, "seed": 42 },
   "history": { "totalBars": 300, "endOfDataType": "end" },

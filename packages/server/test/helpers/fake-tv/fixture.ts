@@ -32,6 +32,8 @@ export interface TvStateFixture {
   alerts?: FixtureAlert[] | undefined;
   // The watchlists of the account (watchlists.ts). None, and no active list, when left out.
   watchlists?: FixtureWatchlists | undefined;
+  // The saved layouts of the account (layouts.ts). None when left out.
+  savedLayouts?: FixtureSavedLayout[] | undefined;
   // The feature toggles of the app by name, which the export isFeatureEnabled answers
   // (plan-limits.ts). A toggle not listed is off.
   featureToggles: Record<string, boolean>;
@@ -169,6 +171,19 @@ export interface FixtureWatchlists {
     { id: string; name: string; exchange: string; group: string; symbols: string[] }[] | undefined;
   active: { type: 'custom' | 'color' | 'hot'; id: number | string } | null;
   ready?: boolean | undefined;
+}
+
+// A saved layout of the account (layouts.ts): its id on the layouts server, its url (the short id in
+// /chart/<url>/, which layoutId() answers while it is loaded), its name, when it was last modified
+// (Unix seconds), and whether it is over the CHART_STORAGE limit of the plan, as a layout saved
+// before a plan change can be (left out: it is not). The layout of the fixture is the one whose url
+// is its id.
+export interface FixtureSavedLayout {
+  id: number;
+  url: string;
+  name: string;
+  modified: number;
+  overLimit?: boolean | undefined;
 }
 
 // A study on the chart (studies.ts). Optional fields admit undefined, which is what the schema
@@ -580,6 +595,17 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
         .nullable(),
       ready: z.boolean().optional(),
     })
+    .optional(),
+  savedLayouts: z
+    .array(
+      z.strictObject({
+        id: z.number(),
+        url: z.string(),
+        name: z.string(),
+        modified: z.number(),
+        overLimit: z.boolean().optional(),
+      }),
+    )
     .optional(),
   featureToggles: z.record(z.string(), z.boolean()),
   bars: z.strictObject({
