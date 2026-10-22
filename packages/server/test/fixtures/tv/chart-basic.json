@@ -303,6 +303,27 @@
   "planConfigs": {
     "SERVER_SIDE_ALERTS": { "primitive_limit": 3, "complex_limit": 0, "overall_limit": 50 }
   },
+  "watchlists": {
+    "lists": [
+      {
+        "id": 101,
+        "name": "Fixture List",
+        "symbols": ["###Tech", "NASDAQ:AAPL", "NASDAQ:MSFT", "###Crypto", "BINANCE:BTCUSDT"]
+      },
+      { "id": 102, "name": "Second List", "symbols": ["NYSE:IBM", "FX:EURUSD"] }
+    ],
+    "flags": [{ "color": "red", "symbols": ["NASDAQ:NVDA"] }],
+    "hot": [
+      {
+        "id": "###HOT###US.gainers",
+        "name": "Fixture Gainers",
+        "exchange": "US",
+        "group": "gainers",
+        "symbols": ["NASDAQ:AAPL", "NYSE:IBM"]
+      }
+    ],
+    "active": { "type": "custom", "id": 101 }
+  },
   "featureToggles": { "pine_free_saved_scripts_limit": true, "alerts-on-lollipop": true },
   "bars": { "count": 300, "startTime": 1704153600, "stepSeconds": 86400, "seed": 42 },
   "history": { "totalBars": 300, "endOfDataType": "end" },

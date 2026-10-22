@@ -29,6 +29,7 @@ import { createFeatureToggleModules, createPlanLimitModules } from './plan-limit
 import { createQuoteModules } from './quotes.js';
 import { createFakeScreen, type FakeChartWidgetDef, type FakeScreenOptions } from './screen.js';
 import { createFakeSearch, type FakeSearchOptions, type FakeSearchResponse } from './search.js';
+import { createFakeServiceLocator } from './service-locator.js';
 import {
   createFakeStudies,
   createStudyCatalogModules,
@@ -38,6 +39,11 @@ import {
   type FakeStudyCore,
 } from './studies.js';
 import type { SyntheticBar } from './synthetic-bars.js';
+import {
+  createFakeWatchlists,
+  type FakeWatchlistsOptions,
+  type FakeWatchlistsState,
+} from './watchlists.js';
 import { createFakeWebpack } from './webpack.js';
 
 // A stand-in for the window of a TradingView chart tab, built from a TvStateFixture. It models
@@ -73,9 +79,10 @@ import { createFakeWebpack } from './webpack.js';
 // (strategy.ts). The core model reports the active strategy source as a watched value, null unless
 // a strategy of the fixture is flagged active.
 //
-// The Pine Editor comes from the pineEditor of the fixture (pine-editor.ts): its registry, the
-// service locator with the page layout service and the descriptor of that service are in the
-// default webpack cache, TradingViewApi.pineEditorApi() opens it, and TradingView.bottomWidgetBar
+// The Pine Editor comes from the pineEditor of the fixture (pine-editor.ts): its registry and the
+// descriptor of the page layout service are in the default webpack cache, the page layout service is
+// registered with the service locator of the app (service-locator.ts), whose module is in the cache
+// too, TradingViewApi.pineEditorApi() opens it, and TradingView.bottomWidgetBar
 // closes it at the bottom placement. Its live state is state.pineEditor, which also holds the saved
 // scripts of the account, listed by the export requestUserScripts of the cache, and whether the
 // account is signed in, which window.is_authenticated reports. The module of the feature toggles
@@ -111,6 +118,16 @@ import { createFakeWebpack } from './webpack.js';
 // whether deleteAlerts is ignored; the alerts option sets the product, which sets the expirations of
 // the alert config, or leaves a module out. The main series gives the chart symbol the way an alert
 // takes it (getAlertSymbolString).
+//
+// The watchlists (watchlists.ts) come from the watchlists of the fixture: the symbol list service with
+// its store and the backend service with the lists of the watchlist server are registered with the
+// service locator, and the selectors, the refresh thunk, the limits, the set of lists with open
+// sections to save and the watchlist functions the tools must never use, which only record their
+// calls, are in the default webpack cache. The WATCHLIST_SYMBOLS limit of the plan applies while the
+// feature toggle watchlist_symbols_tiered_limits is on, as on the app. state.watchlists holds the
+// lists of the server, the state of the store, the errors a test stages for the backend, the limit
+// of the server and the open sections; the watchlists option leaves a service or a module out.
+// TVD.getActiveWatchlistId resolves undefined, as it did on the app, and records itself.
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -184,6 +201,8 @@ export interface FakeTvOverrides {
   drawings?: FakeDrawingsOptions;
   // The product of the account and the alert modules left out (alerts.ts).
   alerts?: FakeAlertsOptions;
+  // The watchlist services and modules left out (watchlists.ts).
+  watchlists?: FakeWatchlistsOptions;
 }
 
 export interface FakeBars {
@@ -308,7 +327,7 @@ export interface FakeTvWindow {
   readonly is_authenticated: boolean;
   // The global of the app that holds its widgets; left out with TradingViewApi.
   TradingView?: { bottomWidgetBar?: FakeBottomWidgetBar };
-  TVD: { reloadTab(): void };
+  TVD: { reloadTab(): void; getActiveWatchlistId(): Promise<undefined> };
   BUILD_TIME: string;
   webpackChunktradingview: unknown[];
   // The size of the viewport in CSS pixels, the size of the window in DIPs (which is the viewport
@@ -351,6 +370,13 @@ export interface FakeTvWindow {
 // alerts.convertEditableAlertState, which changes nothing but tells that the payload came from it,
 // and every call of the alert modules the tools must never use: alertsActions.*,
 // alertsCollection.*, alertsPresenter.*, chartAlertsFacade.* and alertsAdminRestApi.* (alerts.ts).
+// So are the calls of the watchlist backend, symbolListBackend.* (each sends a request), the plain
+// actions dispatched to the store of the symbol list service, symbolListStore.dispatch (with the
+// type of the action), the refresh thunk getCustomWatchlistsThunk (with its signal), the warning
+// dialog dialog.watchlistMaxLimit, every call of the watchlist
+// functions the tools must never use, watchlistThunks.*, watchlistWidget.*,
+// symbolListService.actions.* and initSymbolListService (watchlists.ts), TVD.getActiveWatchlistId,
+// and registerService and unregisterService of the service locator (service-locator.ts).
 // A call is recorded before it is validated, so refused and throwing calls show up too. Reads are
 // not recorded.
 export interface FakeCall {
@@ -383,6 +409,9 @@ export interface FakeTvState {
   // The alerts of the account, the errors staged for the alerts client and whether it ignores a
   // deletion (alerts.ts).
   alerts: FakeAlertsState;
+  // The watchlists of the server and of the store, the errors staged for the backend, the limit of
+  // the server and the lists with open sections to save (watchlists.ts).
+  watchlists: FakeWatchlistsState;
 }
 
 export interface FakeTvInspector {
@@ -440,10 +469,12 @@ export function createFakeTvWindow(
   const record = (name: string, args: readonly unknown[]): void => {
     calls.push({ name, args });
   };
+  const locator = createFakeServiceLocator(record);
   const pine = createFakePineEditor(fixture.pineEditor, {
     readyMs: overrides.pineEditorReadyMs ?? 20,
     openError: overrides.pineEditorOpenError,
     withoutPageLayoutService: overrides.withoutPageLayoutService,
+    provideService: locator.provide,
     closeIgnored: overrides.pineEditorCloseIgnored,
     savedScriptsLimit: fixture.planLimits.SAVED_PINE_SCRIPTS,
     isFeatureEnabled: (name) => fixture.featureToggles[name] === true,
@@ -474,6 +505,27 @@ export function createFakeTvWindow(
     drawings: { list: [], removed: [], experiment: null },
     // Filled with the alerts of the fixture (alerts.ts).
     alerts: { list: [], errors: {}, deleteIgnored: false },
+    // Filled with the watchlists of the fixture (watchlists.ts).
+    watchlists: {
+      server: [],
+      store: {
+        customLists: { lists: { ids: [], byId: {} }, timestamp: null },
+        markedLists: {
+          lists: { colors: [], byColor: {}, bySymbol: {} },
+          commands: [],
+          timestamp: null,
+        },
+        hotLists: { lists: {} },
+        activeSymbolList: null,
+        widgets: {},
+        positions: {},
+        isAuthenticated: false,
+        collapsedSeparators: {},
+      },
+      errors: {},
+      serverLimit: null,
+      pendingOpenSeparators: new Set(),
+    },
   };
 
   // The bars of the series, which grow at the front as older history loads. A request needs bars
@@ -684,6 +736,15 @@ export function createFakeTvWindow(
     },
     options: overrides.alerts,
   });
+  const watchlists = createFakeWatchlists(fixture.watchlists, {
+    state: state.watchlists,
+    record,
+    signedIn: () => pine.state.signedIn,
+    isFeatureEnabled: (name) => fixture.featureToggles[name] === true,
+    planLimit: fixture.planLimits.WATCHLIST_SYMBOLS,
+    provideService: locator.provide,
+    options: overrides.watchlists,
+  });
 
   const chart: FakeChartWidgetApi = {
     symbol: () => state.symbol,
@@ -790,6 +851,10 @@ export function createFakeTvWindow(
       reloadTab() {
         record('TVD.reloadTab', []);
       },
+      getActiveWatchlistId() {
+        record('TVD.getActiveWatchlistId', []);
+        return Promise.resolve(undefined);
+      },
     },
     BUILD_TIME: fixture.buildTime,
     webpackChunktradingview:
@@ -805,9 +870,11 @@ export function createFakeTvWindow(
                 builtinScriptsError: overrides.builtinScriptsError,
                 record,
               }),
+              ...locator.modules,
               ...pine.modules,
               ...drawings.modules,
               ...alerts.modules,
+              ...watchlists.modules,
             },
           ),
     innerWidth: screen.width,

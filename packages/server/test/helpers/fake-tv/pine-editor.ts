@@ -55,12 +55,11 @@ import type { TvStateFixture } from './fixture.js';
 //   compile errors otherwise, as handleTranslateResult of the app does; with state.compileHttpError
 //   set it rejects with that plain string, as the app does for an HTTP failure, and with
 //   state.compileFirstErrorOnly set the compiler stops at its first error and reports only that.
-// - The service locator module exports hasService, service, serviceOrNull, registerService,
-//   unregisterService and waitServiceRegistered, keyed by service descriptors. The page layout
-//   service, whose descriptor is the export PAGE_LAYOUT_SERVICE of another module, has
-//   hasSidePanel, sidePanel, showSidePanel and closeSidePanel; closeSidePanel("pine") closes the
-//   side panel and takes the editor out of the registry, keeping the script it held and whether
-//   its text had unsaved changes (seen on the app).
+// - The page layout service, which the editor provides to the service locator of the app
+//   (service-locator.ts) under the descriptor that is the export PAGE_LAYOUT_SERVICE of another
+//   module, has hasSidePanel, sidePanel, showSidePanel and closeSidePanel; closeSidePanel("pine")
+//   closes the side panel and takes the editor out of the registry, keeping the script it held and
+//   whether its text had unsaved changes (seen on the app).
 // - Two more modules hold the keys (hasScriptModificationsKey, ...) and the helpers
 //   (getPersistedValue, getPersistenceKey) the editor keeps its state between opens with;
 //   getPersistedValue(key, perUser) answers the kept unsaved-changes flag.
@@ -326,6 +325,8 @@ export interface FakePineEditorOptions {
   // Leaves the page layout service out of the service locator, as on a build without the side
   // panel.
   withoutPageLayoutService?: boolean | undefined;
+  // Registers a service with the service locator of the app (service-locator.ts).
+  provideService: (descriptor: unknown, service: unknown) => void;
   // Makes closeSidePanel("pine") and bottomWidgetBar.close() record themselves and change
   // nothing, as a close the app does not carry out.
   closeIgnored?: boolean | undefined;
@@ -405,8 +406,8 @@ export interface FakeBottomWidgetBar {
 
 export interface FakePineEditor {
   readonly state: FakePineEditorState;
-  // The webpack modules of the editor, by module ID: the registry, the service locator and the
-  // descriptor of the page layout service.
+  // The webpack modules of the editor, by module ID: the registry and the descriptor of the page
+  // layout service among them.
   readonly modules: Record<string, Record<string, unknown>>;
   // What TradingViewApi.pineEditorApi() answers.
   readonly api: FakePineEditorApi;
@@ -829,10 +830,9 @@ export function createFakePineEditor(
     },
   };
 
-  const services = new Map<unknown, unknown>(
-    options.withoutPageLayoutService === true ? [] : [[PAGE_LAYOUT_SERVICE, pageLayout]],
-  );
-  const hasService = (descriptor: unknown): boolean => services.has(descriptor);
+  if (options.withoutPageLayoutService !== true) {
+    options.provideService(PAGE_LAYOUT_SERVICE, pageLayout);
+  }
 
   const bottomWidgetBar: FakeBottomWidgetBar = {
     close() {
@@ -861,23 +861,6 @@ export function createFakePineEditor(
         unregisterOpenPineEditor(...args: unknown[]) {
           record('unregisterOpenPineEditor', args);
         },
-      },
-      '70455': {
-        hasService,
-        service(descriptor: unknown) {
-          if (!hasService(descriptor)) {
-            throw new Error('Service not found');
-          }
-          return services.get(descriptor);
-        },
-        serviceOrNull: (descriptor: unknown) => services.get(descriptor) ?? null,
-        registerService(...args: unknown[]) {
-          record('registerService', args);
-        },
-        unregisterService(...args: unknown[]) {
-          record('unregisterService', args);
-        },
-        waitServiceRegistered: (descriptor: unknown) => Promise.resolve(services.get(descriptor)),
       },
       '82931': { PAGE_LAYOUT_SERVICE },
       // The keys and the helpers the editor of the app keeps its state between opens with, per

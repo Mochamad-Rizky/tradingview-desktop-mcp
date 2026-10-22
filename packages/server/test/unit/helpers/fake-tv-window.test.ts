@@ -714,7 +714,7 @@ describe('createFakeTvWindow', () => {
       expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
     });
 
-    test('puts the plan feature, feature toggle, quote cache, indicator catalog, Pine Editor, script list, line tool and alert modules of the fixture in the webpack cache by default', () => {
+    test('puts the plan feature, feature toggle, quote cache, indicator catalog, Pine Editor, script list, line tool, alert and watchlist modules of the fixture in the webpack cache by default', () => {
       const win = createFakeTvWindow(fixture);
       let handed: FakeWebpackRequire | undefined;
 
@@ -735,13 +735,24 @@ describe('createFakeTvWindow', () => {
           'preloadChartAlertsFacade',
           'registerChartAlertsFacade',
         ],
+        [
+          'getCustomListById',
+          'getCustomLists',
+          'getCustomListsState',
+          'getGlobalActiveID',
+          'getGlobalActiveSymbolList',
+          'getIsReadyCustomLists',
+        ],
         ['AlertsCollectionErrorCode', 'getAlertsCollection', 'isAlertsCollectionError'],
+        ['MAX_WATCHLIST_LENGTH', 'getWatchlistSymbolsLimit', 'showMaxLimitError'],
         ['getAlertsActions', 'getFiresActions'],
         ['AlertsRestApiError', 'ErrorCode', 'Status', 'getAlertsAdminRestApi', 'getAlertsRestApi'],
         ['requestUserScripts', 'translateScriptAsync'],
         ['ProductFeatures', 'ProductFeaturesEnum', 'UNLIMITED_FEATURE_LIMIT'],
         ['ensureLineToolLoaded', 'getLoadedLineTool', 'isLineToolLoaded'],
+        ['pendingOpenSeparators'],
         ['quoteSessionAdapters'],
+        ['initSymbolListService'],
         ['studyMetaInfoRepository'],
         ['QUOTE_FIELDS_CACHE', 'snapshoter'],
         ['getAlertConfig'],
@@ -760,9 +771,30 @@ describe('createFakeTvWindow', () => {
           'waitServiceRegistered',
         ],
         ['PAGE_LAYOUT_SERVICE'],
+        [
+          'addWatchlistSymbolsThunk',
+          'createWatchlistThunk',
+          'getActiveWatchlistThunk',
+          'getCustomWatchlistsThunk',
+          'removeWatchlistSymbolsThunk',
+          'replaceWatchlistSymbolsThunk',
+          'setActiveWatchlistThunk',
+          'validateWatchListSymbols',
+        ],
         ['ensureDrawingCreationAllowed', 'getDrawingsExperimentVariation'],
+        [
+          'addSymbolsThunk',
+          'addSymbolsToCustomListThunk',
+          'addSymbolsToListThunk',
+          'enforceListAccessThunk',
+          'removeSelectedSymbolsThunk',
+          'removeSymbolsThunk',
+        ],
         ['isImageDrawingToolAvailable', 'isSupportedLineTool', 'supportedLineTools'],
+        ['SYMBOL_LIST_SERVICE'],
+        ['getColoredListTitle'],
         ['requestBuiltinScripts'],
+        ['SYMBOL_LIST_REPOSITORY_BACKEND_SERVICE'],
         ['ChartAlertsFacade'],
         ['getPersistedValue', 'getPersistenceKey'],
         ['getQuoteSessionInstance', 'getQuoteSessionNoEnsure'],

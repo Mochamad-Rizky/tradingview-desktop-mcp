@@ -30,6 +30,8 @@ export interface TvStateFixture {
   planConfigs?: Record<string, Record<string, number>> | undefined;
   // The alerts of the account (alerts.ts). None when left out.
   alerts?: FixtureAlert[] | undefined;
+  // The watchlists of the account (watchlists.ts). None, and no active list, when left out.
+  watchlists?: FixtureWatchlists | undefined;
   // The feature toggles of the app by name, which the export isFeatureEnabled answers
   // (plan-limits.ts). A toggle not listed is off.
   featureToggles: Record<string, boolean>;
@@ -147,6 +149,26 @@ export interface FixtureAlert {
   complexity?: 'primitive' | 'complex' | undefined;
   kinds?: string[] | undefined;
   raw?: Record<string, JsonValue> | undefined;
+}
+
+// The watchlists of the account (watchlists.ts):
+// - lists: the custom lists on the watchlist server, in order, each with its id (a number on the
+//   app; a text id stands for a list the app keeps locally), its name and its entries, symbols as
+//   EXCHANGE:TICKER and section markers, which start with ###.
+// - flags: the flag lists, by color (red, blue, green, orange, purple, cyan or pink); a flag list
+//   has no name of its own unless one is given.
+// - hot: the hot lists of an exchange the app has loaded, with ids that start with ###HOT###.
+// - active: the active list, { type, id } as the store of the app keeps it, type custom, color or
+//   hot; null for none.
+// - ready: whether the store already holds every custom list, as after the watchlist panel was
+//   opened. Left out, it holds the active list alone, as at the boot of the app.
+export interface FixtureWatchlists {
+  lists: { id: number | string; name: string; symbols: string[] }[];
+  flags?: { color: string; name?: string | null | undefined; symbols: string[] }[] | undefined;
+  hot?:
+    { id: string; name: string; exchange: string; group: string; symbols: string[] }[] | undefined;
+  active: { type: 'custom' | 'color' | 'hot'; id: number | string } | null;
+  ready?: boolean | undefined;
 }
 
 // A study on the chart (studies.ts). Optional fields admit undefined, which is what the schema
@@ -520,6 +542,44 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
         raw: z.record(z.string(), z.json()).optional(),
       }),
     )
+    .optional(),
+  watchlists: z
+    .strictObject({
+      lists: z.array(
+        z.strictObject({
+          id: z.union([z.number(), z.string()]),
+          name: z.string(),
+          symbols: z.array(z.string()),
+        }),
+      ),
+      flags: z
+        .array(
+          z.strictObject({
+            color: z.string(),
+            name: z.string().nullable().optional(),
+            symbols: z.array(z.string()),
+          }),
+        )
+        .optional(),
+      hot: z
+        .array(
+          z.strictObject({
+            id: z.string(),
+            name: z.string(),
+            exchange: z.string(),
+            group: z.string(),
+            symbols: z.array(z.string()),
+          }),
+        )
+        .optional(),
+      active: z
+        .strictObject({
+          type: z.enum(['custom', 'color', 'hot']),
+          id: z.union([z.number(), z.string()]),
+        })
+        .nullable(),
+      ready: z.boolean().optional(),
+    })
     .optional(),
   featureToggles: z.record(z.string(), z.boolean()),
   bars: z.strictObject({
