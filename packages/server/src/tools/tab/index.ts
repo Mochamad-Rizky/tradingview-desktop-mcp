@@ -317,11 +317,85 @@ function windowOutOfView(tabId: string): TvMcpError {
   );
 }
 
+// The close itself: the strip is looked at again right before the click, as the user may have
+// changed it since the tool read it; the tab must still be in front, not be the only tab of the
+// window, and show its close button. Then one guarded click on that button, and a wait until the
+// tab is gone.
+async function clickClose(
+  ctx: ToolContext,
+  tabId: string,
+): Promise<ToolOutput<{ closed: string; remaining: number }>> {
+  const chrome = await ctx.connection.windowChromePage();
+  const tabs = await listTabs(chrome);
+  const current = tabs.find(({ id }) => id === tabId);
+  if (current?.active !== true) {
+    throw new TvMcpError('NOT_AVAILABLE', 'The tab is no longer in front of the window', {
+      hint: 'Check tab_list, then try again.',
+      details: { tabId, inFront: false },
+    });
+  }
+  if (tabs.length === 1) {
+    throw onlyTab(tabId);
+  }
+  if (!current.closable) {
+    throw noCloseButton(tabId);
+  }
+  const waitMs = tabWaitMs(ctx);
+  try {
+    await clickElement(chrome, partOf(tabId, SELECTORS.windowChrome.tabCloseButton), TAB_CLICK);
+    const gone = await pollUntil(
+      () => listTabs(chrome),
+      (left) => !left.some(({ id }) => id === tabId),
+      { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
+    );
+    if (!gone.satisfied) {
+      throw new TvMcpError('TIMEOUT', `The tab did not close within ${String(waitMs)} ms`, {
+        hint:
+          'Check tab_list: TradingView may still close it. If TradingView asks about the tab in ' +
+          'a dialog, answer it there.',
+        details: { tabId, ms: waitMs },
+      });
+    }
+    ctx.session.openedTabIds.delete(tabId);
+    return { data: { closed: tabId, remaining: gone.last.length }, via: 'dom' };
+  } finally {
+    await ctx.connection.reset();
+  }
+}
+
 // Whether the window is in view, as its window chrome reports it (windowVisibility).
 async function assertWindowInView(ctx: ToolContext, tabId: string): Promise<void> {
   if ((await windowVisibility(ctx)) !== 'visible') {
     throw windowOutOfView(tabId);
   }
+}
+
+function onlyTab(tabId: string): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    'The only tab of the window is not closed: closing it would close the window',
+    {
+      hint: 'TradingView closes the window with its last tab. Close the window there yourself.',
+      details: { tabId },
+    },
+  );
+}
+
+// A refusal of tab_close after it brought the tab to the front, which leaves the tab there, where
+// the chart tools act on it: the refusal says so, in its hint and with inFront in its details. A
+// refusal that already says where the tab is, and anything that is not one of ours, is left as it is.
+function leftInFront(error: unknown): unknown {
+  if (!isTvMcpError(error) || error.details?.inFront !== undefined) {
+    return error;
+  }
+  const where =
+    'The tab is in front now, where tab_close brought it, and the chart tools act on the tab in ' +
+    'front.';
+  return new TvMcpError(error.code, error.message, {
+    hint: error.hint === undefined ? where : `${where} ${error.hint}`,
+    details: { ...error.details, inFront: true },
+    cause: error,
+  });
 }
 
 function noCloseButton(tabId: string): TvMcpError {
@@ -581,14 +655,7 @@ export const tabClose = defineTool({
     const tabs = await listTabs(strip);
     const tab = findTab(tabs, choice);
     if (tabs.length === 1) {
-      throw new TvMcpError(
-        'NOT_AVAILABLE',
-        'The only tab of the window is not closed: closing it would close the window',
-        {
-          hint: 'TradingView closes the window with its last tab. Close the window there yourself.',
-          details: { tabId: tab.id },
-        },
-      );
+      throw onlyTab(tab.id);
     }
     if (!ctx.session.openedTabIds.has(tab.id) && confirm !== true) {
       throw new TvMcpError(
@@ -608,73 +675,46 @@ export const tabClose = defineTool({
     // The page in front can be told only while the window is in view (assertClosesWithoutDialog),
     // so a covered or minimized window is refused before anything is clicked.
     await assertWindowInView(ctx, tab.id);
-    if (!tab.active) {
-      // Whether the page of the tab came to the front is told by a change of the page in front, so
-      // that must be known before the click.
-      const before = await frontPage(ctx);
-      if (before.kind === 'unknown') {
-        throw new TvMcpError(
-          'NOT_AVAILABLE',
-          'Which page is in front of the window cannot be told, so whether closing a tab in the ' +
-            'background would open the "Close tab?" dialog of TradingView cannot be checked',
-          {
-            hint: 'Try again shortly, or close the tab in TradingView yourself.',
-            details: { tabId: tab.id, reason: 'front-unknown' },
-          },
-        );
-      }
-      const arrival = await bringToFront(ctx, strip, tab, before);
-      if (arrival === 'covered') {
-        throw windowOutOfView(tab.id);
-      }
-      if (arrival === 'late' || arrival === 'unconfirmed') {
-        throw new TvMcpError(
-          'NOT_AVAILABLE',
-          'The tab is selected in the tab strip, but its page has not come to the front yet, so ' +
-            'whether closing it would open the "Close tab?" dialog of TradingView cannot be told',
-          {
-            hint: 'Try again shortly.',
-            details: { tabId: tab.id, reason: 'page-not-in-front' },
-          },
-        );
-      }
-    }
-    await ctx.connection.reset();
-    await assertClosesWithoutDialog(ctx, tab.id);
-
-    // Looked at again right before the click: the tab must still be in front, and show its close
-    // button.
-    const chrome = await ctx.connection.windowChromePage();
-    const current = (await listTabs(chrome)).find(({ id }) => id === tab.id);
-    if (current?.active !== true) {
-      throw new TvMcpError('NOT_AVAILABLE', 'The tab is no longer in front of the window', {
-        hint: 'Check tab_list, then try again.',
-        details: { tabId: tab.id },
-      });
-    }
-    if (!current.closable) {
-      throw noCloseButton(tab.id);
-    }
-    const waitMs = tabWaitMs(ctx);
+    let broughtToFront = false;
     try {
-      await clickElement(chrome, partOf(tab.id, SELECTORS.windowChrome.tabCloseButton), TAB_CLICK);
-      const gone = await pollUntil(
-        () => listTabs(chrome),
-        (left) => !left.some(({ id }) => id === tab.id),
-        { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
-      );
-      if (!gone.satisfied) {
-        throw new TvMcpError('TIMEOUT', `The tab did not close within ${String(waitMs)} ms`, {
-          hint:
-            'Check tab_list: TradingView may still close it. If TradingView asks about the tab ' +
-            'in a dialog, answer it there.',
-          details: { tabId: tab.id, ms: waitMs },
-        });
+      if (!tab.active) {
+        // Whether the page of the tab came to the front is told by a change of the page in front,
+        // so that must be known before the click.
+        const before = await frontPage(ctx);
+        if (before.kind === 'unknown') {
+          throw new TvMcpError(
+            'NOT_AVAILABLE',
+            'Which page is in front of the window cannot be told, so whether closing a tab in the ' +
+              'background would open the "Close tab?" dialog of TradingView cannot be checked',
+            {
+              hint: 'Try again shortly, or close the tab in TradingView yourself.',
+              details: { tabId: tab.id, reason: 'front-unknown' },
+            },
+          );
+        }
+        const arrival = await bringToFront(ctx, strip, tab, before);
+        broughtToFront = true;
+        if (arrival === 'covered') {
+          throw windowOutOfView(tab.id);
+        }
+        if (arrival === 'late' || arrival === 'unconfirmed') {
+          throw new TvMcpError(
+            'NOT_AVAILABLE',
+            'The tab is selected in the tab strip, but its page has not come to the front yet, ' +
+              'so whether closing it would open the "Close tab?" dialog of TradingView cannot be ' +
+              'told',
+            {
+              hint: 'Try again shortly.',
+              details: { tabId: tab.id, reason: 'page-not-in-front' },
+            },
+          );
+        }
       }
-      ctx.session.openedTabIds.delete(tab.id);
-      return { data: { closed: tab.id, remaining: gone.last.length }, via: 'dom' };
-    } finally {
       await ctx.connection.reset();
+      await assertClosesWithoutDialog(ctx, tab.id);
+      return await clickClose(ctx, tab.id);
+    } catch (error) {
+      throw broughtToFront ? leftInFront(error) : error;
     }
   },
 });

@@ -700,6 +700,84 @@ describe('tab_close', () => {
     expect(tabIds(world)).toEqual([A, B]);
   });
 
+  test('tab_close refuses at its last look when the tab has become the only one of the window', async () => {
+    // Not the last window, so the only tab shows its close button; closing it would close the window.
+    const { client, world } = await startHarness({
+      tabs: [chartA, chartB],
+      active: A,
+      isLastWindow: false,
+    });
+    const api = chartOf(world, A).TradingViewApi;
+    if (api === undefined) {
+      throw new Error('The chart of tab A has no API');
+    }
+    // The user closes tab B at the moment the layout of tab A is asked about.
+    api.shouldBeSaved = () => {
+      world.chrome.state.tabs = world.chrome.state.tabs.filter(({ id }) => id !== B);
+      world.chrome.render();
+      return false;
+    };
+
+    const result = await callTool(client, 'tab_close', { tabId: A, confirm: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: 'The only tab of the window is not closed: closing it would close the window',
+      details: { tabId: A },
+    });
+    expect(world.chrome.clicks).toEqual([]);
+    expect(tabIds(world)).toEqual([A]);
+  });
+
+  test('tab_close says that the tab it brought to the front stays there when it refuses', async () => {
+    const { client, world } = await startHarness({ tabs: [chartA, chartB], active: A });
+    inspectFakeWindow(chartOf(world, B)).state.layouts.unsaved = true;
+
+    const unsaved = await callTool(client, 'tab_close', { tabId: B, confirm: true });
+
+    expect(errorOf(unsaved)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message:
+        'The layout of the tab has unsaved changes: closing it would open the "Close tab?" ' +
+        'dialog of TradingView',
+      hint: expect.stringMatching(/^The tab is in front now, where tab_close brought it/) as string,
+      details: { tabId: B, inFront: true },
+    });
+    expect(world.chrome.state.active).toBe(B);
+  });
+
+  test('tab_close says where the tab is when the user brings another one to the front after its switch', async () => {
+    const { client, world } = await startHarness({ tabs: [chartA, chartB], active: A });
+    const api = chartOf(world, B).TradingViewApi;
+    if (api === undefined) {
+      throw new Error('The chart of tab B has no API');
+    }
+    // The user brings tab A back at the moment the layout of tab B is asked about.
+    api.shouldBeSaved = () => {
+      world.chrome.state.active = A;
+      world.chrome.render();
+      return false;
+    };
+
+    const result = await callTool(client, 'tab_close', { tabId: B, confirm: true });
+
+    expect(errorOf(result)).toEqual({
+      code: 'NOT_AVAILABLE',
+      message: 'The tab is no longer in front of the window',
+      hint: 'Check tab_list, then try again.',
+      details: { tabId: B, inFront: false },
+    });
+  });
+
+  test('tab_close does not say a tab stays in front when it refused before any click', async () => {
+    const { client } = await startHarness({ tabs: [chartA, chartB], active: B });
+
+    const refused = await callTool(client, 'tab_close', { tabId: B });
+
+    expect(errorOf(refused)?.code).toBe('CONFIRMATION_REQUIRED');
+    expect(errorOf(refused)?.details).not.toHaveProperty('inFront');
+  });
+
   test('tab_close fails TIMEOUT when the tab does not close in time', async () => {
     const { client, world } = await startHarness(
       { tabs: [chartA, chartB], active: A, changeMs: Infinity },

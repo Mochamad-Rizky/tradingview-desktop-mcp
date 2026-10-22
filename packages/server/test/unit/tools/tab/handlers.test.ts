@@ -252,3 +252,71 @@ test('tab_switch passes on a failure of the mapping that is not one of the conne
   await expect(tabSwitch.handler({ tabId: B }, ctx)).rejects.toBe(bug);
   expect(chrome.clicks).toEqual([]);
 });
+
+// A chart page whose bridge answers every page function with `answer`.
+function chartPageAnswering(targetId: string, answer: () => Promise<unknown>): PageHandle {
+  return {
+    target: {
+      id: targetId,
+      type: 'page',
+      title: '',
+      url: `https://www.tradingview.com/chart/${targetId}/`,
+    },
+    bridge: { evaluate: answer, evaluateWithLib: answer },
+  } as unknown as PageHandle;
+}
+
+test.each<[string, () => Promise<unknown>, (error: unknown) => void]>([
+  [
+    'a failure without a hint gets one that says where the tab is',
+    () => Promise.reject(new TvMcpError('CDP_UNREACHABLE', 'The debug port did not answer')),
+    (error) => {
+      expect(error).toBeInstanceOf(TvMcpError);
+      expect((error as TvMcpError).toPayload()).toEqual({
+        code: 'CDP_UNREACHABLE',
+        message: 'The debug port did not answer',
+        hint:
+          'The tab is in front now, where tab_close brought it, and the chart tools act on the ' +
+          'tab in front.',
+        details: { inFront: true },
+      });
+    },
+  ],
+  [
+    'a failure that is not one of ours is passed on as it is',
+    () => Promise.reject(new Error('A bug in the page bridge')),
+    (error) => {
+      expect(error).not.toBeInstanceOf(TvMcpError);
+      expect((error as Error).message).toBe('A bug in the page bridge');
+    },
+  ],
+])('tab_close after its switch: %s', async (_case, answer, check) => {
+  const chrome = createFakeWindowChrome({
+    tabs: [
+      { id: A, title: ['AAPL'] },
+      { id: B, title: ['MSFT'] },
+    ],
+    active: A,
+  });
+  let asked = 0;
+  const ctx = contextWith({
+    windowChromePage: () => Promise.resolve(chromePage(chrome)),
+    // Tab A in front before the click, then tab B, whose page fails when it is asked about its
+    // layout.
+    chartPage: () => {
+      asked += 1;
+      return Promise.resolve(
+        asked === 1 ? chartHandle('TARGET-A') : chartPageAnswering('TARGET-B', answer),
+      );
+    },
+  });
+
+  const failure = await tabClose.handler({ tabId: B, confirm: true }, ctx).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+
+  check(failure);
+  // Brought to the front, never closed.
+  expect(chrome.actions).toEqual([{ action: 'switch', tabId: B }]);
+});
