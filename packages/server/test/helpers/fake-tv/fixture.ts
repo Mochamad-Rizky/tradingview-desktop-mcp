@@ -13,7 +13,7 @@ export interface TvStateFixture {
   chartType: number;
   visibleRange: { from: number; to: number };
   studies: FixtureStudy[];
-  shapes: { id: string; name: string }[];
+  shapes: FixtureShape[];
   layout: { type: string; chartsCount: number; name: string; id: string };
   intervals: string[];
   knownSymbols: string[];
@@ -94,6 +94,22 @@ export interface TvStateFixture {
       source: string;
     }[];
   };
+}
+
+// A drawing on the chart (drawings.ts). A recording keeps only id and name, the API name of its
+// tool; the other fields are what the fake makes of the drawing, with defaults for a recording:
+// - points: where it lies, each { time, price } with the time in Unix seconds as the chart reports
+//   bar times. By default as many points as its tool takes, on loaded bars.
+// - properties: properties of the drawing over the defaults of its tool, such as text, frozen (the
+//   lock of the interface) or visible.
+// - editable: false for a drawing created with lock: true, which the user can neither edit nor
+//   delete. True by default.
+export interface FixtureShape {
+  id: string;
+  name: string;
+  points?: { time: number; price: number }[] | undefined;
+  properties?: Record<string, JsonValue> | undefined;
+  editable?: boolean | undefined;
 }
 
 // A study on the chart (studies.ts). Optional fields admit undefined, which is what the schema
@@ -429,7 +445,15 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
       activeStrategy: z.boolean().optional(),
     }),
   ),
-  shapes: z.array(z.strictObject({ id: z.string(), name: z.string() })),
+  shapes: z.array(
+    z.strictObject({
+      id: z.string(),
+      name: z.string(),
+      points: z.array(z.strictObject({ time: z.number(), price: z.number() })).optional(),
+      properties: z.record(z.string(), z.json()).optional(),
+      editable: z.boolean().optional(),
+    }),
+  ),
   layout: z.strictObject({
     type: z.string(),
     chartsCount: z.number(),

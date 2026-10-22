@@ -714,7 +714,7 @@ describe('createFakeTvWindow', () => {
       expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
     });
 
-    test('puts the plan feature, feature toggle, quote cache, indicator catalog, Pine Editor and script list modules of the fixture in the webpack cache by default', () => {
+    test('puts the plan feature, feature toggle, quote cache, indicator catalog, Pine Editor, script list and line tool modules of the fixture in the webpack cache by default', () => {
       const win = createFakeTvWindow(fixture);
       let handed: FakeWebpackRequire | undefined;
 
@@ -731,6 +731,7 @@ describe('createFakeTvWindow', () => {
       expect(exports).toEqual([
         ['requestUserScripts', 'translateScriptAsync'],
         ['ProductFeatures', 'ProductFeaturesEnum', 'UNLIMITED_FEATURE_LIMIT'],
+        ['ensureLineToolLoaded', 'getLoadedLineTool', 'isLineToolLoaded'],
         ['quoteSessionAdapters'],
         ['studyMetaInfoRepository'],
         ['QUOTE_FIELDS_CACHE', 'snapshoter'],
@@ -747,6 +748,8 @@ describe('createFakeTvWindow', () => {
           'waitServiceRegistered',
         ],
         ['PAGE_LAYOUT_SERVICE'],
+        ['ensureDrawingCreationAllowed', 'getDrawingsExperimentVariation'],
+        ['isImageDrawingToolAvailable', 'isSupportedLineTool', 'supportedLineTools'],
         ['requestBuiltinScripts'],
         ['getPersistedValue', 'getPersistenceKey'],
         ['getQuoteSessionInstance', 'getQuoteSessionNoEnsure'],

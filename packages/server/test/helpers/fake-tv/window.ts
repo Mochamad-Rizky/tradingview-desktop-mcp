@@ -1,5 +1,11 @@
 import type { JsonValue } from '../../../src/utils/json.js';
 import type { FakeElement } from './dom.js';
+import {
+  createFakeDrawings,
+  type FakeDrawingsOptions,
+  type FakeDrawingsState,
+  type FakeLineDataSourceApi,
+} from './drawings.js';
 import type { TvStateFixture } from './fixture.js';
 import {
   createFakeFullscreen,
@@ -81,6 +87,15 @@ import { createFakeWebpack } from './webpack.js';
 // exitFullscreen turn it on and off, the collection of the charts reports it, and state.fullscreen
 // holds it.
 //
+// The drawings (drawings.ts) come from the shapes of the fixture: getAllShapes and getShapeById
+// read them, createShape and createMultipointShape add them behind the gate of the app (signed in,
+// the drawings experiment), removeEntity removes a drawing as it removes a study, and
+// removeAllShapes opens a confirmation dialog when a drawing is locked. The line tools of the app,
+// supportedLineTools, the line-tool registry and the gate of drawings, are in the default webpack
+// cache. state.drawings holds the drawings, the removals and the experiment variation; the drawings
+// option sets the variation, leaves it out, or gives a class of the registry another point count or
+// other properties.
+//
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
 // `instanceof Error` for them. Arrays and promises it returns are fine for Array.isArray and
@@ -149,6 +164,8 @@ export interface FakeTvOverrides {
   // TradingView's own fullscreen mode: whether it is on, and whether the page can read it and turn
   // it on and off (fullscreen.ts).
   fullscreen?: FakeFullscreenOptions;
+  // The gate of drawings and the classes of the line-tool registry (drawings.ts).
+  drawings?: FakeDrawingsOptions;
 }
 
 export interface FakeBars {
@@ -212,8 +229,14 @@ export interface FakeChartWidgetApi {
   // Throws "There is no such study" for an id that is not on the chart.
   getStudyById(id: string): FakeStudyApi;
   getAllShapes(): { id: string; name: string }[];
+  // Throws "There is no such shape" for an id that is not a drawing on the chart.
+  getShapeById(id: string): FakeLineDataSourceApi;
+  createShape(point: unknown, options?: unknown): Promise<string>;
+  createMultipointShape(points: unknown, options?: unknown): Promise<string>;
+  removeAllShapes(): void;
   createStudy: FakeStudies['createStudy'];
-  removeEntity: FakeStudies['removeEntity'];
+  // Removes a drawing or a study. A property, so that a test can keep the original to call it.
+  removeEntity: (id: string, options?: { disableUndo?: boolean }) => void;
   setSymbol(symbol: string, options?: FakeSetOptions): Promise<true>;
   setResolution(resolution: string, options?: FakeSetOptions): Promise<true>;
   setChartType(chartType: number): Promise<void>;
@@ -293,7 +316,12 @@ export interface FakeTvWindow {
 // requestBuiltinScripts and studyMetaInfoRepository.requestMetaInfo (studies.ts). So are the changes
 // to studies, chart.createStudy, chart.removeEntity, study.setInputValues and study.setVisible
 // (each with the study id first), and the dialogs the app would open on the way, as dialog.paywall,
-// dialog.tooManyStudies and dialog.studyInputs (studies.ts). So are the calls of the Pine Editor
+// dialog.tooManyStudies and dialog.studyInputs (studies.ts). So are the changes to drawings,
+// chart.createShape, chart.createMultipointShape, chart.removeEntity, chart.removeAllShapes and
+// the setters shape.setProperties and shape.setPoints (with the drawing id first), the loading of
+// a line tool, lineTools.ensureLineToolLoaded, the gate drawingGate.ensureDrawingCreationAllowed,
+// and the dialogs on the way, dialog.signIn, dialog.paywall and
+// dialog.confirmRemovingLockedLineTools (drawings.ts). So are the calls of the Pine Editor
 // that change it, send a request or open or close a panel: pineEditorApi.*, pineFacade.*,
 // pageLayout.*, bottomWidgetBar.close, requestUserScripts and the dialogs dialog.paywall,
 // dialog.signIn, dialog.renameScript and dialog.confirmSaveChanges the app would open, and
@@ -325,6 +353,8 @@ export interface FakeTvState {
   chartContainers: FakeElement[];
   // TradingView's own fullscreen mode (fullscreen.ts).
   fullscreen: FakeFullscreenState;
+  // The drawings on the chart, their removals and the drawings experiment (drawings.ts).
+  drawings: FakeDrawingsState;
 }
 
 export interface FakeTvInspector {
@@ -409,6 +439,8 @@ export function createFakeTvWindow(
     pineEditor: pine.state,
     chartContainers: screen.containers,
     fullscreen: fullscreen.state,
+    // Filled with the drawings of the fixture once the bars are there (drawings.ts).
+    drawings: { list: [], removed: [], experiment: null },
   };
 
   // The bars of the series, which grow at the front as older history loads. A request needs bars
@@ -595,6 +627,15 @@ export function createFakeTvWindow(
     removed: state.removedStudies,
   });
   chartModel.canCreateStudy = (spec) => studies.canCreateStudy(spec);
+  const drawings = createFakeDrawings(fixture.shapes, {
+    state: state.drawings,
+    record,
+    signedIn: () => pine.state.signedIn,
+    bars: loaded,
+    offsetSeconds: offset,
+    stepSeconds: fixture.bars.stepSeconds,
+    options: overrides.drawings,
+  });
 
   const chart: FakeChartWidgetApi = {
     symbol: () => state.symbol,
@@ -603,10 +644,21 @@ export function createFakeTvWindow(
     getVisibleRange: () => (state.symbolInvalid ? { from: 0, to: 0 } : { ...state.visibleRange }),
     getAllStudies: () => studies.getAllStudies(),
     getStudyById: (id) => studies.getStudyById(id),
-    getAllShapes: () => fixture.shapes.map(({ id, name }) => ({ id, name })),
+    getAllShapes: () => drawings.getAllShapes(),
+    getShapeById: (id) => drawings.getShapeById(id),
+    createShape: (point, options) => drawings.createShape(point, options),
+    createMultipointShape: (points, options) => drawings.createMultipointShape(points, options),
+    removeAllShapes: () => {
+      drawings.removeAllShapes();
+    },
     createStudy: (...args) => studies.createStudy(...args),
+    // One member for every source on the chart, as on the app.
     removeEntity: (id, options) => {
-      studies.removeEntity(id, options);
+      if (drawings.has(id)) {
+        drawings.removeEntity(id, options);
+      } else {
+        studies.removeEntity(id, options);
+      }
     },
     setSymbol(symbol, options) {
       record('chart.setSymbol', options === undefined ? [symbol] : [symbol, options]);
@@ -706,6 +758,7 @@ export function createFakeTvWindow(
                 record,
               }),
               ...pine.modules,
+              ...drawings.modules,
             },
           ),
     innerWidth: screen.width,
