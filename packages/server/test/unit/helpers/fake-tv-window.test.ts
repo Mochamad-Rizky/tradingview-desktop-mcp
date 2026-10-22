@@ -714,7 +714,7 @@ describe('createFakeTvWindow', () => {
       expect(inspectFakeWindow(win).callsTo('TVD.reloadTab')).toEqual([[]]);
     });
 
-    test('puts the plan feature, feature toggle, quote cache, indicator catalog, Pine Editor, script list and line tool modules of the fixture in the webpack cache by default', () => {
+    test('puts the plan feature, feature toggle, quote cache, indicator catalog, Pine Editor, script list, line tool and alert modules of the fixture in the webpack cache by default', () => {
       const win = createFakeTvWindow(fixture);
       let handed: FakeWebpackRequire | undefined;
 
@@ -729,12 +729,24 @@ describe('createFakeTvWindow', () => {
       );
       // In the order of the module IDs, which are integer keys.
       expect(exports).toEqual([
+        [
+          'getChartAlertsFacade',
+          'initAlerts',
+          'preloadChartAlertsFacade',
+          'registerChartAlertsFacade',
+        ],
+        ['AlertsCollectionErrorCode', 'getAlertsCollection', 'isAlertsCollectionError'],
+        ['getAlertsActions', 'getFiresActions'],
+        ['AlertsRestApiError', 'ErrorCode', 'Status', 'getAlertsAdminRestApi', 'getAlertsRestApi'],
         ['requestUserScripts', 'translateScriptAsync'],
         ['ProductFeatures', 'ProductFeaturesEnum', 'UNLIMITED_FEATURE_LIMIT'],
         ['ensureLineToolLoaded', 'getLoadedLineTool', 'isLineToolLoaded'],
         ['quoteSessionAdapters'],
         ['studyMetaInfoRepository'],
         ['QUOTE_FIELDS_CACHE', 'snapshoter'],
+        ['getAlertConfig'],
+        ['getAlertErrorPresenter'],
+        ['convertClientNotificationSchedule', 'convertEditableAlertState', 'deriveSymbolStyle'],
         ['consoleMessagesKey', 'hasScriptModificationsKey', 'lastEditedScriptKey'],
         ['canUpgradePlan', 'enabled', 'getConfig', 'getProductFeaturesConfig'],
         ['isFeatureEnabled', 'onFeaturesStateChanged'],
@@ -751,6 +763,7 @@ describe('createFakeTvWindow', () => {
         ['ensureDrawingCreationAllowed', 'getDrawingsExperimentVariation'],
         ['isImageDrawingToolAvailable', 'isSupportedLineTool', 'supportedLineTools'],
         ['requestBuiltinScripts'],
+        ['ChartAlertsFacade'],
         ['getPersistedValue', 'getPersistenceKey'],
         ['getQuoteSessionInstance', 'getQuoteSessionNoEnsure'],
       ]);

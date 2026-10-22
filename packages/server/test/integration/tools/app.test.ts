@@ -1104,7 +1104,7 @@ describe('app_get_plan_limits', () => {
           SAVED_PINE_SCRIPTS: 1,
           CHART_STORAGE: null,
           MULTIPLE_CHARTS: null,
-          SERVER_SIDE_ALERTS: null,
+          SERVER_SIDE_ALERTS: 3,
           WATCHLIST_SYMBOLS: 30,
           STUDY_TEMPLATES: null,
           HISTORICAL_BARS: null,

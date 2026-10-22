@@ -23,6 +23,13 @@ export interface TvStateFixture {
   // through the two webpack modules that hold the plan features (plan-limits.ts). A feature not
   // listed has no limit entry: getConfig throws for it, as for an unknown value.
   planLimits: Record<string, number>;
+  // The fields of the configuration of a plan feature next to its limit, by plan feature name, such
+  // as primitive_limit and overall_limit of SERVER_SIDE_ALERTS, which getConfig answers with the
+  // limit (plan-limits.ts). A feature listed here alone is configured without a limit, which is
+  // what makes enabled() true for it, as for ALERTS_ON_SECONDS: {}. None when left out.
+  planConfigs?: Record<string, Record<string, number>> | undefined;
+  // The alerts of the account (alerts.ts). None when left out.
+  alerts?: FixtureAlert[] | undefined;
   // The feature toggles of the app by name, which the export isFeatureEnabled answers
   // (plan-limits.ts). A toggle not listed is off.
   featureToggles: Record<string, boolean>;
@@ -110,6 +117,36 @@ export interface FixtureShape {
   points?: { time: number; price: number }[] | undefined;
   properties?: Record<string, JsonValue> | undefined;
   editable?: boolean | undefined;
+}
+
+// An alert of the account (alerts.ts), which the fake builds into the record the server keeps, with
+// defaults for every field left out:
+// - symbol: what it watches, EXCHANGE:TICKER or an encoded ={...} form. By default the fixture
+//   symbol, encoded the way the chart gives it to an alert.
+// - condition: the type of its condition, as the app names it (cross, cross_up, cross_down,
+//   greater, less, or another type of the app). Default cross.
+// - price: the price it compares with, the value of the second series; null for an alert on an
+//   indicator, whose second series is a study. Default 100.
+// - active: true by default. lastStopReason: why it stopped, such as auto (it fired once and
+//   stopped itself) or manual; null for an active alert, manual for a stopped one by default.
+// - message: Synthetic alert <id> by default.
+// - expiration: when it expires, an ISO time, or null for never. Default 2030-01-01. Kept as
+//   expiration_policy, or as the legacy expiration with legacyExpiration.
+// - complexity: primitive (a price alert, the default) or complex. kinds: ["regular"] by default.
+// - raw: fields of the record over the ones the fake builds, such as an alert_id that is no number.
+export interface FixtureAlert {
+  id: number;
+  symbol?: string | undefined;
+  condition?: string | undefined;
+  price?: number | null | undefined;
+  active?: boolean | undefined;
+  lastStopReason?: string | null | undefined;
+  message?: string | undefined;
+  expiration?: string | null | undefined;
+  legacyExpiration?: boolean | undefined;
+  complexity?: 'primitive' | 'complex' | undefined;
+  kinds?: string[] | undefined;
+  raw?: Record<string, JsonValue> | undefined;
 }
 
 // A study on the chart (studies.ts). Optional fields admit undefined, which is what the schema
@@ -465,6 +502,25 @@ const tvStateFixtureSchema: z.ZodType<TvStateFixture> = z.strictObject({
   symbolInfo: z.record(z.string(), z.json()),
   quote: z.record(z.string(), z.json()),
   planLimits: z.record(z.string(), z.number()),
+  planConfigs: z.record(z.string(), z.record(z.string(), z.number())).optional(),
+  alerts: z
+    .array(
+      z.strictObject({
+        id: z.number(),
+        symbol: z.string().optional(),
+        condition: z.string().optional(),
+        price: z.number().nullable().optional(),
+        active: z.boolean().optional(),
+        lastStopReason: z.string().nullable().optional(),
+        message: z.string().optional(),
+        expiration: z.string().nullable().optional(),
+        legacyExpiration: z.boolean().optional(),
+        complexity: z.enum(['primitive', 'complex']).optional(),
+        kinds: z.array(z.string()).optional(),
+        raw: z.record(z.string(), z.json()).optional(),
+      }),
+    )
+    .optional(),
   featureToggles: z.record(z.string(), z.boolean()),
   bars: z.strictObject({
     count: z.number(),

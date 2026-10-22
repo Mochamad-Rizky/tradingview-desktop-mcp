@@ -1,4 +1,10 @@
 import type { JsonValue } from '../../../src/utils/json.js';
+import {
+  createFakeAlerts,
+  encodeAlertSymbol,
+  type FakeAlertsOptions,
+  type FakeAlertsState,
+} from './alerts.js';
 import type { FakeElement } from './dom.js';
 import {
   createFakeDrawings,
@@ -96,6 +102,16 @@ import { createFakeWebpack } from './webpack.js';
 // option sets the variation, leaves it out, or gives a class of the registry another point count or
 // other properties.
 //
+// The alerts (alerts.ts) come from the alerts of the fixture: the alerts REST client of the app
+// (getAlertsRestApi), the converter of the alert dialog, the alert config and the alert modules the
+// tools must never use, which only record their calls, are in the default webpack cache. The client
+// refuses while no account is signed in and holds the account to the alert limits of the plan of
+// the fixture (planLimits and planConfigs of SERVER_SIDE_ALERTS), which the plan modules serve as
+// well. state.alerts holds the alerts, the errors a test stages for the methods of the client and
+// whether deleteAlerts is ignored; the alerts option sets the product, which sets the expirations of
+// the alert config, or leaves a module out. The main series gives the chart symbol the way an alert
+// takes it (getAlertSymbolString).
+//
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
 // `instanceof Error` for them. Arrays and promises it returns are fine for Array.isArray and
@@ -166,6 +182,8 @@ export interface FakeTvOverrides {
   fullscreen?: FakeFullscreenOptions;
   // The gate of drawings and the classes of the line-tool registry (drawings.ts).
   drawings?: FakeDrawingsOptions;
+  // The product of the account and the alert modules left out (alerts.ts).
+  alerts?: FakeAlertsOptions;
 }
 
 export interface FakeBars {
@@ -198,6 +216,9 @@ export interface FakeMainSeries {
   endOfDataType(): string | null;
   isLoading(): boolean;
   status(): number;
+  // The listing of the chart symbol, encoded the way an alert takes it (alerts.ts). Optional, so
+  // that a test can delete it, as on a build without it.
+  getAlertSymbolString?: () => string;
 }
 
 export interface FakeSetOptions {
@@ -325,9 +346,13 @@ export interface FakeTvWindow {
 // that change it, send a request or open or close a panel: pineEditorApi.*, pineFacade.*,
 // pageLayout.*, bottomWidgetBar.close, requestUserScripts and the dialogs dialog.paywall,
 // dialog.signIn, dialog.renameScript and dialog.confirmSaveChanges the app would open, and
-// translateScriptAsync, which sends a compile request (pine-editor.ts). A call is
-// recorded before it is validated, so refused and throwing calls show up too. Reads are not
-// recorded.
+// translateScriptAsync, which sends a compile request (pine-editor.ts). So are the calls of the
+// alerts REST client, alertsRestApi.* (each sends a request), the converter of the alert dialog,
+// alerts.convertEditableAlertState, which changes nothing but tells that the payload came from it,
+// and every call of the alert modules the tools must never use: alertsActions.*,
+// alertsCollection.*, alertsPresenter.*, chartAlertsFacade.* and alertsAdminRestApi.* (alerts.ts).
+// A call is recorded before it is validated, so refused and throwing calls show up too. Reads are
+// not recorded.
 export interface FakeCall {
   readonly name: string;
   readonly args: readonly unknown[];
@@ -355,6 +380,9 @@ export interface FakeTvState {
   fullscreen: FakeFullscreenState;
   // The drawings on the chart, their removals and the drawings experiment (drawings.ts).
   drawings: FakeDrawingsState;
+  // The alerts of the account, the errors staged for the alerts client and whether it ignores a
+  // deletion (alerts.ts).
+  alerts: FakeAlertsState;
 }
 
 export interface FakeTvInspector {
@@ -400,6 +428,9 @@ export function createFakeTvWindow(
   // The listing a symbol the chart shows stands for: the symbol whose feed it is, or itself.
   const listingOf = (shown: string): string =>
     [...feeds].find(([, feed]) => feed === shown)?.[0] ?? shown;
+  // The currency an alert symbol names: that of the fixture symbol.
+  const currency =
+    typeof fixture.symbolInfo.currency_code === 'string' ? fixture.symbolInfo.currency_code : 'USD';
   const offset = overrides.sessionOffsetSeconds ?? 0;
   const knownSymbols = new Set([
     ...fixture.knownSymbols,
@@ -441,6 +472,8 @@ export function createFakeTvWindow(
     fullscreen: fullscreen.state,
     // Filled with the drawings of the fixture once the bars are there (drawings.ts).
     drawings: { list: [], removed: [], experiment: null },
+    // Filled with the alerts of the fixture (alerts.ts).
+    alerts: { list: [], errors: {}, deleteIgnored: false },
   };
 
   // The bars of the series, which grow at the front as older history loads. A request needs bars
@@ -611,6 +644,7 @@ export function createFakeTvWindow(
     endOfDataType: () => history.endOfDataType(),
     isLoading: () => history.isLoading(),
     status: () => history.status(),
+    getAlertSymbolString: () => encodeAlertSymbol(listingOf(state.symbol), currency),
   };
 
   // Stable like the model of the real widget: the same objects come back on every call.
@@ -635,6 +669,20 @@ export function createFakeTvWindow(
     offsetSeconds: offset,
     stepSeconds: fixture.bars.stepSeconds,
     options: overrides.drawings,
+  });
+  // The server holds the account to the alert limits of the plan: the active price alerts to
+  // primitive_limit (or limit without it), and every alert to overall_limit.
+  const alertConfig = fixture.planConfigs?.SERVER_SIDE_ALERTS ?? {};
+  const alerts = createFakeAlerts(fixture.alerts ?? [], {
+    state: state.alerts,
+    record,
+    signedIn: () => pine.state.signedIn,
+    defaultSymbol: encodeAlertSymbol(fixture.symbol, currency),
+    limits: {
+      primitive: alertConfig.primitive_limit ?? fixture.planLimits.SERVER_SIDE_ALERTS ?? null,
+      overall: alertConfig.overall_limit ?? null,
+    },
+    options: overrides.alerts,
   });
 
   const chart: FakeChartWidgetApi = {
@@ -749,7 +797,7 @@ export function createFakeTvWindow(
         ? []
         : createFakeWebpack(
             overrides.webpackModules ?? {
-              ...createPlanLimitModules(fixture.planLimits),
+              ...createPlanLimitModules(fixture.planLimits, fixture.planConfigs),
               ...createFeatureToggleModules(fixture.featureToggles),
               ...createQuoteModules(fixture.quoteCache, record),
               ...createStudyCatalogModules(fixture.studyCatalog, {
@@ -759,6 +807,7 @@ export function createFakeTvWindow(
               }),
               ...pine.modules,
               ...drawings.modules,
+              ...alerts.modules,
             },
           ),
     innerWidth: screen.width,

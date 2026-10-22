@@ -294,8 +294,16 @@
     "lp_time": 1729987200,
     "currency_code": "USD"
   },
-  "planLimits": { "INDICATORS_ON_CHART": 2, "SAVED_PINE_SCRIPTS": 1, "WATCHLIST_SYMBOLS": 30 },
-  "featureToggles": { "pine_free_saved_scripts_limit": true },
+  "planLimits": {
+    "INDICATORS_ON_CHART": 2,
+    "SAVED_PINE_SCRIPTS": 1,
+    "WATCHLIST_SYMBOLS": 30,
+    "SERVER_SIDE_ALERTS": 3
+  },
+  "planConfigs": {
+    "SERVER_SIDE_ALERTS": { "primitive_limit": 3, "complex_limit": 0, "overall_limit": 50 }
+  },
+  "featureToggles": { "pine_free_saved_scripts_limit": true, "alerts-on-lollipop": true },
   "bars": { "count": 300, "startTime": 1704153600, "stepSeconds": 86400, "seed": 42 },
   "history": { "totalBars": 300, "endOfDataType": "end" },
   "quoteCache": {
