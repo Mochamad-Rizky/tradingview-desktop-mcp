@@ -3,7 +3,7 @@ import { READ_ONLY } from '../../../../src/tools/annotations.js';
 import { allTools } from '../../../../src/tools/index.js';
 import { paneTools } from '../../../../src/tools/pane/index.js';
 import { selectTools } from '../../../../src/tools/registry.js';
-import { tabTools } from '../../../../src/tools/tab/index.js';
+import { cssString, tabTools } from '../../../../src/tools/tab/index.js';
 import type { AnyToolDefinition } from '../../../../src/tools/types.js';
 
 // What the model and the client see of the tab tools: their names, annotations, descriptions and
@@ -145,4 +145,107 @@ test('the descriptions say what the model must know before it calls', () => {
   expect(close).toMatch(/autosave/);
   expect(close).toMatch(/NOT_AVAILABLE/);
   expect(close).toMatch(/remaining/);
+});
+
+describe('cssString, the id of a tab as a CSS string for an attribute selector', () => {
+  // Reads a CSS string token as CSS Syntax Level 3 does (4.3.5, consume a string token, and 4.3.7,
+  // consume an escaped code point), for a token between double quotes: the value a selector engine
+  // compares the attribute with. A string the tokenizer would end early, or turn into a bad string,
+  // throws.
+  function readCssString(token: string): string {
+    if (!token.startsWith('"') || !token.endsWith('"') || token.length < 2) {
+      throw new Error('Not a string between double quotes');
+    }
+    const end = token.length - 1;
+    let read = '';
+    let at = 1;
+    while (at < end) {
+      const unit = token.charAt(at);
+      if (unit === '"') {
+        throw new Error('An unescaped quote ends the string early');
+      }
+      if (unit === '\n') {
+        throw new Error('An unescaped newline makes a bad string');
+      }
+      if (unit !== '\\') {
+        read += unit;
+        at += 1;
+        continue;
+      }
+      at += 1;
+      if (at >= end) {
+        throw new Error('A backslash before the closing quote escapes it');
+      }
+      if (token.charAt(at) === '\n') {
+        // An escaped newline continues the string and stands for nothing.
+        at += 1;
+        continue;
+      }
+      const hex = /^[0-9a-fA-F]{1,6}/.exec(token.slice(at, end));
+      if (hex !== null) {
+        const code = Number.parseInt(hex[0], 16);
+        at += hex[0].length;
+        // One white space after the hex digits belongs to the escape.
+        if (/^[ \t\n]/.test(token.slice(at, end))) {
+          at += 1;
+        }
+        read +=
+          code === 0 || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff
+            ? '�'
+            : String.fromCodePoint(code);
+        continue;
+      }
+      const escaped = String.fromCodePoint(token.codePointAt(at) ?? 0);
+      read += escaped;
+      at += escaped.length;
+    }
+    return read;
+  }
+
+  test.each([
+    [
+      'a UUID, as the strip gives ids',
+      '11111111-1111-4111-8111-111111111111',
+      '"11111111-1111-4111-8111-111111111111"',
+    ],
+    ['double quotes', 'tab "one"', '"tab \\"one\\""'],
+    ['a backslash', 'a\\b', '"a\\\\b"'],
+    ['a newline', 'a\nb', '"a\\a b"'],
+    ['a tab character', 'a\tb', '"a\\9 b"'],
+    ['a carriage return before a hex digit', '\rabc', '"\\d abc"'],
+    ['the delete character', 'x\u007f', '"x\\7f "'],
+    ['leading digits, which need no escape inside a string', '123abc', '"123abc"'],
+    ['a single quote and a closing bracket', "it's]", '"it\'s]"'],
+    ['letters beyond ASCII and an emoji', 'ïd-✓-📈', '"ïd-✓-📈"'],
+  ])('quotes %s', (_case, id, expected) => {
+    expect(cssString(id)).toBe(expected);
+    expect(readCssString(cssString(id))).toBe(id);
+  });
+
+  test('reads back as the id itself for every character a page could put in an id but NUL', () => {
+    const awkward = [
+      '"',
+      '\\',
+      '\\"',
+      '"\\',
+      'a\\\nb',
+      '\n\n',
+      ' leading and trailing ',
+      '\u0001\u001f',
+      '0',
+      '-1',
+      'f\u000cg\u000bh',
+      'ab\\0 c',
+      '  ',
+      '😀 tail',
+    ];
+    for (const id of awkward) {
+      expect(readCssString(cssString(id)), JSON.stringify(id)).toBe(id);
+    }
+  });
+
+  test('turns NUL into U+FFFD, as CSS does with any NUL, so no selector can name such an id', () => {
+    expect(cssString('a\u0000b')).toBe('"a\\0 b"');
+    expect(readCssString(cssString('a\u0000b'))).toBe('a�b');
+  });
 });

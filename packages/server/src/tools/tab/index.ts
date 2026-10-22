@@ -55,9 +55,12 @@ type ListedTab = StripTab & { index: number };
 // How the caller named a tab.
 type TabChoice = { tabId: string } | { index: number };
 
-// A value in double quotes for an attribute selector, with what would end it or break it escaped.
-// The ids of the strip are UUIDs, which need nothing escaped.
-function quoted(value: string): string {
+// A value as a CSS string in double quotes, for an attribute selector: a double quote and a
+// backslash are escaped with a backslash, and a control character (a newline among them, which
+// would end the string) with its code in hex and a space, which ends the escape before a hex digit
+// that follows. Anything else stands for itself in a CSS string, digits at the start included. The
+// ids of the strip are UUIDs, which need nothing escaped.
+export function cssString(value: string): string {
   let escaped = '';
   for (const character of value) {
     const code = character.charCodeAt(0);
@@ -74,7 +77,7 @@ function quoted(value: string): string {
 
 // A part of the tab with id `tabId`: its title or its close button.
 function partOf(tabId: string, part: string): string {
-  return `div.tab[id=${quoted(tabId)}] ${part}`;
+  return `div.tab[id=${cssString(tabId)}] ${part}`;
 }
 
 async function listTabs(chrome: PageHandle): Promise<ListedTab[]> {
