@@ -325,17 +325,8 @@ export const paneSetSymbol = defineTool({
     'symbol of its charts changes the other charts too: a warning names them. Uses the chart API, ' +
     'and falls back to the symbol search dialog and to typing on the chart only when chartIndex is ' +
     'the active chart.',
-  inputSchema: {
-    chartIndex: requiredChartIndexInput(),
-    symbol: z
-      .string()
-      .min(1)
-      .max(200)
-      .describe(
-        'Symbol to show, best in the EXCHANGE:SYMBOL form such as NASDAQ:AAPL or ' +
-          'BINANCE:BTCUSDT. A bare ticker such as AAPL lets TradingView choose the exchange.',
-      ),
-  },
+  // The symbol is taken as chart_set_symbol takes it, by the very same schema.
+  inputSchema: { chartIndex: requiredChartIndexInput(), symbol: chartSetSymbol.inputSchema.symbol },
   annotations: chartSetSymbol.annotations,
   async handler({ chartIndex, symbol: written }, ctx) {
     const symbol = requestedSymbol(written);

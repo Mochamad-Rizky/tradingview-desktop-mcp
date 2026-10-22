@@ -74,6 +74,10 @@ test('pane_set_symbol has the annotations of chart_set_symbol, whose path it tak
   expect(toolNamed('pane_set_symbol').annotations).toEqual(chartSetSymbol.annotations);
 });
 
+test('pane_set_symbol takes its symbol with the schema of chart_set_symbol, so the two cannot drift', () => {
+  expect(toolNamed('pane_set_symbol').inputSchema.symbol).toBe(chartSetSymbol.inputSchema.symbol);
+});
+
 test('the pane tools are left out of the core profile until the core set is chosen', () => {
   for (const tool of paneTools) {
     expect(tool.core, tool.name).toBeUndefined();
