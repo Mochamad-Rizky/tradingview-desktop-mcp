@@ -334,7 +334,12 @@ describe('the descriptions of the keyboard, panel, fullscreen and evaluate tools
     expect(description).toMatch(/default button/);
     // The rule of the names, exactly: the control, the pointer-cursor ancestor, and no text of a
     // focused element that is no control.
-    expect(description).toMatch(/closest button, link or element with the role of one/);
+    // Everything that counts as the control of the focused element.
+    expect(description).toMatch(/closest button, link \(a\), label or summary element/);
+    expect(description).toMatch(
+      /role button, link, menuitem, menuitemcheckbox, menuitemradio, option, tab, switch, checkbox or radio/,
+    );
+    expect(description).toMatch(/a field inside a label that names a trading action/);
     expect(description).toMatch(/up to six levels up, that the pointer cursor shows as clickable/);
     expect(description).toMatch(/text a focused element that is no control shows is not read/);
     // The gap that remains is said plainly.

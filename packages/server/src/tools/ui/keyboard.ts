@@ -62,10 +62,13 @@ export const uiPressKey = defineTool({
     'while the focus is on or inside a trading control (the buy and sell buttons and the trade ' +
     `button), and while a trading action (${TRADING_NAMES}, as words) is named by the ` +
     'aria-label or the input button value of the focused element, or by the aria-label, the input ' +
-    'button value or the text shown of the control it belongs to: its closest button, link or ' +
-    'element with the role of one, which can be the focused element itself, or the element around ' +
-    'it, up to six levels up, that the pointer cursor shows as clickable. Enter or Space clicks a ' +
-    'focused control. The text a focused element that is no control shows is not read, since a ' +
+    'button value or the text shown of the control it belongs to: its closest button, link (a), ' +
+    'label or summary element, or element with the role button, link, menuitem, ' +
+    'menuitemcheckbox, menuitemradio, option, tab, switch, checkbox or radio, which can be the ' +
+    'focused element itself, or the element around it, up to six levels up, that the pointer ' +
+    'cursor shows as clickable. So a key in a field inside a label that names a trading action is ' +
+    'refused too. Enter or Space clicks a focused control. The text a focused element that is no ' +
+    'control shows is not read, since a ' +
     'key does not reach what it holds. Enter is also refused in a field of a form whose default ' +
     'button is named so, since Enter submits the form through it. With the focus ' +
     'inside a frame or a shadow root, or on a page that cannot say what has the focus, it fails ' +
