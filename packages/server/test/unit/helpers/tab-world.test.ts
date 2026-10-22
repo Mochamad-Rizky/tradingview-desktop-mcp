@@ -128,6 +128,36 @@ test('every page reports hidden while the window is out of view, the tab in fron
   ).toBe('hidden');
 });
 
+test('with pageLag, the pages hear of a switch later than the strip shows it, and start out as the window shows them', async () => {
+  const world = worldWith({ pageLag: { hideMs: 60, showMs: 120 } });
+  const both = () => [visibilityOf(chartOf(world, A)), visibilityOf(chartOf(world, B))];
+
+  expect(both()).toEqual(['visible', 'hidden']);
+  clickPart(world.chrome, tabPartSelector(B, CHROME_SELECTORS.title));
+  await delay(20);
+  // The strip shows the switch; the pages still report what they did.
+  expect(world.chrome.state.active).toBe(B);
+  expect(both()).toEqual(['visible', 'hidden']);
+  await delay(70);
+  // The page that left the front heard first: for a moment no chart page reports visible.
+  expect(both()).toEqual(['hidden', 'hidden']);
+  await delay(80);
+  expect(both()).toEqual(['hidden', 'visible']);
+});
+
+test('with pageLag, a later switch wins over what an earlier one left pending', async () => {
+  const world = worldWith({ pageLag: { hideMs: 80, showMs: 80 } });
+  const both = () => [visibilityOf(chartOf(world, A)), visibilityOf(chartOf(world, B))];
+
+  clickPart(world.chrome, tabPartSelector(B, CHROME_SELECTORS.title));
+  await delay(20);
+  clickPart(world.chrome, tabPartSelector(A, CHROME_SELECTORS.title));
+  await delay(150);
+
+  expect(world.chrome.state.active).toBe(A);
+  expect(both()).toEqual(['visible', 'hidden']);
+});
+
 test('every chart page reports visible with allVisible, as on Windows and Linux', () => {
   const world = worldWith({ allVisible: true });
 

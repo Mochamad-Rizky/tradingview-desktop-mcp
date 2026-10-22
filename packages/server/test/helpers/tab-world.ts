@@ -29,11 +29,13 @@ import {
 // front reports itself visible and every other one hidden, and while the window is out of view
 // (inView false: covered by other windows or minimized), every page of it reports hidden, the window
 // chrome too (seen on the app); allVisible makes every chart page report visible, as on Windows and
-// Linux, where the app does not throttle them. A tab that the shell
-// opens shows its New tab page among the targets pageMs after it shows in the strip, and a tab the
-// shell closes leaves the list with its page. Closing a chart tab asks its page whether to save
-// its layout (shouldBeSaved), and the shell opens its "Close tab?" dialog instead when the page
-// says yes.
+// Linux, where the app does not throttle them. The strip and the pages are separate renderers, so
+// pageLag can have the pages hear of a change of the tab in front later than the strip shows it:
+// the page that leaves the front reports hidden hideMs later, and the one that comes to the front
+// reports visible showMs later. A tab that the shell opens shows its New tab page among the targets
+// pageMs after it shows in the strip, and a tab the shell closes leaves the list with its page.
+// Closing a chart tab asks its page whether to save its layout (shouldBeSaved), and the shell opens
+// its "Close tab?" dialog instead when the page says yes.
 //
 // A New tab page has Node integration, so the server must never connect to one, let alone
 // evaluate anything there: newTabPageAccess reports both, and a test fails on either.
@@ -73,6 +75,9 @@ export interface TabWorldOptions {
   // Default 10 ms; Infinity: never.
   pageMs?: number;
   allVisible?: boolean;
+  // How much later than the strip the chart pages report a change of the tab in front. Default:
+  // at once.
+  pageLag?: { hideMs?: number; showMs?: number };
   newTabIds?: string[];
 }
 
@@ -172,13 +177,28 @@ export function createTabWorld(options: TabWorldOptions): TabWorld {
   };
 
   // As on macOS: the chart page of the tab in front is visible while the window is in view, and
-  // every other one hidden.
-  const showFront = (): void => {
+  // every other one hidden. With pageLag, a page hears of the change late; a later change wins over
+  // what an earlier one left pending.
+  let generation = 0;
+  const showFront = (lagged = true): void => {
+    generation += 1;
+    const current = generation;
     for (const [tabId, win] of charts) {
-      inspectFakeWindow(win).state.visibilityState =
+      const state = inspectFakeWindow(win).state;
+      const wanted =
         options.allVisible === true || (chrome.state.inView && tabId === chrome.state.active)
           ? 'visible'
           : 'hidden';
+      const lagMs = (wanted === 'visible' ? options.pageLag?.showMs : options.pageLag?.hideMs) ?? 0;
+      if (wanted === state.visibilityState || !lagged || lagMs <= 0) {
+        state.visibilityState = wanted;
+        continue;
+      }
+      setTimeout(() => {
+        if (current === generation) {
+          state.visibilityState = wanted;
+        }
+      }, lagMs).unref();
     }
   };
 
@@ -227,7 +247,8 @@ export function createTabWorld(options: TabWorldOptions): TabWorld {
     ...(options.newTabIds === undefined ? {} : { newTabIds: options.newTabIds }),
     hooks: { asksToSave, changed },
   });
-  showFront();
+  // The pages start out as the window shows them.
+  showFront(false);
 
   const windowChrome: FakeTarget = {
     ...chromeTarget,
