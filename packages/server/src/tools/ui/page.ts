@@ -442,6 +442,19 @@ export async function evaluateExpression(
     if (inside.has(object)) {
       return text('[circular]');
     }
+    // Whatever the object does while it is written out, such as a type it forges, a getter that
+    // throws or a proxy that was revoked, makes that object unreadable and nothing more: the
+    // renderer itself never throws.
+    try {
+      return walk(object, depth);
+    } catch {
+      return text('[unreadable]');
+    }
+  };
+
+  // Writes out an object that is not withheld, not a window, not a node and not one the value is
+  // already inside of: by its type, or else its entries or its own enumerable keys.
+  const walk = (object: object, depth: number): JsonValue | undefined => {
     const tag = typeName(object);
     if (tag === '[object Date]') {
       const time = Date.prototype.getTime.call(object as Date);
@@ -528,9 +541,6 @@ export async function evaluateExpression(
         count += 1;
       }
       return written;
-    } catch {
-      // An object whose keys or entries cannot be listed, such as a proxy that throws.
-      return text('[unreadable]');
     } finally {
       inside.delete(object);
     }

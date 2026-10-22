@@ -310,6 +310,33 @@ describe('evaluateExpression', () => {
     expect(odd.value).toEqual({ window: '[unreadable]', nodeType: '[unreadable]', a: 1 });
   });
 
+  test('names what forges the type of a date, a map, a set or a pattern, and a revoked proxy, as unreadable', async () => {
+    const { value, truncated } = await bothWays(
+      '[' +
+        '{ [Symbol.toStringTag]: "Date" }, ' +
+        '{ [Symbol.toStringTag]: "Map" }, ' +
+        '{ [Symbol.toStringTag]: "Set" }, ' +
+        '{ [Symbol.toStringTag]: "RegExp", get source() { throw new Error("no"); } }, ' +
+        '(() => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return proxy; })(), ' +
+        '1]',
+    );
+
+    expect(value).toEqual([
+      '[unreadable]',
+      '[unreadable]',
+      '[unreadable]',
+      '[unreadable]',
+      '[unreadable]',
+      1,
+    ]);
+    expect(truncated).toBe(false);
+    // As the whole value too, where nothing around it would catch what it throws.
+    expect(await bothWays('({ [Symbol.toStringTag]: "Map" })')).toEqual({
+      value: '[unreadable]',
+      truncated: false,
+    });
+  });
+
   test('counts control characters and lone halves of pairs as their escapes', async () => {
     // A control character, a line break, a lone high half, a lone low half, and a character past
     // the halves of pairs, which takes three bytes.
