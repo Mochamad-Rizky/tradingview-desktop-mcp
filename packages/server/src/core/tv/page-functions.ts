@@ -20,6 +20,14 @@ import {
   searchSymbolsViaApi,
 } from '../../tools/data/page.js';
 import {
+  createDrawing,
+  readDrawing,
+  readDrawingIds,
+  readDrawings,
+  removeDrawing,
+  removeDrawings,
+} from '../../tools/drawing/page.js';
+import {
   editStudyInputs,
   insertStudy,
   readStudies,
@@ -87,6 +95,9 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readChartSnapshot,
   readChartState,
   readChartSymbolInfo,
+  readDrawing,
+  readDrawingIds,
+  readDrawings,
   readFullscreen,
   readHistory,
   readPanelControls,
@@ -98,6 +109,8 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readVisibilityState,
   readVisibleRange,
   reloadTab,
+  removeDrawing,
+  removeDrawings,
   removeStudy,
   requestHistory,
   scrollToTime,
@@ -120,6 +133,7 @@ export const pageLibFunctions: Record<
   changePineEditor,
   closePineEditor,
   compilePineSource,
+  createDrawing,
   openPineEditor,
   readCachedQuote,
   readPineConsole,

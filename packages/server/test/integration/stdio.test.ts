@@ -17,6 +17,7 @@ import { createMcpServer } from '../../src/server.js';
 import { appTools } from '../../src/tools/app/index.js';
 import { chartTools } from '../../src/tools/chart/index.js';
 import { dataTools } from '../../src/tools/data/index.js';
+import { drawingTools } from '../../src/tools/drawing/index.js';
 import { indicatorTools } from '../../src/tools/indicator/index.js';
 import { pineTools } from '../../src/tools/pine/index.js';
 import { screenshotTools } from '../../src/tools/screenshot/index.js';
@@ -82,6 +83,7 @@ describe('startStdioTransport', () => {
       ...indicatorTools.map(({ name }) => name),
       ...pineTools.map(({ name }) => name),
       ...strategyTools.map(({ name }) => name),
+      ...drawingTools.map(({ name }) => name),
       ...screenshotTools.map(({ name }) => name),
       ...uiTools.map(({ name }) => name),
       'batch_run',

@@ -144,7 +144,22 @@ export interface ChartWidgetApiLike {
   getAllStudies(): { id: string; name: string }[];
   // The API of a study on the chart; throws "There is no such study" for any other id.
   getStudyById(id: string): StudyApiLike;
+  // Every drawing on the chart whose tool has an API name, which name is, such as trend_line
+  // (notes of Plan 3, section 1.5); drawings of tools without one are left out.
   getAllShapes(): { id: string; name: string }[];
+  // The API of a drawing on the chart; throws "There is no such shape" for any other id.
+  getShapeById(id: string): LineDataSourceApiLike;
+  // Draw a drawing and resolve its id, six letters and digits (notes of Plan 3, section 1.1).
+  // Both run the gate of the app first, which opens a sign-in wall for an account that is signed
+  // out and a paywall where drawings are gated, and then rejects. An unknown or missing shape is
+  // drawn as a flag, without an error; a text for a tool without a text property rejects before
+  // anything is drawn; and the point count is checked only after the drawing was made, so a wrong
+  // count rejects and leaves a half-made drawing. A drawing is made as a step the user can undo,
+  // unless disableUndo, which page code never passes. removeAllShapes is left out on purpose: it
+  // opens a confirmation dialog when a drawing is locked, and removes only the drawings of the
+  // current symbol.
+  createShape(point: ShapePointLike, options: CreateShapeOptionsLike): Promise<string>;
+  createMultipointShape(points: ShapePointLike[], options: CreateShapeOptionsLike): Promise<string>;
   // Adds a study and resolves its id, or null (notes of Plan 2, section 7). A name is the
   // description of a built-in, compared lower case, and the first match counts, hidden built-ins
   // included; with options.checkLimit the app asks canCreateStudy and, when that fails, shows a
@@ -160,8 +175,9 @@ export interface ChartWidgetApiLike {
     overrides?: Record<string, unknown>,
     options?: { checkLimit?: boolean },
   ): Promise<string | null>;
-  // Removes a study (any source) by id. By default as a command the user can undo; an id that is
-  // not on the chart only makes the app warn.
+  // Removes a study or a drawing (any source) by id. By default as a command the user can undo,
+  // which removes a locked drawing too, without a dialog; an id that is not on the chart only makes
+  // the app warn.
   removeEntity(id: string, options?: { disableUndo?: boolean }): void;
   // What these return is not recorded. A change is complete when dataReady runs.
   setSymbol(symbol: string, options?: ChartChangeOptions): unknown;
@@ -176,6 +192,57 @@ export interface ChartWidgetApiLike {
   // session (13:30 UTC for a US stock). It answers for the time points after the last bar too, and
   // null while the series has no symbol info (seen on the app). Internal as well.
   _convertIndexToPublicTime?(index: number): number | null;
+}
+
+// A point of a drawing as createShape takes it: the time in Unix seconds, which lands on the bar
+// at or before it (on daily and longer bars, the start of its session), and the price.
+export interface ShapePointLike {
+  time: number;
+  price: number;
+}
+
+// The options of createShape and createMultipointShape that page code passes. The app knows more
+// (lock, disableSelection, disableSave, zOrder, disableUndo, ownerStudyId, ...), which the server
+// leaves out. shape is an API name of supportedLineTools. overrides are merged property by
+// property, and keys the tool does not have are dropped without a word.
+export interface CreateShapeOptionsLike {
+  shape: string;
+  text?: string;
+  overrides?: Record<string, string | number>;
+}
+
+// The API of one drawing, from getShapeById (notes of Plan 3, section 1.5). Only the readers page
+// code uses are described; the setters next to them (setProperties, setPoints, ...) are left out on
+// purpose, since a style or text is given when the drawing is made.
+export interface LineDataSourceApiLike {
+  // The time as the chart reports bar times: Unix seconds, daily bars at 00:00 UTC.
+  getPoints(): { time: number; price: number }[];
+  // The flat properties: text, frozen (the lock of the interface), visible, and the keys of the
+  // style, which differ from tool to tool (linecolor or color, fontsize or fontSize, ...).
+  getProperties(): Record<string, unknown>;
+  // False for a drawing made with lock: true, which the user can neither edit nor delete.
+  isUserEditEnabled(): boolean;
+  isHidden(): boolean;
+}
+
+// The export supportedLineTools: the class of each tool by API name, { name: "LineToolTrendLine" }
+// for trend_line (notes of Plan 3, section 1.2). Typed loosely: page code checks the name.
+export type SupportedLineToolsLike = Readonly<
+  Record<string, { readonly name?: unknown } | undefined>
+>;
+
+// The line-tool registry, whose exports page code finds together. Only the classes of the tools on
+// the chart are loaded at first: getLoadedLineTool throws "Line tool <class> is undefined" for any
+// other, until ensureLineToolLoaded, which createShape awaits too, has loaded its chunk.
+export interface LineToolRegistryLike {
+  ensureLineToolLoaded(className: string): Promise<unknown>;
+  getLoadedLineTool(className: string): LineToolClassLike;
+}
+
+// A class of the registry: pointsCount() of its prototype is how many points the tool takes, -1
+// for any number.
+export interface LineToolClassLike {
+  readonly prototype: { pointsCount(): unknown };
 }
 
 // The options of setSymbol and setResolution.

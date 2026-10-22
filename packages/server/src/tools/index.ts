@@ -2,6 +2,7 @@ import { appTools } from './app/index.js';
 import { batchTools } from './batch/index.js';
 import { chartTools } from './chart/index.js';
 import { dataTools } from './data/index.js';
+import { drawingTools } from './drawing/index.js';
 import { indicatorTools } from './indicator/index.js';
 import { pineTools } from './pine/index.js';
 import { screenshotTools } from './screenshot/index.js';
@@ -18,6 +19,7 @@ export const allTools: AnyToolDefinition[] = [
   ...indicatorTools,
   ...pineTools,
   ...strategyTools,
+  ...drawingTools,
   ...screenshotTools,
   ...uiTools,
   ...batchTools,
