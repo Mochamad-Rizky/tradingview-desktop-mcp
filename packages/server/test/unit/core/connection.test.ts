@@ -19,6 +19,7 @@ import {
   firstSessionOf,
   HELPER,
   IFRAME,
+  NEW_TAB,
   openSessions,
   OTHER_BROWSER,
   OTHER_SITE,
@@ -478,6 +479,119 @@ describe('choosing among several chart tabs', () => {
       expect(page.session.isClosed).toBe(false);
     }
     expect(openSessions(app)).toEqual([first.session]);
+  });
+});
+
+describe('a New tab page in front', () => {
+  // TradingView's New tab page shows no chart. While it is in front, the chart tabs are all in the
+  // background, so a lone chart tab is not the one the user looks at, and is read before it is
+  // used (notes of Plan 3, section 3.3).
+
+  test('reads the visibility of a lone chart tab while a New tab page is open, and takes it when it is visible', async () => {
+    const app = createApp([CHROME, chart('A'), NEW_TAB]);
+    setVisibility(app, 'A', 'visible');
+    const { manager } = createManager(app);
+
+    const page = await manager.chartPage();
+
+    expect(page.target.id).toBe('A');
+    expect(evaluationsOf(firstSessionOf(app, 'A')).map(({ options }) => options)).toEqual([
+      { timeoutMs: PROBE_TIMEOUT_MS },
+    ]);
+    expect(app.connects).toEqual(['A']);
+  });
+
+  test('refuses the lone chart tab hidden behind a New tab page, naming tab_switch', async () => {
+    const app = createApp([CHROME, chart('A'), NEW_TAB]);
+    setVisibility(app, 'A', 'hidden');
+    const { manager, delays } = createManager(app);
+
+    const error = await failureOf(manager.chartPage());
+
+    expect(error.toPayload()).toEqual({
+      code: 'TARGET_NOT_FOUND',
+      message: 'The active tab of TradingView shows no chart',
+      hint: expect.stringContaining('tab_switch') as string,
+      details: {
+        newTabPage: true,
+        tabs: [{ id: 'A', url: chart('A').url, visibility: 'hidden' }],
+      },
+    });
+    // The session opened to look at the tab is closed again, and the New tab page never had one.
+    expect(openSessions(app)).toEqual([]);
+    expect(app.connects).toEqual(['A']);
+    // A choice that needs the user is not a fault that waiting would cure.
+    expect(delays).toEqual([]);
+  });
+
+  test('keeps the path of a lone chart tab without a New tab page: it is used without a look, hidden or not', async () => {
+    const app = createApp([CHROME, HELPER, chart('A')]);
+    setVisibility(app, 'A', 'hidden');
+    const { manager } = createManager(app);
+
+    const page = await manager.chartPage();
+
+    expect(page.target.id).toBe('A');
+    expect(evaluationsOf(firstSessionOf(app, 'A'))).toEqual([]);
+  });
+
+  test('chooses the visible one of several chart tabs while a New tab page is open', async () => {
+    const app = createApp([chart('A'), NEW_TAB, chart('B')]);
+    setVisibility(app, 'A', 'hidden');
+    setVisibility(app, 'B', 'visible');
+    const { manager } = createManager(app);
+
+    const page = await manager.chartPage();
+
+    expect(page.target.id).toBe('B');
+    expect(app.connects.sort()).toEqual(['A', 'B']);
+    expect(openSessions(app)).toEqual([page.session]);
+  });
+
+  test('refuses when a New tab page is open and no chart tab is', async () => {
+    const app = createApp([CHROME, NEW_TAB]);
+    const { manager } = createManager(app);
+
+    const error = await failureOf(manager.chartPage());
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      message: 'The active tab of TradingView shows no chart',
+      details: { newTabPage: true, tabs: [] },
+    });
+    expect(app.connects).toEqual([]);
+  });
+
+  test('refuses a lone chart tab whose visibility cannot be read while a New tab page is open', async () => {
+    const app = createApp([chart('A'), NEW_TAB]);
+    app.onEvaluate = () =>
+      Promise.reject(new TimeoutError('CDP Runtime.evaluate on A', PROBE_TIMEOUT_MS));
+    const { manager } = createManager(app);
+
+    const error = await failureOf(manager.chartPage());
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      details: { newTabPage: true, tabs: [{ id: 'A', visibility: 'unknown' }] },
+    });
+  });
+
+  test('follows the tab in front once the New tab page goes to the background or closes', async () => {
+    const app = createApp([chart('A'), NEW_TAB]);
+    setVisibility(app, 'A', 'hidden');
+    const { manager } = createManager(app);
+    await failureOf(manager.chartPage());
+
+    // The user brought the chart tab to the front again.
+    setVisibility(app, 'A', 'visible');
+    const front = await manager.chartPage();
+    // The New tab page closed: a lone tab is used without a look again.
+    app.listing = [chart('A')];
+    const lone = await manager.chartPage();
+
+    expect([front.target.id, lone.target.id]).toEqual(['A', 'A']);
+    expect(lone).toBe(front);
+    expect(app.connects).not.toContain('NEWTAB');
   });
 });
 

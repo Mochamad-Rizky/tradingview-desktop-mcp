@@ -125,17 +125,34 @@ export interface FakeWindowChrome {
   render(): void;
 }
 
-// The selectors the page answers, as the notes record the DOM: the server reads the strip and aims
-// its clicks with these.
+// The selectors of the strip the page answers, as the notes record its DOM: the server reads the
+// strip and aims its clicks with these.
 export const CHROME_SELECTORS = {
-  tabs: 'div.tabs-container > div.tab[id]',
-  title: '.tab-title',
-  closeButton: 'button.tab-close-button',
+  tabs: SELECTORS.windowChrome.tabs,
+  title: SELECTORS.windowChrome.tabTitle,
+  closeButton: SELECTORS.windowChrome.tabCloseButton,
 } as const;
+
+// An id in double quotes for an attribute selector, with a double quote, a backslash and the
+// control characters escaped, the way CSS reads them.
+function quotedId(tabId: string): string {
+  let escaped = '';
+  for (const character of tabId) {
+    const code = character.charCodeAt(0);
+    if (character === '"' || character === '\\') {
+      escaped += `\\${character}`;
+    } else if (code < 0x20 || code === 0x7f) {
+      escaped += `\\${code.toString(16)} `;
+    } else {
+      escaped += character;
+    }
+  }
+  return `"${escaped}"`;
+}
 
 // The selector of a part of one tab, as the server builds it from the id of the tab.
 export function tabPartSelector(tabId: string, part: string): string {
-  return `div.tab[id="${tabId}"] ${part}`;
+  return `div.tab[id=${quotedId(tabId)}] ${part}`;
 }
 
 const VIEWPORT = { width: 1280, height: 34 };
@@ -255,7 +272,7 @@ export function createFakeWindowChrome(options: FakeWindowChromeOptions): FakeWi
       matches: [
         CHROME_SELECTORS.tabs,
         SELECTORS.windowChrome.tab,
-        `div.tab[id="${tab.id}"]`,
+        `div.tab[id=${quotedId(tab.id)}]`,
         ...(active ? [SELECTORS.windowChrome.activeTab] : []),
       ],
       attributes: {

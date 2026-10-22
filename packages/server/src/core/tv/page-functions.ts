@@ -77,6 +77,7 @@ import {
 } from '../../tools/pine/page.js';
 import { readChartBox } from '../../tools/screenshot/page.js';
 import { readStrategyReport } from '../../tools/strategy/page.js';
+import { readTabs, readUnsavedLayout } from '../../tools/tab/page.js';
 import {
   evaluateExpression,
   readFullscreen,
@@ -141,7 +142,9 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readStrategyReport,
   readStudies,
   readStudyValues,
+  readTabs,
   readUiState,
+  readUnsavedLayout,
   readVisibilityState,
   readVisibleRange,
   reloadTab,

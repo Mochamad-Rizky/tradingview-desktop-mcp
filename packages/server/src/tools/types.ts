@@ -57,6 +57,9 @@ export interface SessionState {
   // added to, as the list holds them, until watchlist_remove removes them. Removing them needs no
   // confirmation; removing any other symbol of a list does.
   addedWatchlistSymbols: Map<string, Set<string>>;
+  // The ids of the tabs tab_new opened, as the tab strip names them, until tab_close closes them.
+  // Closing them needs no confirmation; closing any other tab does.
+  openedTabIds: Set<string>;
 }
 
 // What a handler works with. Over HTTP the connection, the launcher, the logger and the event bus

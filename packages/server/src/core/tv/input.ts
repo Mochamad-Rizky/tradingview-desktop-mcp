@@ -20,7 +20,9 @@ import { readViewport } from './viewport.js';
 // is named after a trading action, and Enter is refused in a field of a form whose default button
 // is. Text is typed only into a focused text field that is no trading control, because the caret
 // can be somewhere else than the focus (see typeText). A page that cannot say what has the focus,
-// or what lies at a point, is refused too.
+// or what lies at a point, is refused too. The tab tools alone leave the test of names out of their
+// clicks on the tab strip, whose titles show the names of the user's layouts, and have every click
+// land on the very element it aims at (ClickOptions); ui_click has no way to either.
 //
 // The calls of one page run one at a time, because each rests on a lookup that another call
 // would otherwise change.
@@ -56,6 +58,22 @@ export type PointerTarget = { selector: string } | { text: string } | Point;
 // What the pointer does at its target: a click presses the left button there, a hover only moves
 // the pointer there, and a scroll turns the wheel there.
 export type PointerAction = 'click' | 'hover' | 'scroll';
+
+// What a click of a tool of this server may ask on top of the guard, or leave out of it. Only the
+// tools of the tab strip pass any: ui_click passes none, and no tool takes them from its input.
+// - skipTradingNames: leaves out the test of the names of trading actions (TRADING_ACTION_NAMES),
+//   and that test only: the selectors of trading controls, the look at what lies at the point, the
+//   second look once the pointer is there, the turn of the page and the zoom all stay. The titles
+//   of the tabs of the window chrome show the names of the user's layouts and symbols, such as a
+//   layout named "Sell the rally", and the window chrome holds no order controls (notes of Plan 3,
+//   section 3.1).
+// - onTargetOnly: the point of an element must lie on the element itself or on something inside
+//   it, and anything else there covers it, so that a click on the title of a tab cannot land on the
+//   close button beside it.
+export interface ClickOptions {
+  skipTradingNames?: boolean;
+  onTargetOnly?: boolean;
+}
 
 // What the name of an element is, in the words of the hints and of the descriptions of the tools
 // that look an element up by its name. describeElement says it in full.
@@ -119,11 +137,14 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 //     dialog, a menu or a popup, but not the portal itself) or a frame (iframe, frame, object or
 //     embed). The event would go to that, and what it is cannot be told: an order ticket has no
 //     selector, and a frame cannot be looked into. obscuredBy says what it is.
+//   - off-target: something else lies over the point, which is not a layer or a frame, and the
+//     caller asked for the point to lie on the element itself (onTargetOnly). Only an element is
+//     judged so: a point is the target itself.
 //   - center-outside-viewport: no element is hit there, because the point is not on the page.
 //   - hit-test-unavailable: the page cannot say what is there.
 //   - not-checked: there is no element, or it is not visible, or it is unsafe.
 // - obscuredBy: the covering element in a few words, its tag followed by its id, data-qa-id and
-//   data-name when it has them. Empty unless the coverage is obscured.
+//   data-name when it has them. Empty unless the coverage is obscured or off-target.
 // - rect: its box in viewport pixels, as the page reports it.
 // - tradingAction: for a click, a trading action, which `tradingNames` matches ignoring case, that
 //   the click would reach, quoted with the words around it. Each of the aria-label, the value of an
@@ -144,7 +165,8 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 //
 // The caller passes the selectors to refuse, the layers that cover a page and the names of trading
 // actions, because a page function cannot import them. An empty list of selectors is refused: with
-// none, every element would pass.
+// none, every element would pass. onTargetOnly asks for the point of an element to lie on the
+// element itself or on something inside it (ClickOptions).
 //
 // It runs in the window chrome too, whose renderer has Node integration. It only reads the DOM, and
 // must never reach for anything of Node there: no require, no process, nothing but the document.
@@ -155,20 +177,31 @@ export function describeElement(
   overlaySelectors: string[],
   tradingNames: string,
   action: PointerAction,
+  onTargetOnly: boolean,
 ):
   | {
       found: boolean;
       visible: boolean;
       unsafe: boolean;
       coverage:
-        'not-checked' | 'clear' | 'obscured' | 'center-outside-viewport' | 'hit-test-unavailable';
+        | 'not-checked'
+        | 'clear'
+        | 'obscured'
+        | 'off-target'
+        | 'center-outside-viewport'
+        | 'hit-test-unavailable';
       obscuredBy: string;
       rect?: { x: number; y: number; width: number; height: number };
       tradingAction?: string;
     }
   | PageErrorSentinel {
   type Coverage =
-    'not-checked' | 'clear' | 'obscured' | 'center-outside-viewport' | 'hit-test-unavailable';
+    | 'not-checked'
+    | 'clear'
+    | 'obscured'
+    | 'off-target'
+    | 'center-outside-viewport'
+    | 'hit-test-unavailable';
   const doc = win.document;
   const noDom: PageErrorSentinel = {
     __tvmcpError: {
@@ -365,7 +398,10 @@ export function describeElement(
     const layer = hit.closest(overlaySelectors.join(', '));
     const inLayer = layer !== null && layer !== hit;
     const inFrame = ['iframe', 'frame', 'object', 'embed'].includes(hit.localName);
-    if (!element?.contains(hit) && (inLayer || inFrame)) {
+    // Anything else over the point of an element covers it too when the caller asked for the point
+    // to lie on the element itself.
+    const elsewhere = onTargetOnly && element !== null && !element.contains(hit);
+    if (!element?.contains(hit) && (inLayer || inFrame || elsewhere)) {
       let obscuredBy = hit.localName;
       if (hit.id !== '') {
         obscuredBy += `#${hit.id}`;
@@ -380,7 +416,7 @@ export function describeElement(
       }
       return {
         unsafe: false,
-        coverage: 'obscured',
+        coverage: inLayer || inFrame ? 'obscured' : 'off-target',
         obscuredBy: obscuredBy.slice(0, 120),
         ...named,
       };
@@ -968,6 +1004,7 @@ function lookAt(
   page: InputPage,
   target: PointerTarget,
   action: PointerAction,
+  onTargetOnly: boolean,
 ): Promise<TargetDescription> {
   return page.bridge.evaluate(describeElement, [
     target,
@@ -975,6 +1012,7 @@ function lookAt(
     [SELECTORS.regions.overlapManagerRoot],
     TRADING_ACTION_NAMES,
     action,
+    onTargetOnly,
   ]);
 }
 
@@ -1004,11 +1042,13 @@ function outsideTheViewport(point: Point): TvMcpError {
 // go there. The unsafe verdicts come first, so a trading control, and for a click an element named
 // after a trading action, is reported as one even when it is also hidden or covered. An element
 // named by a text that no visible element has is the caller's mistake, INVALID_INPUT, where an
-// element a selector names is NOT_AVAILABLE until it is shown.
+// element a selector names is NOT_AVAILABLE until it is shown. A click that skips the test of
+// trading names (ClickOptions) leaves out the second verdict only.
 function aimAtElement(
   target: { selector: string } | { text: string },
   action: PointerAction,
   look: TargetDescription,
+  options: ClickOptions,
 ): Point | TvMcpError {
   const byText = 'text' in target;
   const what = byText
@@ -1029,7 +1069,7 @@ function aimAtElement(
       { hint: TRADING_HINT, details: named },
     );
   }
-  if (look.tradingAction !== undefined) {
+  if (look.tradingAction !== undefined && options.skipTradingNames !== true) {
     return tradingActionRefused(what, look.tradingAction, named);
   }
   const { rect } = look;
@@ -1062,6 +1102,18 @@ function aimAtElement(
       details: { ...named, obscuredBy: look.obscuredBy },
     });
   }
+  if (look.coverage === 'off-target') {
+    return new TvMcpError(
+      'NOT_AVAILABLE',
+      `Something else lies at the center of ${what}: \`${look.obscuredBy}\``,
+      {
+        hint:
+          'Nothing was clicked: the click has to land on the element itself. Try again once the ' +
+          'page has settled.',
+        details: { ...named, obscuredBy: look.obscuredBy },
+      },
+    );
+  }
   if (look.coverage !== 'clear') {
     // The point is off the page or the page cannot say what is there. Anything else that is not
     // clear is refused the same way, so that an answer nobody expected cannot pass.
@@ -1082,12 +1134,14 @@ function aimAtElement(
 
 // A point goes where it is, or the reason it may not. For a click the element at the point is the
 // target, so one that holds a trading control is refused as well, and so is one whose name, or that
-// of its control, is a trading action. A point outside the viewport is the caller's mistake,
-// INVALID_INPUT, unlike the center of an element that is out of view.
+// of its control, is a trading action, unless the click skips that test (ClickOptions). A point
+// outside the viewport is the caller's mistake, INVALID_INPUT, unlike the center of an element that
+// is out of view.
 function aimAtPoint(
   point: Point,
   action: PointerAction,
   look: TargetDescription,
+  options: ClickOptions,
 ): Point | TvMcpError {
   const at = `(${String(point.x)}, ${String(point.y)})`;
   const where = { x: point.x, y: point.y };
@@ -1102,7 +1156,7 @@ function aimAtPoint(
       { hint: TRADING_HINT, details: where },
     );
   }
-  if (look.tradingAction !== undefined) {
+  if (look.tradingAction !== undefined && options.skipTradingNames !== true) {
     return tradingActionRefused(`at ${at}`, look.tradingAction, where);
   }
   if (look.coverage === 'clear') {
@@ -1129,8 +1183,11 @@ function aimAt(
   target: PointerTarget,
   action: PointerAction,
   look: TargetDescription,
+  options: ClickOptions = {},
 ): Point | TvMcpError {
-  return 'x' in target ? aimAtPoint(target, action, look) : aimAtElement(target, action, look);
+  return 'x' in target
+    ? aimAtPoint(target, action, look, options)
+    : aimAtElement(target, action, look, options);
 }
 
 // Where the pointer goes: the point in the CSS pixels the page judged it in, and the same point in
@@ -1163,8 +1220,14 @@ async function zoomOf(page: InputPage): Promise<number> {
 // it judged, and the zoom of the page, which turns that point into DIPs. The zoom is read anew with
 // every look, after the page has cleared the target, because a change of zoom moves everything on
 // the page as much as a change of its layout does.
-async function aimFor(page: InputPage, target: PointerTarget, action: PointerAction): Promise<Aim> {
-  const point = aimAt(target, action, await lookAt(page, target, action));
+async function aimFor(
+  page: InputPage,
+  target: PointerTarget,
+  action: PointerAction,
+  options: ClickOptions = {},
+): Promise<Aim> {
+  const look = await lookAt(page, target, action, options.onTargetOnly === true);
+  const point = aimAt(target, action, look, options);
   if (isTvMcpError(point)) {
     throw point;
   }
@@ -1220,13 +1283,19 @@ function moveTo(page: InputPage, aim: Aim): Promise<unknown> {
 //
 // The page judges in CSS pixels and the events are sent in DIPs, each at the zoom its own look read
 // (aimFor).
-export async function clickTarget(page: InputPage, target: PointerTarget): Promise<Point> {
+//
+// `options` is for the tools of this server alone (ClickOptions): no tool takes it from its input.
+export async function clickTarget(
+  page: InputPage,
+  target: PointerTarget,
+  options: ClickOptions = {},
+): Promise<Point> {
   const wanted = checkedTarget(target);
   return exclusively(page, async () => {
     const { session } = page;
-    await moveTo(page, await aimFor(page, wanted, 'click'));
+    await moveTo(page, await aimFor(page, wanted, 'click', options));
 
-    const { point, dips } = await aimFor(page, wanted, 'click');
+    const { point, dips } = await aimFor(page, wanted, 'click', options);
     const press = { ...dips, button: 'left', clickCount: 1 } as const;
     await session.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...press });
     await session.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...press });
@@ -1235,8 +1304,12 @@ export async function clickTarget(page: InputPage, target: PointerTarget): Promi
 }
 
 // Clicks the center of the first element that matches `selector` (clickTarget).
-export async function clickElement(page: InputPage, selector: string): Promise<void> {
-  await clickTarget(page, { selector });
+export async function clickElement(
+  page: InputPage,
+  selector: string,
+  options: ClickOptions = {},
+): Promise<void> {
+  await clickTarget(page, { selector }, options);
 }
 
 // Clicks at `point`, in CSS pixels of the viewport, rounded to whole pixels (clickTarget).
@@ -1266,7 +1339,7 @@ export async function hoverTarget(page: InputPage, target: PointerTarget): Promi
     const first = await aimFor(page, wanted, 'hover');
     await moveTo(page, first);
 
-    const point = aimAt(wanted, 'hover', await lookAt(page, wanted, 'hover'));
+    const point = aimAt(wanted, 'hover', await lookAt(page, wanted, 'hover', false));
     if (isTvMcpError(point)) {
       return {
         point: first.point,

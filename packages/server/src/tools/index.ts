@@ -10,6 +10,7 @@ import { paneTools } from './pane/index.js';
 import { pineTools } from './pine/index.js';
 import { screenshotTools } from './screenshot/index.js';
 import { strategyTools } from './strategy/index.js';
+import { tabTools } from './tab/index.js';
 import type { AnyToolDefinition } from './types.js';
 import { uiTools } from './ui/index.js';
 import { watchlistTools } from './watchlist/index.js';
@@ -28,6 +29,7 @@ export const allTools: AnyToolDefinition[] = [
   ...watchlistTools,
   ...layoutTools,
   ...paneTools,
+  ...tabTools,
   ...screenshotTools,
   ...uiTools,
   ...batchTools,

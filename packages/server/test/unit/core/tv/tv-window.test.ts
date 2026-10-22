@@ -107,6 +107,14 @@ describe('the TvWindow contract', () => {
     });
   });
 
+  test('is satisfied by the shared fake window for what the shell asks before it closes a tab', () => {
+    const win: TvWindow = createFakeTvWindow(fixture);
+
+    expect(win.TradingViewApi?.shouldBeSaved?.()).toBe(false);
+    inspectFakeWindow(win).state.layouts.unsaved = true;
+    expect(win.TradingViewApi?.shouldBeSaved?.()).toBe(true);
+  });
+
   test("is satisfied by the shared fake window for TradingView's own fullscreen mode", () => {
     const win: TvWindow = createFakeTvWindow(fixture);
     const api = win.TradingViewApi;

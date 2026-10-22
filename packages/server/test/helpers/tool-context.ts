@@ -87,6 +87,7 @@ export function createTestContext(
       lastPineCompile: null,
       lastWrittenPineText: null,
       addedWatchlistSymbols: new Map(),
+      openedTabIds: new Set(),
     },
     ...overrides,
   };

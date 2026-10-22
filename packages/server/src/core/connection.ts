@@ -3,6 +3,7 @@ import { withTimeout } from '../utils/timeout.js';
 import {
   findChartTargets,
   findWindowChromeTarget,
+  isNewTabPage,
   isTradingViewUserAgent,
   pickChartTarget,
   type Visibility,
@@ -203,8 +204,9 @@ export class ConnectionManager {
   }
 
   // The chart tab to work on. It is TARGET_NOT_FOUND when no chart tab is open, or when several are
-  // and none or more than one is the one the user is looking at (the error lists them). A debug
-  // port that does not answer is retried three times first.
+  // and none or more than one is the one the user is looking at (the error lists them), and while
+  // TradingView's New tab page is open, when no chart tab is the one in front (see chooseChart). A
+  // debug port that does not answer is retried three times first.
   chartPage(): Promise<PageHandle> {
     // A call that arrives while another one is resolving joins it. Choosing among several tabs
     // opens sessions to look at them and closes those it does not keep, so two resolutions running
@@ -285,8 +287,8 @@ export class ConnectionManager {
 
   private async resolveChart(): Promise<PageHandle> {
     this.assertOpen();
-    const candidates = findChartTargets(await this.targets());
-    return this.page(await this.chooseChart(candidates));
+    const listed = await this.targets();
+    return this.page(await this.chooseChart(findChartTargets(listed), listed.some(isNewTabPage)));
   }
 
   private async resolveWindowChrome(): Promise<PageHandle> {
@@ -300,8 +302,17 @@ export class ConnectionManager {
 
   // The tab to drive. A lone tab needs no question, and the visibility of the others is only read
   // when there is a choice to make: the one the user is looking at reports itself visible.
-  private async chooseChart(candidates: CdpTargetInfo[]): Promise<CdpTargetInfo> {
-    if (candidates.length < 2) {
+  //
+  // Only the tab in front of the window has its page shown, and its page alone reports itself
+  // visible, at least on macOS (notes of Plan 3, section 3.3). TradingView's New tab page shows no
+  // chart and has no chart tab, so while one is open (newTabPageOpen), a lone chart tab may be behind
+  // it: then the visibility of even a lone tab is read, and only a tab that reports itself visible
+  // is taken (pickChartTarget). The New tab page itself is never connected to.
+  private async chooseChart(
+    candidates: CdpTargetInfo[],
+    newTabPageOpen: boolean,
+  ): Promise<CdpTargetInfo> {
+    if (candidates.length < 2 && !newTabPageOpen) {
       // Hands back the lone tab, and refuses an empty list with the advice to open a chart.
       return pickChartTarget(candidates, new Map());
     }
@@ -317,7 +328,7 @@ export class ConnectionManager {
       );
       // Closing the manager made every probe fail, and "unclear which tab" would not say why.
       this.assertOpen();
-      chosen = pickChartTarget(candidates, visibility);
+      chosen = pickChartTarget(candidates, visibility, newTabPageOpen);
       this.logger.debug(
         { targetId: chosen.id, candidates: candidates.length },
         'Chose a chart tab by its visibility',

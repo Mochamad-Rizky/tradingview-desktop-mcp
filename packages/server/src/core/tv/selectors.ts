@@ -138,10 +138,15 @@ export const SELECTORS = {
   },
 
   // The tabs and buttons of the window around the charts (notes, section 5.6). This is another
-  // renderer than the chart: the selectors apply to the window chrome target.
+  // renderer than the chart: the selectors apply to the window chrome target. The tab strip as the
+  // notes of Plan 3 (section 3.1) record it: every tab, whose place among them is its index, the
+  // title of a tab and its close button, which the shell shows only on some tabs.
   windowChrome: {
     tab: 'div.tab[draggable="true"][id]',
+    tabs: 'div.tabs-container > div.tab[id]',
     activeTab: 'div.tab.active',
+    tabTitle: '.tab-title',
+    tabCloseButton: 'button.tab-close-button',
     newTab: 'button.create-new-tab-button',
     newWindow: '#new-window-button',
     mainMenu: '#main-menu-button',

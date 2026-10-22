@@ -18,6 +18,7 @@ import {
   firstSessionOf,
   fixture,
   HELPER,
+  NEW_TAB,
   never,
   openSessions,
   OTHER_BROWSER,
@@ -314,6 +315,19 @@ describe('health', () => {
 
     expect(report.chart).toEqual({ found: true, tabs: 3 });
     expect(report.app).toEqual({ ready: false });
+    expect(openSessions(app)).toEqual([]);
+  });
+
+  test('reports the app as not ready while a New tab page is in front, and never connects to that page', async () => {
+    const app = createApp([CHROME, chart('A'), NEW_TAB]);
+    setVisibility(app, 'A', 'hidden');
+    const { manager } = createManager(app);
+
+    const report = await manager.health();
+
+    expect(report.chart).toEqual({ found: true, tabs: 1, url: chart('A').url });
+    expect(report.app).toEqual({ ready: false });
+    expect(app.connects).toEqual(['A']);
     expect(openSessions(app)).toEqual([]);
   });
 

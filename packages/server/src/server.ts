@@ -82,6 +82,7 @@ export function createMcpServer(
     lastPineCompile: null,
     lastWrittenPineText: null,
     addedWatchlistSymbols: new Map(),
+    openedTabIds: new Set(),
   };
   const base = { config, logger, connection, launcher, events, session };
 

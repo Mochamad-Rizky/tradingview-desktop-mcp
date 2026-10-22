@@ -54,6 +54,14 @@ export const HELPER: CdpTargetInfo = {
   title: 'index.html',
   url: 'file:///Applications/TradingView.app/Contents/Resources/app.asar/app/tooltip/index.html',
 };
+// TradingView's local New tab page, which a new tab opens on (notes of Plan 3, section 3.2). It has
+// Node integration, so the manager must never connect to it.
+export const NEW_TAB: CdpTargetInfo = {
+  id: 'NEWTAB',
+  type: 'page',
+  title: 'index.html',
+  url: 'file:///Applications/TradingView.app/Contents/Resources/app.asar/app/new-tab/index.html',
+};
 export const BLANK: CdpTargetInfo = { id: 'BLANK', type: 'page', title: '', url: '' };
 export const IFRAME: CdpTargetInfo = {
   id: 'IFRAME',

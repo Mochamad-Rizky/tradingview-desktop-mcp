@@ -34,7 +34,7 @@ test('paneTools lists the pane tools in the order of the catalog', () => {
   expect(new Set(paneTools.map(({ domain }) => domain))).toEqual(new Set(['pane']));
 });
 
-test('the catalog lists the pane tools after the layout tools and before the screenshot', () => {
+test('the catalog lists the pane tools after the layout tools and before the tab tools', () => {
   const names = allTools.map(({ name }) => name);
   const lastLayout = layoutTools.at(-1);
   if (lastLayout === undefined) {
@@ -42,7 +42,7 @@ test('the catalog lists the pane tools after the layout tools and before the scr
   }
 
   expect(names.indexOf('pane_list')).toBe(names.indexOf(lastLayout.name) + 1);
-  expect(names.indexOf('pane_set_symbol')).toBe(names.indexOf('screenshot_capture') - 1);
+  expect(names.indexOf('pane_set_symbol')).toBe(names.indexOf('tab_list') - 1);
 });
 
 test('pane_list only reads, so the readonly profile offers it and no other pane tool', () => {

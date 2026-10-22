@@ -98,6 +98,11 @@ export interface TradingViewApiLike {
   // Whether the layout on the chart has unsaved changes, as a read-only watched value of a boolean
   // (notes of Plan 3, section 1.3). A build may not have it.
   hasChartChanges?(): { value(): unknown };
+  // Whether the layout has changes to save and may be saved (it is not read-only), as a boolean:
+  // what the shell asks the page of a tab before it closes the tab, and when it is true, the shell
+  // asks the user in its "Close tab?" dialog (notes of Plan 3, sections 1.3 and 3.4). Typed loosely,
+  // because page code checks for a boolean. A build may not have it.
+  shouldBeSaved?(): unknown;
   // Loads the saved layout whose url is given (notes of Plan 3, section 1.3). With openInNewTab
   // false it loads it in place, without navigating, and with skipConfirm true it discards unsaved
   // changes instead of asking about them in a dialog; it resolves once the content of the layout is

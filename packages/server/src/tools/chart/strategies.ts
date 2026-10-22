@@ -279,6 +279,7 @@ function lookUp(page: PageHandle, selector: string) {
     [SELECTORS.regions.overlapManagerRoot],
     TRADING_ACTION_NAMES,
     'click',
+    false,
   ]);
 }
 

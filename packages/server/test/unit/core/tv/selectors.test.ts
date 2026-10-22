@@ -199,7 +199,12 @@ describe('SELECTORS', () => {
   test('names the tabs and buttons of the window chrome', () => {
     expect(SELECTORS.windowChrome).toEqual({
       tab: 'div.tab[draggable="true"][id]',
+      // The tab strip of the notes of Plan 3 (section 3.1): every tab in the order of the strip,
+      // the title of a tab and its close button.
+      tabs: 'div.tabs-container > div.tab[id]',
       activeTab: 'div.tab.active',
+      tabTitle: '.tab-title',
+      tabCloseButton: 'button.tab-close-button',
       newTab: 'button.create-new-tab-button',
       newWindow: '#new-window-button',
       mainMenu: '#main-menu-button',

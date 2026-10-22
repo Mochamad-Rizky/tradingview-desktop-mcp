@@ -79,6 +79,7 @@ function look(win: TvWindow, selector: string) {
     [OVERLAP_ROOT],
     TRADING_ACTION_NAMES,
     'click',
+    false,
   );
 }
 
@@ -607,7 +608,7 @@ describe('describeElement', () => {
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
 
     expect(() =>
-      describeElement(win, BUY, [], [OVERLAP_ROOT], TRADING_ACTION_NAMES, 'click'),
+      describeElement(win, BUY, [], [OVERLAP_ROOT], TRADING_ACTION_NAMES, 'click', false),
     ).toThrow(/unsafe/);
   });
 
@@ -615,7 +616,7 @@ describe('describeElement', () => {
     const win = createFakeDomWindow([fakeElement({ matches: [BUY] })]);
 
     expect(() =>
-      describeElement(win, BUY, [...UNSAFE_SELECTORS], [], TRADING_ACTION_NAMES, 'click'),
+      describeElement(win, BUY, [...UNSAFE_SELECTORS], [], TRADING_ACTION_NAMES, 'click', false),
     ).toThrow(/cover/);
   });
 });
@@ -2399,6 +2400,7 @@ describe('describeElement with a point', () => {
     [OVERLAP_ROOT],
     TRADING_ACTION_NAMES,
     action,
+    false,
   ];
 
   test('judges what lies at a point, which is the target itself', async () => {
@@ -2551,6 +2553,7 @@ describe('describeElement with a text', () => {
     [OVERLAP_ROOT],
     TRADING_ACTION_NAMES,
     action,
+    false,
   ];
   const notFound = {
     found: false,
@@ -2756,6 +2759,7 @@ describe('describeElement for a hover or a scroll', () => {
     [OVERLAP_ROOT],
     TRADING_ACTION_NAMES,
     action,
+    false,
   ];
 
   test('does not flag an element that only holds a trading control', async () => {
@@ -3762,6 +3766,7 @@ describe('the text of fields and editable regions', () => {
     [OVERLAP_ROOT],
     TRADING_ACTION_NAMES,
     'click',
+    false,
   ];
 
   test('findElements leaves what was typed into a field or an editable region out of the elements around it', async () => {
@@ -3825,7 +3830,14 @@ test("the options of a select show nothing: what is chosen in a field is the use
   );
   const byText = await bothWays(
     describeElement,
-    [{ text: 'Option B' }, [...UNSAFE_SELECTORS], [OVERLAP_ROOT], TRADING_ACTION_NAMES, 'click'],
+    [
+      { text: 'Option B' },
+      [...UNSAFE_SELECTORS],
+      [OVERLAP_ROOT],
+      TRADING_ACTION_NAMES,
+      'click',
+      false,
+    ],
     make,
   );
 
@@ -4011,6 +4023,7 @@ describe('trading actions by name', () => {
       [OVERLAP_ROOT],
       TRADING_ACTION_NAMES,
       action,
+      false,
     ];
 
     expect(await bothWays(describeElement, [...args('click')], make)).toMatchObject({
@@ -4032,6 +4045,7 @@ describe('trading actions in split labels, input buttons and the text shown', ()
     [OVERLAP_ROOT],
     TRADING_ACTION_NAMES,
     'click',
+    false,
   ];
 
   test('a label split into spans side by side is read with a space between them', async () => {
@@ -4392,6 +4406,7 @@ describe('trading words split by elements inside them', () => {
         [OVERLAP_ROOT],
         TRADING_ACTION_NAMES,
         'click',
+        false,
       ],
       screen(panel),
     );
@@ -4423,7 +4438,7 @@ describe('clickable elements that the pointer cursor marks', () => {
     });
   const make = screen(() => [quoteButton()]);
   const clickArgs = (target: PointerTarget, action: PointerAction = 'click') =>
-    [target, [...UNSAFE_SELECTORS], [OVERLAP_ROOT], TRADING_ACTION_NAMES, action] as ArgsOf<
+    [target, [...UNSAFE_SELECTORS], [OVERLAP_ROOT], TRADING_ACTION_NAMES, action, false] as ArgsOf<
       typeof describeElement
     >;
 
@@ -5058,5 +5073,226 @@ describe('describeFocusedElement reads names the way describeElement does', () =
       ...(tradingAction === undefined ? {} : { tradingAction }),
       ...(formSubmit === undefined ? {} : { formSubmit }),
     }).toEqual(expected);
+  });
+});
+
+describe('the options of a click that only the tools of this server pass', () => {
+  // A tab of the window chrome: the title shows the symbol and the layout name of the user, "Sell
+  // the rally", and the close button lies beside the title, or over the middle of it in a strip
+  // squeezed narrow.
+  const TITLE = '#title';
+  const strip =
+    (closeOverTitle = false): (() => TvWindow) =>
+    () =>
+      createFakeDomWindow(
+        [
+          background(),
+          fakeElement({
+            id: 'tab',
+            rect: box(80, 0, 200, 34),
+            children: [
+              fakeElement({
+                id: 'title',
+                matches: [TITLE],
+                rect: box(90, 4, 160, 26),
+                children: [
+                  fakeElement({ tag: 'span', text: 'AAPL', rect: box(90, 8, 60, 18) }),
+                  fakeElement({ tag: 'span', text: 'Sell the rally', rect: box(150, 8, 100, 18) }),
+                ],
+              }),
+              fakeElement({
+                tag: 'button',
+                id: 'close',
+                attributes: { 'aria-label': 'Close' },
+                rect: closeOverTitle ? box(160, 7, 20, 20) : box(254, 7, 20, 20),
+              }),
+            ],
+          }),
+        ],
+        { viewport: VIEWPORT },
+      );
+  // The title spans (90, 4) to (250, 30), so a click lands on its center, (170, 17).
+  const clickAtTitle = [
+    mouseEvent('mouseMoved', 170, 17),
+    mouseEvent('mousePressed', 170, 17),
+    mouseEvent('mouseReleased', 170, 17),
+  ];
+
+  test('a click on an element named after a trading action is refused by default, and goes through with skipTradingNames', async () => {
+    const refused = pageOver(strip()());
+    const allowed = pageOver(strip()());
+
+    const error = await failureOf(clickElement(refused.page, TITLE));
+    await clickElement(allowed.page, TITLE, { skipTradingNames: true });
+
+    expect(error.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(error.details).toEqual({ selector: TITLE, name: 'AAPL Sell the rally' });
+    expect(refused.input()).toEqual([]);
+    expect(allowed.input()).toEqual(clickAtTitle);
+  });
+
+  test('skipTradingNames leaves every other guard in place', async () => {
+    const unsafe = pageOver(screen(() => [buyButton()])());
+    const covered = pageOver(screen(() => [openMenu()])());
+    const unzoomed = pageWith(chart(), {}, undefined, () => ({}));
+    const zoomed = pageWith(chart(), { zoom: 1.25 });
+
+    const onTradingControl = await failureOf(
+      clickElement(unsafe.page, BUY, { skipTradingNames: true }),
+    );
+    const underMenu = await failureOf(clickElement(covered.page, PANE, { skipTradingNames: true }));
+    const withoutZoom = await failureOf(
+      clickElement(unzoomed.page, SAVE, { skipTradingNames: true }),
+    );
+    await clickElement(zoomed.page, SAVE, { skipTradingNames: true });
+
+    expect(onTradingControl.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(underMenu.toPayload()).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { selector: PANE, obscuredBy: 'div#menu-item' },
+    });
+    expect(withoutZoom.code).toBe('NOT_AVAILABLE');
+    for (const { input } of [unsafe, covered, unzoomed]) {
+      expect(input()).toEqual([]);
+    }
+    // The point goes out in DIPs, as for any click: (120, 60) at 125%.
+    expect(zoomed.input()).toEqual([
+      mouseEvent('mouseMoved', 150, 75),
+      mouseEvent('mousePressed', 150, 75),
+      mouseEvent('mouseReleased', 150, 75),
+    ]);
+  });
+
+  test('skipTradingNames still looks again once the pointer is there, and presses only on a look as clean as the first', async () => {
+    const item = fakeElement({ id: 'menu-item', rect: box(500, 500, 40, 20) });
+    const win = strip()();
+    const { page, types } = pageOver(
+      win,
+      afterTheMove(() => {
+        dom(win).document.elementFromPoint = () => buyButton();
+      }),
+    );
+    const menuWin = createFakeDomWindow([background(), overlapRoot([item]), ...chart()], {
+      viewport: VIEWPORT,
+    });
+    const menu = pageOver(
+      menuWin,
+      afterTheMove(() => {
+        dom(menuWin).document.elementFromPoint = () => item;
+      }),
+    );
+
+    const onTradingControl = await failureOf(clickElement(page, TITLE, { skipTradingNames: true }));
+    const underMenu = await failureOf(clickElement(menu.page, SAVE, { skipTradingNames: true }));
+
+    expect(onTradingControl.code).toBe('UNSAFE_ACTION_BLOCKED');
+    expect(underMenu.code).toBe('NOT_AVAILABLE');
+    expect(types()).toEqual(['mouseMoved']);
+    expect(menu.types()).toEqual(['mouseMoved']);
+  });
+
+  test('skipTradingNames keeps the turn of the page: a second call waits for the first', async () => {
+    const { page, types } = pageOver(strip()());
+
+    await Promise.all([
+      clickElement(page, TITLE, { skipTradingNames: true }),
+      clickElement(page, TITLE, { skipTradingNames: true }),
+    ]);
+
+    expect(types()).toEqual([
+      'mouseMoved',
+      'mousePressed',
+      'mouseReleased',
+      'mouseMoved',
+      'mousePressed',
+      'mouseReleased',
+    ]);
+  });
+
+  test('onTargetOnly refuses a click whose center lies on another element, before anything is sent', async () => {
+    const strict = pageOver(strip(true)());
+    const plain = pageOver(strip(true)());
+
+    const error = await failureOf(
+      clickElement(strict.page, TITLE, { skipTradingNames: true, onTargetOnly: true }),
+    );
+    // Without it, an element stacked over the target that is no layer does not stop a click.
+    await clickElement(plain.page, TITLE, { skipTradingNames: true });
+
+    expect(error.toPayload()).toEqual({
+      code: 'NOT_AVAILABLE',
+      message: 'Something else lies at the center of `#title`: `button#close`',
+      hint:
+        'Nothing was clicked: the click has to land on the element itself. Try again once the ' +
+        'page has settled.',
+      details: { selector: TITLE, obscuredBy: 'button#close' },
+    });
+    expect(strict.input()).toEqual([]);
+    expect(plain.types()).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+  });
+
+  test('onTargetOnly clicks a target whose center lies on something inside it', async () => {
+    const { page, input } = pageOver(strip()());
+
+    await clickElement(page, TITLE, { skipTradingNames: true, onTargetOnly: true });
+
+    expect(input()).toEqual(clickAtTitle);
+  });
+
+  test('onTargetOnly looks again once the pointer is there: an element that moved over the center stops the press', async () => {
+    const win = strip()();
+    const close = fakeElement({ tag: 'button', id: 'close', rect: box(160, 7, 20, 20) });
+    const { page, types } = pageOver(
+      win,
+      afterTheMove(() => {
+        dom(win).document.elementFromPoint = () => close;
+      }),
+    );
+
+    const error = await failureOf(
+      clickElement(page, TITLE, { skipTradingNames: true, onTargetOnly: true }),
+    );
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { selector: TITLE, obscuredBy: 'button#close' },
+    });
+    expect(types()).toEqual(['mouseMoved']);
+  });
+
+  test('describeElement reports a center that lies on another element only when asked to, run either way', async () => {
+    const args = (
+      target: { selector: string } | { x: number; y: number },
+      onTargetOnly: boolean,
+    ): ArgsOf<typeof describeElement> => [
+      target,
+      [...UNSAFE_SELECTORS],
+      [OVERLAP_ROOT],
+      TRADING_ACTION_NAMES,
+      'click',
+      onTargetOnly,
+    ];
+
+    expect(
+      await bothWays(describeElement, [...args({ selector: TITLE }, true)], strip(true)),
+    ).toEqual({
+      found: true,
+      visible: true,
+      unsafe: false,
+      coverage: 'off-target',
+      obscuredBy: 'button#close',
+      rect: box(90, 4, 160, 26),
+      tradingAction: 'AAPL Sell the rally',
+    });
+    expect(
+      await bothWays(describeElement, [...args({ selector: TITLE }, false)], strip(true)),
+    ).toMatchObject({ coverage: 'clear', obscuredBy: '' });
+    expect(
+      await bothWays(describeElement, [...args({ selector: TITLE }, true)], strip()),
+    ).toMatchObject({ coverage: 'clear', obscuredBy: '' });
+    // A point is the target itself, so there is nothing else for it to land on.
+    expect(
+      await bothWays(describeElement, [...args({ x: 170, y: 17 }, true)], strip(true)),
+    ).toMatchObject({ coverage: 'clear' });
   });
 });

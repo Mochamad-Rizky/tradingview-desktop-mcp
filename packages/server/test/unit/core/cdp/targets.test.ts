@@ -2,7 +2,11 @@ import type { CdpTargetInfo } from '../../../../src/core/cdp/types.js';
 import {
   classifyTarget,
   findChartTargets,
+  findNewTabPages,
   findWindowChromeTarget,
+  isEveryChartTabHidden,
+  isNewTabPage,
+  isNoChartInFrontError,
   isTradingViewUserAgent,
   pickChartTarget,
   type TargetKind,
@@ -30,6 +34,9 @@ const OTHER_IDS = [
 const APP_PAGES = 'file:///Applications/TradingView.app/Contents/Resources/app.asar/app';
 const WINDOW_CHROME_URL = `${APP_PAGES}/window/index.html?rendererInitialData=%7B%7D`;
 const TOOLTIP_URL = `${APP_PAGES}/tooltip/index.html?rendererInitialData=%7B%7D`;
+// TradingView's local New tab page, the start page a new tab opens on (notes of Plan 3, section
+// 3.2).
+const NEW_TAB_URL = `${APP_PAGES}/new-tab/index.html`;
 const WINDOWS_APP_PAGES = 'file:///C:/Users/me/AppData/Local/TradingView/resources/app.asar/app';
 
 function target(overrides: Partial<CdpTargetInfo> & { url: string }): CdpTargetInfo {
@@ -270,6 +277,162 @@ test('pickChartTarget lists every tab when three are open and two are visible', 
     code: 'TARGET_NOT_FOUND',
     details: { tabs: tabs.map(({ id, url }) => ({ id, url })) },
   });
+});
+
+test.each<[string, Partial<CdpTargetInfo> & { url: string }, boolean]>([
+  ['the New tab page of macOS', { url: NEW_TAB_URL }, true],
+  ['the New tab page of Windows', { url: `${WINDOWS_APP_PAGES}/new-tab/index.html` }, true],
+  ['the New tab page with a query', { url: `${NEW_TAB_URL}?rendererInitialData=%7B%7D` }, true],
+  [
+    'a New tab path served over http',
+    { url: 'http://localhost:3000/app/new-tab/index.html' },
+    false,
+  ],
+  ['a New tab path loaded in an iframe', { type: 'iframe', url: NEW_TAB_URL }, false],
+  [
+    'a helper page that mentions the New tab path in its query',
+    { url: `${TOOLTIP_URL}&from=/app/new-tab/index.html` },
+    false,
+  ],
+  ['the window chrome', { url: WINDOW_CHROME_URL }, false],
+  ['a tooltip page', { url: TOOLTIP_URL }, false],
+  ['a chart', { url: 'https://www.tradingview.com/chart/AbC123/' }, false],
+  ['a page with an empty URL', { url: '' }, false],
+])('isNewTabPage tells %s', (_label, overrides, expected) => {
+  expect(isNewTabPage(target(overrides))).toBe(expected);
+});
+
+test('a New tab page is still a helper page to classifyTarget, and none is a chart tab', () => {
+  const page = target({ id: 'NEWTAB', url: NEW_TAB_URL });
+
+  expect(classifyTarget(page)).toBe('helper');
+  expect(findChartTargets([page])).toEqual([]);
+});
+
+test('findNewTabPages returns every New tab page in list order, and none of the observed list', () => {
+  const list = [
+    target({ id: 'FIRST', url: NEW_TAB_URL }),
+    chartTab('CHART'),
+    target({ id: 'CHROME', url: WINDOW_CHROME_URL }),
+    target({ id: 'SECOND', url: `${NEW_TAB_URL}?x=1` }),
+  ];
+
+  expect(findNewTabPages(list).map(({ id }) => id)).toEqual(['FIRST', 'SECOND']);
+  expect(findNewTabPages(loadTargetsFixture())).toEqual([]);
+});
+
+describe('pickChartTarget while a New tab page is open', () => {
+  test('reads even a lone tab, and takes it when it reports visible', () => {
+    const only = chartTab('ONLY');
+
+    expect(pickChartTarget([only], visibilities({ ONLY: 'visible' }), true)).toBe(only);
+  });
+
+  test.each<[string, Visibility | undefined]>([
+    ['hidden', 'hidden'],
+    ['unknown', 'unknown'],
+    ['not read', undefined],
+  ])('refuses a lone tab that is %s: the active tab shows no chart', (_label, state) => {
+    const only = chartTab('ONLY');
+
+    const error = thrownBy(() =>
+      pickChartTarget([only], visibilities(state === undefined ? {} : { ONLY: state }), true),
+    );
+
+    expect(error).toBeInstanceOf(TvMcpError);
+    expect(error).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      message: 'The active tab of TradingView shows no chart',
+      details: {
+        newTabPage: true,
+        tabs: [{ id: 'ONLY', url: only.url, visibility: state ?? 'unknown' }],
+      },
+    });
+    expect((error as TvMcpError).hint).toMatch(/tab_switch/);
+    expect(isNoChartInFrontError(error)).toBe(true);
+  });
+
+  test('refuses when no chart tab is open at all', () => {
+    const error = thrownBy(() => pickChartTarget([], new Map(), true));
+
+    expect(error).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      details: { newTabPage: true, tabs: [] },
+    });
+    expect(isNoChartInFrontError(error)).toBe(true);
+  });
+
+  test('takes the only visible one of several tabs, and refuses when none is', () => {
+    const first = chartTab('FIRST');
+    const second = chartTab('SECOND');
+
+    expect(
+      pickChartTarget([first, second], visibilities({ FIRST: 'hidden', SECOND: 'visible' }), true),
+    ).toBe(second);
+    const error = thrownBy(() =>
+      pickChartTarget([first, second], visibilities({ FIRST: 'hidden', SECOND: 'hidden' }), true),
+    );
+    expect(error).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      details: {
+        newTabPage: true,
+        tabs: [
+          { id: 'FIRST', url: first.url, visibility: 'hidden' },
+          { id: 'SECOND', url: second.url, visibility: 'hidden' },
+        ],
+      },
+    });
+  });
+
+  test('refuses several visible tabs as without a New tab page: it is unclear which one to use', () => {
+    const tabs = [chartTab('FIRST'), chartTab('SECOND')];
+
+    const error = thrownBy(() =>
+      pickChartTarget(tabs, visibilities({ FIRST: 'visible', SECOND: 'visible' }), true),
+    );
+
+    expect(error).toMatchObject({
+      code: 'TARGET_NOT_FOUND',
+      details: { tabs: tabs.map(({ id, url }) => ({ id, url })) },
+    });
+    expect(isNoChartInFrontError(error)).toBe(false);
+  });
+});
+
+test('isNoChartInFrontError tells the refusal of a New tab page in front from every other error', () => {
+  const unclear = thrownBy(() =>
+    pickChartTarget([chartTab('A'), chartTab('B')], visibilities({ A: 'hidden', B: 'hidden' })),
+  );
+  const none = thrownBy(() => pickChartTarget([], new Map()));
+
+  for (const other of [
+    unclear,
+    none,
+    new TvMcpError('NOT_AVAILABLE', 'x', { details: { newTabPage: true } }),
+    new Error('The active tab of TradingView shows no chart'),
+    { code: 'TARGET_NOT_FOUND', details: { newTabPage: true } },
+    undefined,
+  ]) {
+    expect(isNoChartInFrontError(other)).toBe(false);
+  }
+});
+
+test('isEveryChartTabHidden tells a refusal whose chart tabs all reported hidden from one that has a tab it could not read', () => {
+  const refusal = (states: Record<string, Visibility>) =>
+    thrownBy(() =>
+      pickChartTarget(Object.keys(states).map(chartTab), visibilities(states), true),
+    ) as TvMcpError;
+
+  expect(isEveryChartTabHidden(refusal({ A: 'hidden', B: 'hidden' }))).toBe(true);
+  expect(isEveryChartTabHidden(refusal({}))).toBe(true);
+  expect(isEveryChartTabHidden(refusal({ A: 'hidden', B: 'unknown' }))).toBe(false);
+  // An error that lists no tabs, or lists them in another shape, says nothing about them.
+  expect(isEveryChartTabHidden(new TvMcpError('TARGET_NOT_FOUND', 'x'))).toBe(false);
+  expect(
+    isEveryChartTabHidden(
+      new TvMcpError('TARGET_NOT_FOUND', 'x', { details: { tabs: ['A', null, [1]] } }),
+    ),
+  ).toBe(false);
 });
 
 // The user agent /json/version reports. TradingView Desktop names itself in it twice; a browser that

@@ -170,6 +170,15 @@ describe('the input schemas', () => {
     expect(Object.keys(uiEvaluate.inputSchema)).toEqual(['expression']);
   });
 
+  test('ui_click takes no option of the guard, so no caller can skip one of its checks', () => {
+    // The tab tools may leave the test of trading names out of their own clicks on the tab strip;
+    // ui_click has no input that reaches that option, and drops any key it does not know.
+    expect(Object.keys(uiClick.inputSchema)).toEqual(['selector', 'text', 'x', 'y', 'target']);
+    expect(
+      click.parse({ selector: '#a', skipTradingNames: true, onTargetOnly: true, options: {} }),
+    ).toEqual({ selector: '#a', target: 'chart' });
+  });
+
   test('ui_click and ui_hover take a selector, a text or a point, on the chart by default', () => {
     for (const schema of [click, hover]) {
       expect(schema.parse({ selector: '#a' })).toEqual({ selector: '#a', target: 'chart' });
