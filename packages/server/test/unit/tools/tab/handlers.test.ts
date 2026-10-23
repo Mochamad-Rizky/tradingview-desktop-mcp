@@ -93,7 +93,8 @@ function contextWith(connection: Partial<ConnectionManager>): ToolContext {
   return {
     ...createTestContext(),
     connection: {
-      reset: () => Promise.resolve(),
+      // A call that runs on a page meanwhile must go on: the tab tools drop no session.
+      reset: () => Promise.reject(new Error('The tab tools drop no session')),
       chartPage: () => Promise.reject(noChartInFrontError()),
       ...connection,
     } as ConnectionManager,
@@ -149,9 +150,9 @@ test('tab_new passes on a failure of the target list that is not one of the conn
   });
 
   await expect(tabNew.handler({}, ctx)).rejects.toBe(bug);
-  // The tab did open, so it is recorded, and the sessions are dropped all the same.
+  // The tab did open, so it is recorded, and no session is dropped.
   expect(ctx.session.openedTabIds).toEqual(new Set([OPENED]));
-  expect(resets).toBe(1);
+  expect(resets).toBe(0);
 });
 
 test('tab_close passes on a failure to reach the chart tab, and clicks nothing', async () => {

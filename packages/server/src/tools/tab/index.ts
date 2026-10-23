@@ -25,10 +25,12 @@ import { readTabs, readUnsavedLayout, TAB_STRIP, type StripTab } from './page.js
 // menu on a right click.
 //
 // Only the page of the tab in front is shown, and the connection manager maps the chart tools to it
-// by its visibility (connection.ts). The strip and the pages are separate renderers, so a page can
-// hear of a change of the tab in front later than the strip shows it: a tool that changes the tab
-// in front drops every session (reset) and waits until the mapping shows the change too
-// (awaitPageInFront), so that the next tool acts on the tab in front. A new tab opens on
+// by its visibility (connection.ts), anew on every call. The strip and the pages are separate
+// renderers, so a page can hear of a change of the tab in front later than the strip shows it: a tool
+// that changes the tab in front waits until the mapping shows the change too (awaitPageInFront), so
+// that the next tool acts on the tab in front. No session is dropped for it: a call that runs on a
+// page meanwhile goes on, and the session of a tab that closed goes once the targets are listed
+// without it. A new tab opens on
 // TradingView's New tab page, whose renderer has Node integration too: it is only ever found by its
 // URL among the targets, never connected to.
 
@@ -166,7 +168,6 @@ type Arrival = 'chart' | 'none' | 'covered' | 'late' | 'unconfirmed';
 // polls, which the call timeout always leaves room for.
 async function awaitPageInFront(ctx: ToolContext, before: FrontPage): Promise<Arrival> {
   const waitMs = Math.max(tabWaitMs(ctx), NO_CHART_SETTLE_MS + 3 * POLL_INTERVAL_MS);
-  await ctx.connection.reset();
   let held: { reading: string; since: number } | undefined;
   const { satisfied, last } = await pollUntil(
     async (): Promise<Arrival | null> => {
@@ -210,8 +211,7 @@ async function awaitPageInFront(ctx: ToolContext, before: FrontPage): Promise<Ar
 
 // Brings `tab` to the front with a click on its title, waits until the strip shows it there, and
 // then until the mapping of the chart tools shows it too (awaitPageInFront), with `before` read
-// before the click. However that ends, the sessions are dropped, since the click may have changed the
-// tab in front.
+// before the click.
 async function bringToFront(
   ctx: ToolContext,
   chrome: PageHandle,
@@ -219,27 +219,23 @@ async function bringToFront(
   before: FrontPage,
 ): Promise<Arrival> {
   const waitMs = tabWaitMs(ctx);
-  try {
-    await clickElement(chrome, partOf(tab.id, SELECTORS.windowChrome.tabTitle), TAB_CLICK);
-    const { satisfied } = await pollUntil(
-      () => listTabs(chrome),
-      (tabs) => tabs.some(({ id, active }) => id === tab.id && active),
-      { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
+  await clickElement(chrome, partOf(tab.id, SELECTORS.windowChrome.tabTitle), TAB_CLICK);
+  const { satisfied } = await pollUntil(
+    () => listTabs(chrome),
+    (tabs) => tabs.some(({ id, active }) => id === tab.id && active),
+    { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
+  );
+  if (!satisfied) {
+    throw new TvMcpError(
+      'TIMEOUT',
+      `The tab did not come to the front within ${String(waitMs)} ms`,
+      {
+        hint: 'Check tab_list: TradingView may still bring the tab to the front.',
+        details: { tabId: tab.id, ms: waitMs },
+      },
     );
-    if (!satisfied) {
-      throw new TvMcpError(
-        'TIMEOUT',
-        `The tab did not come to the front within ${String(waitMs)} ms`,
-        {
-          hint: 'Check tab_list: TradingView may still bring the tab to the front.',
-          details: { tabId: tab.id, ms: waitMs },
-        },
-      );
-    }
-    return await awaitPageInFront(ctx, before);
-  } finally {
-    await ctx.connection.reset();
   }
+  return awaitPageInFront(ctx, before);
 }
 
 // The ids of the New tab pages the debug port lists, or null while it cannot list them.
@@ -344,26 +340,22 @@ async function clickClose(
     throw noCloseButton(tabId);
   }
   const waitMs = tabWaitMs(ctx);
-  try {
-    await clickElement(chrome, partOf(tabId, SELECTORS.windowChrome.tabCloseButton), TAB_CLICK);
-    const gone = await pollUntil(
-      () => listTabs(chrome),
-      (left) => !left.some(({ id }) => id === tabId),
-      { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
-    );
-    if (!gone.satisfied) {
-      throw new TvMcpError('TIMEOUT', `The tab did not close within ${String(waitMs)} ms`, {
-        hint:
-          'Check tab_list: TradingView may still close it. If TradingView asks about the tab in ' +
-          'a dialog, answer it there.',
-        details: { tabId, ms: waitMs },
-      });
-    }
-    ctx.session.openedTabIds.delete(tabId);
-    return { data: { closed: tabId, remaining: gone.last.length }, via: 'dom' };
-  } finally {
-    await ctx.connection.reset();
+  await clickElement(chrome, partOf(tabId, SELECTORS.windowChrome.tabCloseButton), TAB_CLICK);
+  const gone = await pollUntil(
+    () => listTabs(chrome),
+    (left) => !left.some(({ id }) => id === tabId),
+    { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
+  );
+  if (!gone.satisfied) {
+    throw new TvMcpError('TIMEOUT', `The tab did not close within ${String(waitMs)} ms`, {
+      hint:
+        'Check tab_list: TradingView may still close it. If TradingView asks about the tab in ' +
+        'a dialog, answer it there.',
+      details: { tabId, ms: waitMs },
+    });
   }
+  ctx.session.openedTabIds.delete(tabId);
+  return { data: { closed: tabId, remaining: gone.last.length }, via: 'dom' };
 }
 
 // Whether the window is in view, as its window chrome reports it (windowVisibility).
@@ -492,61 +484,57 @@ export const tabNew = defineTool({
     );
     const frontBefore = await frontPage(ctx);
     const waitMs = tabWaitMs(ctx);
-    try {
-      await clickElement(chrome, SELECTORS.windowChrome.newTab);
-      const opened = await pollUntil(
-        () => listTabs(chrome),
-        (tabs) => tabs.some(({ id, active }) => active && !before.has(id)),
-        { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
+    await clickElement(chrome, SELECTORS.windowChrome.newTab);
+    const opened = await pollUntil(
+      () => listTabs(chrome),
+      (tabs) => tabs.some(({ id, active }) => active && !before.has(id)),
+      { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
+    );
+    const tab = opened.last.find(({ id, active }) => active && !before.has(id));
+    if (tab === undefined) {
+      throw new TvMcpError(
+        'TIMEOUT',
+        `No new tab showed in the tab strip within ${String(waitMs)} ms`,
+        {
+          hint:
+            'Check tab_list before you try again: the tab may still open, and tab_new would ' +
+            'open another one.',
+          details: { ms: waitMs },
+        },
       );
-      const tab = opened.last.find(({ id, active }) => active && !before.has(id));
-      if (tab === undefined) {
-        throw new TvMcpError(
-          'TIMEOUT',
-          `No new tab showed in the tab strip within ${String(waitMs)} ms`,
-          {
-            hint:
-              'Check tab_list before you try again: the tab may still open, and tab_new would ' +
-              'open another one.',
-            details: { ms: waitMs },
-          },
-        );
-      }
-      ctx.session.openedTabIds.add(tab.id);
-      // Its page is found by its URL among the targets, and never connected to.
-      const page = await pollUntil(
-        () => newTabPageIds(ctx),
-        (ids) => ids?.some((id) => !pagesBefore.has(id)) === true,
-        { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
-      );
-      if (!page.satisfied) {
-        return {
-          data: { id: tab.id, index: tab.index },
-          via: 'dom',
-          warnings: [
-            `The new tab is open, but its page did not show among the pages of TradingView ` +
-              `within ${String(waitMs)} ms: until it does, the chart tools may act on the chart ` +
-              'of a tab behind it.',
-          ],
-        };
-      }
-      // The chart tab it covers may hear of it later than the strip: the chart tools are left to
-      // the mapping once that shows the new tab in front too.
-      const arrival = await awaitPageInFront(ctx, frontBefore);
+    }
+    ctx.session.openedTabIds.add(tab.id);
+    // Its page is found by its URL among the targets, and never connected to.
+    const page = await pollUntil(
+      () => newTabPageIds(ctx),
+      (ids) => ids?.some((id) => !pagesBefore.has(id)) === true,
+      { intervalMs: POLL_INTERVAL_MS, timeoutMs: waitMs },
+    );
+    if (!page.satisfied) {
       return {
         data: { id: tab.id, index: tab.index },
         via: 'dom',
-        warnings:
-          arrival === 'late' || arrival === 'unconfirmed'
-            ? [
-                'The new tab is open, but the chart tab it covers did not show yet that it is ' +
-                  'behind it: for a moment, the chart tools may still act on that chart.',
-              ]
-            : [],
+        warnings: [
+          `The new tab is open, but its page did not show among the pages of TradingView ` +
+            `within ${String(waitMs)} ms: until it does, the chart tools may act on the chart ` +
+            'of a tab behind it.',
+        ],
       };
-    } finally {
-      await ctx.connection.reset();
     }
+    // The chart tab it covers may hear of it later than the strip: the chart tools are left to
+    // the mapping once that shows the new tab in front too.
+    const arrival = await awaitPageInFront(ctx, frontBefore);
+    return {
+      data: { id: tab.id, index: tab.index },
+      via: 'dom',
+      warnings:
+        arrival === 'late' || arrival === 'unconfirmed'
+          ? [
+              'The new tab is open, but the chart tab it covers did not show yet that it is ' +
+                'behind it: for a moment, the chart tools may still act on that chart.',
+            ]
+          : [],
+    };
   },
 });
 
@@ -713,7 +701,6 @@ export const tabClose = defineTool({
           );
         }
       }
-      await ctx.connection.reset();
       await assertClosesWithoutDialog(ctx, tab.id);
       return await clickClose(ctx, tab.id);
     } catch (error) {

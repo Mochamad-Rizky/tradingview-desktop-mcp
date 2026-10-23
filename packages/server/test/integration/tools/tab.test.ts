@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Config } from '../../../src/config/schema.js';
 import { describeElement } from '../../../src/core/tv/input.js';
@@ -1119,6 +1120,50 @@ describe('pages that hear of a switch later than the strip shows it', () => {
       details: { tabId: B, reason: 'front-unknown' },
     });
     expect(world.chrome.clicks).toEqual([]);
+  });
+});
+
+describe('calls that run while a tab tool changes the tab in front', () => {
+  // A call on the chart page held open for a while: an expression that settles later.
+  const SLOW = 'new Promise((resolve) => setTimeout(() => resolve("settled"), 500))';
+
+  test('tab_switch leaves a call that runs on the chart page meanwhile to finish, and the next chart call acts on the new tab', async () => {
+    const { client } = await startHarness(
+      { tabs: [chartA, chartB], active: A },
+      { allowEval: true },
+    );
+
+    const slow = callTool(client, 'ui_evaluate', { expression: SLOW });
+    // The expression is under way in the page of the first tab before the switch.
+    await delay(100);
+    const switched = await callTool(client, 'tab_switch', { tabId: B });
+    const state = await callTool(client, 'chart_get_state');
+
+    expect(envelopeOf(await slow)).toMatchObject({
+      ok: true,
+      data: { value: 'settled', truncated: false },
+    });
+    expect(dataOf(switched)).toEqual({ id: B, index: 1, changed: true });
+    expect(dataOf(state)).toMatchObject({ symbol: 'NASDAQ:MSFT' });
+  });
+
+  test('tab_new and tab_close leave a call that runs on a chart page meanwhile to finish', async () => {
+    const { client } = await startHarness({ tabs: [chartA] }, { allowEval: true });
+
+    const during = async (tool: string, args: Record<string, unknown> = {}) => {
+      const slow = callTool(client, 'ui_evaluate', { expression: SLOW });
+      await delay(100);
+      const result = await callTool(client, tool, args);
+      expect(envelopeOf(await slow), tool).toMatchObject({ ok: true, data: { value: 'settled' } });
+      return result;
+    };
+
+    const opened = await during('tab_new');
+    await callTool(client, 'tab_switch', { tabId: A });
+    const closed = await during('tab_close', { tabId: OPENED });
+
+    expect(dataOf(opened)).toMatchObject({ id: OPENED });
+    expect(dataOf(closed)).toEqual({ closed: OPENED, remaining: 1 });
   });
 });
 
