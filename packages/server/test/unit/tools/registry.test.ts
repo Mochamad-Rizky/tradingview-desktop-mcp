@@ -417,7 +417,9 @@ test('registry emits start and end events with the error code', async () => {
 
   expect(events).toHaveLength(2);
   const [start, end] = events;
+  // The bus numbers the events; the registry emits everything else.
   expect(start).toStrictEqual({
+    seq: 1,
     id: expect.any(String) as string,
     tool: 'chart_fail',
     origin: 'batch',
@@ -426,6 +428,7 @@ test('registry emits start and end events with the error code', async () => {
     args: { reason: 'test' },
   });
   expect(end).toStrictEqual({
+    seq: 2,
     id: start?.id,
     tool: 'chart_fail',
     origin: 'batch',
@@ -703,6 +706,7 @@ test('registry reports a successful call as ok, with its own id per call', async
 
   expect(events.map(({ phase }) => phase)).toEqual(['start', 'end', 'start', 'end']);
   expect(events[1]).toStrictEqual({
+    seq: 2,
     id: events[0]?.id,
     tool: 'chart_echo',
     origin: 'mcp',

@@ -8,16 +8,8 @@ import type { ToolCallEvent } from '../core/events.js';
 import { toErrorResult, toSuccessResult, type ToolMeta } from '../core/result.js';
 import type { JsonValue } from '../utils/json.js';
 import { redactedArgs } from './redaction.js';
+import { toolProfiles } from './schema-export.js';
 import type { AnyToolDefinition, ToolContext, ToolOutput, ToolRegistry } from './types.js';
-
-// Which tools each profile keeps (design spec 5.4).
-const PROFILES: Record<Profile, (tool: AnyToolDefinition) => boolean> = {
-  full: () => true,
-  core: (tool) => tool.core === true,
-  // A tool that does not say that it only reads may change something, so only the explicit hint
-  // counts.
-  readonly: (tool) => tool.annotations.readOnlyHint === true,
-};
 
 // `*` stands for any run of characters and every other character for itself. Case is ignored:
 // tool names are lower case, and a filter typed in capitals means the same tools.
@@ -29,16 +21,17 @@ function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${source}$`, 'i');
 }
 
-// The tools that the profile keeps and, when there are patterns, that match at least one of them.
-// No patterns means no restriction. The order of `tools` is kept.
+// The tools that the profile keeps (toolProfiles) and, when there are patterns, that match at
+// least one of them. No patterns means no restriction. The order of `tools` is kept.
 export function selectTools(
   tools: AnyToolDefinition[],
   options: { profile: Profile; patterns: string[] },
 ): AnyToolDefinition[] {
-  const keep = PROFILES[options.profile];
   const globs = options.patterns.map(globToRegExp);
   return tools.filter(
-    (tool) => keep(tool) && (globs.length === 0 || globs.some((glob) => glob.test(tool.name))),
+    (tool) =>
+      toolProfiles(tool).includes(options.profile) &&
+      (globs.length === 0 || globs.some((glob) => glob.test(tool.name))),
   );
 }
 

@@ -19,4 +19,18 @@ export type {
   ToolOutput,
   ToolRegistry,
 } from './tools/types.js';
+export type {
+  DashboardCallRequest,
+  DashboardCallResult,
+  DashboardDomain,
+  DashboardError,
+  DashboardErrorCode,
+  DashboardEvent,
+  DashboardHealth,
+  DashboardInfo,
+  DashboardProfile,
+  DashboardTool,
+  DashboardToolList,
+  JsonSchemaObject,
+} from './transports/dashboard/contract.js';
 export type { JsonObject, JsonValue } from './utils/json.js';
