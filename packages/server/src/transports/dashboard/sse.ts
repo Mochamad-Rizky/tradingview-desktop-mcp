@@ -10,15 +10,20 @@ const HEARTBEAT_MS = 15_000;
 const MAX_BUFFERED_BYTES = 1_048_576;
 
 const LINE_BREAK = /[\r\n]/;
+const LINE_BREAK_OR_NUL = /[\r\n\0]/;
 
 // One server-sent event. JSON.stringify escapes every line break inside a value, so the data is one
 // line. Without an id the client keeps the last id it saw.
-export function formatSseEvent(event: string, data: JsonValue, id?: number): string {
-  // A line break would end the event field and start another, such as a forged id.
+export function formatSseEvent(event: string, data: JsonValue, id?: string): string {
+  // A line break would end the field and start another, such as a forged id.
   if (LINE_BREAK.test(event)) {
     throw new Error(`An event name cannot hold a line break: ${JSON.stringify(event)}`);
   }
-  const idLine = id === undefined ? '' : `id: ${String(id)}\n`;
+  // A browser ignores an id with a NUL in it, and would resume from the id before.
+  if (id !== undefined && LINE_BREAK_OR_NUL.test(id)) {
+    throw new Error(`An event id cannot hold a line break or a NUL: ${JSON.stringify(id)}`);
+  }
+  const idLine = id === undefined ? '' : `id: ${id}\n`;
   return `${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
@@ -62,7 +67,7 @@ export class SseStream {
   }
 
   // False when the stream is closed, or closes now because the client is too far behind.
-  send(event: string, data: JsonValue, id?: number): boolean {
+  send(event: string, data: JsonValue, id?: string): boolean {
     return this.#write(formatSseEvent(event, data, id));
   }
 

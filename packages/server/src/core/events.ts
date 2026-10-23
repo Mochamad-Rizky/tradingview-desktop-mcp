@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { JsonValue } from '../utils/json.js';
 import type { ErrorCode } from './errors.js';
 
@@ -33,6 +34,10 @@ function wholeCount(limit: number): number {
 // late observer can catch up. The backlog is a bounded FIFO: at this size, dropping the oldest
 // entry with shift() is cheaper than the bookkeeping of a circular index.
 export class ToolEventBus {
+  // Names this bus among the buses of earlier and later processes, whose seqs start at 1 as well:
+  // an observer that comes back after a restart can tell that the seq it saw was given by another
+  // bus. Hex, so it never holds the dash that a stream id puts between it and a seq.
+  readonly bootId: string = randomBytes(4).toString('hex');
   readonly #buffer: ToolCallEvent[] = [];
   readonly #subscribers = new Set<(e: ToolCallEvent) => void>();
   // The seq of the last event emitted; 0 before the first.

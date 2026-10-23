@@ -203,3 +203,15 @@ test('after() returns a copy, so reordering the result does not reorder the buff
 
   expect(bus.recent().map(({ seq }) => seq)).toEqual([1, 2]);
 });
+
+// The seqs of a bus start at 1 again after a restart, so an observer needs to know which bus gave
+// the seq it resumes from.
+test('every bus names itself with a short random boot id of its own', () => {
+  const ids = new Set(Array.from({ length: 20 }, () => new ToolEventBus().bootId));
+
+  expect(ids.size).toBe(20);
+  for (const id of ids) {
+    // Hex only: an id never holds the dash that separates it from the seq in a stream id.
+    expect(id).toMatch(/^[0-9a-f]{8}$/);
+  }
+});

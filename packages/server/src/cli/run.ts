@@ -5,7 +5,8 @@ import type { CliCommand, Config } from '../config/schema.js';
 import { debugPortEndpoint } from '../core/cdp/discovery.js';
 import { isTvMcpError } from '../core/errors.js';
 import { createMcpServer, createServerDeps, type ServerDeps } from '../server.js';
-import { startHttpTransport } from '../transports/http.js';
+import { createDashboardApi, type DashboardApi } from '../transports/dashboard/api.js';
+import { mcpUrl, startHttpTransport } from '../transports/http.js';
 import { startStdioTransport } from '../transports/stdio.js';
 import { withTimeout } from '../utils/timeout.js';
 import { VERSION } from '../version.js';
@@ -114,6 +115,26 @@ async function closeConnection({ connection, logger }: ServerDeps): Promise<void
   }
 }
 
+// The dashboard API of the process. Its tool calls go through a registry of their own, created once
+// with a session state of its own, on the dependencies of the process: they reach the connection
+// and the event bus that every MCP session uses.
+function dashboardApi(
+  config: Readonly<Config>,
+  deps: ServerDeps,
+  mcpEndpoint: string | null,
+): DashboardApi {
+  return createDashboardApi({
+    config,
+    registry: createMcpServer(config, deps).registry,
+    events: deps.events,
+    connection: deps.connection,
+    version: VERSION,
+    startedAt: new Date(),
+    mcpEndpoint,
+    logger: deps.logger,
+  });
+}
+
 interface Serving {
   // Where an HTTP client connects, without the token.
   endpoint?: string;
@@ -137,6 +158,9 @@ async function startServing(
     config,
     logger: deps.logger,
     createServer: () => createMcpServer(config, deps).server,
+    ...(config.dashboard
+      ? { dashboard: { api: dashboardApi(config, deps, mcpUrl(config.httpHost, config.httpPort)) } }
+      : {}),
   });
   return { endpoint: handle.url, close: () => handle.close() };
 }

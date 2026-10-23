@@ -86,8 +86,11 @@ export type DashboardHealth = {
 };
 
 // An event of the stream of GET /api/events (ToolCallEvent): the start or the end of a tool call.
-// seq numbers the events of one server process from 1 and is the id of the stream event. A start
-// carries the arguments as the server shows them, redacted and cut; an end carries the outcome.
+// seq numbers the events of one server process from 1. The id of the stream event is the boot id of
+// that process, a dash and the seq, so that a server that restarted can tell the id of a client that
+// resumes from one of its own; a client keeps it as it is, and starts afresh after a gap event. A
+// start carries the arguments as the server shows them, redacted and cut; an end carries the
+// outcome.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type DashboardEvent = {
   seq: number;

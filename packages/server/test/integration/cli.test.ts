@@ -5,6 +5,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { runCli } from '../../src/cli/run.js';
+import { ToolEventBus } from '../../src/core/events.js';
+import { allTools } from '../../src/tools/index.js';
 import { startFakeCdpServer, type FakeCdpServer } from '../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../helpers/fake-cdp/targets.js';
 import { loadTvFixture } from '../helpers/fake-tv/fixture.js';
@@ -160,6 +162,84 @@ test('serve over http shares one CDP session between MCP sessions and stops on S
   await expect(fetch(`http://127.0.0.1:${String(port)}/healthz`)).rejects.toThrow();
   expect(app.openConnectionCount()).toBe(0);
   expect(signals.eventNames()).toEqual([]);
+});
+
+// A request to the dashboard API of a server on `port`, with the token.
+function apiRequest(port: number, path: string, body?: string): Promise<Response> {
+  return fetch(`http://127.0.0.1:${String(port)}${path}`, {
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { method: 'POST', body }),
+  });
+}
+
+test('serve over http serves the dashboard API on the bus and the connection of the process', async () => {
+  const app = await startApp();
+  const port = await freePort();
+  const events = new ToolEventBus();
+  const signals = new EventEmitter();
+  const stderr = new CaptureStream();
+  const running = runCli(
+    ['--transport', 'http', '--port', String(port)],
+    { ...appEnv(app), TV_MCP_AUTH_TOKEN: TOKEN },
+    { stdout: new CaptureStream(), stderr, process: signals },
+    { logger: quietLogger, launcher: refusingLauncher(), events },
+  );
+  const endpoint = `http://127.0.0.1:${String(port)}/mcp`;
+  await expect.poll(() => stderr.text, { timeout: 5000 }).toContain(endpoint);
+
+  const info = (await (await apiRequest(port, '/api/info')).json()) as Record<string, unknown>;
+  const call = await apiRequest(port, '/api/tools/chart_get_state', '{}');
+  const client = await connectHttpClient(endpoint);
+  await client.callTool({ name: 'chart_get_state', arguments: {} });
+
+  // The endpoint the dashboard shows is the one of the banner.
+  expect(info).toMatchObject({ transport: 'http', mcpEndpoint: endpoint });
+  expect(info.toolCount).toBe(allTools.length);
+  expect(call.status).toBe(200);
+  expect(events.recent().map(({ origin, phase }) => `${origin} ${phase}`)).toEqual([
+    'dashboard start',
+    'dashboard end',
+    'mcp start',
+    'mcp end',
+  ]);
+  // The dashboard's calls go through the connection manager of the process, like the session's.
+  expect(app.connectionCount(CHART_ID)).toBe(1);
+
+  signals.emit('SIGTERM');
+  expect(await running).toBe(0);
+});
+
+// A server without tools says so each time it is created, which shows when the CLI creates one.
+test('serve over http builds one dashboard registry at startup, and none with --no-dashboard', async () => {
+  const noTools = (lines: Record<string, unknown>[]) =>
+    lines.filter((line) => typeof line.msg === 'string' && line.msg.startsWith('No tool matches'));
+
+  for (const [flags, status, registries] of [
+    [[], 200, 1],
+    [['--no-dashboard'], 404, 0],
+  ] as const) {
+    const { logger, lines } = capturingLogger();
+    const port = await freePort();
+    const signals = new EventEmitter();
+    const stderr = new CaptureStream();
+    const running = runCli(
+      ['--transport', 'http', '--port', String(port), '--tools', 'nosuchdomain_*', ...flags],
+      { TV_CDP_PORT: '9', TV_MCP_AUTH_TOKEN: TOKEN },
+      { stdout: new CaptureStream(), stderr, process: signals },
+      { logger, launcher: refusingLauncher(), connection: unreachableConnection(logger) },
+    );
+    await expect.poll(() => stderr.text, { timeout: 5000 }).toContain(String(port));
+
+    const first = await apiRequest(port, '/api/info');
+    const second = await apiRequest(port, '/api/tools/app_health', '{}');
+
+    expect(first.status).toBe(status);
+    // No tool is offered to call, and without the dashboard there is no API at all.
+    expect(second.status).toBe(404);
+    expect(noTools(lines)).toHaveLength(registries);
+    signals.emit('SIGTERM');
+    expect(await running).toBe(0);
+  }
 });
 
 test('serve over http exits 1 with the code, message and hint when the port is taken', async () => {

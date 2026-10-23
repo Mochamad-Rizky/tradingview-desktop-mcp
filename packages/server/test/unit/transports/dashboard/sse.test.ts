@@ -68,11 +68,11 @@ function openStream(options?: ConstructorParameters<typeof SseStream>[1]) {
 test('formatSseEvent writes one id, event and data line and a blank line', () => {
   const data = { tool: 'chart_get_state', args: { note: 'two\nlines' }, ok: true };
 
-  expect(formatSseEvent('tool', data, 7)).toBe(
-    `id: 7\nevent: tool\ndata: ${JSON.stringify(data)}\n\n`,
+  expect(formatSseEvent('tool', data, 'b007-7')).toBe(
+    `id: b007-7\nevent: tool\ndata: ${JSON.stringify(data)}\n\n`,
   );
   // The line break inside a value stays escaped, so the data is one line.
-  expect(formatSseEvent('tool', data, 7).split('\n')).toHaveLength(5);
+  expect(formatSseEvent('tool', data, 'b007-7').split('\n')).toHaveLength(5);
   // Without an id the client keeps the last one it saw.
   expect(formatSseEvent('gap', {})).toBe('event: gap\ndata: {}\n\n');
 });
@@ -82,6 +82,15 @@ test.each(['tool\nid: 99', 'tool\r', 'tool\r\nretry: 1'])(
   'formatSseEvent refuses an event name with a line break: %j',
   (event) => {
     expect(() => formatSseEvent(event, null)).toThrow('line break');
+  },
+);
+
+// An id is a string now, and a line break in it would end the id field and forge the ones after.
+// A NUL makes a browser ignore the id, which would keep it from resuming where it was.
+test.each(['b007-1\nevent: gap', 'b007-1\r', 'b007\u00001'])(
+  'formatSseEvent refuses an id with a line break or a NUL: %j',
+  (id) => {
+    expect(() => formatSseEvent('tool', null, id)).toThrow('line break or a NUL');
   },
 );
 
@@ -100,11 +109,11 @@ test('SseStream writes the event-stream headers and the retry delay first', () =
 test('SseStream sends events as formatSseEvent writes them', () => {
   const { res, stream } = openStream();
 
-  expect(stream.send('tool', { seq: 1 }, 1)).toBe(true);
+  expect(stream.send('tool', { seq: 1 }, 'b007-1')).toBe(true);
   expect(stream.send('gap', {})).toBe(true);
 
   expect(res.written).toBe(
-    `retry: 3000\n\n${formatSseEvent('tool', { seq: 1 }, 1)}${formatSseEvent('gap', {})}`,
+    `retry: 3000\n\n${formatSseEvent('tool', { seq: 1 }, 'b007-1')}${formatSseEvent('gap', {})}`,
   );
 });
 
@@ -140,10 +149,10 @@ test("SseStream closes and refuses to send when the client's unsent buffer passe
 
   // At the limit the client is behind, but not too far.
   res.writableLength = 100;
-  expect(stream.send('tool', { seq: 1 }, 1)).toBe(true);
+  expect(stream.send('tool', { seq: 1 }, 'b007-1')).toBe(true);
 
   res.writableLength = 101;
-  expect(stream.send('tool', { seq: 2 }, 2)).toBe(false);
+  expect(stream.send('tool', { seq: 2 }, 'b007-2')).toBe(false);
 
   // The buffered events are dropped with the connection, so memory is freed at once; the client
   // reconnects with the last id it got.
@@ -152,7 +161,7 @@ test("SseStream closes and refuses to send when the client's unsent buffer passe
   expect(onClose).toHaveBeenCalledOnce();
   expect(res.written).not.toContain('"seq":2');
   res.writableLength = 0;
-  expect(stream.send('tool', { seq: 3 }, 3)).toBe(false);
+  expect(stream.send('tool', { seq: 3 }, 'b007-3')).toBe(false);
   // No heartbeat is written to the closed stream either.
   const written = res.written;
   vi.advanceTimersByTime(5000);
@@ -206,7 +215,7 @@ test('SseStream closes the stream of a real client that stops reading', async ()
   const event = { text: 'x'.repeat(16 * 1024) };
   const most = 4096;
   let sent = 0;
-  while (sent < most && stream.send('tool', event, sent + 1)) {
+  while (sent < most && stream.send('tool', event, String(sent + 1))) {
     sent += 1;
   }
 
@@ -220,7 +229,7 @@ test('SseStream closes the stream of a real client that stops reading', async ()
 test('SseStream streams through a real response', async () => {
   const server = createServer((_req, res) => {
     const stream = new SseStream(res);
-    stream.send('tool', { seq: 1, tool: 'chart_get_state' }, 1);
+    stream.send('tool', { seq: 1, tool: 'chart_get_state' }, 'b007-1');
     stream.close();
   });
   const port = await listen(server);
@@ -235,7 +244,7 @@ test('SseStream streams through a real response', async () => {
   expect(response.headers.get('cache-control')).toBe('no-store');
   expect(response.headers.get('x-accel-buffering')).toBe('no');
   expect(await response.text()).toBe(
-    `retry: 3000\n\nid: 1\nevent: tool\ndata: {"seq":1,"tool":"chart_get_state"}\n\n`,
+    `retry: 3000\n\nid: b007-1\nevent: tool\ndata: {"seq":1,"tool":"chart_get_state"}\n\n`,
   );
 });
 

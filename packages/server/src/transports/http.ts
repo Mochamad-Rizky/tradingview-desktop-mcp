@@ -13,6 +13,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Config } from '../config/schema.js';
 import { TvMcpError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
+import type { DashboardApi } from './dashboard/api.js';
 import {
   allowedHostsFor,
   bearerToken,
@@ -34,8 +35,12 @@ export interface HttpTransportOptions {
   // process (see createServerDeps), because a target may only ever have one CDP session.
   createServer: () => McpServer;
   logger: Logger;
-  // Where the built dashboard is. Serving it arrives with the dashboard; until then it is unused.
-  dashboardDir?: string;
+  // The dashboard: its API under /api, and where its built files are. Without it, /api is 404.
+  dashboard?: {
+    api: DashboardApi;
+    // Serving the files arrives with the dashboard package; until then it is unused.
+    dir?: string;
+  };
   // How long a session may go without a request in flight before it is closed.
   sessionIdleTimeoutMs?: number;
 }
@@ -53,6 +58,8 @@ const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const MCP_ROUTE = /^\/mcp(?:\/([^/]+))?\/?$/;
 // Everything after /mcp/ can be a token, or a part of one that holds a slash.
 const MCP_SUBPATH = /^\/mcp\/./;
+// /api and everything under it.
+const API_ROUTE = /^\/api(?:\/|$)/;
 const REDACTED = '<redacted>';
 const REDACTED_PATH = '/mcp/<redacted>';
 const MCP_METHODS = ['GET', 'POST', 'DELETE'];
@@ -61,6 +68,10 @@ const HEALTH_METHODS = ['GET', 'HEAD'];
 const MISSING_TOKEN =
   'Authentication required: send the token as "Authorization: Bearer <token>", or in the path ' +
   'as /mcp/<token>';
+const MISSING_API_TOKEN =
+  'Authentication required: send the token as "Authorization: Bearer <token>"';
+const TOKEN_IN_URL =
+  'Send the token in the "Authorization: Bearer <token>" header only, never in the URL';
 
 interface Session {
   server: McpServer;
@@ -118,6 +129,27 @@ function urlHost(host: string): string {
   return isIPv6(host) ? `[${host}]` : host;
 }
 
+// Where MCP clients connect to a transport on host:port. It never holds the token, so it can be
+// shown and logged.
+export function mcpUrl(host: string, port: number): string {
+  return `http://${urlHost(host)}:${String(port)}/mcp`;
+}
+
+// Whether a URL carries the token, as it is or percent-encoded: as a path segment (several, for a
+// token that holds a slash), or anywhere in the query string, where a client might put a parameter
+// or an "Authorization" value. Only whole segments count in the path, where the names of the routes
+// are.
+function urlCarriesToken(url: string, token: string): boolean {
+  const queryStart = url.indexOf('?');
+  const path = queryStart === -1 ? url : url.slice(0, queryStart);
+  const query = queryStart === -1 ? '' : url.slice(queryStart + 1);
+  const inPath = [path, decodeEscapes(path)].some((text) => `${text}/`.includes(`/${token}/`));
+  const inQuery = [query, decodeEscapes(query), decodeEscapes(query.replaceAll('+', ' '))].some(
+    (text) => text.includes(token),
+  );
+  return inPath || inQuery;
+}
+
 function errnoCode(error: unknown): string | undefined {
   if (typeof error === 'object' && error !== null && 'code' in error) {
     return typeof error.code === 'string' ? error.code : undefined;
@@ -162,9 +194,10 @@ function listen(server: Server, host: string, port: number): Promise<void> {
   });
 }
 
-// Streamable HTTP with stateful sessions on config.httpHost:config.httpPort. Every request must
-// name this server as its Host and come from no web page but the server's own, and every MCP
-// request must carry the token. /healthz needs no token, for scripts that check the server is up.
+// Streamable HTTP with stateful sessions on config.httpHost:config.httpPort, and the dashboard API
+// under /api when a dashboard is given. Every request must name this server as its Host and come
+// from no web page but the server's own, and every MCP and API request must carry the token.
+// /healthz needs no token, for scripts that check the server is up.
 export async function startHttpTransport(options: HttpTransportOptions): Promise<HttpServerHandle> {
   const { config, createServer, logger } = options;
   const token = config.authToken;
@@ -317,6 +350,34 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     }
   };
 
+  // The dashboard API takes the token from the Authorization header only. A URL ends up in logs,
+  // browser histories and Referer headers, so one that carries the token is refused even next to
+  // the header: whoever sent it learns to stop.
+  const serveApi = async (req: IncomingMessage, res: ServerResponse, path: string) => {
+    const { dashboard } = options;
+    if (dashboard === undefined) {
+      sendJson(res, 404, { error: 'Not found' });
+      return;
+    }
+    if (urlCarriesToken(req.url ?? path, token)) {
+      refuse(req, path, 'token in the URL');
+      sendJson(res, 401, { error: TOKEN_IN_URL }, { 'WWW-Authenticate': 'Bearer' });
+      return;
+    }
+    const provided = bearerToken(req.headers.authorization);
+    if (!tokenMatches(provided, token)) {
+      refuse(req, path, provided === undefined ? 'missing token' : 'wrong token');
+      sendJson(
+        res,
+        401,
+        { error: provided === undefined ? MISSING_API_TOKEN : 'Invalid token' },
+        { 'WWW-Authenticate': 'Bearer' },
+      );
+      return;
+    }
+    await dashboard.api.handle(req, res, path);
+  };
+
   const route = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {
     const { host, origin } = req.headers;
     // 403 for a foreign Host as for a foreign Origin, as the SDK's own Host check answers: the
@@ -339,6 +400,10 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       } else {
         sendJson(res, 405, { error: 'Method not allowed' }, { Allow: HEALTH_METHODS.join(', ') });
       }
+      return;
+    }
+    if (API_ROUTE.test(path)) {
+      await serveApi(req, res, path);
       return;
     }
     const match = MCP_ROUTE.exec(path);
@@ -391,7 +456,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
 
   let closing: Promise<void> | undefined;
   return {
-    url: `http://${urlHost(config.httpHost)}:${String(port)}/mcp`,
+    url: mcpUrl(config.httpHost, port),
     port,
     close() {
       closing ??= (async () => {
@@ -401,6 +466,10 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
             resolve();
           });
         });
+        // The event streams of the dashboard end after what they sent, so their clients see them
+        // end rather than break. Ending a response hands its last bytes to the socket at once, so
+        // cutting the connections below loses none of them.
+        options.dashboard?.api.close();
         const open = [...live];
         for (const session of open) {
           session.closeReason = 'shutdown';
