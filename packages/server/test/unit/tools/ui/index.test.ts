@@ -392,6 +392,13 @@ describe('the descriptions of the keyboard, panel, fullscreen and evaluate tools
     expect(description).toMatch(/never in the window chrome/);
     expect(description).toMatch(/100 kB/);
     expect(description).toMatch(/UNSAFE_ACTION_BLOCKED/);
+    // Trading surfaces too, and every name joined out of pieces.
+    expect(description).toMatch(
+      /trading service of TradingView, its brokers, orders and positions/,
+    );
+    expect(description).toMatch(/the order buttons/);
+    expect(description).toMatch(/buy and sell calls of the replay API/);
+    expect(description).toMatch(/every one of these names is also looked for/i);
     // The objects themselves are withheld, not what the code copies out of them.
     expect(description).toMatch(/those objects themselves/);
     expect(description).toMatch(/what the code reads out of them or copies is not recognised/);

@@ -1820,6 +1820,28 @@ describe('ui_evaluate', () => {
     },
   );
 
+  // A click from the page itself never meets the guard of the input, so the denylist refuses it.
+  test.each([
+    'TradingViewApi.tradingService().then((s) => s.activeBroker().placeOrder({ qty: 1 }))',
+    'document.querySelector(\'[data-name="buy-order-button"]\').click()',
+    "document.querySelector('#header-toolbar-trade-desktop').click()",
+    'TradingViewApi.replayApi().then((r) => r.buy(1))',
+  ])(
+    'ui_evaluate refuses an expression that reaches trading, and sends nothing: %s',
+    async (expression) => {
+      const { client, app } = await startHarness({ config: ALLOW_EVAL });
+
+      const result = await callTool(client, 'ui_evaluate', { expression });
+
+      expect(errorOf(result)).toMatchObject({
+        code: 'UNSAFE_ACTION_BLOCKED',
+        hint: expect.stringMatching(/places no orders/) as string,
+        details: { category: 'trading' },
+      });
+      expect(app.calls).toEqual([]);
+    },
+  );
+
   test('ui_evaluate returns JSON-safe values and truncates beyond 100 kB', async () => {
     const save = fakeElement({
       tag: 'button',

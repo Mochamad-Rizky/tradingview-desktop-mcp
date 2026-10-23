@@ -909,8 +909,10 @@ User data lives in `~/Library/Application Support/TradingView` on macOS (`%APPDA
 - `tradingview-mcp` exposes **no broker trading tools**, and no replay trading tool either: on Desktop the paper
   trading of Bar Replay runs through the app's trading service with an internal replay broker, which the server never
   calls ([§4.5](#45-replay-api-await-tradingviewapireplayapi)).
-- `ui_evaluate` is disabled unless explicitly enabled, and denylists credential and identity surfaces (`TVD.getCredentials`,
-  `TVD.setCredentials`, `TVD.insertCredentialsText`, `document.cookie`, `window.user`).
+- `ui_evaluate` is disabled unless explicitly enabled, and denylists credential, identity and trading surfaces
+  (`TVD.getCredentials`, `TVD.setCredentials`, `TVD.insertCredentialsText`, `document.cookie`, `window.user`, the
+  trading service and its brokers, orders and positions, the [§5.5](#55-never-click) order buttons, which a click from
+  the page itself would press past the guard of the input, and the replay API's `buy` and `sell`).
 - The HTTP transport requires a bearer token, binds to `127.0.0.1` by default, and validates `Origin` to prevent DNS
   rebinding.
 

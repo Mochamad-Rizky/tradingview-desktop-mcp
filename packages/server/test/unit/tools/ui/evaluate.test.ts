@@ -137,8 +137,53 @@ describe('EVAL_DENYLIST', () => {
     expect(deniedSurface(expression)?.category).toBe(category);
   });
 
+  // Trading surfaces (design spec 5.3, rules 1 and 4): the trading service and its brokers, the
+  // order buttons, which a click from the page itself reaches past the guard of the input, and the
+  // buy and sell calls of the replay API.
+  test.each([
+    'TradingViewApi.tradingService().then((s) => s.activeBroker().placeOrder({ qty: 1 }))',
+    'document.querySelector(\'[data-name="buy-order-button"]\').click()',
+    "document.querySelector('#header-toolbar-trade-desktop').click()",
+    'TradingViewApi.replayApi().then((r) => r.buy(1))',
+    "TradingViewApi.replayApi().then((r) => r['sell'](1))",
+    'replay.sell.call(replay, 1)',
+    'broker.modifyOrder(order)',
+    'broker.cancelOrder(id)',
+    'broker.closePosition(id)',
+    'broker.reversePosition(id)',
+    'service.selectBroker("paper")',
+    'document.querySelector(\'[data-name="sell-order-button"]\').click()',
+    'document.querySelector(\'[data-name="buy-sell-buttons"] button\').click()',
+    'document.querySelector(\'[data-qa-id="trade-button"]\').click()',
+    "s[('place')+('Order')]({})",
+    "r[('bu')+('y')](1)",
+    "TradingViewApi[('trading')/* a gap */+('Service')]()",
+  ])('refuses the trading surface in %s', (expression) => {
+    expect(deniedSurface(expression)?.category).toBe('trading');
+  });
+
+  // The other names joined in parentheses, or around comments, which the joined reading misses.
+  test.each([
+    ['identity', "window[('us')+('er')]"],
+    ['identity', "data[('ses')+('sionId')]"],
+    ['credentials', "form[('pass')+('word')]"],
+    ['network', "window[('fe')+('tch')]('/x')"],
+    ['network', "new window[('Web')+('Socket')]('wss://x')"],
+    ['network', "navigator[('send')/* a gap */+('Beacon')]('/x', 'y')"],
+    ['node', "globalThis[('re')+('quire')]('fs')"],
+    ['node', "window[('pro')//\n+('cess')]"],
+    ['tvd', "window[('T')/* a gap */+('VD')]"],
+    ['cookies', "document[('coo')/**/+('kie')]"],
+    ['storage', "window[('local')//\n+('Storage')]"],
+  ])('refuses %s joined in parentheses or around comments in %j', (category, expression) => {
+    expect(deniedSurface(expression)?.category).toBe(category);
+  });
+
   test.each([
     '1 + 1',
+    // A buy or a sell that is not called, and words that merely hold one.
+    'document.title.includes("Sell")',
+    'data.buyers.length',
     'TradingViewApi.activeChart().symbol()',
     'document.title',
     // userAgent is no user, and the other words merely hold a denied one.

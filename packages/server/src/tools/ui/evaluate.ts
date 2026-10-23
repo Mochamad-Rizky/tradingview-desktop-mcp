@@ -3,51 +3,58 @@ import { isTvMcpError, TvMcpError } from '../../core/errors.js';
 import { defineTool } from '../types.js';
 import { evaluateExpression } from './page.js';
 
-// ui_evaluate, the opt-in power tool of the low-level interface (design spec 5.3, rules 4 and 5):
+// ui_evaluate, the opt-in power tool of the low-level interface (design spec 5.3, rules 1, 4 and 5):
 // JavaScript a client wrote, run in the chart tab of the user's live, signed-in TradingView. It is
 // off unless the user started the server with TV_MCP_ALLOW_EVAL=true (--allow-eval), it runs in the
 // chart tab only and never in the window chrome, whose renderer has Node integration, and it refuses
-// before anything is sent an expression that names a credential, identity, storage, network or Node
-// surface. That denylist reads the text of the expression, so a name built while the code runs gets
-// past it; the page function therefore also never writes out the objects that hold the user and
-// the credentials (EVAL_WITHHELD_GLOBALS), whatever the code reached them by. Neither the expression
-// nor its value is ever logged.
+// before anything is sent an expression that names a credential, identity, storage, network, Node
+// or trading surface. A trading control clicked by the page itself never meets the guard of the
+// input, so the denylist is all that keeps an expression from it. That denylist reads the text of
+// the expression, so a name built while the code runs gets past it; the page function therefore also
+// never writes out the objects that hold the user and the credentials (EVAL_WITHHELD_GLOBALS),
+// whatever the code reached them by. Neither the expression nor its value is ever logged.
 
 export type EvalDeniedCategory =
-  'tvd' | 'identity' | 'cookies' | 'storage' | 'credentials' | 'network' | 'node';
+  'tvd' | 'identity' | 'cookies' | 'storage' | 'credentials' | 'network' | 'node' | 'trading';
 
 // A name in a pattern below is a whole word unless it is said otherwise: no letter, digit or $
 // next to it, while an underscore may be, so that __TVD__ and user_id count.
-// The names in `names` are looked for in the squashed reading of the text as they are written in
-// JavaScript, capitals and all (see readings).
+// The names in `names`, the riskiest, are looked for anywhere in the squashed readings of the text
+// as they are written in JavaScript, capitals and all; the words in `words`, every name of the entry
+// in lower case, wherever the squashed readings join one out of pieces (see readings).
 const DENIED: readonly {
   category: EvalDeniedCategory;
   surface: string;
   patterns: readonly RegExp[];
   names?: readonly string[];
+  words: readonly string[];
 }[] = [
   {
     category: 'tvd',
     surface: 'the desktop bridge of TradingView (TVD), which holds the credentials of the user',
     patterns: [/(?<![a-z0-9$])tvd(?![a-z0-9$])/i],
     names: ['TVD'],
+    words: ['tvd'],
   },
   {
     category: 'identity',
     surface: 'the user object and the identity of the user (user ids and names, session ids)',
     patterns: [/(?<![a-z0-9$])user(?![a-z0-9$])/i, /user_?(?:id|name)/i, /session_?id/i],
+    words: ['user', 'session_id', 'sessionid'],
   },
   {
     category: 'cookies',
     surface: 'the cookies of the page',
     patterns: [/cookie/i],
     names: ['cookie'],
+    words: ['cookie'],
   },
   {
     category: 'storage',
     surface: 'the storage of the page (localStorage, sessionStorage, indexedDB)',
     patterns: [/localstorage/i, /sessionstorage/i, /indexeddb/i],
     names: ['localStorage', 'sessionStorage', 'indexedDB'],
+    words: ['localstorage', 'sessionstorage', 'indexeddb'],
   },
   {
     category: 'credentials',
@@ -64,6 +71,7 @@ const DENIED: readonly {
       /auth(?!or(?!i[sz]))/i,
     ],
     names: ['getCredentials', 'setCredentials', 'insertCredentialsText'],
+    words: ['credential', 'signin', 'sign_in', 'password', 'passwd', 'token', 'auth'],
   },
   {
     category: 'network',
@@ -77,6 +85,7 @@ const DENIED: readonly {
       /sendbeacon/i,
       /(?<![a-z0-9$])import(?![a-z0-9$])/i,
     ],
+    words: ['fetch', 'xmlhttprequest', 'websocket', 'eventsource', 'sendbeacon', 'import'],
   },
   {
     category: 'node',
@@ -86,6 +95,54 @@ const DENIED: readonly {
       /(?<![a-z0-9$])process(?![a-z0-9$])/i,
       /child_process/i,
       /electron/i,
+    ],
+    words: ['require', 'process', 'child_process', 'electron'],
+  },
+  {
+    category: 'trading',
+    surface:
+      'trading (the trading service of TradingView, its brokers, orders and positions, the order ' +
+      'buttons, and the buy and sell of the replay API)',
+    // The order buttons by the selectors of reverse-engineering notes 5.5, and a buy or a sell as a
+    // call: called, called by its name in brackets, or through call, apply or bind.
+    patterns: [
+      /trading_?service/i,
+      /(?:place|modify|cancel)_?orders?/i,
+      /(?:close|reverse)_?positions?/i,
+      /(?:select|active)_?broker/i,
+      /buy-order-button/i,
+      /sell-order-button/i,
+      /buy-sell-buttons/i,
+      /trade-button/i,
+      /header-toolbar-trade/i,
+      /(?<![a-z0-9$])(?:buy|sell)(?![a-z0-9$])[\s'"`\])]*(?:\(|\.\s*(?:call|apply|bind)(?![a-z0-9$]))/i,
+    ],
+    names: [
+      'tradingService',
+      'placeOrder',
+      'modifyOrder',
+      'cancelOrder',
+      'closePosition',
+      'reversePosition',
+      'selectBroker',
+      'activeBroker',
+    ],
+    words: [
+      'tradingservice',
+      'placeorder',
+      'modifyorder',
+      'cancelorder',
+      'closeposition',
+      'reverseposition',
+      'selectbroker',
+      'activebroker',
+      'buy-order-button',
+      'sell-order-button',
+      'buy-sell-buttons',
+      'trade-button',
+      'header-toolbar-trade',
+      'buy',
+      'sell',
     ],
   },
 ];
@@ -97,8 +154,8 @@ export const EVAL_DENYLIST: readonly RegExp[] = Object.freeze(
   DENIED.flatMap(({ patterns }) => patterns),
 );
 
-// The names of the riskiest surfaces, which ui_evaluate also looks for in the squashed reading of
-// an expression, as JavaScript writes them (see deniedSurface). Frozen as well.
+// The names of the riskiest surfaces, which ui_evaluate also looks for anywhere in the squashed
+// readings of an expression, as JavaScript writes them (see deniedSurface). Frozen as well.
 export const EVAL_DENIED_NAMES: readonly string[] = Object.freeze(
   DENIED.flatMap(({ names }) => names ?? []),
 );
@@ -130,24 +187,12 @@ function fromCodePoint(hex: string): string {
   return code <= 0x10ffff ? String.fromCodePoint(code) : '';
 }
 
-// The text of an expression, read the ways the denylist looks at it:
-// - as it is, which keeps every word of the expression, since the other readings could hide one;
-// - decoded: its escapes written as the characters they stand for (\x54, \u0054 and \u{0054},
-//   with any number of zeros, are T, in a string as in a name; an octal escape likewise; a backslash
-//   that ends a line inside a string, before a CR, an LF, both, or a line or paragraph separator,
-//   stands for nothing; any other escaped character is itself);
-// - joined: the decoded text with the strings that + joins written as one ('T' + 'VD' is 'TVD',
-//   comments between them too) and a string put into a template as its text;
-// - squashed: the decoded text without white space, quotes, backticks, +, brackets, parentheses,
-//   commas, the ${ and } of templates and the word concat, in which only the names of the riskiest
-//   surfaces are looked for: ('T')+('VD'), 'T'.concat('V', 'D') and 'T'['concat']('VD') all read
-//   TVD there. A name that only appears once such characters are gone is refused too, which errs on
-//   the side of refusing.
-function readings(expression: string): {
-  texts: [string, string, string];
-  squashed: string;
-} {
-  const decoded = expression
+// The escapes of a text written as the characters they stand for (\x54, T and \u{0054}, with
+// any number of zeros, are T, in a string as in a name; an octal escape likewise; a backslash that
+// ends a line inside a string, before a CR, an LF, both, or a line or paragraph separator, stands for
+// nothing; any other escaped character is itself).
+function decode(text: string): string {
+  return text
     .replace(/\\u\{0*([0-9a-f]{1,6})\}/gi, (_match, hex: string) => fromCodePoint(hex))
     .replace(/\\u([0-9a-f]{4})/gi, (_match, hex: string) => fromCodePoint(hex))
     .replace(/\\x([0-9a-f]{2})/gi, (_match, hex: string) => fromCodePoint(hex))
@@ -156,26 +201,97 @@ function readings(expression: string): {
     )
     .replace(/\\(?:\r\n|[\r\n\u2028\u2029])/g, '')
     .replace(/\\([\s\S])/g, '$1');
-  const joined = decoded.replace(/\$\{\s*(['"`])([^'"`]*)\1\s*\}/g, '$2').replace(SEAM, '');
-  const squashed = decoded
+}
+
+// The text without its comments, a // to the end of its line and a /* to the next */, outside its
+// strings, whose quotes and escapes it follows so that a // or a /* inside a string stays. The
+// patterns of regular expressions are not told apart, so a quote in one can keep a comment in.
+function withoutComments(text: string): string {
+  let kept = '';
+  let quote: string | null = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text.charAt(index);
+    if (quote !== null) {
+      kept += character;
+      if (character === '\\') {
+        kept += text.charAt(index + 1);
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+    } else if (text.startsWith('//', index)) {
+      const end = text.indexOf('\n', index);
+      index = end === -1 ? text.length : end - 1;
+    } else if (text.startsWith('/*', index)) {
+      const end = text.indexOf('*/', index + 2);
+      index = end === -1 ? text.length : end + 1;
+    } else {
+      if (character === "'" || character === '"' || character === '`') {
+        quote = character;
+      }
+      kept += character;
+    }
+  }
+  return kept;
+}
+
+// A text without white space, quotes, backticks, +, brackets, parentheses, commas, the ${ and } of
+// templates and the word concat: ('T')+('VD'), 'T'.concat('V', 'D') and 'T'['concat']('VD') all
+// read TVD in it.
+function squash(text: string): string {
+  return text
     .replace(/\s+/g, '')
     .replace(/\.?concat/g, '')
     .replace(/\$\{/g, '')
     .replace(/['"`+[\](),}]/g, '');
-  return { texts: [expression, decoded, joined], squashed };
+}
+
+// The text of an expression, read the ways the denylist looks at it:
+// - as it is, which keeps every word of the expression, since the other readings could hide one;
+// - decoded (decode);
+// - joined: the decoded text with the strings that + joins written as one ('T' + 'VD' is 'TVD',
+//   comments between them too) and a string put into a template as its text;
+// - squashed (squash), of the decoded text and of the decoded text without its comments
+//   (withoutComments), each beside the text it was squashed from: ('T')/* a gap */+('VD') reads TVD
+//   in the second. A name that only appears once such characters are gone is refused, which errs on
+//   the side of refusing.
+function readings(expression: string): {
+  texts: [string, string, string];
+  squashed: { from: string; text: string }[];
+} {
+  const decoded = decode(expression);
+  const joined = decoded.replace(/\$\{\s*(['"`])([^'"`]*)\1\s*\}/g, '$2').replace(SEAM, '');
+  return {
+    texts: [expression, decoded, joined],
+    squashed: [decoded, decode(withoutComments(expression))].map((from) => ({
+      from,
+      text: squash(from),
+    })),
+  };
+}
+
+// How many times `word`, in lower case, occurs in `text`, case aside.
+function occurrences(text: string, word: string): number {
+  return text.toLowerCase().split(word).length - 1;
 }
 
 // The surface an expression names that ui_evaluate refuses, by its category and in words, or null
-// for none. It reads only the text: it is best effort, and a name built while the code runs gets
-// past it.
+// for none: a pattern of an entry in one of the readings of the text, one of its names anywhere in a
+// squashed reading, or one of its words in a squashed reading more often than in the text squashed,
+// which is a word the squashing joined out of pieces: ('fe')+('tch') reads fetch there, while
+// prefetchData merely holds it. It reads only the text: it is best effort, and a name built while
+// the code runs gets past it.
 export function deniedSurface(
   expression: string,
 ): { category: EvalDeniedCategory; surface: string } | null {
   const { texts, squashed } = readings(expression);
-  for (const { category, surface, patterns, names = [] } of DENIED) {
+  for (const { category, surface, patterns, names = [], words } of DENIED) {
     if (
       patterns.some((pattern) => texts.some((text) => pattern.test(text))) ||
-      names.some((name) => squashed.includes(name))
+      names.some((name) => squashed.some(({ text }) => text.includes(name))) ||
+      words.some((word) =>
+        squashed.some(({ from, text }) => occurrences(text, word) > occurrences(from, word)),
+      )
     ) {
       return { category, surface };
     }
@@ -201,10 +317,15 @@ export const uiEvaluate = defineTool({
     'the desktop bridge (TVD), the user object, user ids or names or session ids, cookies, the ' +
     'storage of the page (localStorage, sessionStorage, indexedDB), credentials (passwords, ' +
     'tokens, signing in, authentication), requests to the network (fetch, XMLHttpRequest, ' +
-    'WebSocket, EventSource, sendBeacon, import()) or Node.js (require, process, child_process, ' +
-    'electron), in the spacing, bracket, quote, joined-string, concat and escaped forms it ' +
-    'knows. The denylist is best effort: it reads the text of the expression, and a name built ' +
-    'in other ways while the code runs gets ' +
+    'WebSocket, EventSource, sendBeacon, import()), Node.js (require, process, child_process, ' +
+    'electron) or trading: the trading service of TradingView, its brokers, orders and positions ' +
+    '(placeOrder, closePosition and the like), the order buttons (buy-order-button, trade-button ' +
+    'and the like, which a click from the code itself would press past every guard of the input) ' +
+    'and the buy and sell calls of the replay API. It knows the spacing, bracket, quote, ' +
+    'joined-string, concat, comment and escaped forms of them: every one of these names is also ' +
+    'looked for once quotes, brackets, parentheses, +, concat and comments are taken out, so that ' +
+    'a name joined out of pieces is refused too. The denylist is best effort: it reads the text ' +
+    'of the expression, and a name built in other ways while the code runs gets ' +
     'past it, so those objects themselves, the user object, the desktop bridge and the storage ' +
     'of the page, never come back in a value either, whatever the code reached them by: they ' +
     'are [withheld]. Only the objects are known: what the code reads out of them or copies is not ' +
@@ -253,7 +374,7 @@ export const uiEvaluate = defineTool({
           hint:
             'The denylist reads the text of the expression and errs on the side of refusing. ' +
             'Leave that out: this server reads no credentials, identity, cookies or storage of ' +
-            'the user, and sends no requests of its own.',
+            'the user, sends no requests of its own and places no orders.',
           details: { category: denied.category },
         },
       );

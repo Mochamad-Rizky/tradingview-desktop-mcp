@@ -143,7 +143,9 @@ leave the server.
    charts, `app_launch` with `restart: true`, and `app_reconnect` with `reloadTab: true`, which can lose unsaved Pine
    Editor text). Operations on objects the server created in this session do not.
 3. Plan limits are checked before acting (`PLAN_LIMIT`), and server-side limit errors are relayed unchanged.
-4. `ui_evaluate` is off unless `TV_MCP_ALLOW_EVAL=true`, and denylists credential and identity surfaces.
+4. `ui_evaluate` is off unless `TV_MCP_ALLOW_EVAL=true`, and denylists credential, identity and trading surfaces
+   (the trading service, brokers, orders and positions, the order buttons of reverse-engineering §5.5, and the buy and
+   sell calls of the replay API), since a click the page itself makes never meets the guard of the input.
 5. No tool returns cookies, `window.user`, session identifiers, or `TVD` credential data.
 
 ### 5.4 Tool profiles
