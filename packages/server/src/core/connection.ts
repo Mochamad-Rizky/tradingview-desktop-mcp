@@ -1,6 +1,7 @@
 import { retry } from '../utils/retry.js';
 import { withTimeout } from '../utils/timeout.js';
 import {
+  classifyTarget,
   findChartTargets,
   findWindowChromeTarget,
   isNewTabPage,
@@ -129,6 +130,16 @@ function windowChromeMissing(): TvMcpError {
   });
 }
 
+// Each TradingView window has a window chrome of its own, and the tab and window tools act on the
+// strip of one window: with several, which one the user means cannot be told.
+function severalWindows(count: number): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    'Several TradingView windows are open, and the tab and window tools work with one window',
+    { hint: 'Close the other TradingView windows, then try again.', details: { windows: count } },
+  );
+}
+
 async function closeSession(session: CdpSession): Promise<void> {
   try {
     await session.close();
@@ -220,7 +231,8 @@ export class ConnectionManager {
     return this.chartFlight;
   }
 
-  // The window chrome, which holds the tab strip: TARGET_NOT_FOUND when the app has no window.
+  // The window chrome, which holds the tab strip: TARGET_NOT_FOUND when the app has no window, and
+  // NOT_AVAILABLE when it has several.
   windowChromePage(): Promise<PageHandle> {
     return this.retrying(() => this.resolveWindowChrome());
   }
@@ -301,9 +313,15 @@ export class ConnectionManager {
 
   private async resolveWindowChrome(): Promise<PageHandle> {
     this.assertOpen();
-    const chrome = findWindowChromeTarget(await this.targets());
+    const chromes = (await this.targets()).filter(
+      (target) => classifyTarget(target) === 'window-chrome',
+    );
+    const [chrome, ...others] = chromes;
     if (chrome === undefined) {
       throw windowChromeMissing();
+    }
+    if (others.length > 0) {
+      throw severalWindows(chromes.length);
     }
     return this.page(chrome);
   }

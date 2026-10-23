@@ -1295,6 +1295,40 @@ describe('the tab tools while a replay this session started runs', () => {
   });
 });
 
+describe('several TradingView windows', () => {
+  test('the tab tools and the tools on the window chrome refuse NOT_AVAILABLE, and click nothing', async () => {
+    const { client, world, app } = await startHarness({ tabs: [chartA, chartB], active: A });
+    const chrome = world.targets().find(({ id }) => id === WINDOW_CHROME_TARGET_ID);
+    if (chrome === undefined) {
+      throw new Error('The world has no window chrome');
+    }
+    // A second window, with a window chrome of its own.
+    app.setTargets([...world.targets(), { ...chrome, id: 'SECONDWINDOWCHROME' }]);
+
+    const results = [
+      await callTool(client, 'tab_list'),
+      await callTool(client, 'tab_new'),
+      await callTool(client, 'tab_switch', { tabId: B }),
+      await callTool(client, 'tab_close', { tabId: B, confirm: true }),
+      await callTool(client, 'screenshot_capture', { target: 'window' }),
+      await callTool(client, 'ui_find_element', { selector: 'button', target: 'window' }),
+    ];
+
+    for (const result of results) {
+      expect(errorOf(result)).toMatchObject({
+        code: 'NOT_AVAILABLE',
+        message: expect.stringContaining('Several TradingView windows are open') as string,
+      });
+    }
+    expect(world.chrome.clicks).toEqual([]);
+    expect(tabIds(world)).toEqual([A, B]);
+    // The chart tools go on with the chart in front.
+    expect(dataOf(await callTool(client, 'chart_get_state'))).toMatchObject({
+      symbol: fixture.symbol,
+    });
+  });
+});
+
 describe('a tab whose id holds characters a selector must quote', () => {
   test('tab_switch and tab_close reach it by a selector that quotes its id', async () => {
     const odd = 'tab "one" \\ two\u0007';

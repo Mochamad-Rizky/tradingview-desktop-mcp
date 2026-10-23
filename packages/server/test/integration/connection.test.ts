@@ -622,6 +622,29 @@ test('reports TARGET_NOT_FOUND when the window chrome is missing', async () => {
   expect(server.connectionCount()).toBe(0);
 });
 
+test('refuses the window chrome while several TradingView windows are open, and keeps the chart tab', async () => {
+  const targets = loadTargetsFixture();
+  const chrome = targets.find(({ id }) => id === WINDOW_CHROME_ID);
+  if (chrome === undefined) {
+    throw new Error('The recorded target list has no window chrome');
+  }
+  const server = await startServer([...targets, { ...chrome, id: 'SECONDWINDOWCHROME' }]);
+  const manager = managerOn(server);
+
+  const error = await failureOf(manager.windowChromePage());
+
+  expect(error.toPayload()).toEqual({
+    code: 'NOT_AVAILABLE',
+    message:
+      'Several TradingView windows are open, and the tab and window tools work with one window',
+    hint: 'Close the other TradingView windows, then try again.',
+    details: { windows: 2 },
+  });
+  expect(server.connectionCount(WINDOW_CHROME_ID)).toBe(0);
+  expect(server.connectionCount('SECONDWINDOWCHROME')).toBe(0);
+  await expect(manager.chartPage()).resolves.toMatchObject({ target: { id: CHART_ID } });
+});
+
 // Health
 
 test('health reports a connection the app lost', async () => {
