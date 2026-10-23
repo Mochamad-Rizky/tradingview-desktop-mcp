@@ -76,8 +76,11 @@ port 9, and the suites that could start a program mock `node:child_process`.
 and their results. It is generated, not written: `pnpm docs:examples` runs the scenarios of
 `packages/server/scripts/docs/scenarios.ts` through the real server against the fake app with the
 `chart-basic` fixture, so the results have the real shape and synthetic values. The page is the same
-on every run, machine and time zone. The duration of a call is left out, and the one value that
-comes from the clock, the time of a Pine compilation, is fixed.
+on every run, machine and time zone. The duration of a call is left out, and the two values that
+come from the clock are fixed, as if the call had been made at the time of the last bar of the
+chart: the time of a Pine compilation, and the expiration of an alert set without one. An image,
+such as a screenshot, is named in a note instead of shown; the screenshots are jpegs, which the
+fake app writes byte by byte, so that their size does not depend on the zlib of Node.
 
 The test "docs/examples.md is up to date" (`test/integration/docs-examples.test.ts`) runs the
 scenarios again and fails, saying to run `pnpm docs:examples`, when the committed page differs. The

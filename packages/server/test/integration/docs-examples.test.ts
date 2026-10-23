@@ -94,8 +94,9 @@ describe('docs/examples.md', () => {
   });
 
   test('the page does not depend on the clock', async () => {
-    // The compile time is the one value of a result that comes from the clock: the server stamps
-    // it when it compiles.
+    // Two values of a result come from the clock: the compile time, which the server stamps when
+    // it compiles, and the expiration of an alert set without one, which it sets from the time of
+    // the call.
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       vi.setSystemTime(new Date('2031-05-17T03:21:09Z'));
@@ -209,15 +210,46 @@ describe('docs/examples.md', () => {
     // The result holds the image, as MCP image content in front of the JSON block.
     expect(results[0]).toMatchObject({
       ok: true,
-      images: ['image/png'],
-      data: { target: 'chart', format: 'png' },
+      images: ['image/jpeg'],
+      data: { target: 'chart', format: 'jpeg' },
     });
-    // The page names it in a note above the JSON block, and holds none of its data: a png in
-    // base64 starts with iVBORw0KGgo.
+    // The page names it in a note above the JSON block, and holds none of its data: a jpeg in
+    // base64 starts with /9j/, a png with iVBORw0KGgo.
     expect(section).toMatch(
-      /\*\*The server returns\*\*\n\n_The image itself, of type image\/png, [^\n]*_\n\n```json\n/,
+      /\*\*The server returns\*\*\n\n_The image itself, of type image\/jpeg, [^\n]*_\n\n```json\n/,
     );
-    expect(page).not.toContain('iVBORw0KGgo');
+    expect(page).not.toMatch(/\/9j\/[\w+/]{8}|iVBORw0KGgo/);
+  });
+
+  test('the screenshots of the page are jpegs, whose size the fake app sets byte by byte', () => {
+    // The fake app deflates a png with the zlib of Node, whose output can change with Node; a jpeg
+    // it writes byte by byte: 140 bytes of headers around a scan of 2 bits for each block of 8 by 8
+    // pixels, so 140 + 148 * 80 * 2 / 8 = 3100 bytes for the chart of 1180 by 640 pixels.
+    const shots = SCENARIOS.flatMap(({ steps }) => steps).filter(
+      ({ tool }) => tool === 'screenshot_capture',
+    );
+    expect(shots.length).toBeGreaterThan(0);
+    for (const { arguments: args } of shots) {
+      expect(args).toMatchObject({ format: 'jpeg' });
+    }
+    expect(runOf('screenshot_capture').results[0]).toMatchObject({
+      data: { format: 'jpeg', width: 1180, height: 640, bytes: 3100 },
+    });
+  });
+
+  test('the alerts that fill the plan expire within the span a new alert gets from the time of the page', () => {
+    const { results } = runOf('alert_create', 'alert_list');
+    // The page is set at the time of the last bar, 2024-10-27, and an alert set then without an
+    // expiration expires on 2024-11-26 (the alert of the plan with room): alerts of the same plan
+    // set before then expire between the two.
+    const listed = results[1]?.ok === true ? results[1].data : null;
+    const alerts = (listed as { alerts?: { expiration: number }[] } | null)?.alerts ?? [];
+
+    expect(alerts).toHaveLength(3);
+    for (const { expiration } of alerts) {
+      expect(expiration).toBeGreaterThan(1729987200);
+      expect(expiration).toBeLessThan(1732579200);
+    }
   });
 
   test('the scenario of the full chart ends in the PLAN_LIMIT error and shows it', () => {
@@ -443,6 +475,12 @@ describe('the README', () => {
       for (const { name } of prompts) {
         expect(readme, `The README does not name the prompt ${name}`).toContain(`\`${name}\``);
       }
+      // The README counts them in words, in its introduction and where it lists them. A line
+      // break inside a paragraph, quoted or not, is a space.
+      const count = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'][prompts.length];
+      const prose = readme.replaceAll(/\n>? */g, ' ');
+      expect(prose).toContain(`and ${String(count)} prompts for common jobs`);
+      expect(prose).toContain(`The server also offers ${String(count)} prompts of its own`);
     } finally {
       await client.close();
       await server.close();

@@ -727,8 +727,8 @@ plot(ta.rsi(close, 14))
         "price": 100,
         "message": "Synthetic alert 1",
         "status": "active",
-        "expiration": 1893456000,
-        "expirationIso": "2030-01-01T00:00:00Z",
+        "expiration": 1730592000,
+        "expirationIso": "2024-11-03T00:00:00Z",
         "createdByServer": false
       },
       {
@@ -738,8 +738,8 @@ plot(ta.rsi(close, 14))
         "price": 105,
         "message": "Synthetic alert 2",
         "status": "active",
-        "expiration": 1893456000,
-        "expirationIso": "2030-01-01T00:00:00Z",
+        "expiration": 1731196800,
+        "expirationIso": "2024-11-10T00:00:00Z",
         "createdByServer": false
       },
       {
@@ -749,8 +749,8 @@ plot(ta.rsi(close, 14))
         "price": 205,
         "message": "Synthetic alert 3",
         "status": "active",
-        "expiration": 1893456000,
-        "expirationIso": "2030-01-01T00:00:00Z",
+        "expiration": 1731801600,
+        "expirationIso": "2024-11-17T00:00:00Z",
         "createdByServer": false
       }
     ]
@@ -761,7 +761,7 @@ plot(ta.rsi(close, 14))
 
 **The assistant answers**
 
-> No alert was created: the plan allows 3 active price alerts and 3 are in use (the error is PLAN_LIMIT, for SERVER_SIDE_ALERTS), which was checked before anything was sent. The alerts that fill the plan are NASDAQ:AAPL crossing 100, NASDAQ:AAPL crossing up 105 and NASDAQ:MSFT crossing down 205, all active until 2030-01-01. To make room, one of them has to go: alert_delete can delete it, but it needs confirm: true for an alert that this session did not create, so the assistant asks you which one first. Stopping one in TradingView makes room too.
+> No alert was created: the plan allows 3 active price alerts and 3 are in use (the error is PLAN_LIMIT, for SERVER_SIDE_ALERTS), which was checked before anything was sent. The alerts that fill the plan are NASDAQ:AAPL crossing 100, NASDAQ:AAPL crossing up 105 and NASDAQ:MSFT crossing down 205, all active and set to expire between 2024-11-03 and 2024-11-17. To make room, one of them has to go: alert_delete can delete it, but it needs confirm: true for an alert that this session did not create, so the assistant asks you which one first. Stopping one in TradingView makes room too.
 
 ## 12. Add symbols to a watchlist
 
@@ -899,21 +899,21 @@ plot(ta.rsi(close, 14))
 **The assistant calls `screenshot_capture`**
 
 ```json
-{}
+{ "format": "jpeg" }
 ```
 
 **The server returns**
 
-_The image itself, of type image/png, comes first, as MCP image content, and this page leaves it out: the fake app answers a screenshot with a plain grey picture of the size the result gives._
+_The image itself, of type image/jpeg, comes first, as MCP image content, and this page leaves it out: the fake app answers a screenshot with a plain grey picture of the size the result gives._
 
 ```json
 {
   "ok": true,
-  "data": { "target": "chart", "format": "png", "width": 1180, "height": 640, "bytes": 812 },
+  "data": { "target": "chart", "format": "jpeg", "width": 1180, "height": 640, "bytes": 3100 },
   "meta": { "via": "cdp", "warnings": [] }
 }
 ```
 
 **The assistant answers**
 
-> Here is the chart as a picture: the chart container of the active chart, with its legend, panes and scales but without the toolbars, a png of 1180 by 640 pixels (812 bytes). The assistant can look at it and describe what it shows; the server handed it over and kept no copy. With target page, the picture would show the whole chart tab, toolbars and panels included.
+> Here is the chart as a picture: the chart container of the active chart, with its legend, panes and scales but without the toolbars, a jpeg of 1180 by 640 pixels (3100 bytes), the smaller of the two formats and enough to read a chart. The assistant can look at it and describe what it shows; the server handed it over and kept no copy. With target page, the picture would show the whole chart tab, toolbars and panels included.

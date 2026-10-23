@@ -216,7 +216,7 @@ image, along with its size, and writes nothing to disk
 ([details](docs/examples.md#14-take-a-screenshot)):
 
 ```json
-"data": { "target": "chart", "format": "png", "width": 1180, "height": 640, "bytes": 812 },
+"data": { "target": "chart", "format": "jpeg", "width": 1180, "height": 640, "bytes": 3100 },
 "meta": { "via": "cdp", "warnings": [] }
 ```
 

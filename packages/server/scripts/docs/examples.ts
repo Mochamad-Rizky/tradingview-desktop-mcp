@@ -39,6 +39,9 @@ const WIDTH = 100;
 const CALL_TIMEOUT_MS = 5000;
 
 const DAY = 86_400;
+// How long after the generator reads the clock the server may read it for a call, at most: far
+// more than a call takes (CALL_TIMEOUT_MS), far less than a day.
+const MAX_CALL_SECONDS = 60;
 
 // What the assistant gets back from a tool, without the duration, which differs on every run.
 // images are the media types of the images in front of the JSON block (a screenshot), whose data the
@@ -96,11 +99,25 @@ function pinCompileTime(value: JsonValue, time: number): JsonValue {
 }
 
 // The expiration of an alert that alert_create set without being given one comes from the clock as
-// well: the server sets it the default span of TradingView after the moment of the call. It is
-// replaced by the expiration the alert would have had, had it been set at `time`. The span is a
-// whole number of days (TradingView gives it in days, weeks or months), so it is the days from
-// `calledAt`, read just before the call, to the expiration, rounded: the part of a second the call
-// took drops out.
+// well: the server sets it the default span of TradingView after the moment of the call, which it
+// reads at most MAX_CALL_SECONDS after `calledAt`. The span of the fake app is 30 days (its free
+// plan, the only plan the generator gives it), so the expiration is moved to as many whole days
+// after `time`, and the seconds the call took drop out. An expiration that is not whole days after
+// the call is refused rather than shown at a time it does not stand for. A span in calendar months,
+// which the pro plan of the fake has, would be whole days too, but a different number of them at
+// another time of the year, so it could not be pinned this way.
+export function pinnedExpiration(expiration: number, calledAt: number, time: number): number {
+  const days = Math.floor((expiration - calledAt) / DAY);
+  const late = expiration - calledAt - days * DAY;
+  if (days < 1 || late > MAX_CALL_SECONDS) {
+    throw new Error(
+      `The expiration ${toIso(expiration)} of the alert is not a whole number of days after the ` +
+        `call at ${toIso(calledAt)}, so the page cannot show it from the time of the last bar`,
+    );
+  }
+  return time + days * DAY;
+}
+
 function pinDefaultExpiration(data: JsonValue, calledAt: number, time: number): JsonValue {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return data;
@@ -109,7 +126,7 @@ function pinDefaultExpiration(data: JsonValue, calledAt: number, time: number): 
   if (typeof expiration !== 'number') {
     return data;
   }
-  const pinned = time + Math.round((expiration - calledAt) / DAY) * DAY;
+  const pinned = pinnedExpiration(expiration, calledAt, time);
   return { ...data, expiration: pinned, expirationIso: toIso(pinned) };
 }
 
@@ -374,8 +391,10 @@ function shownResult(result: StepResult): { envelope: JsonValue; content: JsonVa
 }
 
 // What stands on the page for the images of a result, which come in front of its JSON block as MCP
-// image content. Their data is left out: the page would show a block of base64, and the fake app
-// answers a screenshot with a plain grey picture anyway.
+// image content. Their data is left out: the page would show a block of base64. The screenshots of
+// the page are jpegs, which the fake app writes byte by byte in one shade of grey (its pngs, which
+// zlib compresses and which are black, would make the size on the page depend on the zlib of Node),
+// and a test checks that every screenshot of the scenarios asks for one.
 function imageNote(types: readonly string[]): string[] {
   const [type, ...more] = types;
   if (type === undefined) {

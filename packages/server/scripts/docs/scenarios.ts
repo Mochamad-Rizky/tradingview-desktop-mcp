@@ -202,23 +202,31 @@ export const SCENARIOS: Scenario[] = [
       { tool: 'alert_create', arguments: ALERT_ARGUMENTS, expectError: 'PLAN_LIMIT' },
       { tool: 'alert_list', arguments: {} },
     ],
-    // As many active price alerts as the plan of the fixture allows, which is 3.
+    // As many active price alerts as the plan of the fixture allows, which is 3. They were set
+    // before the time the page is set at, the last bar, so they expire within the 30 days a free
+    // plan allows from then, before the alert of the plan with room would.
     fixture: (base) => ({
       ...base,
       alerts: [
-        { id: 1, price: 100 },
-        { id: 2, condition: 'cross_up', price: 105 },
-        { id: 3, symbol: 'NASDAQ:MSFT', condition: 'cross_down', price: 205 },
+        { id: 1, price: 100, expiration: '2024-11-03T00:00:00Z' },
+        { id: 2, condition: 'cross_up', price: 105, expiration: '2024-11-10T00:00:00Z' },
+        {
+          id: 3,
+          symbol: 'NASDAQ:MSFT',
+          condition: 'cross_down',
+          price: 205,
+          expiration: '2024-11-17T00:00:00Z',
+        },
       ],
     }),
     summary:
       'No alert was created: the plan allows 3 active price alerts and 3 are in use (the error ' +
       'is PLAN_LIMIT, for SERVER_SIDE_ALERTS), which was checked before anything was sent. The ' +
       'alerts that fill the plan are NASDAQ:AAPL crossing 100, NASDAQ:AAPL crossing up 105 and ' +
-      'NASDAQ:MSFT crossing down 205, all active until 2030-01-01. To make room, one of them has ' +
-      'to go: alert_delete can delete it, but it needs confirm: true for an alert that this ' +
-      'session did not create, so the assistant asks you which one first. Stopping one in ' +
-      'TradingView makes room too.',
+      'NASDAQ:MSFT crossing down 205, all active and set to expire between 2024-11-03 and ' +
+      '2024-11-17. To make room, one of them has to go: alert_delete can delete it, but it needs ' +
+      'confirm: true for an alert that this session did not create, so the assistant asks you ' +
+      'which one first. Stopping one in TradingView makes room too.',
   },
   {
     title: 'Add symbols to a watchlist',
@@ -260,12 +268,14 @@ export const SCENARIOS: Scenario[] = [
   {
     title: 'Take a screenshot',
     prompt: 'Take a screenshot of my chart.',
-    steps: [{ tool: 'screenshot_capture', arguments: {} }],
+    // A jpeg, which is smaller and enough to read a chart. The fake app writes it byte by byte, so
+    // its size on the page is the same on every machine (a png of the fake goes through zlib).
+    steps: [{ tool: 'screenshot_capture', arguments: { format: 'jpeg' } }],
     summary:
       'Here is the chart as a picture: the chart container of the active chart, with its legend, ' +
-      'panes and scales but without the toolbars, a png of 1180 by 640 pixels (812 bytes). The ' +
-      'assistant can look at it and describe what it shows; the server handed it over and kept ' +
-      'no copy. With target page, the picture would show the whole chart tab, toolbars and ' +
-      'panels included.',
+      'panes and scales but without the toolbars, a jpeg of 1180 by 640 pixels (3100 bytes), ' +
+      'the smaller of the two formats and enough to read a chart. The assistant can look at it ' +
+      'and describe what it shows; the server handed it over and kept no copy. With target ' +
+      'page, the picture would show the whole chart tab, toolbars and panels included.',
   },
 ];

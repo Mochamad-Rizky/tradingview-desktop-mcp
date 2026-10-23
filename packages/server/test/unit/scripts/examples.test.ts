@@ -1,5 +1,6 @@
 import {
   formatJson,
+  pinnedExpiration,
   renderExamples,
   trimArrays,
   type ScenarioRun,
@@ -44,6 +45,25 @@ describe('trimArrays', () => {
     trimArrays(value);
 
     expect(value).toEqual({ list: [1, 2, 3, 4] });
+  });
+});
+
+describe('pinnedExpiration', () => {
+  const DAY = 86_400;
+
+  test('pinnedExpiration moves an expiration whole days after a call to as many days after the time of the page', () => {
+    // The server read its clock 2 s after the generator did, and set 30 days from then.
+    expect(pinnedExpiration(1_000 + 2 + 30 * DAY, 1_000, 50_000)).toBe(50_000 + 30 * DAY);
+    expect(pinnedExpiration(1_000 + 7 * DAY, 1_000, 50_000)).toBe(50_000 + 7 * DAY);
+  });
+
+  test('pinnedExpiration refuses an expiration that is not whole days after the call', () => {
+    expect(() => pinnedExpiration(1_000 + 30 * DAY + 3_600, 1_000, 50_000)).toThrow(
+      /not a whole number of days after the call/,
+    );
+    expect(() => pinnedExpiration(1_000 - 5, 1_000, 50_000)).toThrow(
+      /not a whole number of days after the call/,
+    );
   });
 });
 
@@ -247,7 +267,7 @@ describe('renderExamples', () => {
   test('renderExamples names the images of a result in a note above its JSON block, and shows none of their data', () => {
     const run: ScenarioRun = {
       ...first,
-      results: [{ ok: true, via: 'cdp', warnings: [], images: ['image/png'], data: { width: 8 } }],
+      results: [{ ok: true, via: 'cdp', warnings: [], images: ['image/jpeg'], data: { width: 8 } }],
     };
     const two: ScenarioRun = {
       ...first,
@@ -256,7 +276,7 @@ describe('renderExamples', () => {
           ok: true,
           via: 'cdp',
           warnings: [],
-          images: ['image/png', 'image/jpeg'],
+          images: ['image/jpeg', 'image/jpeg'],
           data: { width: 8 },
         },
       ],
@@ -265,7 +285,7 @@ describe('renderExamples', () => {
     const page = renderExamples([run]);
 
     expect(page).toContain(
-      '**The server returns**\n\n_The image itself, of type image/png, comes first, as MCP image ' +
+      '**The server returns**\n\n_The image itself, of type image/jpeg, comes first, as MCP image ' +
         'content, and this page leaves it out: the fake app answers a screenshot with a plain ' +
         'grey picture of the size the result gives._\n\n```json\n',
     );
@@ -275,7 +295,7 @@ describe('renderExamples', () => {
       meta: { via: 'cdp', warnings: [] },
     });
     expect(renderExamples([two])).toContain(
-      '_The 2 images themselves, of types image/png, image/jpeg, come first, as MCP image ' +
+      '_The 2 images themselves, of types image/jpeg, image/jpeg, come first, as MCP image ' +
         'content, and this page leaves them out:',
     );
     // A result without an image has no note, and the page says why a note can stand in for one.
