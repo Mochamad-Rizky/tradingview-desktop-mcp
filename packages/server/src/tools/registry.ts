@@ -7,6 +7,7 @@ import { isTvMcpError, toErrorPayload, TvMcpError, type ErrorCode } from '../cor
 import type { ToolCallEvent } from '../core/events.js';
 import { toErrorResult, toSuccessResult, type ToolMeta } from '../core/result.js';
 import type { JsonValue } from '../utils/json.js';
+import { redactedArgs } from './redaction.js';
 import type { AnyToolDefinition, ToolContext, ToolOutput, ToolRegistry } from './types.js';
 
 // Which tools each profile keeps (design spec 5.4).
@@ -221,20 +222,11 @@ export function createToolRegistry(
   };
   const handlerCtx: ToolContext = { ...ctx, registry };
 
-  // Whether a tool keeps its arguments out of the tool events, as its definition says.
-  const redacts = (tool: string): boolean => byName.get(tool)?.redactArgs === true;
-
-  // What the start event of a call shows of its arguments: nothing of a tool that redacts them, and
-  // for a tool that runs others, what it makes of them (eventArgs). A summary that throws is cut.
-  function argsForEvent(tool: AnyToolDefinition | undefined, args: unknown): JsonValue {
-    if (tool?.redactArgs === true) {
-      return { redacted: true };
-    }
-    if (tool?.eventArgs === undefined) {
-      return eventArgs(args);
-    }
+  // What the start event of a call shows of its arguments: what redactedArgs keeps of them, by the
+  // name of the tool, whether this registry offers it or not. A summary that throws is cut.
+  function argsForEvent(name: string, args: unknown): JsonValue {
     try {
-      return eventArgs(tool.eventArgs(args, redacts));
+      return eventArgs(redactedArgs(name, args));
     } catch {
       return CUT;
     }
@@ -284,7 +276,7 @@ export function createToolRegistry(
       origin,
       phase: 'start',
       at: new Date().toISOString(),
-      args: argsForEvent(byName.get(name), args),
+      args: argsForEvent(name, args),
     });
 
     let result: CallToolResult;

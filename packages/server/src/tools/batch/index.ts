@@ -61,28 +61,7 @@ export const batchRun = defineTool({
     openWorldHint: false,
   },
   core: true,
-  // In the tool events, a step of a tool that keeps its arguments out of them (ui_evaluate,
-  // ui_type_text) shows { redacted: true } in their place, as a call of that tool would. Arguments
-  // that are no list of steps show as they are: the call refuses them anyway.
-  eventArgs(args, redacts) {
-    if (typeof args !== 'object' || args === null || Array.isArray(args)) {
-      return args;
-    }
-    const { steps } = args as { steps?: unknown };
-    if (!Array.isArray(steps)) {
-      return args;
-    }
-    return {
-      ...args,
-      steps: steps.map((step: unknown) => {
-        const tool: unknown =
-          typeof step === 'object' && step !== null ? (step as { tool?: unknown }).tool : undefined;
-        return typeof tool === 'string' && redacts(tool)
-          ? { ...(step as object), arguments: { redacted: true } }
-          : step;
-      }),
-    };
-  },
+  // In the tool events, a step shows what a call of its tool would (redaction.ts).
   async handler({ steps, stopOnError }, ctx) {
     // Checked for every step before the first one runs: a batch refused halfway would have left
     // the steps before the refusal done.

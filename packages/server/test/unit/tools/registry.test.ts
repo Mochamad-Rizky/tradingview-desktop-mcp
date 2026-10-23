@@ -438,29 +438,186 @@ test('registry emits start and end events with the error code', async () => {
   expect(Date.parse(start?.at ?? '')).not.toBeNaN();
 });
 
-test('registry keeps the arguments of a tool that redacts them out of its events', async () => {
+test('registry keeps the arguments of ui_evaluate and ui_type_text out of its events, offered or not', async () => {
   const { ctx, events } = harness();
-  const secretive = defineTool({
-    name: 'ui_secret',
-    domain: 'ui',
-    title: 'Secret',
-    description: 'Takes what nobody else should see.',
-    inputSchema: { text: z.string().describe('Something private.') },
-    annotations: {},
-    redactArgs: true,
-    handler: () => Promise.resolve({ data: null }),
-  });
-  const registry = createToolRegistry([secretive, failingTool(notAvailable)], ctx);
+  // The core profile offers neither of them, yet a client can name them.
+  const registry = createToolRegistry(
+    [...selectTools(allTools, { profile: 'core', patterns: [] }), failingTool(notAvailable)],
+    ctx,
+  );
 
-  await registry.call('ui_secret', { text: 'private words' }, 'mcp');
+  await registry.call('ui_evaluate', { expression: '"private code"' }, 'dashboard');
+  await registry.call('ui_type_text', { text: 'private words' }, 'mcp');
   await registry.call('chart_fail', { reason: 'test' }, 'mcp');
 
   expect(events.filter(({ phase }) => phase === 'start').map(({ args }) => args)).toEqual([
     { redacted: true },
+    { redacted: true },
     { reason: 'test' },
   ]);
-  expect(JSON.stringify(events)).not.toContain('private words');
+  expect(JSON.stringify(events)).not.toMatch(/private (code|words)/);
 });
+
+test('registry keeps the message of alert_create out of its events, wherever it is, and shows the rest', async () => {
+  const { ctx, events } = harness();
+  const registry = createToolRegistry(allTools, ctx);
+
+  await registry.call(
+    'alert_create',
+    {
+      condition: 'crossing',
+      price: 150,
+      message: 'https://hooks.example/secret-token',
+      extra: { message: 'secret aside' },
+    },
+    'mcp',
+  );
+
+  expect(events[0]?.args).toEqual({
+    condition: 'crossing',
+    price: 150,
+    message: { redacted: true },
+    extra: { message: { redacted: true } },
+  });
+  expect(JSON.stringify(events)).not.toContain('secret');
+});
+
+// The tools of a server with the core profile, and with a tool filter: neither offers ui_evaluate
+// or ui_type_text, and the filter leaves out alert_create as well.
+const NARROWED: Record<string, AnyToolDefinition[]> = {
+  'the core profile': selectTools(allTools, { profile: 'core', patterns: [] }),
+  'a tool filter': selectTools(allTools, { profile: 'full', patterns: ['batch_*'] }),
+};
+
+test.each(
+  Object.keys(NARROWED).flatMap((label) =>
+    (['mcp', 'dashboard'] as const).map((origin) => [label, origin] as const),
+  ),
+)(
+  'registry of %s keeps the secrets of batch steps out of the tool events, from the %s',
+  async (label, origin) => {
+    const { ctx, events } = harness();
+    const registry = createToolRegistry(NARROWED[label] ?? [], ctx);
+
+    await registry.call(
+      'batch_run',
+      {
+        steps: [
+          { tool: 'ui_evaluate', arguments: { expression: '"secret code"' } },
+          // Arguments under another key reach no tool, but the event shows what was sent.
+          {
+            tool: 'ui_type_text',
+            arguments: { text: 'secret text' },
+            args: { text: 'secret aside' },
+          },
+          {
+            tool: 'alert_create',
+            arguments: { condition: 'crossing', price: 1, message: 'secret hook' },
+          },
+        ],
+        stopOnError: false,
+      },
+      origin,
+    );
+
+    const starts = events.filter(({ phase }) => phase === 'start');
+    expect(starts[0]).toMatchObject({
+      tool: 'batch_run',
+      origin,
+      args: {
+        steps: [
+          { tool: 'ui_evaluate', arguments: { redacted: true } },
+          { tool: 'ui_type_text', arguments: { redacted: true }, args: { redacted: true } },
+          {
+            tool: 'alert_create',
+            arguments: { condition: 'crossing', price: 1, message: { redacted: true } },
+          },
+        ],
+        stopOnError: false,
+      },
+    });
+    // Each step is a call of its own, offered or not, whose event redacts the same way.
+    expect(starts.slice(1).map(({ tool, args }) => [tool, args])).toEqual([
+      ['ui_evaluate', { redacted: true }],
+      ['ui_type_text', { redacted: true }],
+      ['alert_create', { condition: 'crossing', price: 1, message: { redacted: true } }],
+    ]);
+    expect(JSON.stringify(events)).not.toContain('secret');
+  },
+);
+
+test.each(['mcp', 'dashboard'] as const)(
+  'registry keeps the secrets of the steps of nested batches out of the batch_run event, from the %s',
+  async (origin) => {
+    const { ctx, events } = harness();
+    const registry = createToolRegistry(allTools, ctx);
+
+    await registry.call(
+      'batch_run',
+      {
+        steps: [
+          {
+            tool: 'batch_run',
+            arguments: {
+              steps: [
+                { tool: 'ui_type_text', arguments: { text: 'secret text' } },
+                { tool: 'ui_evaluate', arguments: { expression: 'secret code' } },
+              ],
+            },
+          },
+          // The steps of a nested batch under another key than arguments.
+          {
+            tool: 'batch_run',
+            steps: [{ tool: 'alert_create', arguments: { message: 'secret hook' } }],
+          },
+          // A batch two levels down, which the event cuts at its depth limit in any case.
+          {
+            tool: 'batch_run',
+            arguments: {
+              steps: [
+                {
+                  tool: 'batch_run',
+                  arguments: {
+                    steps: [{ tool: 'ui_evaluate', arguments: { expression: 'secret deep' } }],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      origin,
+    );
+
+    // batch_run refuses a nested batch before any step runs, so its own event is the only one.
+    expect(events.map(({ tool, phase }) => [tool, phase])).toEqual([
+      ['batch_run', 'start'],
+      ['batch_run', 'end'],
+    ]);
+    expect(events[0]?.args).toEqual({
+      steps: [
+        {
+          tool: 'batch_run',
+          arguments: {
+            steps: [
+              { tool: 'ui_type_text', arguments: { redacted: true } },
+              { tool: 'ui_evaluate', arguments: { redacted: true } },
+            ],
+          },
+        },
+        {
+          tool: 'batch_run',
+          steps: [{ tool: 'alert_create', arguments: { message: { redacted: true } } }],
+        },
+        {
+          tool: 'batch_run',
+          arguments: { steps: [{ tool: 'batch_run', arguments: { steps: ['…'] } }] },
+        },
+      ],
+    });
+    expect(JSON.stringify(events)).not.toContain('secret');
+  },
+);
 
 test.each(['mcp', 'dashboard'] as const)(
   'registry keeps the arguments of redacting steps out of the batch_run event, from the %s',

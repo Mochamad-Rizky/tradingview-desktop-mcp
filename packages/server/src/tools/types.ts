@@ -107,14 +107,6 @@ export interface ToolDefinition<S extends z.ZodRawShape, T extends JsonValue> {
   // Kept by the core profile (design spec 5.4), the reduced set for clients that cap the number of
   // tools: the essentials of a domain, so a tool is not core unless it says so.
   core?: boolean;
-  // Keeps the arguments of a call out of the tool events that the dashboard shows and keeps, for a
-  // tool that takes what should not linger there, such as text typed for the user or code. The
-  // event says { redacted: true } instead; the handler gets the arguments as ever.
-  redactArgs?: boolean;
-  // For a tool whose arguments hold the arguments of other tools (batch_run): what the tool events
-  // show of its arguments, which come as the client sent them, before they are validated. `redacts`
-  // tells, from the definitions, whether a tool keeps its own arguments out of the events.
-  eventArgs?(args: unknown, redacts: (tool: string) => boolean): unknown;
   // Declared as a method so that a definition with a narrower input still counts as an
   // AnyToolDefinition. Errors are thrown: a TvMcpError reaches the client as it is, anything else
   // as INTERNAL.

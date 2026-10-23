@@ -280,6 +280,7 @@ export const alertCreate = defineTool({
     openWorldHint: false,
   },
   core: true,
+  // The message stays out of the tool events (redaction.ts): it can carry the secret of a webhook.
   async handler({ symbol, condition, price, message, expiration }, ctx) {
     // All of it before the app is asked anything.
     const wanted = symbol?.trim();

@@ -462,6 +462,56 @@ test('batch_run reports the data of a step as a direct call returns it', async (
   });
 });
 
+// What a server keeps out of the tool events does not depend on the tools it offers: neither the core
+// profile nor this filter offers ui_evaluate or ui_type_text, and the filter leaves out alert_create.
+test.each<[string, Partial<Config>]>([
+  ['the core profile', { profile: 'core' }],
+  ['a tool filter', { toolPatterns: ['batch_*'] }],
+])(
+  'a server with %s keeps the secrets of batch steps out of the tool events, from a client and from the dashboard',
+  async (_label, overrides) => {
+    const deps = offlineDeps();
+    const events: ToolCallEvent[] = [];
+    deps.events.subscribe((event) => {
+      events.push(event);
+    });
+    const { server, registry } = createMcpServer(testConfig(overrides), deps);
+    const client = await connect(server);
+    const args = {
+      steps: [
+        { tool: 'ui_evaluate', arguments: { expression: '"secret code"' } },
+        { tool: 'ui_type_text', arguments: { text: 'secret text' } },
+        {
+          tool: 'alert_create',
+          arguments: { condition: 'crossing', price: 1, message: 'secret hook' },
+        },
+      ],
+      stopOnError: false,
+    };
+
+    await callTool(client, 'batch_run', args);
+    await registry.call('batch_run', args, 'dashboard');
+
+    const starts = events.filter(({ tool, phase }) => tool === 'batch_run' && phase === 'start');
+    expect(starts.map(({ origin }) => origin)).toEqual(['mcp', 'dashboard']);
+    for (const start of starts) {
+      expect(start.args).toEqual({
+        steps: [
+          { tool: 'ui_evaluate', arguments: { redacted: true } },
+          { tool: 'ui_type_text', arguments: { redacted: true } },
+          {
+            tool: 'alert_create',
+            arguments: { condition: 'crossing', price: 1, message: { redacted: true } },
+          },
+        ],
+        stopOnError: false,
+      });
+    }
+    expect(events.filter(({ origin }) => origin === 'batch')).toHaveLength(12);
+    expect(JSON.stringify(events)).not.toContain('secret');
+  },
+);
+
 test('batch steps reach the event log as calls from the batch', async () => {
   const { client, events } = await startStepServer();
 
