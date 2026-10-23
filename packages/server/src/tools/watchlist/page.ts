@@ -263,9 +263,9 @@ export function readWatchlists(
 // One watchlist as a WatchlistRecord: the active list when listId is null (getGlobalActiveSymbolList
 // of the app, whatever its kind), else the custom list, flag list or hot list whose id listId is. A
 // list the store does not hold is null. The store is refreshed first when refresh is true, or when it
-// does not hold every custom list; refreshed says whether that worked, null when no refresh was
-// needed. ready says whether the store holds every custom list, and signedIn whether an account is
-// signed in. NOT_AVAILABLE as for readWatchlists.
+// does not hold every custom list; refreshed says whether that loaded the lists, which a refresh the
+// app aborts does not, null when no refresh was needed. ready says whether the store holds every
+// custom list, and signedIn whether an account is signed in. NOT_AVAILABLE as for readWatchlists.
 export function readWatchlist(
   win: TvWindow,
   lib: PageLib,
@@ -345,7 +345,21 @@ export function readWatchlist(
       return false;
     }
   };
+  // When the custom lists were last loaded into the store: customLists.timestamp of the app, which
+  // the refresh thunk sets when it loads them.
+  const loadedAt = (): unknown => {
+    try {
+      const state = live.getState() as { customLists?: { timestamp?: unknown } } | null;
+      return state?.customLists?.timestamp;
+    } catch {
+      return undefined;
+    }
+  };
+  // Whether the refresh thunk loaded every custom list within waitMs. A refresh the app starts
+  // meanwhile aborts it, and the thunk then resolves without loading anything (respectLatest and
+  // skipAbortError of the app), so it counts only once the time of the last load has changed.
   const reload = (): Promise<boolean> => {
+    const before = loadedAt();
     let loading: Promise<boolean>;
     try {
       loading =
@@ -366,7 +380,7 @@ export function readWatchlist(
     });
     return Promise.race([loading, late]).then((done) => {
       clearTimeout(timer);
-      return done;
+      return done && loadedAt() !== before;
     });
   };
 

@@ -415,6 +415,29 @@ export function blankSymbolsError(positions: readonly number[]): TvMcpError {
   );
 }
 
+// The error of a change the server took when neither its answer nor the list reloaded afterwards
+// shows the entries of the list, so that whether the symbols changed cannot be told.
+export function unconfirmedChangeError(
+  change: 'add' | 'remove',
+  listId: string,
+  symbols: readonly string[],
+): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    `TradingView took the ${change === 'add' ? 'addition' : 'removal'} of ${listed(symbols)}, ` +
+      `but neither its answer nor the watchlist ${listId} reloaded afterwards shows the list, so ` +
+      'the change is not confirmed',
+    {
+      hint:
+        change === 'add'
+          ? 'Check watchlist_get. This session did not record the symbols, so removing them needs ' +
+            'confirm: true.'
+          : 'Check watchlist_get.',
+      details: { listId, symbols: [...symbols] },
+    },
+  );
+}
+
 // The error of a change the server took and that changed none of the symbols it was sent.
 export function notChangedError(
   change: 'add' | 'remove',

@@ -193,6 +193,22 @@ function expectNothingElseTouched(win: FakeTvWindow): void {
   expect(refreshes(win).filter((args) => args[0] !== null || args.length !== 1)).toEqual([]);
 }
 
+// Has every refresh of the store that a page function starts after a change of the server aborted
+// at once by a refresh the app starts meanwhile, as when the watchlist panel mounts, which loads
+// nothing before the call is over: the aborted refresh resolves without loading anything.
+function abortRefreshesAfterChanges(win: FakeTvWindow): void {
+  const thunks = moduleWith(win, 'getCustomWatchlistsThunk');
+  const refresh = thunks.getCustomWatchlistsThunk as (signal: unknown) => unknown;
+  thunks.getCustomWatchlistsThunk = (signal: unknown) => {
+    const thunk = refresh(signal);
+    if (added(win).length + removed(win).length > 0) {
+      // The refresh of the app, which aborts the one before it as soon as it is made.
+      refresh(null);
+    }
+    return thunk;
+  };
+}
+
 // Whether the last refresh of the store came after the last call of the backend named `method`.
 function refreshedAfter(win: FakeTvWindow, method: string): boolean {
   const names = callNames(win);
@@ -948,6 +964,48 @@ describe('watchlist_add and watchlist_add_bulk', () => {
     expect(session.addedWatchlistSymbols.get('101')).toEqual(new Set(['NYSE:IBM']));
   });
 
+  test('an addition that neither the reloaded store nor the answer of the server shows is NOT_AVAILABLE, and nothing is recorded', async () => {
+    const win = createFakeTvWindow(withWatchlists({ ready: true }));
+    const backend = backendOf(win);
+    const add = backend.addSymbols.bind(backend);
+    // The server takes the symbols and answers no list of them.
+    backend.addSymbols = async (list, symbols) => {
+      await add(list, symbols);
+      return undefined;
+    };
+    const { client, session } = await startHarnessWith(win);
+    inspectFakeWindow(win).state.watchlists.errors.getCustomWatchLists = {
+      code: null,
+      message: 'Failed to fetch',
+    };
+
+    const single = await callTool(client, 'watchlist_add', { symbol: 'NYSE:IBM' });
+    const bulk = await callTool(client, 'watchlist_add_bulk', { symbols: ['FX:EURUSD'] });
+
+    expect(errorOf(single)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: expect.stringMatching(/watchlist_get.*confirm: true/s) as string,
+      details: { listId: '101', symbols: ['NYSE:IBM'] },
+    });
+    expect(errorOf(bulk)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { listId: '101', symbols: ['FX:EURUSD'] },
+    });
+    expect(session.addedWatchlistSymbols.size).toBe(0);
+  });
+
+  test('an addition whose refresh a later refresh aborts follows the answer of the server, with a warning', async () => {
+    const win = createFakeTvWindow(withWatchlists({ ready: true }));
+    abortRefreshesAfterChanges(win);
+    const { client, session } = await startHarnessWith(win);
+
+    const result = await callTool(client, 'watchlist_add', { symbol: 'NYSE:IBM' });
+
+    expect(dataOf(result)).toEqual({ listId: '101', symbol: 'NYSE:IBM', outcome: 'added' });
+    expect(warningsOf(result)).toEqual([expect.stringContaining('may show') as string]);
+    expect(session.addedWatchlistSymbols.get('101')).toEqual(new Set(['NYSE:IBM']));
+  });
+
   test('a change that does not come within the time of a call is TIMEOUT, the store is refreshed and nothing is recorded', async () => {
     const win = createFakeTvWindow(fixture);
     const backend = backendOf(win);
@@ -1127,6 +1185,46 @@ describe('watchlist_remove', () => {
       code: 'NOT_AVAILABLE',
       hint: expect.stringContaining('watchlist_get') as string,
     });
+  });
+
+  test('a removal that neither the reloaded store nor the answer of the server shows is NOT_AVAILABLE, and the session keeps the symbols', async () => {
+    const win = createFakeTvWindow(withWatchlists({ ready: true }));
+    const { client, session } = await startHarnessWith(win);
+    await callTool(client, 'watchlist_add', { symbol: 'NYSE:IBM' });
+    const backend = backendOf(win);
+    const remove = backend.removeSymbols.bind(backend);
+    // The server takes the removal and answers no list.
+    backend.removeSymbols = async (list, symbols) => {
+      await remove(list, symbols);
+      return undefined;
+    };
+    inspectFakeWindow(win).state.watchlists.errors.getCustomWatchLists = {
+      code: null,
+      message: 'Failed to fetch',
+    };
+
+    const result = await callTool(client, 'watchlist_remove', { symbols: ['NYSE:IBM'] });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: expect.stringContaining('watchlist_get') as string,
+      details: { listId: '101', symbols: ['NYSE:IBM'] },
+    });
+    expect(session.addedWatchlistSymbols.get('101')).toEqual(new Set(['NYSE:IBM']));
+  });
+
+  test('a removal whose refresh a later refresh aborts follows the answer of the server, with a warning', async () => {
+    const win = createFakeTvWindow(withWatchlists({ ready: true }));
+    abortRefreshesAfterChanges(win);
+    const { client } = await startHarnessWith(win);
+
+    const result = await callTool(client, 'watchlist_remove', {
+      symbols: ['NASDAQ:AAPL'],
+      confirm: true,
+    });
+
+    expect(dataOf(result)).toEqual({ listId: '101', removed: ['NASDAQ:AAPL'], notListed: [] });
+    expect(warningsOf(result)).toEqual([expect.stringContaining('may show') as string]);
   });
 });
 

@@ -26,6 +26,7 @@ import {
   symbolsToSearch,
   toListing,
   toWatchlistView,
+  unconfirmedChangeError,
   unknownListError,
   unknownSymbolError,
   watchlistRefusalError,
@@ -298,8 +299,11 @@ async function commitAddition(
       sending.length,
       await page.bridge.evaluateWithLib(readWatchlistLimits, []),
     );
-    const after = await changeList(page, 'add', current, sending, waitMs);
-    const added = sending.filter((name) => after.entries === null || after.entries.includes(name));
+    const { entries, refreshed } = await changeList(page, 'add', current, sending, waitMs);
+    if (entries === null) {
+      throw unconfirmedChangeError('add', current.id, sending);
+    }
+    const added = sending.filter((name) => entries.includes(name));
     if (added.length === 0) {
       throw notChangedError('add', current.id, sending);
     }
@@ -309,7 +313,7 @@ async function commitAddition(
       added,
       warnings: [
         ...(missing.length === 0 ? [] : [notAddedWarning(missing)]),
-        ...(after.refreshed ? [] : [STALE_STORE_WARNING]),
+        ...(refreshed ? [] : [STALE_STORE_WARNING]),
       ],
     };
   });
@@ -503,8 +507,11 @@ export const watchlistRemove = defineTool({
     if (foreign.length > 0 && confirm !== true) {
       throw confirmationError(list.id, foreign);
     }
-    const after = await changeList(page, 'remove', list, toRemove, waitMs);
-    const removed = toRemove.filter((symbol) => after.entries?.includes(symbol) !== true);
+    const { entries, refreshed } = await changeList(page, 'remove', list, toRemove, waitMs);
+    if (entries === null) {
+      throw unconfirmedChangeError('remove', list.id, toRemove);
+    }
+    const removed = toRemove.filter((symbol) => !entries.includes(symbol));
     if (own !== undefined) {
       for (const symbol of removed) {
         own.delete(symbol);
@@ -522,7 +529,7 @@ export const watchlistRemove = defineTool({
       via: 'internal',
       warnings: [
         ...(kept.length === 0 ? [] : [notRemovedWarning(kept)]),
-        ...(after.refreshed ? [] : [STALE_STORE_WARNING]),
+        ...(refreshed ? [] : [STALE_STORE_WARNING]),
       ],
     };
   },

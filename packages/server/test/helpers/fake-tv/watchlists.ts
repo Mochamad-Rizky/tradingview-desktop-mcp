@@ -23,8 +23,9 @@ import type { FixtureWatchlists } from './fixture.js';
 //   by getColoredListTitle unless it has a name, a hot list as kept.
 // - getCustomWatchlistsThunk(signal) makes the thunk the app refreshes the custom lists with, and
 //   records itself with its signal: the thunk asks the backend service for the lists and dispatches
-//   custom-lists/setup with them. As respectLatest of the app makes it, a call aborts the call before
-//   it, which then changes nothing; a refusal of the backend rejects the thunk.
+//   custom-lists/setup with them, with the time of the load as customLists.timestamp. As
+//   respectLatest of the app makes it, a call aborts the call before it, which then changes nothing
+//   and resolves (skipAbortError); a refusal of the backend rejects the thunk.
 // - The backend service, registered under SYMBOL_LIST_REPOSITORY_BACKEND_SERVICE, answers from the
 //   lists of the watchlist server (state.watchlists.server), which it alone changes: the store
 //   learns of a change only from the next refresh, as on the app. getCustomWatchLists(),
@@ -452,6 +453,9 @@ export function createFakeWatchlists(
 
   // The call of getCustomWatchlistsThunk that is still running, which the next call aborts.
   let latest: { aborted: boolean } | null = null;
+  // When the lists were last loaded: each load is later than the one before, as two loads of the
+  // app, each a request to the server, never come within the same millisecond.
+  let loadedAt = FIXTURE_TIMESTAMP;
   const getCustomWatchlistsThunk = (signal: unknown): Thunk => {
     deps.record('getCustomWatchlistsThunk', [signal]);
     if (latest !== null) {
@@ -465,7 +469,8 @@ export function createFakeWatchlists(
         if (call.aborted) {
           return;
         }
-        const timestamp = Date.now();
+        loadedAt = Math.max(Date.now(), loadedAt + 1);
+        const timestamp = loadedAt;
         dispatchAction({
           type: 'custom-lists/setup',
           payload: {

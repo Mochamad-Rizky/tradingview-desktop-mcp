@@ -658,6 +658,46 @@ describe('readWatchlist', () => {
     expect(unsure.result).toMatchObject({ ready: false, refreshed: true, list: { id: '101' } });
   });
 
+  test('says the refresh did not work when a refresh the app starts meanwhile aborts it, which loads nothing', async () => {
+    const aborted = await libResultOf(
+      readWatchlist,
+      ['101', WAIT_MS, true],
+      changed((win) => {
+        const thunks = moduleWith(win, 'getCustomWatchlistsThunk');
+        const refresh = thunks.getCustomWatchlistsThunk as (signal: unknown) => unknown;
+        thunks.getCustomWatchlistsThunk = (signal: unknown) => {
+          const thunk = refresh(signal);
+          // The refresh of the app, which aborts the one before it as soon as it is made.
+          refresh(null);
+          return thunk;
+        };
+      }, READY),
+    );
+    // A store that cannot say when it last loaded the lists before the refresh counts the load.
+    const unknownBefore = await libResultOf(
+      readWatchlist,
+      ['101', WAIT_MS, true],
+      changed((win) => {
+        const services = moduleWith(win, 'serviceOrNull').serviceOrNull as (descriptor: string) => {
+          store: { getState: () => unknown };
+        };
+        const { store } = services('SymbolListService');
+        const getState = store.getState.bind(store);
+        let reads = 0;
+        store.getState = () => {
+          reads += 1;
+          if (reads === 1) {
+            throw new Error('Not yet');
+          }
+          return getState();
+        };
+      }, READY),
+    );
+
+    expect(aborted.result).toMatchObject({ ready: true, refreshed: false, list: { id: '101' } });
+    expect(unknownBefore.result).toMatchObject({ refreshed: true, list: { id: '101' } });
+  });
+
   test('reads odd answers of the app field by field, and finds no list where the app holds none', async () => {
     const read = async (listId: string, change: (win: FakeTvWindow) => void) =>
       (await libResultOf(readWatchlist, [listId, WAIT_MS, false], changed(change, READY))).result;
