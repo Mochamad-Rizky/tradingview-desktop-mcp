@@ -273,8 +273,8 @@ function debugPineScript(): GetPromptResult {
 // in a journal, at prices it read from the chart. A replay that was running before the session is
 // the user's: the model finds out about one before it changes anything, asks what to do with it,
 // and never stops it. Only the replay its own replay_start started is stopped at the end, whatever
-// happened, so that no session leaves the chart in replay. replay_status, which the core profile
-// leaves out, is used only where the message also says what to do without it.
+// happened, so that a session leaves no replay of its own running. replay_status, which the core
+// profile leaves out, is used only where the message also says what to do without it.
 function replayPracticeSession(
   start: { date: string; kind: ReplayStartChoice['start'] } | undefined,
   symbol: string | undefined,
@@ -314,9 +314,11 @@ function replayPracticeSession(
         '(chart_set_timeframe with 1D, then replay_start again). If it fails in another way, tell ' +
         'me its error with its hint, and ask me before you follow the hint.',
       'Note the replay date and the timeframe. If this server offers replay_status, call it ' +
-        'again: active must be true. Otherwise take them from what replay_start returned (active, ' +
-        'date and resolution); on a replay that was running before the session, the timeframe ' +
-        'from step 1 and the date from the first replay_step.',
+        'again: replay runs while active is true, and may run while it is null, as in step 2; ' +
+        'while it is false no replay runs, so tell me and end the session. Otherwise take them ' +
+        'from what replay_start returned (active, date and resolution); on a replay that was ' +
+        'running before the session, the timeframe from step 1 and the date from the first ' +
+        'replay_step.',
       'Then go bar by bar. Read the bar at the replay point with data_get_ohlcv with to set to the ' +
         'replay date and a count of 5: the last bar it returns is the bar at the replay point, and ' +
         'the ones before it give the context. Show me that bar (its date, open, high, low and ' +

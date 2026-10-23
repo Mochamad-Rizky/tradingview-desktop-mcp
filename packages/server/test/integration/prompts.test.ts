@@ -624,6 +624,21 @@ describe('replay_practice_session', () => {
     );
   });
 
+  test('takes a replay as running in the note of the replay date as it does in the check, active null included', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session');
+
+    // The check lets the session practice on a replay whose active is null, so the note must too.
+    expect(stepOf(text, CHECK)).toMatch(
+      /a replay runs while active is true, and may run while active is null/,
+    );
+    expect(stepOf(text, NOTE)).not.toMatch(/active must be true/);
+    expect(stepOf(text, NOTE)).toMatch(
+      /replay runs while active is true, and may run while it is null/,
+    );
+  });
+
   test('sets the chart to the symbol and the timeframe it is given before replay starts', async () => {
     const { client } = await startServer();
 

@@ -916,4 +916,4 @@ _The image itself, of type image/jpeg, comes first, as MCP image content, and th
 
 **The assistant answers**
 
-> Here is the chart as a picture: the chart container of the active chart, with its legend, panes and scales but without the toolbars, a jpeg of 1180 by 640 pixels (3100 bytes), the smaller of the two formats and enough to read a chart. The assistant can look at it and describe what it shows; the server handed it over and kept no copy. With target page, the picture would show the whole chart tab, toolbars and panels included.
+> Here is the chart as a picture: the chart container of the active chart, with its legend, panes and scales but without the toolbars, a jpeg of 1180 by 640 pixels (3100 bytes), enough to read a chart. The assistant can look at it and describe what it shows; the server handed it over and kept no copy. With target page, the picture would show the whole chart tab, toolbars and panels included.
