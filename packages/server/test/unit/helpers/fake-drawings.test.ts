@@ -334,6 +334,7 @@ describe('creating drawings', () => {
       [
         { time: timeOf(1), price: 1 },
         { time: timeOf(2), price: 2 },
+        { time: timeOf(3), price: 3 },
       ],
       { shape: 'ellipse' },
     );
@@ -454,16 +455,16 @@ describe('the line tools of the app', () => {
     const win = createFakeTvWindow(fixture, {
       drawings: {
         classes: {
-          LineToolEllipse: { pointsCount: 3 },
+          LineToolCircle: { pointsCount: 3 },
           LineToolTrendLine: { properties: { linecolor: '#000000', frozen: false } },
         },
       },
     });
     const registry = registryOf(win);
 
-    await registry.ensureLineToolLoaded('LineToolEllipse');
+    await registry.ensureLineToolLoaded('LineToolCircle');
 
-    expect(registry.getLoadedLineTool('LineToolEllipse').prototype.pointsCount()).toBe(3);
+    expect(registry.getLoadedLineTool('LineToolCircle').prototype.pointsCount()).toBe(3);
     expect(Object.keys(chartOf(win).getShapeById('SHAPE01').getProperties()).sort()).toEqual([
       'frozen',
       'linecolor',

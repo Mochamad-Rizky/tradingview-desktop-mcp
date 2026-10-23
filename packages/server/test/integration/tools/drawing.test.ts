@@ -436,18 +436,18 @@ describe('styles', () => {
 describe('point counts', () => {
   test('drawing_create refuses a shape whose point count the line-tool registry disputes, naming both counts', async () => {
     const { client, win } = await startHarness(fixture, {
-      drawings: { classes: { LineToolEllipse: { pointsCount: 3 } } },
+      drawings: { classes: { LineToolCircle: { pointsCount: 3 } } },
     });
 
     const result = await callTool(client, 'drawing_create', {
-      shape: 'ellipse',
+      shape: 'circle',
       points: pointsOf(2),
     });
 
     expect(errorOf(result)).toMatchObject({
       code: 'NOT_AVAILABLE',
-      message: 'TradingView takes 3 points for an ellipse drawing, where this server expects 2',
-      details: { shape: 'ellipse', expected: 2, reported: 3 },
+      message: 'TradingView takes 3 points for a circle drawing, where this server expects 2',
+      details: { shape: 'circle', expected: 2, reported: 3 },
     });
     expect(calls(win, 'chart.createMultipointShape')).toEqual([]);
     expect(shapesOn(win)).toEqual(['SHAPE01', 'SHAPE02', 'SHAPE03']);

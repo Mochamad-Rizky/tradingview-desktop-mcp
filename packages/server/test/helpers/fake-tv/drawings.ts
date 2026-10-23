@@ -207,7 +207,7 @@ const LINE_TOOLS: Record<string, FakeLineTool> = {
   arrow: tool('LineToolArrow', 2, LINE),
   rectangle: tool('LineToolRectangle', 2, SHAPE),
   circle: tool('LineToolCircle', 2, SHAPE),
-  ellipse: tool('LineToolEllipse', 2, SHAPE),
+  ellipse: tool('LineToolEllipse', 3, SHAPE),
   triangle: tool('LineToolTriangle', 3, SHAPE),
   parallel_channel: tool('LineToolParallelChannel', 3, LINE),
   fib_retracement: tool('LineToolFibRetracement', 2, withoutText(LINE)),

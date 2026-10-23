@@ -37,7 +37,7 @@ const POINT_COUNTS: [DrawingShape, number][] = [
   ['arrow', 2],
   ['rectangle', 2],
   ['circle', 2],
-  ['ellipse', 2],
+  ['ellipse', 3],
   ['triangle', 3],
   ['parallel_channel', 3],
   ['fib_retracement', 2],

@@ -364,21 +364,21 @@ describe('createDrawing', () => {
       [
         null,
         request({
-          shape: 'ellipse',
-          className: 'LineToolEllipse',
+          shape: 'circle',
+          className: 'LineToolCircle',
           points: [...TREND_LINE.points],
           verifyCount: 2,
         }),
         WAIT_MS,
       ],
-      chart(fixture, { drawings: { classes: { LineToolEllipse: { pointsCount: 3 } } } }),
+      chart(fixture, { drawings: { classes: { LineToolCircle: { pointsCount: 3 } } } }),
     );
 
     expect(error.code).toBe('NOT_AVAILABLE');
     expect(error.message).toBe(
-      'TradingView takes 3 points for an ellipse drawing, where this server expects 2',
+      'TradingView takes 3 points for a circle drawing, where this server expects 2',
     );
-    expect(error.details).toEqual({ shape: 'ellipse', expected: 2, reported: 3 });
+    expect(error.details).toEqual({ shape: 'circle', expected: 2, reported: 3 });
     expect(calls(win, 'chart.createMultipointShape')).toEqual([]);
   });
 

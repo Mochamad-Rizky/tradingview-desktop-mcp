@@ -105,9 +105,12 @@ const assumed = (
   style: StyleFamily,
 ): DrawingShapeSpec => ({ points, className, verified: false, text, style });
 
-// The curated shapes (notes, section 1.2). Of the texts, the notes saw the text property on the
-// horizontal line, the rectangle and the text; the others are by convention, and a tool that turns
-// out to lack the property refuses the text before anything is drawn.
+// The curated shapes (notes, section 1.2). The line-tool registry of the app reported these point
+// counts for every one of them on the app, the ellipse taking three points (two for its axis and one
+// for its width); the counts not seen in a drawing stay confirmed with the registry before drawing.
+// Of the texts, the notes saw the text property on the horizontal line, the rectangle and the text;
+// the others are by convention, and a tool that turns out to lack the property refuses the text
+// before anything is drawn.
 export const DRAWING_SHAPES: Readonly<Record<DrawingShape, DrawingShapeSpec>> = {
   horizontal_line: seen(1, 'LineToolHorzLine', 'optional', 'line'),
   vertical_line: assumed(1, 'LineToolVertLine', 'optional', 'line'),
@@ -118,7 +121,7 @@ export const DRAWING_SHAPES: Readonly<Record<DrawingShape, DrawingShapeSpec>> = 
   arrow: assumed(2, 'LineToolArrow', 'optional', 'line'),
   rectangle: seen(2, 'LineToolRectangle', 'optional', 'shape'),
   circle: assumed(2, 'LineToolCircle', 'optional', 'shape'),
-  ellipse: assumed(2, 'LineToolEllipse', 'optional', 'shape'),
+  ellipse: assumed(3, 'LineToolEllipse', 'optional', 'shape'),
   triangle: assumed(3, 'LineToolTriangle', 'optional', 'shape'),
   parallel_channel: assumed(3, 'LineToolParallelChannel', 'optional', 'line'),
   fib_retracement: assumed(2, 'LineToolFibRetracement', 'none', 'line'),
