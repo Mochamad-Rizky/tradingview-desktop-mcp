@@ -1,6 +1,8 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Config } from '../../src/config/schema.js';
 import { createMcpServer } from '../../src/server.js';
+import { allTools } from '../../src/tools/index.js';
+import { selectTools } from '../../src/tools/registry.js';
 import type { ToolRegistry } from '../../src/tools/types.js';
 import { connectInMemoryClient } from '../helpers/mcp-client.js';
 import {
@@ -506,24 +508,120 @@ describe('debug_pine_script', () => {
 });
 
 describe('replay_practice_session', () => {
-  // Started and checked, stepped, and left.
-  const STEPS = ['replay_start', 'replay_status', 'replay_step', 'replay_stop'];
+  // The text of step `number` of a message: its numbered line, without the number.
+  function stepOf(text: string, number: number): string {
+    const match = new RegExp(`^${String(number)}\\. (.*)$`, 'm').exec(text);
+    if (match === null) {
+      throw new Error(`The message has no step ${String(number)}`);
+    }
+    return match[1] ?? '';
+  }
+
+  // The steps: read the chart, check for a running replay, set up the chart, start, note where
+  // replay is, go bar by bar, keep the journal, end.
+  const CHECK = 2;
+  const SETUP = 3;
+  const START = 4;
+  const NOTE = 5;
+  const END = 8;
 
   test('replay_practice_session names replay_start, replay_step, replay_status and replay_stop and tells the assistant to stop replay at the end', async () => {
     const { client } = await startServer();
 
     const text = await messageOf(client, 'replay_practice_session');
 
-    expect(stepsNamed(text, STEPS)).toEqual(STEPS);
-    // The stop is the last call, after every other tool the message names, and it is made also
-    // when a step went wrong.
+    expect(toolsNamed(text)).toEqual(
+      expect.arrayContaining(['replay_start', 'replay_step', 'replay_status', 'replay_stop']),
+    );
+    // The stop is the last call, after every other tool the message names. It is made whenever
+    // the session started a replay of its own, also when a step went wrong, and only then.
     const stop = text.lastIndexOf('replay_stop');
     for (const tool of toolsNamed(text).filter((name) => name !== 'replay_stop')) {
       expect(text.lastIndexOf(tool), tool).toBeLessThan(stop);
     }
-    expect(text).toMatch(/ALWAYS call replay_stop at the end, also after an error/);
+    expect(stepOf(text, END)).toMatch(
+      /If your replay_start succeeded, ALWAYS call replay_stop at the end, also after an error/,
+    );
     // The journal is summed up once replay is left.
     expect(text.indexOf('Then summarize the journal')).toBeGreaterThan(stop);
+  });
+
+  test('checks whether a replay is already running before it changes anything, and asks the user about one', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session', { symbol: 'NASDAQ:MSFT' });
+
+    expect(stepOf(text, 1)).toMatch(/^chart_get_state: note the symbol and the timeframe/);
+    const check = stepOf(text, CHECK);
+    expect(check).toMatch(
+      /^Before you change anything, find out whether a replay is already running/,
+    );
+    expect(check).toMatch(/If this server offers replay_status, call it/);
+    // Nothing changes before the check: the chart tools that change come after it.
+    expect(text.indexOf('chart_set_symbol')).toBeGreaterThan(text.indexOf(check));
+    expect(text.indexOf('chart_set_timeframe')).toBeGreaterThan(text.indexOf(check));
+    // A running replay may be the user's, who decides what happens to it.
+    expect(check).toMatch(/may be mine/);
+    expect(check).toMatch(/practice on it from where it is or to leave it alone/);
+    expect(check).toMatch(/change nothing until I answer/);
+  });
+
+  test('without replay_status, learns from a refused replay_start that a replay runs, before it sets up the chart', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session');
+
+    const check = stepOf(text, CHECK);
+    expect(check).toMatch(
+      /If it does not offer replay_status, call replay_start as in step 4 now, on the chart as it is/,
+    );
+    expect(check).toMatch(/fails with NOT_AVAILABLE[^.]*when a replay is already running/);
+    // A replay that start gave is the session's own; any other refusal means none was running.
+    expect(check).toMatch(/if it starts replay instead, that replay is yours/);
+    expect(check).toMatch(/If it fails in another way, no replay was running/);
+    // The session's own replay is left before the chart changes, and started again after.
+    expect(stepOf(text, SETUP)).toMatch(
+      /If replay_start started your replay in step 2 and the chart has to change, call replay_stop first/,
+    );
+    expect(stepOf(text, START)).toMatch(/when your replay from step 2 already runs on the chart/);
+  });
+
+  test('never stops a replay that was running before the session, and says that it still runs', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session');
+
+    // Practicing on the user's replay skips the setup and the start, which would change it.
+    expect(stepOf(text, CHECK)).toMatch(/If I choose to practice on it, go on with step 5/);
+    expect(stepOf(text, CHECK)).toMatch(/if I want it left alone, end the session there/);
+    const end = stepOf(text, END);
+    expect(end).toMatch(/Never stop a replay that was running before the session/);
+    expect(end).toMatch(/tell me at the end that it is still running/);
+  });
+
+  test('names replay_status, which the core profile leaves out, only where it says what to do without it', async () => {
+    const { client } = await startServer();
+    const core = new Set(
+      selectTools(allTools, { profile: 'core', patterns: [] }).map(({ name }) => name),
+    );
+
+    const text = await messageOf(client, 'replay_practice_session', {
+      symbol: 'NASDAQ:AAPL',
+      timeframe: '1D',
+    });
+
+    expect(toolsNamed(text).filter((name) => !core.has(name))).toEqual(['replay_status']);
+    const sentences = text
+      .split(/(?<=\.)\s+/)
+      .filter((sentence) => sentence.includes('replay_status'));
+    expect(sentences.length).toBeGreaterThan(0);
+    for (const sentence of sentences) {
+      expect(sentence).toMatch(/If (?:this server|it does not) (?:offers|offer) replay_status/);
+    }
+    // Without it, the date and the timeframe come from what replay_start returned.
+    expect(stepOf(text, NOTE)).toMatch(
+      /Otherwise take them from what replay_start returned \(active, date and resolution\)/,
+    );
   });
 
   test('sets the chart to the symbol and the timeframe it is given before replay starts', async () => {
@@ -534,13 +632,10 @@ describe('replay_practice_session', () => {
       timeframe: '1W',
     });
 
-    expect(toolsNamed(text).slice(0, 3)).toEqual([
-      'chart_set_symbol',
-      'chart_set_timeframe',
-      'replay_start',
-    ]);
-    expect(text).toMatch(/chart_set_symbol with NASDAQ:MSFT/);
-    expect(text).toMatch(/chart_set_timeframe with 1W/);
+    expect(stepOf(text, SETUP)).toMatch(
+      /^Set up the chart: chart_set_symbol with NASDAQ:MSFT, then chart_set_timeframe with 1W\./,
+    );
+    expect(stepOf(text, START)).toMatch(/^replay_start /);
   });
 
   test('practices on the daily chart when it is given no timeframe, since intraday replay is plan-gated', async () => {
@@ -549,26 +644,42 @@ describe('replay_practice_session', () => {
     const text = await messageOf(client, 'replay_practice_session');
 
     expect(toolsNamed(text)).not.toContain('chart_set_symbol');
-    expect(text).toMatch(/chart_set_timeframe with 1D/);
-    expect(text).toMatch(/BAR_REPLAY_INTRADAY/);
+    expect(stepOf(text, SETUP)).toMatch(/^Set up the chart: chart_set_timeframe with 1D\./);
+    expect(stepOf(text, SETUP)).toMatch(/BAR_REPLAY_INTRADAY/);
     // On an intraday timeframe without intraday replay in the plan, replay_start refuses, and the
     // message says what to do then.
-    const start = text.slice(text.indexOf('replay_start'));
+    const start = stepOf(text, START);
     expect(start).toMatch(/fails with PLAN_LIMIT for BAR_REPLAY_INTRADAY/);
     expect(start).toMatch(/practice on the daily chart/);
   });
 
-  test('starts at the date it is given, or at a random bar', async () => {
+  test('says where replay starts for a date, for first and for random', async () => {
     const { client } = await startServer();
 
     const dated = await messageOf(client, 'replay_practice_session', { date: '2024-03-01' });
-    const random = await messageOf(client, 'replay_practice_session');
+    const first = await messageOf(client, 'replay_practice_session', { date: ' First ' });
+    const random = await messageOf(client, 'replay_practice_session', { date: 'random' });
+    const none = await messageOf(client, 'replay_practice_session');
 
-    expect(dated).toMatch(/replay_start with date 2024-03-01/);
-    expect(random).toMatch(/replay_start without a date[^.]*random bar/);
-    expect(random).not.toMatch(/replay_start with date/);
-    // The steps are the same either way.
-    expect(toolsNamed(dated)).toEqual(toolsNamed(random));
+    expect(stepOf(dated, START)).toMatch(
+      /^replay_start with date 2024-03-01\. Replay starts just before it, so its bar comes with the first step\./,
+    );
+    expect(stepOf(first, START)).toMatch(
+      /^replay_start with date first, which starts replay at the first bar replay can reach\./,
+    );
+    expect(stepOf(random, START)).toMatch(
+      /^replay_start with date random, which starts replay at a random bar, so that I cannot know what comes next\./,
+    );
+    expect(stepOf(none, START)).toMatch(
+      /^replay_start without a date, which starts replay at a random bar, so that I cannot know what comes next\./,
+    );
+    for (const text of [first, random, none]) {
+      expect(text).not.toMatch(/starts just before it/);
+    }
+    // The steps are the same however replay starts.
+    for (const text of [first, random, none]) {
+      expect(toolsNamed(text)).toEqual(toolsNamed(dated));
+    }
   });
 
   test('has the user decide at the steps, and keeps a journal of hypothetical trades with prices read from the chart', async () => {
@@ -599,6 +710,18 @@ describe('replay_practice_session', () => {
     expect(toolsNamed(text).filter((name) => /trade|order|buy|sell|position/.test(name))).toEqual(
       [],
     );
+  });
+
+  test('says in its title and description that it trades nothing and stops only its own replay', async () => {
+    const { client } = await startServer();
+
+    const { prompts } = await client.listPrompts();
+    const prompt = prompts.find(({ name }) => name === 'replay_practice_session');
+
+    expect(prompt?.title).toBe('Practice reading charts with bar replay');
+    expect(prompt?.description).toMatch(/never places an order/);
+    expect(prompt?.description).toMatch(/stops the replay it started at the end/);
+    expect(prompt?.description).toMatch(/never one that was running before/);
   });
 
   test('takes blank arguments for none', async () => {

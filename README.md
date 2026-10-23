@@ -226,7 +226,9 @@ you to pick: `analyze_current_chart`, `multi_timeframe_review`, `write_and_backt
 call, in which order, and what to report back. `replay_practice_session` runs a practice session on
 bar replay: the assistant steps through the past bar by bar, asks you at each step whether you
 would go long, go short or stay flat, keeps a journal of these hypothetical trades at prices it
-reads from the chart, works out their profit or loss, and always stops replay at the end.
+reads from the chart, and works out their profit or loss. It checks first whether a replay of yours
+is running, and asks you what to do with one before it changes anything; at the end it stops the
+replay it started, and never one of yours.
 
 ### Safety
 

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { TvMcpError } from '../core/errors.js';
 import { toMcpError } from '../core/mcp-error.js';
 import { normalizeTimeframe } from '../tools/chart/mappers.js';
-import { startOf } from '../tools/replay/mappers.js';
+import { startOf, type ReplayStartChoice } from '../tools/replay/mappers.js';
 
 // The prompts of design spec 7. A prompt is one user message that tells the model which tools to
 // call, in which order, and what to report back; reading one asks TradingView nothing. The tools
@@ -74,11 +74,12 @@ function resolutionOf(timeframe: string): string {
   }
 }
 
-// Refuses a start of replay that replay_start cannot read, with the forms it takes: a time, first
-// or random. The message keeps the text as written.
-function requireReplayStart(date: string): void {
+// Where replay starts for a date as written, as replay_start reads it: at the time it names, at the
+// first bar replay can reach (first) or at a random bar (random). A date that replay_start cannot
+// read is refused with the forms it takes. The message keeps a time as written.
+function replayStartOf(date: string): ReplayStartChoice['start'] {
   try {
-    startOf(date);
+    return startOf(date).start;
   } catch (error) {
     throw toMcpError(error);
   }
@@ -269,10 +270,13 @@ function debugPineScript(): GetPromptResult {
 // A practice session on bar replay. Nothing is traded: no tool places an order (design spec 5.3,
 // rule 1), and on TradingView Desktop the paper trading of replay goes through the trading service
 // of the app, which the server never touches, so the trades are hypothetical ones the model keeps
-// in a journal, at prices it read from the chart. The message has the model stop replay at the end
-// whatever happened, so that no session leaves the chart in replay.
+// in a journal, at prices it read from the chart. A replay that was running before the session is
+// the user's: the model finds out about one before it changes anything, asks what to do with it,
+// and never stops it. Only the replay its own replay_start started is stopped at the end, whatever
+// happened, so that no session leaves the chart in replay. replay_status, which the core profile
+// leaves out, is used only where the message also says what to do without it.
 function replayPracticeSession(
-  date: string | undefined,
+  start: { date: string; kind: ReplayStartChoice['start'] } | undefined,
   symbol: string | undefined,
   timeframe: string | undefined,
 ): GetPromptResult {
@@ -286,21 +290,33 @@ function replayPracticeSession(
       'practice only: nothing is traded.',
     '',
     ...numbered([
+      'chart_get_state: note the symbol and the timeframe the chart shows.',
+      'Before you change anything, find out whether a replay is already running on the chart. If ' +
+        'this server offers replay_status, call it: a replay runs while active is true, and may ' +
+        'run while active is null. If it does not offer replay_status, call replay_start as in ' +
+        'step 4 now, on the chart as it is: it fails with NOT_AVAILABLE, saying so, when a replay ' +
+        'is already running or TradingView cannot tell whether one is, and if it starts replay ' +
+        'instead, that replay is yours. If it fails in another way, no replay was running. A ' +
+        'replay that was running before the session may be mine: tell me about it, ask me whether ' +
+        'to practice on it from where it is or to leave it alone, and change nothing until I ' +
+        'answer. If I choose to practice on it, go on with step 5 on that replay; if I want it ' +
+        'left alone, end the session there.',
       `Set up the chart: ${setup.join(', then ')}.` +
         (timeframe === undefined
           ? ' The daily timeframe is the default because TradingView replays intraday timeframes ' +
             'only on plans with BAR_REPLAY_INTRADAY.'
-          : ''),
-      (date === undefined
-        ? 'replay_start without a date, which starts replay at a random bar, so that I cannot ' +
-          'know what comes next.'
-        : `replay_start with date ${date}. Replay starts just before it, so its bar comes with ` +
-          'the first step.') +
-        ' If it fails with PLAN_LIMIT for BAR_REPLAY_INTRADAY, the plan does not replay intraday ' +
-        'timeframes: tell me, and offer to practice on the daily chart instead (chart_set_timeframe ' +
-        'with 1D, then replay_start again). If it fails in another way, tell me its error with its ' +
-        'hint, and ask me before you follow the hint.',
-      'replay_status: check that replay is active, and note the replay date and the timeframe.',
+          : '') +
+        ' If replay_start started your replay in step 2 and the chart has to change, call ' +
+        'replay_stop first, and start again in step 4.',
+      `${startSentence(start)} Skip this step when your replay from step 2 already runs on the ` +
+        'chart as set up. If it fails with PLAN_LIMIT for BAR_REPLAY_INTRADAY, the plan does not ' +
+        'replay intraday timeframes: tell me, and offer to practice on the daily chart instead ' +
+        '(chart_set_timeframe with 1D, then replay_start again). If it fails in another way, tell ' +
+        'me its error with its hint, and ask me before you follow the hint.',
+      'Note the replay date and the timeframe. If this server offers replay_status, call it ' +
+        'again: active must be true. Otherwise take them from what replay_start returned (active, ' +
+        'date and resolution); on a replay that was running before the session, the timeframe ' +
+        'from step 1 and the date from the first replay_step.',
       'Then go bar by bar. Read the bar at the replay point with data_get_ohlcv with to set to the ' +
         'replay date and a count of 5: the last bar it returns is the bar at the replay point, and ' +
         'the ones before it give the context. Show me that bar (its date, open, high, low and ' +
@@ -313,8 +329,9 @@ function replayPracticeSession(
         'hypothetical profit or loss of each closed trade, as a price difference and in percent, ' +
         'and the running total yourself, in the conversation.',
       'End the session when I say so, when replay_step returns finished: true, or when a step ' +
-        'fails. ALWAYS call replay_stop at the end, also after an error, so that the chart shows ' +
-        'its live bars again.',
+        'fails. If your replay_start succeeded, ALWAYS call replay_stop at the end, also after an ' +
+        'error, so that the chart shows its live bars again. Never stop a replay that was running ' +
+        'before the session: if we practiced on one, tell me at the end that it is still running.',
     ]),
     '',
     'Then summarize the journal: each trade with its side, its entry and exit dates and prices ' +
@@ -324,6 +341,28 @@ function replayPracticeSession(
       'way to trade either, such as the trading panel or the Buy and Sell buttons of TradingView.',
     MISSING_TOOLS,
   ]);
+}
+
+// The call of replay_start a practice session makes, by where replay starts: at the time the date
+// names, which replay_start starts a second before, at the first bar replay can reach, or at a
+// random bar, which is also where it starts without a date.
+function startSentence(
+  start: { date: string; kind: ReplayStartChoice['start'] } | undefined,
+): string {
+  const random = 'which starts replay at a random bar, so that I cannot know what comes next.';
+  switch (start?.kind) {
+    case undefined:
+      return `replay_start without a date, ${random}`;
+    case 'random':
+      return `replay_start with date random, ${random}`;
+    case 'first':
+      return 'replay_start with date first, which starts replay at the first bar replay can reach.';
+    case 'date':
+      return (
+        `replay_start with date ${start.date}. Replay starts just before it, so its bar comes ` +
+        'with the first step.'
+      );
+  }
 }
 
 // Registers the prompts. They need nothing of the connection or of the tools of the server: a
@@ -427,12 +466,12 @@ export function registerPrompts(server: McpServer): void {
   server.registerPrompt(
     'replay_practice_session',
     {
-      title: 'Practice trading with bar replay',
+      title: 'Practice reading charts with bar replay',
       description:
         'Replays the chart bar by bar from a point in the past, asks for a decision at each ' +
         'step, keeps a journal of hypothetical trades at prices read from the chart and works ' +
-        'out their profit or loss. It never places an order, and it always stops replay at the ' +
-        'end.',
+        'out their profit or loss. It never places an order, and it stops the replay it started ' +
+        'at the end, never one that was running before.',
       argsSchema: {
         date: z
           .string()
@@ -460,13 +499,12 @@ export function registerPrompts(server: McpServer): void {
       },
     },
     ({ date, symbol, timeframe }) => {
-      const start = given(date);
-      if (start !== undefined) {
-        // Only to refuse one that cannot be read; the message keeps it as written.
-        requireReplayStart(start);
-      }
+      const written = given(date);
+      const start =
+        written === undefined ? undefined : { date: written, kind: replayStartOf(written) };
       const frame = given(timeframe);
       if (frame !== undefined) {
+        // Only to refuse one that cannot be read; the message keeps it as written.
         resolutionOf(frame);
       }
       return replayPracticeSession(start, given(symbol), frame);
