@@ -16,6 +16,7 @@ import {
   observe,
   optedIn,
   readWindowVisibility,
+  sameJson,
   startE2eServer,
   type E2eServer,
 } from './setup.js';
@@ -262,10 +263,11 @@ describe.skipIf(!e2eEnabled())('the tab tools against TradingView Desktop', () =
 
     let opened: string | null = null;
     const lags: { to: 'new' | 'chart'; via: string; lag: ReturnType<typeof lagOf> }[] = [];
-    let newTabShape: ReturnType<typeof readTabStructure>[number] | undefined;
-    let chartTabShape: ReturnType<typeof readTabStructure>[number] | undefined;
-    let failure: unknown;
-    let failed = false;
+    // How the strip shows the New tab page of the test and the chart tab, once both are there.
+    const shown: {
+      newTab?: ReturnType<typeof readTabStructure>[number] | undefined;
+      chartTab?: ReturnType<typeof readTabStructure>[number] | undefined;
+    } = {};
 
     // One tool call that changes the tab in front, watched from before it until a while after it.
     // `target` names the tab that comes to the front, from the answer of the call when need be.
@@ -291,144 +293,137 @@ describe.skipIf(!e2eEnabled())('the tab tools against TradingView Desktop', () =
       }
     };
 
-    try {
-      const made = await watched(
-        'new',
-        'tab_new',
-        async () => {
-          const answer = await callOk<{ id: string; index: number }>(client, 'tab_new');
-          opened = answer.data.id;
-          return answer;
-        },
-        (answer) => answer?.data.id ?? '',
-      );
-      expect(made.warnings.length === 0, 'tab_new gives no warning').toBe(true);
-      const tabs = await listTabs();
-      expect(tabs.length).toBe(before.length + 1);
-      const mine = tabs.find(({ id }) => id === opened);
-      expect(mine?.active).toBe(true);
-      expect(mine?.openedBySession).toBe(true);
-      const shapes = await structure();
-      newTabShape = shapes.find(({ id }) => id === opened);
-      chartTabShape = shapes.find(({ id }) => id === original.id);
-      expect(findNewTabPages(await ctx.connection.targets()).length).toBe(1);
-      // No chart is in front: the chart tools say so.
-      const noChart = await callFailure(client, 'chart_get_state');
-      expect(noChart.code).toBe('TARGET_NOT_FOUND');
-
-      for (let round = 0; round < 2; round += 1) {
-        const back = await watched(
-          'chart',
-          'tab_switch',
-          () => callOk<{ changed: boolean }>(client, 'tab_switch', { tabId: original.id }),
-          () => original.id,
+    // However the test ends, after a timeout too: the test's own tab is closed, the one tab_list says
+    // this session opened and that was not there before, never another one, the chart tab of before
+    // goes back to the front, and the window holds the tabs of before, and only they.
+    onTestFinished(async () => {
+      const failures: string[] = [];
+      try {
+        const now = await listTabs();
+        const own = now.filter(
+          ({ id, openedBySession }) =>
+            (openedBySession || id === opened) && !before.some((tab) => tab.id === id),
         );
-        expect(back.data.changed).toBe(true);
-        expect(back.warnings.length === 0, 'tab_switch gives no warning').toBe(true);
-        await callOk(client, 'chart_get_state');
-        const ahead = await watched(
-          'new',
-          'tab_switch',
-          () => callOk<{ changed: boolean }>(client, 'tab_switch', { tabId: opened ?? '' }),
-          () => opened ?? '',
-        );
-        expect(ahead.data.changed).toBe(true);
+        for (const tab of own) {
+          try {
+            await callOk(client, 'tab_close', { tabId: tab.id });
+          } catch (error) {
+            failures.push(
+              `The test could not close the tab it opened (${describeFailure(error)}): close the ` +
+                'New tab page in TradingView',
+            );
+          }
+        }
+        const after = await listTabs();
+        if (!after.some(({ id, active }) => id === original.id && active)) {
+          try {
+            await callOk(client, 'tab_switch', { tabId: original.id });
+          } catch (error) {
+            failures.push(
+              `The chart tab of before could not be brought back to the front (${describeFailure(error)})`,
+            );
+          }
+        }
+        const left = await listTabs();
+        if (!sameJson(left.map(({ id }) => id).sort(), before.map(({ id }) => id).sort())) {
+          failures.push(
+            `The window has ${String(left.length)} tabs after the test and had ` +
+              `${String(before.length)} before, or other ones`,
+          );
+        }
+      } catch (error) {
+        failures.push(describeFailure(error));
       }
-      // Closed while it is in front; the shell then brings a neighbour to the front.
-      const closed = await watched(
+      observe('tab switches: the chart page following the strip', {
+        switches: lags.map(({ to, via, lag }) => ({ to, via, ...lag })),
+        maxLagMs: Math.max(
+          ...lags.map(({ lag }) => lag.lagMs ?? Number.NEGATIVE_INFINITY),
+          Number.NEGATIVE_INFINITY,
+        ),
+      });
+      const { newTab: newTabShape, chartTab: chartTabShape } = shown;
+      observe('a New tab page tab against a chart tab in the strip', {
+        newTab:
+          newTabShape === undefined
+            ? null
+            : {
+                hasSymbol: newTabShape.hasSymbol,
+                symbolLength: newTabShape.symbolLength,
+                hasLayoutName: newTabShape.hasLayoutName,
+                layoutNameLength: newTabShape.layoutNameLength,
+                hasLogo: newTabShape.hasLogo,
+                hasCloseButton: newTabShape.hasCloseButton,
+                titleNonEmpty: newTabShape.titleLength > 0,
+              },
+        chartTab:
+          chartTabShape === undefined
+            ? null
+            : {
+                hasSymbol: chartTabShape.hasSymbol,
+                symbolNonEmpty: (chartTabShape.symbolLength ?? 0) > 0,
+                hasLayoutName: chartTabShape.hasLayoutName,
+                hasLogo: chartTabShape.hasLogo,
+                hasCloseButton: chartTabShape.hasCloseButton,
+              },
+      });
+      if (failures.length > 0) {
+        throw new HarnessError(`The tab test could not clean up: ${failures.join('; ')}`);
+      }
+    });
+
+    const made = await watched(
+      'new',
+      'tab_new',
+      async () => {
+        const answer = await callOk<{ id: string; index: number }>(client, 'tab_new');
+        opened = answer.data.id;
+        return answer;
+      },
+      (answer) => answer?.data.id ?? '',
+    );
+    expect(made.warnings.length === 0, 'tab_new gives no warning').toBe(true);
+    const tabs = await listTabs();
+    expect(tabs.length).toBe(before.length + 1);
+    const mine = tabs.find(({ id }) => id === opened);
+    expect(mine?.active).toBe(true);
+    expect(mine?.openedBySession).toBe(true);
+    const shapes = await structure();
+    shown.newTab = shapes.find(({ id }) => id === opened);
+    shown.chartTab = shapes.find(({ id }) => id === original.id);
+    expect(findNewTabPages(await ctx.connection.targets()).length).toBe(1);
+    // No chart is in front: the chart tools say so.
+    const noChart = await callFailure(client, 'chart_get_state');
+    expect(noChart.code).toBe('TARGET_NOT_FOUND');
+
+    for (let round = 0; round < 2; round += 1) {
+      const back = await watched(
         'chart',
-        'tab_close',
-        () =>
-          callOk<{ closed: string; remaining: number }>(client, 'tab_close', {
-            tabId: opened ?? '',
-          }),
+        'tab_switch',
+        () => callOk<{ changed: boolean }>(client, 'tab_switch', { tabId: original.id }),
         () => original.id,
       );
-      expect(closed.data).toEqual({ closed: opened, remaining: before.length });
-      opened = null;
-    } catch (error) {
-      failure = error;
-      failed = true;
-    }
-
-    // However the test ended: the test's own tab is closed, the one tab_list says this session opened
-    // and that was not there before, never another one, and the chart tab of before goes back to the
-    // front.
-    const failures: string[] = [];
-    try {
-      const now = await listTabs();
-      const own = now.filter(
-        ({ id, openedBySession }) =>
-          (openedBySession || id === opened) && !before.some((tab) => tab.id === id),
+      expect(back.data.changed).toBe(true);
+      expect(back.warnings.length === 0, 'tab_switch gives no warning').toBe(true);
+      await callOk(client, 'chart_get_state');
+      const ahead = await watched(
+        'new',
+        'tab_switch',
+        () => callOk<{ changed: boolean }>(client, 'tab_switch', { tabId: opened ?? '' }),
+        () => opened ?? '',
       );
-      for (const tab of own) {
-        try {
-          await callOk(client, 'tab_close', { tabId: tab.id });
-        } catch (error) {
-          failures.push(
-            `The test could not close the tab it opened (${describeFailure(error)}): close the ` +
-              'New tab page in TradingView',
-          );
-        }
-      }
-      const after = await listTabs();
-      if (!after.some(({ id, active }) => id === original.id && active)) {
-        try {
-          await callOk(client, 'tab_switch', { tabId: original.id });
-        } catch (error) {
-          failures.push(
-            `The chart tab of before could not be brought back to the front (${describeFailure(error)})`,
-          );
-        }
-      }
-      const left = await listTabs();
-      if (left.length !== before.length) {
-        failures.push(
-          `The window has ${String(left.length)} tabs after the test and had ${String(before.length)} before`,
-        );
-      }
-    } catch (error) {
-      failures.push(describeFailure(error));
+      expect(ahead.data.changed).toBe(true);
     }
-    observe('tab switches: the chart page following the strip', {
-      switches: lags.map(({ to, via, lag }) => ({ to, via, ...lag })),
-      maxLagMs: Math.max(
-        ...lags.map(({ lag }) => lag.lagMs ?? Number.NEGATIVE_INFINITY),
-        Number.NEGATIVE_INFINITY,
-      ),
-    });
-    observe('a New tab page tab against a chart tab in the strip', {
-      newTab:
-        newTabShape === undefined
-          ? null
-          : {
-              hasSymbol: newTabShape.hasSymbol,
-              symbolLength: newTabShape.symbolLength,
-              hasLayoutName: newTabShape.hasLayoutName,
-              layoutNameLength: newTabShape.layoutNameLength,
-              hasLogo: newTabShape.hasLogo,
-              hasCloseButton: newTabShape.hasCloseButton,
-              titleNonEmpty: newTabShape.titleLength > 0,
-            },
-      chartTab:
-        chartTabShape === undefined
-          ? null
-          : {
-              hasSymbol: chartTabShape.hasSymbol,
-              symbolNonEmpty: (chartTabShape.symbolLength ?? 0) > 0,
-              hasLayoutName: chartTabShape.hasLayoutName,
-              hasLogo: chartTabShape.hasLogo,
-              hasCloseButton: chartTabShape.hasCloseButton,
-            },
-    });
-    if (failed) {
-      if (failures.length > 0) {
-        console.error(`The tab test could not clean up after it failed: ${failures.join('; ')}`);
-      }
-      throw failure;
-    }
-    if (failures.length > 0) {
-      throw new HarnessError(`The tab test could not clean up: ${failures.join('; ')}`);
-    }
+    // Closed while it is in front; the shell then brings a neighbour to the front.
+    const closed = await watched(
+      'chart',
+      'tab_close',
+      () =>
+        callOk<{ closed: string; remaining: number }>(client, 'tab_close', {
+          tabId: opened ?? '',
+        }),
+      () => original.id,
+    );
+    expect(closed.data).toEqual({ closed: opened, remaining: before.length });
+    opened = null;
   });
 });

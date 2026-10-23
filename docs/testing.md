@@ -194,12 +194,16 @@ The end-to-end suites work on the user's own, logged-in app, so they follow thes
   below; and studies a test added itself, within the plan limits, which the test removes again,
   together with any study a call left on the chart under the name the test added (below).
   Compiling a synthetic script without the editor changes nothing in the app. The suites of Plan 3
-  also change objects of their own, each removed again however the test ended: three drawings, an
-  alert within the alert limit of the plan, a watchlist symbol the active list did not hold, and,
-  when allowed, a tab on the New tab page. They run bar replay on a daily chart and leave it, open
-  and close the symbol search and the watchlist panel, and ask the layout and pane tools only for
-  what the plan refuses. Nothing else, and nothing is left behind in the account, unless the person
-  running the suites allows it (below).
+  also change objects of their own, each removed again however the test ended, in a hook that runs
+  once the test is over (`onTestFinished`), so that its timeout does not cut the cleanup short:
+  three drawings, removed by their ids, an alert within the alert limit of the plan, a watchlist
+  symbol the active list did not hold, and, when allowed, a tab on the New tab page; the drawings,
+  the alerts and the tabs of before are then compared by their ids. They run bar replay on a daily
+  chart and leave it (`replay_stop` is tried twice, and the suite leaves a replay of its own that a
+  test left running before it puts the chart back), open and close the symbol search and the
+  watchlist panel, and ask the layout and pane tools only for what the plan refuses. Nothing else,
+  and nothing is left behind in the account, unless the person running the suites allows it
+  (below).
 - **What they check first:** before its first change, a suite that changes the chart checks by
   reading only that the chart API has every member the chart tools use (`symbol`, `resolution`,
   `chartType`, `getVisibleRange` and the three setters of the active chart, `zoomToBarsRange` of the

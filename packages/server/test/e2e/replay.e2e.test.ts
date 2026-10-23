@@ -19,6 +19,7 @@ import {
   startE2eServer,
   type ChartChangePlan,
   type E2eServer,
+  type ToolSuccess,
 } from './setup.js';
 
 // The replay tools against the real TradingView Desktop, on a daily chart: a chart on another
@@ -140,6 +141,9 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
   const barsBackAfterStopMs: (number | null)[] = [];
   // How long after the bars were back the visible range last changed, after each replay_stop.
   const viewSettledAfterStopMs: number[] = [];
+  // Whether a test may have left the replay it started running: from before its start until a
+  // reading after its stop shows replay off.
+  let ownReplayMayRun = false;
 
   async function reading(): Promise<ReplayReading> {
     const page = await server().ctx.connection.chartPage();
@@ -195,15 +199,17 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
     }
   });
 
-  // The chart and its exact view go back after the last test. TradingView can still move the view a
-  // moment after replay is left, so the range is read again a while later, and the chart put back
-  // again while it is more than a bar away from where it was.
+  // The chart and its exact view go back after the last test, once replay is off: a test that ended
+  // early may have left the replay of the suite running, which is left first. TradingView can still
+  // move the view a moment after replay is left, so the range is read again a while later, and the
+  // chart put back again while it is more than a bar away from where it was.
   afterAll(async () => {
     if (e2e === undefined) {
       return;
     }
     const failures: string[] = [];
     const attempts: number[] = [];
+    const replayLeft = await leaveOwnReplay();
     if (plan?.snapshot !== undefined) {
       const snapshot = plan.snapshot;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -227,19 +233,57 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
       viewChangesAfterEachStop: viewSettledAfterStopMs,
     });
     await e2e.close();
-    if (failures.length > 0) {
-      throw new Error(failures.join('; '));
+    if (replayLeft.length + failures.length > 0) {
+      throw new Error([...replayLeft, ...failures].join('; '));
     }
   });
+
+  // replay_stop, tried a second time when the first try fails.
+  async function stopReplay(): Promise<ToolSuccess<{ active: boolean }>> {
+    const { client } = server();
+    try {
+      return await callOk<{ active: boolean }>(client, 'replay_stop');
+    } catch {
+      return callOk<{ active: boolean }>(client, 'replay_stop');
+    }
+  }
+
+  // Leaves the replay of the suite when replay still runs, or its toolbar is open, after a test of
+  // the suite that may have started one has not seen it off. Answers what it found, never a value of
+  // the user.
+  async function leaveOwnReplay(): Promise<string[]> {
+    if (!ownReplayMayRun) {
+      return [];
+    }
+    try {
+      const now = await reading();
+      if (now.started === false && now.modeOn !== true) {
+        return [];
+      }
+      await stopReplay();
+      ownReplayMayRun = false;
+      return ['A test left the replay of the suite running, and the suite left it'];
+    } catch (error) {
+      return [`The suite could not check that replay is off (${describeFailure(error)})`];
+    }
+  }
 
   // Runs `work` on a replay, then leaves replay with replay_stop whatever it did, and checks what is
   // left: no replay running or saved, and the settings of replay as they were. A replay TradingView
   // saved that replay_stop did not clear is the suite's own, and is cleared, and the test fails. The
-  // failure of `work` is the one thrown, with a failed check logged next to it.
+  // failure of `work` is the one thrown, with a failed check logged next to it. Should the test end
+  // before that, by its timeout say, replay is left once it is over all the same.
   async function replayThenStop(work: () => Promise<void>): Promise<void> {
     const { client } = server();
+    onTestFinished(async () => {
+      const left = await leaveOwnReplay();
+      if (left.length > 0) {
+        throw new HarnessError(left.join('; '));
+      }
+    });
     let failure: unknown;
     let failed = false;
+    ownReplayMayRun = true;
     try {
       await work();
     } catch (error) {
@@ -248,7 +292,7 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
     }
     const problems: string[] = [];
     try {
-      const stop = await callOk<{ active: boolean }>(client, 'replay_stop');
+      const stop = await stopReplay();
       if (stop.data.active) {
         problems.push('replay_stop did not report replay off');
       }
@@ -288,6 +332,8 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
       const after = await reading();
       if (after.started !== false || after.modeOn === true) {
         problems.push('replay is still running or its toolbar is open after replay_stop');
+      } else {
+        ownReplayMayRun = false;
       }
       if (after.savedSession !== false) {
         const page = await server().ctx.connection.chartPage();
@@ -373,9 +419,8 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
       facts.selectedPointAtReadiness =
         ready.selectedPoint === null ? 'null' : Number.isFinite(ready.selectedPoint);
       facts.dateRelativeToStartBar = {
-        // In whole bars of a day, so that only the relation is printed.
-        sessionStartMinusDate:
-          start.data.date === null ? null : Math.round((startBar.time - start.data.date) / 60),
+        // Relations only: how far apart they are would tell the session of the user's symbol.
+        dateBeforeStartBar: start.data.date !== null && start.data.date < startBar.time,
         dateIsDayStart: start.data.date !== null && start.data.date % 86_400 === 0,
         selectedPointEqualsDate: ready.selectedPoint === start.data.date,
       };

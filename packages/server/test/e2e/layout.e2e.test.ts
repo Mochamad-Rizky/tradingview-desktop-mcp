@@ -3,6 +3,7 @@ import {
   callFailure,
   callOk,
   e2eEnabled,
+  HarnessError,
   observe,
   optedIn,
   planLimitSkipReason,
@@ -176,6 +177,32 @@ describe.skipIf(!e2eEnabled())('the layout and pane tools against TradingView De
       'chart_get_state',
     );
     expect(state.layout.id === original).toBe(true);
+    // However the test ends, after a timeout too: the chart tab goes back to the layout of before
+    // from a layout that was not saved before the test, which only layout_new of the test made, and
+    // whose unsaved changes may go. Any other layout is left alone.
+    onTestFinished(async () => {
+      const { data: now } = await callOk<{ layout: { id: string | null } }>(
+        client,
+        'chart_get_state',
+      );
+      if (now.layout.id === original) {
+        return;
+      }
+      if (before.layouts.some(({ id }) => id === now.layout.id)) {
+        throw new HarnessError(
+          'The chart tab shows another saved layout than before the test: switch back in TradingView',
+        );
+      }
+      const back = await callOk<{ id: string; changed: boolean }>(client, 'layout_switch', {
+        layoutId: original,
+        confirm: true,
+      });
+      if (back.data.id !== original) {
+        throw new HarnessError(
+          'The chart tab does not show the layout of before: switch back in TradingView',
+        );
+      }
+    });
     const result = await callTool(client, 'layout_new', { name: TEST_LAYOUT_NAME });
     if (result.isError === true) {
       const { error } = result.structuredContent as { error: ToolFailure };
@@ -188,22 +215,13 @@ describe.skipIf(!e2eEnabled())('the layout and pane tools against TradingView De
       }
       throw new Error(`layout_new failed with ${error.code}`);
     }
-    try {
-      const created = (result.structuredContent as { data: { id: string | null; opened: boolean } })
-        .data;
-      expect(created.id).not.toBeNull();
-      const listing = await listLayouts();
-      expect(listing.layouts.length).toBe(before.layouts.length + 1);
-      expect(listing.layouts.some(({ id }) => id === created.id)).toBe(true);
-      observe('layout_new on a plan with room', { opened: created.opened });
-    } finally {
-      // The new layout is the test's own, so its unsaved changes may go.
-      const back = await callOk<{ id: string; changed: boolean }>(client, 'layout_switch', {
-        layoutId: original,
-        confirm: true,
-      });
-      expect(back.data.id === original, 'the chart tab shows the layout of before').toBe(true);
-    }
+    const created = (result.structuredContent as { data: { id: string | null; opened: boolean } })
+      .data;
+    expect(created.id).not.toBeNull();
+    const listing = await listLayouts();
+    expect(listing.layouts.length).toBe(before.layouts.length + 1);
+    expect(listing.layouts.some(({ id }) => id === created.id)).toBe(true);
+    observe('layout_new on a plan with room', { opened: created.opened });
   });
 
   test('layout_switch refuses a layout the account does not have', async () => {

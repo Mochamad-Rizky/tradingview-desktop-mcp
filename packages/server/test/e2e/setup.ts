@@ -63,10 +63,11 @@ import { quietLogger } from '../helpers/tool-context.js';
 // added only within the plan limits (planLimitSkipReason) and removed again by the test that added
 // them.
 //
-// The suites of Plan 3 work on objects of their own only, each removed again in a finally block by
-// the test that made it: three drawings, one alert within the alert limit of the plan, one symbol
-// that the active watchlist does not hold yet, within its limit, and one tab on the New tab page
-// (only with TV_E2E_ALLOW_TABS and the window in view). They run bar replay on a daily chart and
+// The suites of Plan 3 work on objects of their own only, each removed again by the test that made
+// it, in a hook that runs once the test is over (onTestFinished), however it ended, after its timeout
+// too: three drawings, one alert within the alert limit of the plan, one symbol that the active
+// watchlist does not hold yet, within its limit, and one tab on the New tab page (only with
+// TV_E2E_ALLOW_TABS and the window in view). They run bar replay on a daily chart and
 // leave it, open and close the symbol search and the watchlist panel as they found them, and ask the
 // layout and pane tools only for what the plan refuses (a new layout on a full plan, a multi-chart
 // layout on a one-chart plan), so that nothing changes. Nothing else of the app is touched: no

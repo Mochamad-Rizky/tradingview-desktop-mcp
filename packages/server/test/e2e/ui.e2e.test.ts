@@ -54,7 +54,8 @@ const TRADING_CONTROLS =
 
 // What has the focus, by its kind only: its tag, the type of an input, whether it takes text,
 // whether it lies in the overlap root (dialogs, menus) or in the chart, and how long the text in a
-// field is, never the text itself. It only reads.
+// field is, never the text itself. It only reads. The length is compared, never printed: the symbol
+// search opens with the symbol of the chart in its field.
 function readFocus(win: TvWindow): {
   tag: string;
   type: string | null;
@@ -86,6 +87,12 @@ function readFocus(win: TvWindow): {
     inChart: active.closest('[data-qa-id="chart-container"]') !== null,
     valueLength: takesText ? field.value.length : null,
   };
+}
+
+// A focus as observe prints it: whether the field holds text, and not how much.
+function focusFacts(focus: ReturnType<typeof readFocus>): JsonValue {
+  const { valueLength, ...kind } = focus;
+  return { ...kind, holdsText: valueLength === null ? null : valueLength > 0 };
 }
 
 // What the right panel remembers while it is collapsed: whether it is minimized and which page it
@@ -183,7 +190,7 @@ describe.skipIf(!e2eEnabled())('the low-level interface tools against TradingVie
   test('finds elements by selector and by name, and marks trading controls unsafe', async () => {
     const { ctx } = server();
     const [search, ...others] = await find({ selector: SYMBOL_SEARCH });
-    expect(others).toEqual([]);
+    expect(others.length === 0, 'the selector picks one element').toBe(true);
     expect(search?.selector).toBe(SYMBOL_SEARCH);
     expect(search?.visible).toBe(true);
     expect(search?.unsafe).toBe(false);
@@ -254,88 +261,76 @@ describe.skipIf(!e2eEnabled())('the low-level interface tools against TradingVie
     }
     const chart = await readChartState(client);
     const facts: Record<string, JsonValue> = {};
-    let failure: unknown;
-    let failed = false;
-    try {
-      await callOk(client, 'ui_click', { selector: SYMBOL_SEARCH });
-      const opened = await pollUntil(uiState, (state) => state.dialogs.length > 0, {
-        intervalMs: 100,
-        timeoutMs: 3000,
-      });
-      expect(opened.satisfied, 'the symbol search opened').toBe(true);
-      facts.dialogs = opened.last.dialogs;
-      facts.openedWithinMs = opened.waitedMs;
-      const atOpen = await focus();
-      facts.focusAtOpen = atOpen;
-      expect(atOpen.editable && atOpen.inOverlap, 'the search field has the focus').toBe(true);
-      const typed = await callOk<{ characters: number }>(client, 'ui_type_text', { text: 'AAPL' });
-      expect(typed.data.characters).toBe(4);
-      const afterTyping = await focus();
-      facts.valueLengthGrewBy =
-        afterTyping.valueLength === null || atOpen.valueLength === null
-          ? null
-          : afterTyping.valueLength - atOpen.valueLength;
-      let escapes = 0;
-      let closed = false;
-      while (!closed && escapes < 2) {
-        await callOk(client, 'ui_press_key', { key: 'Escape' });
-        escapes += 1;
-        closed = (
-          await pollUntil(uiState, (state) => state.dialogs.length === 0, {
-            intervalMs: 100,
-            timeoutMs: 2000,
-          })
-        ).satisfied;
+    // However the test ends, after a timeout too: the chart keeps its symbol and timeframe, and no
+    // dialog is left open.
+    onTestFinished(async () => {
+      const problems: string[] = [];
+      try {
+        let state = await uiState();
+        if (state.dialogs.length > 0) {
+          await callOk(client, 'ui_press_key', { key: 'Escape' });
+          state = (
+            await pollUntil(uiState, (now) => now.dialogs.length === 0, {
+              intervalMs: 100,
+              timeoutMs: 2000,
+            })
+          ).last;
+        }
+        if (state.dialogs.length > 0) {
+          problems.push('A dialog is still open after the test: close it in TradingView');
+        }
+        const after = await readChartState(client);
+        if (after.symbol !== chart.symbol || after.resolution !== chart.resolution) {
+          problems.push('The chart shows another symbol or timeframe after the test');
+        }
+      } catch (error) {
+        problems.push(describeFailure(error));
       }
-      facts.escapesToClose = closed ? escapes : null;
-      expect(closed, 'Escape closed the symbol search').toBe(true);
-      const afterClose = await focus();
-      facts.focusAfterClose = afterClose;
-      // A key on whatever has the focus now: the chart, or the page, when the dialog gave it back.
-      if (!afterClose.editable) {
-        const key = await callTool(client, 'ui_press_key', { key: 'Escape' });
-        const envelope = key.structuredContent as { error?: { code?: string } };
-        facts.escapeAfterClose =
-          key.isError === true ? (envelope.error?.code ?? 'UNKNOWN') : 'sent';
-      }
-    } catch (error) {
-      failure = error;
-      failed = true;
-    }
-    // However the test ended: the chart keeps its symbol and timeframe, and no dialog is left open.
-    const problems: string[] = [];
-    try {
-      let state = await uiState();
-      if (state.dialogs.length > 0) {
-        await callOk(client, 'ui_press_key', { key: 'Escape' });
-        state = (
-          await pollUntil(uiState, (now) => now.dialogs.length === 0, {
-            intervalMs: 100,
-            timeoutMs: 2000,
-          })
-        ).last;
-      }
-      if (state.dialogs.length > 0) {
-        problems.push('A dialog is still open after the test: close it in TradingView');
-      }
-      const after = await readChartState(client);
-      if (after.symbol !== chart.symbol || after.resolution !== chart.resolution) {
-        problems.push('The chart shows another symbol or timeframe after the test');
-      }
-    } catch (error) {
-      problems.push(describeFailure(error));
-    }
-    observe('the symbol search', facts);
-    if (failed) {
+      observe('the symbol search', facts);
       if (problems.length > 0) {
-        console.error(`The symbol search test left something behind: ${problems.join('; ')}`);
+        throw new HarnessError(
+          `The symbol search test left something behind: ${problems.join('; ')}`,
+        );
       }
-      throw failure;
+    });
+    await callOk(client, 'ui_click', { selector: SYMBOL_SEARCH });
+    const opened = await pollUntil(uiState, (state) => state.dialogs.length > 0, {
+      intervalMs: 100,
+      timeoutMs: 3000,
+    });
+    expect(opened.satisfied, 'the symbol search opened').toBe(true);
+    facts.dialogs = opened.last.dialogs;
+    facts.openedWithinMs = opened.waitedMs;
+    const atOpen = await focus();
+    facts.focusAtOpen = focusFacts(atOpen);
+    expect(atOpen.editable && atOpen.inOverlap, 'the search field has the focus').toBe(true);
+    const typed = await callOk<{ characters: number }>(client, 'ui_type_text', { text: 'AAPL' });
+    expect(typed.data.characters).toBe(4);
+    const afterTyping = await focus();
+    // Whether typing replaced the text the field opened with, without saying how long that was.
+    facts.fieldHoldsTheTypedTextOnly =
+      afterTyping.valueLength === null ? null : afterTyping.valueLength === typed.data.characters;
+    let escapes = 0;
+    let closed = false;
+    while (!closed && escapes < 2) {
+      await callOk(client, 'ui_press_key', { key: 'Escape' });
+      escapes += 1;
+      closed = (
+        await pollUntil(uiState, (state) => state.dialogs.length === 0, {
+          intervalMs: 100,
+          timeoutMs: 2000,
+        })
+      ).satisfied;
     }
-    if (problems.length > 0) {
-      throw new HarnessError(
-        `The symbol search test left something behind: ${problems.join('; ')}`,
-      );
+    facts.escapesToClose = closed ? escapes : null;
+    expect(closed, 'Escape closed the symbol search').toBe(true);
+    const afterClose = await focus();
+    facts.focusAfterClose = focusFacts(afterClose);
+    // A key on whatever has the focus now: the chart, or the page, when the dialog gave it back.
+    if (!afterClose.editable) {
+      const key = await callTool(client, 'ui_press_key', { key: 'Escape' });
+      const envelope = key.structuredContent as { error?: { code?: string } };
+      facts.escapeAfterClose = key.isError === true ? (envelope.error?.code ?? 'UNKNOWN') : 'sent';
     }
   });
 
@@ -349,62 +344,52 @@ describe.skipIf(!e2eEnabled())('the low-level interface tools against TradingVie
     const other = (['alerts', 'object_tree', 'data_window'] as const).find(
       (panel) => before.panels[panel],
     );
-    let failure: unknown;
-    let failed = false;
-    try {
-      const first = await callOk<{ open: boolean; changed: boolean }>(client, 'ui_open_panel', {
-        panel: 'watchlist',
-        open: !wasOpen,
-      });
-      expect(first.data.changed).toBe(true);
-      expect((await uiState()).panels.watchlist).toBe(!wasOpen);
-      const second = await callOk<{ open: boolean; changed: boolean }>(client, 'ui_open_panel', {
-        panel: 'watchlist',
-        open: wasOpen,
-      });
-      expect(second.data.changed).toBe(true);
-      expect((await uiState()).panels.watchlist).toBe(wasOpen);
-      const again = await callOk<{ changed: boolean }>(client, 'ui_open_panel', {
-        panel: 'watchlist',
-        open: wasOpen,
-      });
-      expect(again.data.changed, 'a panel as asked is left alone').toBe(false);
-    } catch (error) {
-      failure = error;
-      failed = true;
-    }
-    const problems: string[] = [];
-    try {
-      if (other !== undefined && !(await uiState()).panels[other]) {
-        await callOk(client, 'ui_open_panel', { panel: other, open: true });
+    // However the test ends, after a timeout too: the panels are as they were.
+    onTestFinished(async () => {
+      const problems: string[] = [];
+      try {
+        if (other !== undefined && !(await uiState()).panels[other]) {
+          await callOk(client, 'ui_open_panel', { panel: other, open: true });
+        }
+        const after = await uiState();
+        if (
+          !sameJson(after.panels, before.panels) ||
+          !sameJson(after.rightPanel, before.rightPanel)
+        ) {
+          problems.push('The panels are not as they were before the test');
+        }
+      } catch (error) {
+        problems.push(describeFailure(error));
       }
-      const after = await uiState();
-      if (
-        !sameJson(after.panels, before.panels) ||
-        !sameJson(after.rightPanel, before.rightPanel)
-      ) {
-        problems.push('The panels are not as they were before the test');
-      }
-    } catch (error) {
-      problems.push(describeFailure(error));
-    }
-    const memoryAfter = await page.bridge.evaluate(readWidgetbarMemory, []);
-    observe('the watchlist panel', {
-      wasOpen,
-      otherPanelOpen: other ?? null,
-      rememberedPageKept: sameJson(memoryAfter, memoryBefore),
-      memoryBefore,
-      memoryAfter,
-    });
-    if (failed) {
+      const memoryAfter = await page.bridge.evaluate(readWidgetbarMemory, []);
+      observe('the watchlist panel', {
+        wasOpen,
+        otherPanelOpen: other ?? null,
+        rememberedPageKept: sameJson(memoryAfter, memoryBefore),
+        memoryBefore,
+        memoryAfter,
+      });
       if (problems.length > 0) {
-        console.error(`The panel test left something behind: ${problems.join('; ')}`);
+        throw new HarnessError(`The panel test left something behind: ${problems.join('; ')}`);
       }
-      throw failure;
-    }
-    if (problems.length > 0) {
-      throw new HarnessError(`The panel test left something behind: ${problems.join('; ')}`);
-    }
+    });
+    const first = await callOk<{ open: boolean; changed: boolean }>(client, 'ui_open_panel', {
+      panel: 'watchlist',
+      open: !wasOpen,
+    });
+    expect(first.data.changed).toBe(true);
+    expect((await uiState()).panels.watchlist).toBe(!wasOpen);
+    const second = await callOk<{ open: boolean; changed: boolean }>(client, 'ui_open_panel', {
+      panel: 'watchlist',
+      open: wasOpen,
+    });
+    expect(second.data.changed).toBe(true);
+    expect((await uiState()).panels.watchlist).toBe(wasOpen);
+    const again = await callOk<{ changed: boolean }>(client, 'ui_open_panel', {
+      panel: 'watchlist',
+      open: wasOpen,
+    });
+    expect(again.data.changed, 'a panel as asked is left alone').toBe(false);
   });
 
   test('ui_evaluate runs one expression that reads, when the run allows it', async (context) => {

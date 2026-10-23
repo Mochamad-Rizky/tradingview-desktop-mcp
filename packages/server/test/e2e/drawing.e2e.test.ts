@@ -8,7 +8,9 @@ import {
   e2eEnabled,
   HarnessError,
   observe,
+  sameJson,
   startE2eServer,
+  ToolCallError,
   type E2eServer,
   type ToolSuccess,
 } from './setup.js';
@@ -16,9 +18,9 @@ import {
 // The drawing tools against the real TradingView Desktop. The chart holds the user's own drawings,
 // often many, which no test touches: the suite draws three drawings of its own (a horizontal line, a
 // trend line and a text), reads them back and removes exactly those, by their ids, however the test
-// ended. drawing_clear_all runs only with scope created_by_mcp, which removes the drawings of the
-// session and no other. The points and prices of the drawings, the drawings of the user and their
-// texts are compared without being printed.
+// ended, after a timeout too. drawing_clear_all runs only with scope created_by_mcp, which removes the
+// drawings of the session and no other. The points and prices of the drawings, the drawings of the
+// user and their texts are compared without being printed.
 
 // The text of the test's own text drawing, by which a drawing a failed call left behind is told
 // apart from the user's.
@@ -187,18 +189,26 @@ describe.skipIf(!e2eEnabled())('the drawing tools against TradingView Desktop', 
     return e2e;
   }
 
+  // Every drawing of the chart, page by page, as one listing shows at most 500.
   async function listAll(): Promise<{ total: number; drawings: ListedDrawing[] }> {
-    return (
-      await callOk<{ total: number; drawings: ListedDrawing[] }>(server().client, 'drawing_list', {
-        limit: 500,
-      })
-    ).data;
+    const drawings: ListedDrawing[] = [];
+    for (;;) {
+      const page = await callOk<{ total: number; drawings: ListedDrawing[] }>(
+        server().client,
+        'drawing_list',
+        { limit: 500, offset: drawings.length },
+      );
+      drawings.push(...page.data.drawings);
+      if (page.data.drawings.length === 0 || drawings.length >= page.data.total) {
+        return { total: page.data.total, drawings };
+      }
+    }
   }
 
-  // Removes what the test drew, however it ended: its own drawings still on the chart, by their ids,
-  // and a drawing a failed creation left behind, which is new, of a shape the test drew, at the
-  // prices it gave (and with its text, for a text), and no more of those than creations failed.
-  // Answers the failures, by tool and code only.
+  // Removes what the test drew, however it ended: its own drawings, each by its id, one that is gone
+  // already (INVALID_INPUT) being no failure, and a drawing a failed creation left behind, which is
+  // new, of a shape the test drew, at the prices it gave (and with its text, for a text), and no more
+  // of those than creations failed. Answers the failures, by tool and code only.
   async function removeOwnDrawings(
     beforeIds: ReadonlySet<string>,
     created: readonly Created[],
@@ -208,16 +218,16 @@ describe.skipIf(!e2eEnabled())('the drawing tools against TradingView Desktop', 
   ): Promise<string[]> {
     const { client } = server();
     const failures: string[] = [];
-    const now = await listAll();
     for (const { id } of created) {
-      if (now.drawings.some((drawing) => drawing.id === id)) {
-        try {
-          await callOk(client, 'drawing_remove', { id });
-        } catch (error) {
+      try {
+        await callOk(client, 'drawing_remove', { id });
+      } catch (error) {
+        if (!(error instanceof ToolCallError && error.code === 'INVALID_INPUT')) {
           failures.push(describeFailure(error));
         }
       }
     }
+    const now = await listAll();
     const strays = now.drawings.filter(
       (drawing) =>
         !beforeIds.has(drawing.id) &&
@@ -369,151 +379,139 @@ describe.skipIf(!e2eEnabled())('the drawing tools against TradingView Desktop', 
     const created: Created[] = [];
     // Creations that failed without an id, which may still have drawn something.
     let unanswered = 0;
-    let failure: unknown;
-    let failed = false;
-    try {
-      const undoBefore = await page.bridge.evaluate(readUndoState, []);
-      for (const plan of planned) {
-        let made: ToolSuccess<{ id: string; shape: string }>;
-        try {
-          made = await callOk<{ id: string; shape: string }>(client, 'drawing_create', {
-            shape: plan.shape,
-            points: plan.points,
-            ...(plan.text === undefined ? {} : { text: plan.text }),
-            style: plan.style,
-          });
-        } catch (error) {
-          unanswered += 1;
-          throw error;
+    // However the test ends, after a timeout too: the drawings of the test go, and the chart holds
+    // the drawings of before, and only they.
+    onTestFinished(async () => {
+      let failures: string[];
+      try {
+        failures = await removeOwnDrawings(beforeIds, created, planned, unanswered, tolerance);
+        const left = await listAll();
+        if (!sameJson(left.drawings.map(({ id }) => id).sort(), [...beforeIds].sort())) {
+          failures.push(
+            `The chart holds ${String(left.total)} drawings after the test and held ` +
+              `${String(before.total)} before, or other ones`,
+          );
         }
-        created.push({ id: made.data.id, planned: plan, warnings: made.warnings });
-        expect(made.data.shape).toBe(plan.shape);
+      } catch (error) {
+        failures = [describeFailure(error)];
       }
-      const undoAfter = await page.bridge.evaluate(readUndoState, []);
-      const focus = await page.bridge.evaluate(readFocusKind, []);
-      const ui = await callOk<{ dialogs: string[] }>(client, 'app_get_ui_state');
-
-      const after = await listAll();
-      expect(after.total).toBe(before.total + planned.length);
-      const timeBases: { shape: string; dayStarts: boolean; equalToSent: boolean }[] = [];
-      for (const { id, planned: plan } of created) {
-        const listed = after.drawings.find((drawing) => drawing.id === id);
-        expect(
-          listed?.createdByServer,
-          'drawing_list marks the drawing as made by the session',
-        ).toBe(true);
-        const detail = (await callOk<DrawingDetail>(client, 'drawing_get', { id })).data;
-        expect(detail.shape).toBe(plan.shape);
-        expect(detail.points.length).toBe(plan.points.length);
-        expect(detail.locked).toBe(false);
-        expect(detail.hidden).toBe(false);
-        expect(detail.createdByServer).toBe(true);
-        expect(detail.text === (plan.text ?? null), 'the text reads back').toBe(true);
-        detail.points.forEach((point, index) => {
-          const sent = plan.points[index];
-          expect(
-            sent !== undefined && Math.abs(point.price - sent.price) <= tolerance,
-            'a point reads back at its price',
-          ).toBe(true);
-          expect(
-            sent !== undefined && Math.abs(point.time - sent.time) <= step,
-            'a point reads back within a bar of its time',
-          ).toBe(true);
-        });
-        timeBases.push({
-          shape: plan.shape,
-          dayStarts: detail.points.every(({ time }) => time % 86_400 === 0),
-          equalToSent: detail.points.every(({ time }, index) => plan.points[index]?.time === time),
-        });
-        if (plan.style.color !== undefined) {
-          expect(detail.style.color?.toLowerCase()).toBe(plan.style.color);
-        }
-        if (plan.style.lineWidth !== undefined) {
-          expect(detail.style.lineWidth).toBe(plan.style.lineWidth);
-        }
-        if (plan.style.lineStyle !== undefined) {
-          expect(detail.style.lineStyle).toBe(plan.style.lineStyle);
-        }
-        if (plan.style.fontSize !== undefined) {
-          expect(detail.style.fontSize).toBe(plan.style.fontSize);
-        }
-      }
-      observe('drawing creation', {
-        idsAreSixAlphanumerics: created.every(({ id }) => /^[A-Za-z0-9]{6}$/.test(id)),
-        warnings: created.map(({ planned: plan, warnings }) => ({ shape: plan.shape, warnings })),
-        undoStepsAdded:
-          undoBefore === null || undoAfter === null
-            ? null
-            : undoAfter.undoCount - undoBefore.undoCount,
-        undoTextChanged:
-          undoBefore === null || undoAfter === null
-            ? null
-            : undoAfter.undoText !== undoBefore.undoText,
-        focusAfterText: focus,
-        dialogsAfterCreation: ui.data.dialogs.length,
-        timeBases,
-      });
-      expect(ui.data.dialogs.length, 'no dialog opened').toBe(0);
-      expect(
-        created.every(({ warnings }) => warnings.length === 0),
-        'every style was applied',
-      ).toBe(true);
-
-      // Two go one by one, the third with the scope of the session's own drawings.
-      for (const own of created.slice(0, 2)) {
-        const removed = await callOk<{ removed: string }>(client, 'drawing_remove', { id: own.id });
-        expect(removed.data.removed).toBe(own.id);
-      }
-      const cleared = await callOk<{ removed: number; failed: string[] }>(
-        client,
-        'drawing_clear_all',
-        { scope: 'created_by_mcp' },
-      );
-      expect(cleared.data).toEqual({ removed: 1, failed: [] });
-      const undoRemoved = await page.bridge.evaluate(readUndoState, []);
-      observe('drawing removal', {
-        undoStepsAddedByRemovals:
-          undoAfter === null || undoRemoved === null
-            ? null
-            : undoRemoved.undoCount - undoAfter.undoCount,
-      });
-      const left = await listAll();
-      expect(left.total).toBe(before.total);
-      expect(
-        left.drawings.every(({ id }) => beforeIds.has(id)),
-        'the drawings of before are left, and only they',
-      ).toBe(true);
-
-      // An id that is not on the chart any more.
-      const gone = await callFailure(client, 'drawing_remove', { id: created[0]?.id ?? 'zz9zz9' });
-      expect(gone.code).toBe('INVALID_INPUT');
-    } catch (error) {
-      failure = error;
-      failed = true;
-    }
-    let failures: string[];
-    try {
-      failures = await removeOwnDrawings(beforeIds, created, planned, unanswered, tolerance);
-      const left = await listAll();
-      if (left.total !== before.total) {
-        failures.push(
-          `The chart holds ${String(left.total)} drawings after the test and held ` +
-            `${String(before.total)} before`,
-        );
-      }
-    } catch (error) {
-      failures = [describeFailure(error)];
-    }
-    if (failed) {
       if (failures.length > 0) {
-        console.error(
-          `The drawing test could not clean up after it failed: ${failures.join('; ')}`,
-        );
+        throw new HarnessError(`The drawing test could not clean up: ${failures.join('; ')}`);
       }
-      throw failure;
+    });
+    const undoBefore = await page.bridge.evaluate(readUndoState, []);
+    for (const plan of planned) {
+      let made: ToolSuccess<{ id: string; shape: string }>;
+      try {
+        made = await callOk<{ id: string; shape: string }>(client, 'drawing_create', {
+          shape: plan.shape,
+          points: plan.points,
+          ...(plan.text === undefined ? {} : { text: plan.text }),
+          style: plan.style,
+        });
+      } catch (error) {
+        unanswered += 1;
+        throw error;
+      }
+      created.push({ id: made.data.id, planned: plan, warnings: made.warnings });
+      expect(made.data.shape).toBe(plan.shape);
     }
-    if (failures.length > 0) {
-      throw new HarnessError(`The drawing test could not clean up: ${failures.join('; ')}`);
+    const undoAfter = await page.bridge.evaluate(readUndoState, []);
+    const focus = await page.bridge.evaluate(readFocusKind, []);
+    const ui = await callOk<{ dialogs: string[] }>(client, 'app_get_ui_state');
+
+    const after = await listAll();
+    expect(after.total).toBe(before.total + planned.length);
+    const timeBases: { shape: string; dayStarts: boolean; equalToSent: boolean }[] = [];
+    for (const { id, planned: plan } of created) {
+      const listed = after.drawings.find((drawing) => drawing.id === id);
+      expect(listed?.createdByServer, 'drawing_list marks the drawing as made by the session').toBe(
+        true,
+      );
+      const detail = (await callOk<DrawingDetail>(client, 'drawing_get', { id })).data;
+      expect(detail.shape).toBe(plan.shape);
+      expect(detail.points.length).toBe(plan.points.length);
+      expect(detail.locked).toBe(false);
+      expect(detail.hidden).toBe(false);
+      expect(detail.createdByServer).toBe(true);
+      expect(detail.text === (plan.text ?? null), 'the text reads back').toBe(true);
+      detail.points.forEach((point, index) => {
+        const sent = plan.points[index];
+        expect(
+          sent !== undefined && Math.abs(point.price - sent.price) <= tolerance,
+          'a point reads back at its price',
+        ).toBe(true);
+        expect(
+          sent !== undefined && Math.abs(point.time - sent.time) <= step,
+          'a point reads back within a bar of its time',
+        ).toBe(true);
+      });
+      timeBases.push({
+        shape: plan.shape,
+        dayStarts: detail.points.every(({ time }) => time % 86_400 === 0),
+        equalToSent: detail.points.every(({ time }, index) => plan.points[index]?.time === time),
+      });
+      if (plan.style.color !== undefined) {
+        expect(detail.style.color?.toLowerCase()).toBe(plan.style.color);
+      }
+      if (plan.style.lineWidth !== undefined) {
+        expect(detail.style.lineWidth).toBe(plan.style.lineWidth);
+      }
+      if (plan.style.lineStyle !== undefined) {
+        expect(detail.style.lineStyle).toBe(plan.style.lineStyle);
+      }
+      if (plan.style.fontSize !== undefined) {
+        expect(detail.style.fontSize).toBe(plan.style.fontSize);
+      }
     }
+    observe('drawing creation', {
+      idsAreSixAlphanumerics: created.every(({ id }) => /^[A-Za-z0-9]{6}$/.test(id)),
+      warnings: created.map(({ planned: plan, warnings }) => ({ shape: plan.shape, warnings })),
+      undoStepsAdded:
+        undoBefore === null || undoAfter === null
+          ? null
+          : undoAfter.undoCount - undoBefore.undoCount,
+      undoTextChanged:
+        undoBefore === null || undoAfter === null
+          ? null
+          : undoAfter.undoText !== undoBefore.undoText,
+      focusAfterText: focus,
+      dialogsAfterCreation: ui.data.dialogs.length,
+      timeBases,
+    });
+    expect(ui.data.dialogs.length, 'no dialog opened').toBe(0);
+    expect(
+      created.every(({ warnings }) => warnings.length === 0),
+      'every style was applied',
+    ).toBe(true);
+
+    // Two go one by one, the third with the scope of the session's own drawings.
+    for (const own of created.slice(0, 2)) {
+      const removed = await callOk<{ removed: string }>(client, 'drawing_remove', { id: own.id });
+      expect(removed.data.removed).toBe(own.id);
+    }
+    const cleared = await callOk<{ removed: number; failed: string[] }>(
+      client,
+      'drawing_clear_all',
+      { scope: 'created_by_mcp' },
+    );
+    expect(cleared.data).toEqual({ removed: 1, failed: [] });
+    const undoRemoved = await page.bridge.evaluate(readUndoState, []);
+    observe('drawing removal', {
+      undoStepsAddedByRemovals:
+        undoAfter === null || undoRemoved === null
+          ? null
+          : undoRemoved.undoCount - undoAfter.undoCount,
+    });
+    const left = await listAll();
+    expect(left.total).toBe(before.total);
+    expect(
+      left.drawings.every(({ id }) => beforeIds.has(id)),
+      'the drawings of before are left, and only they',
+    ).toBe(true);
+
+    // An id that is not on the chart any more.
+    const gone = await callFailure(client, 'drawing_remove', { id: created[0]?.id ?? 'zz9zz9' });
+    expect(gone.code).toBe('INVALID_INPUT');
   });
 });

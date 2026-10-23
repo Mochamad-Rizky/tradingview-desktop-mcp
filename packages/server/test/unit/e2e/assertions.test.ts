@@ -11,8 +11,12 @@ const E2E_DIR = new URL('../../e2e/', import.meta.url);
 
 const PRINTING: readonly [RegExp, string][] = [
   [
-    /expect\(\s*[\w.?]*\bwarnings\s*\)\s*\.(?:toEqual|toStrictEqual|toHaveLength|toContain)\(/,
+    /expect\(\s*[\w.?]*\bwarnings\s*(?:\?\?\s*\[\s*\]\s*)?\)\s*\.(?:toEqual|toStrictEqual|toHaveLength|toContain)\(/,
     'compares warnings, which can name the chart symbol, with a matcher that prints them',
+  ],
+  [
+    /expect\(\s*[\w.?]*\b(?:others|elements)\s*\)\s*\.(?:toEqual|toStrictEqual|toHaveLength)\(/,
+    'compares elements of the page, whose names and texts can be the user’s, with a matcher that prints them',
   ],
   [
     /expect\(\s*[\w.?]*\.(?:bars|rows)\s*\)\s*\.toHaveLength\(/,
@@ -29,6 +33,10 @@ const PRINTING: readonly [RegExp, string][] = [
   [
     /expect\(\s*[\w.?]*\bdata\s*\)\s*\.(?:toMatchObject|toEqual)\(\s*\{\s*(?:levels|symbol|resolution|chartType)\b/,
     'matches data of the chart, which the matcher prints whole',
+  ],
+  [
+    /expect\(\s*[\w.?]*\bdata\s*\)\s*\.(?:toMatchObject|toEqual)\(\s*\{\s*(?:removed\s*:\s*\[|(?:notListed|added|skipped|symbols)\b)/,
+    'matches what a watchlist tool returns, which can list the user’s symbols, with a matcher that prints it',
   ],
   [
     /expect\(\s*[\w.?]*\.state(?:\.script)?\s*\)\s*\.(?:toMatchObject|toBeNull)\(/,
@@ -97,6 +105,9 @@ test('the check finds the forms that print what they received', () => {
     'expect(after.map(({ id }) => id)).toEqual(studies.map(({ id }) => id));',
     'expect(switched.data.symbol).toMatch(/:AAPL$/);',
     'expect(reopened.state).toMatchObject({ open: true });',
+    'expect(envelope.meta.warnings ?? []).toEqual([]);',
+    'expect(others).toEqual([]);',
+    "expect(notListed.data).toMatchObject({ removed: [], notListed: ['EXAMPLE:X'] });",
   ];
   const ok = [
     "expect(warnings.length === 0, 'no warnings').toBe(true);",

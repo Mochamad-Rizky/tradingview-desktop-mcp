@@ -10,6 +10,7 @@ import {
   HarnessError,
   observe,
   planLimitSkipReason,
+  sameJson,
   startE2eServer,
   type E2eServer,
   type ToolFailure,
@@ -213,6 +214,45 @@ describe.skipIf(!e2eEnabled())('the alert tools against TradingView Desktop', ()
     const price = Number((last * 10).toPrecision(6));
     const expiration = Math.floor(Date.now() / 1000) + DAY_SECONDS;
 
+    // The alert of the test, once alert_create answers its id.
+    const own: { alert?: CreatedAlert } = {};
+    // However the test ends, after a timeout too: the test alert goes, and so does an alert of its
+    // message the creation left without answering its id, which only the test makes; the account
+    // then holds the alerts of before, and only they.
+    onTestFinished(async () => {
+      const failures: string[] = [];
+      try {
+        const now = await listAlerts();
+        const left = now.filter(
+          ({ id, message }) =>
+            id === own.alert?.id || (!beforeIds.has(id) && message === TEST_MESSAGE),
+        );
+        if (left.length > 0) {
+          try {
+            await callOk(client, 'alert_delete', {
+              alertIds: left.map(({ id }) => id),
+              // Only for an alert the session could not record: one of the test's message.
+              ...(left.some(({ id }) => id !== own.alert?.id) ? { confirm: true } : {}),
+            });
+          } catch (error) {
+            failures.push(describeFailure(error));
+          }
+        }
+        const after = await listAlerts();
+        if (!sameJson(after.map(({ id }) => id).sort(), [...beforeIds].sort())) {
+          failures.push(
+            `The account holds ${String(after.length)} alerts after the test and held ` +
+              `${String(before.length)} before, or other ones`,
+          );
+        }
+      } catch (error) {
+        failures.push(describeFailure(error));
+      }
+      if (failures.length > 0) {
+        throw new HarnessError(`The alert test could not clean up: ${failures.join('; ')}`);
+      }
+    });
+
     const result = await callTool(client, 'alert_create', {
       condition: 'crossing_up',
       price,
@@ -228,112 +268,66 @@ describe.skipIf(!e2eEnabled())('the alert tools against TradingView Desktop', ()
         );
       }
     }
-    let created: CreatedAlert | undefined;
-    let failure: unknown;
-    let failed = false;
-    try {
-      const envelope = result.structuredContent as {
-        ok: boolean;
-        data?: CreatedAlert;
-        error?: ToolFailure;
-        meta: { warnings?: string[] };
-      };
-      if (result.isError === true || envelope.data === undefined) {
-        throw new HarnessError(`alert_create failed with ${envelope.error?.code ?? 'UNKNOWN'}`);
-      }
-      created = envelope.data;
-      expect(/^[1-9]\d*$/.test(created.id)).toBe(true);
-      expect(created.condition).toBe('crossing_up');
-      // A price derived from the chart's, so compared without being printed.
-      expect(created.price === price, 'alert_create reports the price').toBe(true);
-      expect(created.expiration).toBe(expiration);
-      expect(envelope.meta.warnings ?? []).toEqual([]);
+    const envelope = result.structuredContent as {
+      ok: boolean;
+      data?: CreatedAlert;
+      error?: ToolFailure;
+      meta: { warnings?: string[] };
+    };
+    if (result.isError === true || envelope.data === undefined) {
+      throw new HarnessError(`alert_create failed with ${envelope.error?.code ?? 'UNKNOWN'}`);
+    }
+    const created = envelope.data;
+    own.alert = created;
+    expect(/^[1-9]\d*$/.test(created.id)).toBe(true);
+    expect(created.condition).toBe('crossing_up');
+    // A price derived from the chart's, so compared without being printed.
+    expect(created.price === price, 'alert_create reports the price').toBe(true);
+    expect(created.expiration).toBe(expiration);
+    expect((envelope.meta.warnings ?? []).length === 0, 'alert_create gives no warning').toBe(true);
 
-      const listed = (await listAlerts()).find(({ id }) => id === created?.id);
-      expect(listed, 'alert_list lists the new alert').toBeDefined();
-      expect(listed?.status).toBe('active');
-      expect(listed?.condition).toBe('crossing_up');
-      expect(listed?.price === price, 'the price reads back').toBe(true);
-      expect(listed?.message === TEST_MESSAGE, 'the message reads back').toBe(true);
-      expect(listed?.symbol === created.symbol, 'the symbol reads back').toBe(true);
-      expect(listed?.createdByServer).toBe(true);
-      const activeNow = await listAlerts('active');
-      expect(activeNow.some(({ id }) => id === created?.id)).toBe(true);
+    const listed = (await listAlerts()).find(({ id }) => id === created.id);
+    expect(listed, 'alert_list lists the new alert').toBeDefined();
+    expect(listed?.status).toBe('active');
+    expect(listed?.condition).toBe('crossing_up');
+    expect(listed?.price === price, 'the price reads back').toBe(true);
+    expect(listed?.message === TEST_MESSAGE, 'the message reads back').toBe(true);
+    expect(listed?.symbol === created.symbol, 'the symbol reads back').toBe(true);
+    expect(listed?.createdByServer).toBe(true);
+    const activeNow = await listAlerts('active');
+    expect(activeNow.some(({ id }) => id === created.id)).toBe(true);
 
-      const page = await ctx.connection.chartPage();
-      const shape = await page.bridge.evaluateWithLib(readAlertRecordShape, [
-        Number(created.id),
-        10_000,
-      ]);
-      observe('the test alert as the server stores it', {
-        record: shape,
-        expirationReadBackOffsetSeconds:
-          listed?.expiration === null || listed?.expiration === undefined
-            ? null
-            : listed.expiration - expiration,
-        symbolIsExchangeTicker: /^[^:]+:[^:]+$/.test(created.symbol),
-      });
-      expect(shape, 'the alerts client lists the test alert').not.toBeNull();
+    const page = await ctx.connection.chartPage();
+    const shape = await page.bridge.evaluateWithLib(readAlertRecordShape, [
+      Number(created.id),
+      10_000,
+    ]);
+    observe('the test alert as the server stores it', {
+      record: shape,
+      expirationReadBackOffsetSeconds:
+        listed?.expiration === null || listed?.expiration === undefined
+          ? null
+          : listed.expiration - expiration,
+      symbolIsExchangeTicker: /^[^:]+:[^:]+$/.test(created.symbol),
+    });
+    expect(shape, 'the alerts client lists the test alert').not.toBeNull();
 
-      // An id the account does not have: nothing is deleted.
-      const unknownId = ['1', '2', '3'].find((id) => !beforeIds.has(id) && id !== created?.id);
-      if (unknownId !== undefined) {
-        const unknown = await callFailure(client, 'alert_delete', { alertIds: [unknownId] });
-        expect(unknown.code).toBe('INVALID_INPUT');
-        expect(unknown.details?.unknown).toEqual([unknownId]);
-      }
-
-      // The session created it, so it goes without confirm.
-      const deleted = await callOk<{ deleted: string[] }>(client, 'alert_delete', {
-        alertIds: [created.id],
-      });
-      expect(deleted.data.deleted).toEqual([created.id]);
-      expect(deleted.warnings.length === 0, 'alert_delete gives no warning').toBe(true);
-      const after = await listAlerts();
-      expect(after.some(({ id }) => id === created?.id)).toBe(false);
-      expect(after.length).toBe(before.length);
-    } catch (error) {
-      failure = error;
-      failed = true;
+    // An id the account does not have: nothing is deleted.
+    const unknownId = ['1', '2', '3'].find((id) => !beforeIds.has(id) && id !== created.id);
+    if (unknownId !== undefined) {
+      const unknown = await callFailure(client, 'alert_delete', { alertIds: [unknownId] });
+      expect(unknown.code).toBe('INVALID_INPUT');
+      expect(sameJson(unknown.details?.unknown, [unknownId]), 'the unknown id is named').toBe(true);
     }
 
-    // However the test ended: the test alert goes, and so does an alert of its message the
-    // creation left without answering its id, which only the test makes.
-    const failures: string[] = [];
-    try {
-      const now = await listAlerts();
-      const own = now.filter(
-        ({ id, message }) => id === created?.id || (!beforeIds.has(id) && message === TEST_MESSAGE),
-      );
-      if (own.length > 0) {
-        try {
-          await callOk(client, 'alert_delete', {
-            alertIds: own.map(({ id }) => id),
-            // Only for an alert the session could not record: one of the test's message.
-            ...(own.some(({ id }) => id !== created?.id) ? { confirm: true } : {}),
-          });
-        } catch (error) {
-          failures.push(describeFailure(error));
-        }
-      }
-      const left = await listAlerts();
-      if (left.length !== before.length) {
-        failures.push(
-          `The account holds ${String(left.length)} alerts after the test and held ` +
-            `${String(before.length)} before`,
-        );
-      }
-    } catch (error) {
-      failures.push(describeFailure(error));
-    }
-    if (failed) {
-      if (failures.length > 0) {
-        console.error(`The alert test could not clean up after it failed: ${failures.join('; ')}`);
-      }
-      throw failure;
-    }
-    if (failures.length > 0) {
-      throw new HarnessError(`The alert test could not clean up: ${failures.join('; ')}`);
-    }
+    // The session created it, so it goes without confirm.
+    const deleted = await callOk<{ deleted: string[] }>(client, 'alert_delete', {
+      alertIds: [created.id],
+    });
+    expect(deleted.data.deleted).toEqual([created.id]);
+    expect(deleted.warnings.length === 0, 'alert_delete gives no warning').toBe(true);
+    const after = await listAlerts();
+    expect(after.some(({ id }) => id === created.id)).toBe(false);
+    expect(after.length).toBe(before.length);
   });
 });

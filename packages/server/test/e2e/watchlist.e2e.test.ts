@@ -119,121 +119,110 @@ describe.skipIf(!e2eEnabled())('the watchlist tools against TradingView Desktop'
     }
 
     let added: string | null = null;
-    let failure: unknown;
-    let failed = false;
-    try {
-      // Nothing is added for a symbol the symbol search does not know.
-      const unknown = await callFailure(client, 'watchlist_add', { symbol: UNKNOWN_SYMBOL });
-      expect(unknown.code).toBe('INVALID_INPUT');
-      expect(sameJson((await activeList()).symbols, before.symbols), 'nothing was added').toBe(
-        true,
-      );
-
-      const result = await callOk<{ listId: string; symbol: string; outcome: string }>(
-        client,
-        'watchlist_add',
-        { symbol },
-      );
-      added = result.data.symbol;
-      expect(result.data.outcome).toBe('added');
-      expect(result.data.listId === before.id, 'the symbol went to the active list').toBe(true);
-      expect(
-        result.warnings.length === 0,
-        'watchlist_add gives no warning: the store of the app shows the change',
-      ).toBe(true);
-      const withIt = await activeList();
-      expect(withIt.symbols.length).toBe(before.symbols.length + 1);
-      expect(withIt.symbols.includes(result.data.symbol), 'the list holds the symbol').toBe(true);
-      expect(
-        sameJson(
-          withIt.symbols.filter((item) => item !== result.data.symbol),
-          before.symbols,
-        ),
-        'the other symbols are as they were',
-      ).toBe(true);
-
-      // A second add finds it there.
-      const again = await callOk<{ outcome: string }>(client, 'watchlist_add', { symbol });
-      expect(again.data.outcome).toBe('already_listed');
-
-      // A symbol the list does not hold is not removed, and needs no confirm.
-      const notListed = await callOk<{ removed: string[]; notListed: string[] }>(
-        client,
-        'watchlist_remove',
-        { symbols: [UNKNOWN_SYMBOL] },
-      );
-      expect(notListed.data).toMatchObject({ removed: [], notListed: [UNKNOWN_SYMBOL] });
-
-      // The session added it, so it goes without confirm.
-      const removed = await callOk<{ listId: string; removed: string[]; notListed: string[] }>(
-        client,
-        'watchlist_remove',
-        { symbols: [result.data.symbol] },
-      );
-      expect(
-        removed.data.removed.length === 1 && removed.data.removed[0] === result.data.symbol,
-      ).toBe(true);
-      expect(removed.warnings.length === 0, 'watchlist_remove gives no warning').toBe(true);
-      added = null;
-      const after = await activeList();
-      expect(sameJson(after.symbols, before.symbols), 'the list holds what it held before').toBe(
-        true,
-      );
-      expect(sameJson(after.sections, before.sections), 'and in the same sections').toBe(true);
-      observe('watchlist add and remove', {
-        entriesBefore: entries,
-        addedAtTheEnd: withIt.symbols.at(-1) === result.data.symbol,
-        sectionOfTheAdded:
-          withIt.sections.findIndex(({ symbols }) => symbols.includes(result.data.symbol)) ===
-          withIt.sections.length - 1
-            ? 'last'
-            : 'other',
-        warnings: result.warnings.length + removed.warnings.length,
-      });
-    } catch (error) {
-      failure = error;
-      failed = true;
-    }
-
-    // However the test ended: the symbol goes again if the list holds it and did not before.
-    const failures: string[] = [];
-    try {
-      const now = await activeList();
-      const own = now.symbols.filter(
-        (item) =>
-          !before.symbols.includes(item) && (item === added || tickerOf(item) === tickerOf(symbol)),
-      );
-      if (own.length > 0) {
-        try {
-          await callOk(client, 'watchlist_remove', {
-            symbols: own,
-            // Only symbols the list did not hold before the test.
-            confirm: true,
-          });
-        } catch (error) {
-          failures.push(describeFailure(error));
+    // However the test ends, after a timeout too: the symbol goes again if the list holds it and did
+    // not before.
+    onTestFinished(async () => {
+      const failures: string[] = [];
+      try {
+        const now = await activeList();
+        const own = now.symbols.filter(
+          (item) =>
+            !before.symbols.includes(item) &&
+            (item === added || tickerOf(item) === tickerOf(symbol)),
+        );
+        if (own.length > 0) {
+          try {
+            await callOk(client, 'watchlist_remove', {
+              symbols: own,
+              // Only symbols the list did not hold before the test.
+              confirm: true,
+            });
+          } catch (error) {
+            failures.push(describeFailure(error));
+          }
         }
+        const left = await activeList();
+        if (!sameJson(left.symbols, before.symbols)) {
+          failures.push(
+            `The active watchlist holds ${String(left.symbols.length)} symbols after the test and ` +
+              `held ${String(before.symbols.length)} before, or in another order`,
+          );
+        }
+      } catch (error) {
+        failures.push(describeFailure(error));
       }
-      const left = await activeList();
-      if (!sameJson(left.symbols, before.symbols)) {
-        failures.push(
-          `The active watchlist holds ${String(left.symbols.length)} symbols after the test and ` +
-            `held ${String(before.symbols.length)} before, or in another order`,
-        );
-      }
-    } catch (error) {
-      failures.push(describeFailure(error));
-    }
-    if (failed) {
       if (failures.length > 0) {
-        console.error(
-          `The watchlist test could not clean up after it failed: ${failures.join('; ')}`,
-        );
+        throw new HarnessError(`The watchlist test could not clean up: ${failures.join('; ')}`);
       }
-      throw failure;
-    }
-    if (failures.length > 0) {
-      throw new HarnessError(`The watchlist test could not clean up: ${failures.join('; ')}`);
-    }
+    });
+    // Nothing is added for a symbol the symbol search does not know.
+    const unknown = await callFailure(client, 'watchlist_add', { symbol: UNKNOWN_SYMBOL });
+    expect(unknown.code).toBe('INVALID_INPUT');
+    expect(sameJson((await activeList()).symbols, before.symbols), 'nothing was added').toBe(true);
+
+    const result = await callOk<{ listId: string; symbol: string; outcome: string }>(
+      client,
+      'watchlist_add',
+      { symbol },
+    );
+    added = result.data.symbol;
+    expect(result.data.outcome).toBe('added');
+    expect(result.data.listId === before.id, 'the symbol went to the active list').toBe(true);
+    expect(
+      result.warnings.length === 0,
+      'watchlist_add gives no warning: the store of the app shows the change',
+    ).toBe(true);
+    const withIt = await activeList();
+    expect(withIt.symbols.length).toBe(before.symbols.length + 1);
+    expect(withIt.symbols.includes(result.data.symbol), 'the list holds the symbol').toBe(true);
+    expect(
+      sameJson(
+        withIt.symbols.filter((item) => item !== result.data.symbol),
+        before.symbols,
+      ),
+      'the other symbols are as they were',
+    ).toBe(true);
+
+    // A second add finds it there.
+    const again = await callOk<{ outcome: string }>(client, 'watchlist_add', { symbol });
+    expect(again.data.outcome).toBe('already_listed');
+
+    // A symbol the list does not hold is not removed, and needs no confirm.
+    const notListed = await callOk<{ removed: string[]; notListed: string[] }>(
+      client,
+      'watchlist_remove',
+      { symbols: [UNKNOWN_SYMBOL] },
+    );
+    expect(
+      notListed.data.removed.length === 0 && sameJson(notListed.data.notListed, [UNKNOWN_SYMBOL]),
+      'a symbol the list does not hold is reported, and nothing is removed',
+    ).toBe(true);
+
+    // The session added it, so it goes without confirm.
+    const removed = await callOk<{ listId: string; removed: string[]; notListed: string[] }>(
+      client,
+      'watchlist_remove',
+      { symbols: [result.data.symbol] },
+    );
+    expect(
+      removed.data.removed.length === 1 && removed.data.removed[0] === result.data.symbol,
+    ).toBe(true);
+    expect(removed.warnings.length === 0, 'watchlist_remove gives no warning').toBe(true);
+    added = null;
+    const after = await activeList();
+    expect(sameJson(after.symbols, before.symbols), 'the list holds what it held before').toBe(
+      true,
+    );
+    expect(sameJson(after.sections, before.sections), 'and in the same sections').toBe(true);
+    observe('watchlist add and remove', {
+      entriesBefore: entries,
+      addedAtTheEnd: withIt.symbols.at(-1) === result.data.symbol,
+      sectionOfTheAdded:
+        withIt.sections.findIndex(({ symbols }) => symbols.includes(result.data.symbol)) ===
+        withIt.sections.length - 1
+          ? 'last'
+          : 'other',
+      warnings: result.warnings.length + removed.warnings.length,
+    });
   });
 });
