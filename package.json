@@ -7,7 +7,8 @@
     "node": ">=22.22"
   },
   "scripts": {
-    "build": "pnpm -r --if-present build",
+    "build": "pnpm --filter tradingview-desktop-mcp-dashboard build && pnpm --filter tradingview-desktop-mcp build",
+    "dev:dashboard": "pnpm --filter tradingview-desktop-mcp-dashboard dev",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -26,6 +27,7 @@
     "@commitlint/config-conventional": "^21.2.3",
     "@eslint/js": "^10.0.1",
     "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "17.13.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",

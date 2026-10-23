@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import { defineConfig, globalIgnores } from 'eslint/config';
+import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
@@ -24,15 +25,22 @@ export default defineConfig(
     extends: [tseslint.configs.disableTypeChecked],
   },
   {
-    // The scripts at the repository root are plain Node programs outside any package, so ESLint has
-    // to be told that process, console and the timers exist there.
-    files: ['scripts/**/*.mjs'],
+    // The plain JavaScript scripts, at the repository root and in a package, are Node programs
+    // outside any tsconfig, so ESLint has to be told that process, console and the timers exist.
+    files: ['scripts/**/*.mjs', 'packages/*/scripts/**/*.mjs'],
     languageOptions: { globals: globals.node },
+  },
+  {
+    // The dashboard runs in the browser, and its components follow the rules of hooks.
+    files: ['packages/dashboard/**/*.{ts,tsx}'],
+    extends: [reactHooks.configs.flat.recommended],
+    languageOptions: { globals: globals.browser },
   },
   {
     files: ['packages/*/src/**/*.{ts,tsx}'],
     rules: {
       // Stdout carries JSON-RPC in stdio mode, so a stray console call would corrupt the protocol.
+      // The dashboard keeps the rule too: what it has to say belongs on the page.
       'no-console': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
     },

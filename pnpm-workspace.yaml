@@ -2,9 +2,11 @@ packages:
   - 'packages/*'
 
 # pnpm blocks dependency build scripts until they are reviewed. esbuild (used by tsup) only runs a
-# postinstall that validates and speeds up its prebuilt platform binary.
+# postinstall that validates and speeds up its prebuilt platform binary. msw's postinstall copies its
+# browser worker into a public folder, which the dashboard tests do not use: they run msw/node.
 allowBuilds:
   esbuild: true
+  msw: false
 
 # @types/node follows the published runtime floor (Node 20.19), so type-checking rejects newer
 # Node APIs in src. Vitest 5 lists only @types/node ^22 || >=24 as its optional peer (the Node

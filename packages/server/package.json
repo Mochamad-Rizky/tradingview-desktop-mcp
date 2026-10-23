@@ -17,7 +17,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/copy-dashboard.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --project unit --project integration",
     "test:unit": "vitest run --project unit",
