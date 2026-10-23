@@ -151,9 +151,11 @@ test('the descriptions name the start points, the refusals, the speeds, the sett
   expect(start).toMatch(/internal replay broker/);
   expect(start).toMatch(/never trades/);
   expect(start).toMatch(/replay_stop/);
+  expect(start).toMatch(/once the chart shows the bars of the replay/);
   expect(step).toMatch(/1 to 500/);
   expect(step).toMatch(/45 s/);
   expect(step).toMatch(/finished/);
+  expect(step).toMatch(/date is null/);
   expect(autoplay).toMatch(/10x/);
   expect(autoplay).toMatch(/own setting/);
   expect(autoplay).toMatch(/INVALID_INPUT/);
@@ -391,6 +393,60 @@ describe('what replay_step makes of each step', () => {
     });
   });
 
+  test('counts the step that reached the end, after which TradingView stopped replay, and reports no date', async () => {
+    const output = await stepWith([
+      { value: stepped(1729900800) },
+      { value: { outcome: 'ended', date: null, reason: null } },
+    ]);
+
+    expect(output.data).toEqual({ date: null, dateIso: null, stepped: 2, finished: true });
+    expect(output.warnings).toEqual([]);
+  });
+
+  test('reports finished when a later step finds replay stopped by TradingView, its toolbar shown', async () => {
+    const stepsThenStopped = (after: ReplayReading) =>
+      scriptedRun([
+        [readReplayState, [{ value: RUNNING }, { value: after }]],
+        [
+          stepReplayViaApi,
+          [
+            { value: stepped(1729900800) },
+            { error: new TvMcpError('NOT_AVAILABLE', 'Replay is not running on the chart') },
+          ],
+        ],
+      ]);
+    const atEnd = stepsThenStopped({ ...OFF, modeOn: true });
+    const left = stepsThenStopped(OFF);
+    const unread = scriptedRun([
+      [
+        readReplayState,
+        [{ value: RUNNING }, { error: new TvMcpError('TIMEOUT', 'Runtime.evaluate timed out') }],
+      ],
+      [
+        stepReplayViaApi,
+        [
+          { value: stepped(1729900800) },
+          { error: new TvMcpError('NOT_AVAILABLE', 'Replay is not running on the chart') },
+        ],
+      ],
+    ]);
+
+    const ended = await stepBars({ bars: 3 }, atEnd.ctx, CLIENT_SAFE_BUDGET_MS, () => 0);
+    const stopped = await stepBars({ bars: 3 }, left.ctx, CLIENT_SAFE_BUDGET_MS, () => 0);
+    const notRead = await stepBars({ bars: 3 }, unread.ctx, CLIENT_SAFE_BUDGET_MS, () => 0);
+
+    expect(ended.data).toEqual({ date: null, dateIso: null, stepped: 1, finished: true });
+    expect(ended.warnings).toEqual([]);
+    // Left by someone else: what was stepped, and why it stopped.
+    expect(stopped.data).toMatchObject({ stepped: 1, finished: false });
+    expect(stopped.warnings).toEqual([
+      'Stepped 1 of 3 bars, then stopped: Replay is not running on the chart',
+    ]);
+    // A replay that cannot be read then is not taken for its end.
+    expect(notRead.data).toMatchObject({ stepped: 1, finished: false });
+    expect(notRead.warnings).toEqual(stopped.warnings);
+  });
+
   test('fails when the first step fails or does not end in time', async () => {
     const failed = await failureOf(
       stepWith([{ value: { outcome: 'failed', date: null, reason: 'Session error' } }]),
@@ -500,6 +556,38 @@ describe('what replay_start makes of the start', () => {
     // The page checks the timeframe again right before the select, with the answer of the plan.
     expect(run.argsOf(readPlanFeaturesEnabled)).toEqual([[['BAR_REPLAY_INTRADAY']]]);
     expect(run.argsOf(startReplayViaApi)).toEqual([['date', 1712793600000, false, 14_000]]);
+  });
+
+  test('waits until the chart shows the bars of the replay, which come after its date', async () => {
+    const { run, call } = startWith(
+      { value: { ended: 'resolved', reason: null, timingModeKept: true } },
+      [{ ...RUNNING, history: null }, RUNNING],
+    );
+
+    const output = await call;
+
+    expect(output.data).toMatchObject({ active: true, date: 1712707200 });
+    expect(output.warnings).toEqual([]);
+    expect(run.argsOf(readReplayState)).toHaveLength(3);
+  });
+
+  test('warns when the bars of the replay do not show in time', async () => {
+    const run = scriptedRun(
+      [
+        [readReplayState, [{ value: OFF }, { value: { ...RUNNING, history: null } }]],
+        [readPlanFeaturesEnabled, [NO_INTRADAY]],
+        [startReplayViaApi, [{ value: { ended: 'resolved', reason: null, timingModeKept: true } }]],
+      ],
+      2000,
+    );
+
+    const output = await replayStart.handler({ date: 'first' }, run.ctx);
+
+    expect(output.data).toMatchObject({ active: true });
+    expect(output.warnings).toEqual([
+      expect.stringMatching(/^Replay started, but TradingView did not show the bars of the replay/),
+    ]);
+    expect(run.ctx.session.replayRunStartedBySession).toBe(1712620800);
   });
 
   test('refuses a replay that TradingView does not tell is off', async () => {

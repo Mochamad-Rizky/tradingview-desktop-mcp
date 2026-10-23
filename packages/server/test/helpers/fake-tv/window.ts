@@ -724,7 +724,10 @@ export function createFakeTvWindow(
   };
 
   // The bars a page sees: none while the series is flagged for an unknown symbol.
-  const loaded = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : history.bars());
+  // The bars the chart has, and those its main series holds, which are none for a moment after a
+  // start of replay (replay.ts).
+  const known = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : history.bars());
+  const loaded = (): readonly SyntheticBar[] => (state.replay.barsHidden ? [] : known());
   // The time points a page sees, which go with the bars.
   const points = (): readonly number[] => (loaded().length === 0 ? [] : publicTimes());
   // Their times in the time base of the rows.
@@ -913,7 +916,7 @@ export function createFakeTvWindow(
     state: state.replay,
     record,
     signedIn: () => pine.state.signedIn,
-    bars: loaded,
+    bars: known,
     chart: () => ({ symbol: state.symbol, interval: state.resolution }),
     // A plan has the feature when it configures it, as enabled() of the plan modules answers.
     planIntraday:

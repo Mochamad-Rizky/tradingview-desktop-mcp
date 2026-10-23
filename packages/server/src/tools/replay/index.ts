@@ -13,6 +13,7 @@ import {
   autoplayUnchangedError,
   availabilityOf,
   availabilityRefusal,
+  barsNotShownWarning,
   dateNotReportedWarning,
   endOfHistoryError,
   isDailyOrLonger,
@@ -153,9 +154,11 @@ export const replayStart = defineTool({
     'and shows them again one by one (replay_step, replay_autoplay). date picks the point: a time ' +
     '(ISO 8601 or a Unix timestamp; replay starts a second before it, so its bar comes with the ' +
     "first step), 'first' (the first bar replay can reach) or 'random' (a random bar, the default, " +
-    'as the Random bar of TradingView). Returns active, date and dateIso (the replay point, Unix ' +
-    'seconds and ISO; null, with a warning, until TradingView reports it), start and resolution ' +
-    '(the timeframe of the chart). Fails with NOT_AVAILABLE while replay runs already, when ' +
+    'as the Random bar of TradingView). It returns once the chart shows the bars of the replay, ' +
+    'or with a warning when they do not show in time. Returns active, date and dateIso (the ' +
+    'replay point, Unix seconds and ISO; null, with a warning, until TradingView reports it), ' +
+    'start and resolution (the timeframe of the chart). Fails with NOT_AVAILABLE while replay runs ' +
+    'already, when ' +
     'TradingView cannot replay the chart, and when the layout holds a replay TradingView saved on ' +
     'leaving it, which it would ask about in its "continue replay" dialog; with PLAN_LIMIT on an ' +
     'intraday timeframe when the plan lacks BAR_REPLAY_INTRADAY (daily, weekly and monthly charts ' +
@@ -211,11 +214,13 @@ export const replayStart = defineTool({
       allowed,
       waitMs,
     ]);
-    // A select that ended has started replay by then, or will not; the replay date shows later.
+    // A select that ended has started replay by then, or will not; the replay date shows later, and
+    // the bars of the replay later still: the chart holds no bars for a moment after the date shows
+    // (seen on the app), when a step is not taken up and data_get_ohlcv finds no bars.
     const ready = await pollUntil(
       () => page.bridge.evaluate(readReplayState, []),
       (state) =>
-        (state.started === true && state.date !== null) ||
+        (state.started === true && state.date !== null && state.history !== null) ||
         (outcome.ended !== 'late' && state.started !== true),
       { intervalMs: POLL_INTERVAL_MS, timeoutMs: left() },
     );
@@ -231,6 +236,8 @@ export const replayStart = defineTool({
     const warnings: string[] = [];
     if (state.date === null) {
       warnings.push(dateNotReportedWarning(waitMs));
+    } else if (state.history === null) {
+      warnings.push(barsNotShownWarning(waitMs));
     }
     if (!outcome.timingModeKept) {
       warnings.push(TIMING_MODE_WARNING);
@@ -256,7 +263,8 @@ export const replayStep = defineTool({
     'Moves a running replay forward by bars bars (1 to 500, default 1), one step of TradingView ' +
     'each, and returns date and dateIso (the replay point afterwards), stepped (how many bars it ' +
     'moved) and finished (true when replay reached the end of the loaded bars, where TradingView ' +
-    'stops replay; replay_stop then closes its toolbar). A call keeps within 45 s, so that no ' +
+    'stops replay by itself, so that date is null when it leaves no replay point; replay_stop ' +
+    'then closes its toolbar). A call keeps within 45 s, so that no ' +
     'client gives up on it: what is left comes back with a warning, to step on with another call. ' +
     'Fails with NOT_AVAILABLE when replay is not running (replay_start) or plays on its own ' +
     '(replay_autoplay with enabled: false first).',
@@ -312,12 +320,34 @@ export async function stepBars(
       if (stepped === 0 || !isTvMcpError(error)) {
         throw error;
       }
+      // TradingView stops replay by itself once a step reaches the end of the data, keeping its
+      // toolbar, so a later step finds replay stopped.
+      let now: ReplayReading | null = null;
+      try {
+        now = await page.bridge.evaluate(readReplayState, []);
+      } catch (readError) {
+        if (!isTvMcpError(readError)) {
+          throw readError;
+        }
+      }
+      if (now?.started === false && now.modeOn === true) {
+        finished = true;
+        date = null;
+        break;
+      }
       warnings.push(stoppedEarlyWarning(stepped, bars, error.message));
       break;
     }
     if (step.outcome === 'finished') {
       finished = true;
       date = step.date ?? date;
+      break;
+    }
+    if (step.outcome === 'ended') {
+      // TradingView took the step that reached the end, and stopped replay: no replay point is left.
+      stepped += 1;
+      finished = true;
+      date = null;
       break;
     }
     if (step.outcome === 'stepped') {

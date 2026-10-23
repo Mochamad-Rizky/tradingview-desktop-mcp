@@ -268,6 +268,40 @@ describe('stepping and autoplay', () => {
     expect(replay.currentDate().value()).toBe(times[51]);
   });
 
+  test('the step that reaches the last bar resolves, and replay then stops before it shows that bar, keeping its mode', async () => {
+    const win = windowWith(fixture, { replay: { stepMs: 5, dateMs: 20 } });
+    const replay = await replayOf(win);
+    running(win, LAST - 1);
+
+    await replay.doStep();
+
+    expect(stateOf(win)).toMatchObject({ started: false, modeOn: true, index: null });
+    await delay(40);
+    expect([replay.currentDate().value(), replay.getReplaySelectedDate().value()]).toEqual([
+      null,
+      null,
+    ]);
+    expect(replay._replayUIController?._replayManager.isReplayFinished()).toBe(false);
+  });
+
+  test('the main series holds no bars for barsMs after a start, then the bars of the chart', async () => {
+    const win = windowWith(fixture, { replay: { barsMs: 40 } });
+    const replay = await replayOf(win);
+    const series = win.TradingViewApi?.activeChart()._chartWidget.model().mainSeries();
+
+    await replay.selectDate((times[100] ?? 0) * 1000);
+
+    expect(stateOf(win).barsHidden).toBe(true);
+    expect(series?.bars().size()).toBe(0);
+    await delay(60);
+    expect(stateOf(win).barsHidden).toBe(false);
+    expect(series?.bars().size()).toBe(times.length);
+    // Without the option the bars stay.
+    const plain = windowWith();
+    await (await replayOf(plain)).selectDate((times[100] ?? 0) * 1000);
+    expect(stateOf(plain).barsHidden).toBe(false);
+  });
+
   test('doStep on the last bar stops replay and rejects with "Replay is finished"', async () => {
     const win = windowWith();
     const replay = await replayOf(win);

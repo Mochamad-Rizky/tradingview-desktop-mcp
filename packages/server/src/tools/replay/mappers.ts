@@ -345,6 +345,14 @@ export function dateNotReportedWarning(waitMs: number): string {
   );
 }
 
+export function barsNotShownWarning(waitMs: number): string {
+  return (
+    `Replay started, but TradingView did not show the bars of the replay within ${String(waitMs)} ` +
+    'ms: until it does, data_get_ohlcv finds no bars and replay_step may not be confirmed. Call ' +
+    'replay_status or data_get_ohlcv again shortly.'
+  );
+}
+
 export const TIMING_MODE_WARNING =
   'Starting replay changed the setting of TradingView for how its replay button starts a replay, ' +
   'and it could not be set back.';

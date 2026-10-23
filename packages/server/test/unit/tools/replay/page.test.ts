@@ -839,6 +839,33 @@ describe('stepReplayViaApi', () => {
     expect(calls(win, 'replayApi.doStep')).toEqual([[]]);
   });
 
+  test('answers ended for the step that reaches the end of the loaded bars, after which TradingView stops replay and keeps its toolbar', async () => {
+    const { result, win } = await resultOf(stepReplayViaApi, [WAIT_MS], chart(running(LAST - 1)));
+
+    // TradingView stops replay before it shows the last bar: no replay point is left.
+    expect(result).toEqual({ outcome: 'ended', date: null, reason: null });
+    expect(replayOf(win)).toMatchObject({ started: false, modeOn: true });
+  });
+
+  test('answers failed for a step during which replay was left, its toolbar closed', async () => {
+    const { result } = await resultOf(
+      stepReplayViaApi,
+      [WAIT_MS],
+      withReplay((replay, win) => {
+        replay.doStep = () => {
+          Object.assign(replayOf(win), { started: false, modeOn: false, shownIndex: null });
+          return Promise.resolve();
+        };
+      }, running(40)),
+    );
+
+    expect(result).toEqual({
+      outcome: 'failed',
+      date: null,
+      reason: 'Replay was left during the step',
+    });
+  });
+
   test('answers finished at the end of the loaded bars, where TradingView stops replay', async () => {
     const { result, win } = await resultOf(stepReplayViaApi, [WAIT_MS], chart(running(LAST)));
 

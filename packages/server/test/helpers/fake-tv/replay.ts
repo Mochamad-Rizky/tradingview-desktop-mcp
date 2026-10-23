@@ -31,12 +31,16 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   last bar for selectRandomDate, so that two fake windows agree. A time before the first bar
 //   replay can reach starts there, with the notification of the app (not a dialog). The selected
 //   point is the time of that bar. The promise resolves as replay starts, and currentDate shows the
-//   point dateMs later. A select while replay runs moves the point, as a reset of the app does.
-// - doStep() throws at once while replay is not started (the assert of the app). On the last bar
-//   replay is finished: doStep stops replay and rejects with the text "Replay is finished". A
-//   step error a test stages (state.replay.stepError) rejects with an Error stepMs later and leaves
-//   replay running, and state.replay.stepHangs makes a step never settle. Otherwise the step
-//   resolves stepMs later and currentDate shows the next bar dateMs after that.
+//   point dateMs later; the main series of the chart holds no bars until barsMs after the start (the
+//   bars of the replay come after the date on the app; 0 by default, when they come at once). A
+//   select while replay runs moves the point, as a reset of the app does.
+// - doStep() throws at once while replay is not started (the assert of the app). The step that
+//   reaches the last bar resolves stepMs later, and replay stops by itself then, the replay mode
+//   staying on and currentDate never showing the last bar, as on the app. On the last bar (a state
+//   a test stages) replay is finished: doStep stops replay and rejects with the text "Replay is
+//   finished". A step error a test stages (state.replay.stepError) rejects with an Error stepMs
+//   later and leaves replay running, and state.replay.stepHangs makes a step never settle.
+//   Otherwise the step resolves stepMs later and currentDate shows the next bar dateMs after that.
 // - toggleAutoplay() stops replay when it is finished, stops autoplay while it runs and starts it
 //   otherwise, which throws while replay is not started. Autoplay does not move the point.
 // - leaveReplay(options) records itself with its argument as given. While replay runs and is not
@@ -71,6 +75,8 @@ export interface FakeReplayOptions {
   dateMs?: number;
   // How long a step takes to resolve. Default 5 ms.
   stepMs?: number;
+  // How long after a start the main series holds no bars. Default 0 ms.
+  barsMs?: number;
   // Leaves the internal replay controller out of the replay API.
   withoutController?: boolean;
   // Leaves replaySessionState and updateReplaySessionState out of the chart widget collection.
@@ -111,6 +117,8 @@ export interface FakeReplayState {
   depthIndex: number;
   stepError: string | null;
   stepHangs: boolean;
+  // Whether the main series of the chart holds no bars for now, as right after a start.
+  barsHidden: boolean;
 }
 
 export interface FakeReplayDeps {
@@ -216,6 +224,7 @@ export function initialReplayState(): FakeReplayState {
     depthIndex: 0,
     stepError: null,
     stepHangs: false,
+    barsHidden: false,
   };
 }
 
@@ -234,6 +243,7 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
   const selectMs = options.selectMs ?? 10;
   const dateMs = options.dateMs ?? 10;
   const stepMs = options.stepMs ?? 5;
+  const barsMs = options.barsMs ?? 0;
   const lastIndex = (): number => deps.bars().length - 1;
   const timeAt = (index: number | null): number | null =>
     index === null ? null : (deps.bars()[index]?.[0] ?? null);
@@ -329,6 +339,12 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
         state.index = pick();
         state.selectedPoint = timeAt(state.index);
         state.started = true;
+        if (barsMs > 0) {
+          state.barsHidden = true;
+          setTimeout(() => {
+            state.barsHidden = false;
+          }, barsMs);
+        }
         resolve();
         showPointLater();
       }, selectMs);
@@ -424,6 +440,11 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
           }
           state.index = (state.index ?? state.depthIndex) + 1;
           resolve();
+          if (finished()) {
+            // The end of the data: replay stops before it shows the last bar, its mode stays on.
+            stop();
+            return;
+          }
           showPointLater();
         }, stepMs);
       });

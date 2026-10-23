@@ -478,6 +478,34 @@ describe('replay_start', () => {
     // Replay was not seen ready, so the session does not count it as its own.
     expect(ctx.session.replayRunStartedBySession).toBeNull();
   });
+
+  test('replay_start answers once the chart shows the bars of the replay, so that the first step and data_get_ohlcv find them', async () => {
+    const { client } = await startHarness(fixture, { replay: { barsMs: 300 } });
+
+    await callTool(client, 'replay_start', { date: '2024-04-11' });
+    const bars = await callTool(client, 'data_get_ohlcv', { count: 1 });
+    const step = await callTool(client, 'replay_step');
+
+    expect(errorOf(bars)).toBeUndefined();
+    expect(dataOf(step)).toMatchObject({ stepped: 1, finished: false });
+    expect(warningsOf(step)).toEqual([]);
+  });
+
+  test('replay_start warns when the bars of the replay do not show in time, and still counts the replay as its own', async () => {
+    const { client, ctx } = await startHarness(
+      fixture,
+      { replay: { barsMs: 3000 } },
+      { callTimeoutMs: 1500 },
+    );
+
+    const result = await callTool(client, 'replay_start', { date: 'first' });
+
+    expect(dataOf(result)).toMatchObject({ active: true, date: time(0) });
+    expect(warningsOf(result)).toEqual([
+      expect.stringMatching(/did not show the bars of the replay within 500 ms/),
+    ]);
+    expect(ctx.session.replayRunStartedBySession).toBe(time(0));
+  });
 });
 
 describe('replay_step', () => {
@@ -507,15 +535,12 @@ describe('replay_step', () => {
 
     const result = await callTool(client, 'replay_step', { bars: 5 });
 
-    expect(dataOf(result)).toEqual({
-      date: time(LAST),
-      dateIso: isoOf(time(LAST)),
-      stepped: 2,
-      finished: true,
-    });
-    // The step at the end stopped replay, as TradingView does.
-    expect(calls(win, 'replayApi.doStep')).toHaveLength(3);
-    expect(replayOf(win).started).toBe(false);
+    // The step that reached the end counts; TradingView stopped replay before it showed the last bar,
+    // keeping its toolbar, so no replay point is left.
+    expect(dataOf(result)).toEqual({ date: null, dateIso: null, stepped: 2, finished: true });
+    expect(warningsOf(result)).toEqual([]);
+    expect(calls(win, 'replayApi.doStep')).toHaveLength(2);
+    expect(replayOf(win)).toMatchObject({ started: false, modeOn: true });
   });
 
   test('replay_step refuses NOT_AVAILABLE when replay is not running, naming replay_start', async () => {

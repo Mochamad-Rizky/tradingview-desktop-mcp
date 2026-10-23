@@ -77,12 +77,14 @@ export type StartOutcome = {
 };
 
 // How one step ended: stepped, once the replay date showed the next bar; unconfirmed, when the step
-// resolved but the date did not change within the wait; finished, at the end of the data, where
-// TradingView stops replay; failed, with why; or late, when the step had not ended within the wait.
-// date is the replay date afterwards.
+// resolved but the date did not change within the wait; ended, when the step resolved and
+// TradingView then stopped replay by itself, keeping its toolbar, as it does once a step reaches the
+// end of the data (seen on the app); finished, when TradingView refused the step as the end of the
+// data ("Replay is finished"); failed, with why; or late, when the step had not ended within the
+// wait. date is the replay date afterwards.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type StepOutcome = {
-  outcome: 'stepped' | 'unconfirmed' | 'finished' | 'failed' | 'late';
+  outcome: 'stepped' | 'unconfirmed' | 'ended' | 'finished' | 'failed' | 'late';
   date: number | null;
   reason: string | null;
 };
@@ -529,10 +531,12 @@ export async function startReplayViaApi(
 
 // Moves a running replay one bar forward with doStep, and answers how the step ended within waitMs
 // (StepOutcome): the step resolves before the replay date shows the next bar, so it then waits, for
-// what is left of waitMs, until the date changes. At the end of the data TradingView stops replay and
-// rejects the step with "Replay is finished", which is the outcome finished. Before the step, replay
-// that does not run, or plays on its own (autoplay), is NOT_AVAILABLE, and a build without doStep
-// CAPABILITY_UNAVAILABLE.
+// what is left of waitMs, until the date changes. The step that reaches the end of the data resolves,
+// and TradingView then stops replay by itself and keeps its toolbar, without showing a new date: the
+// outcome ended; replay that stops with its toolbar gone was left, which is the outcome failed. A
+// step TradingView rejects with "Replay is finished" is the outcome finished. Before the step,
+// replay that does not run, or plays on its own (autoplay), is NOT_AVAILABLE, and a build without
+// doStep CAPABILITY_UNAVAILABLE.
 export async function stepReplayViaApi(
   win: TvWindow,
   waitMs: number,
@@ -650,20 +654,27 @@ export async function stepReplayViaApi(
       ? { outcome: 'finished', date: dateNow() ?? before, reason: null }
       : { outcome: 'failed', date: dateNow() ?? before, reason };
   }
-  const shown = await new Promise<boolean>((resolve) => {
+  const shown = await new Promise<'date' | 'stopped' | 'none'>((resolve) => {
     const look = (): void => {
       const date = dateNow();
       if (date !== null && date !== before) {
-        resolve(true);
+        resolve('date');
+      } else if (watched(() => replay.isReplayStarted?.()) === false) {
+        resolve('stopped');
       } else if (Date.now() - startedAt >= waitMs) {
-        resolve(false);
+        resolve('none');
       } else {
         setTimeout(look, 20);
       }
     };
     look();
   });
-  return { outcome: shown ? 'stepped' : 'unconfirmed', date: dateNow(), reason: null };
+  if (shown === 'stopped') {
+    return watched(() => replay.isReplayToolbarVisible?.()) === true
+      ? { outcome: 'ended', date: dateNow(), reason: null }
+      : { outcome: 'failed', date: dateNow(), reason: 'Replay was left during the step' };
+  }
+  return { outcome: shown === 'date' ? 'stepped' : 'unconfirmed', date: dateNow(), reason: null };
 }
 
 // Sets the speed of autoplay to the delay delayMs (one of the speeds of the app; null leaves it),
