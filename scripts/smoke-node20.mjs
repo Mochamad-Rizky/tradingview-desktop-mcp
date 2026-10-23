@@ -17,8 +17,9 @@ const TIMEOUT_MS = 20_000;
 const EXIT_GRACE_MS = 5_000;
 // How much of the server's stderr a failure shows.
 const STDERR_LINES = 12;
-// A tool of the app domain and the batch tool: enough to show that registration works.
-const EXPECTED_TOOLS = ['app_health', 'batch_run'];
+// Every tool of the full profile, which the server offers when nothing narrows it (serverEnv drops
+// every TV_* variable): a bundle that registers fewer, or one twice, fails here.
+const EXPECTED_TOOL_COUNT = 83;
 // A server answers a version it knows with that version, and any other with its latest.
 const PROTOCOL_VERSION = '2025-06-18';
 
@@ -194,10 +195,11 @@ async function smoke(server, step) {
     throw new SmokeFailure('tools/list answered without a tool list');
   }
   const names = listed.tools.map((tool) => tool?.name);
-  const missing = EXPECTED_TOOLS.filter((name) => !names.includes(name));
-  if (missing.length > 0) {
+  const distinct = new Set(names.filter((name) => typeof name === 'string' && name !== ''));
+  if (names.length !== EXPECTED_TOOL_COUNT || distinct.size !== names.length) {
     throw new SmokeFailure(
-      `tools/list does not include ${missing.join(' and ')}, it lists ${String(names.length)} tools`,
+      `tools/list lists ${String(names.length)} tools, ${String(distinct.size)} of them named ` +
+        `and distinct, not the ${String(EXPECTED_TOOL_COUNT)} tools of the full profile`,
     );
   }
 
