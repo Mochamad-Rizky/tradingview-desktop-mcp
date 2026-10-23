@@ -4,7 +4,12 @@ import { isTvMcpError } from '../../core/errors.js';
 import { getPlanLimits, inPlanLimitedTurn, requireBelowLimit } from '../../core/tv/plan-limits.js';
 import { pollUntil } from '../../utils/poll.js';
 import { READ_ONLY } from '../annotations.js';
-import { dataWaitMs, pageWaitMs, POLL_INTERVAL_MS } from '../chart/strategies.js';
+import {
+  CLIENT_SAFE_BUDGET_MS,
+  dataWaitMs,
+  pageWaitMs,
+  POLL_INTERVAL_MS,
+} from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import {
   CHART_STORAGE_HINT,
@@ -63,9 +68,6 @@ import {
 // dialog of TradingView once it is trimmed (layoutNameOf).
 const MAX_NAME_INPUT = 200;
 const MAX_LAYOUT_ID = 100;
-// The longest layout_new takes from its start: below the 60 s a common MCP client waits for a call,
-// since a client that gives up after the layout was created would call again and create another.
-const NEW_LAYOUT_BUDGET_MS = 45_000;
 // Less time than this left to open a created layout counts as none: a load the call could not wait
 // for might switch the layout after the call reported it unopened.
 const MIN_OPEN_MS = 1000;
@@ -231,7 +233,7 @@ export const layoutNew = defineTool({
 export async function newLayout(
   { name, confirm }: { name: string; confirm?: boolean | undefined },
   ctx: ToolContext,
-  budgetMs: number = NEW_LAYOUT_BUDGET_MS,
+  budgetMs: number = CLIENT_SAFE_BUDGET_MS,
   now: () => number = () => performance.now(),
 ): Promise<ToolOutput<NewLayout>> {
   const startedAt = now();

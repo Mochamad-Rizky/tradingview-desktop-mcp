@@ -5,7 +5,7 @@ import { getPlanFeaturesEnabled } from '../../core/tv/plan-limits.js';
 import { pollUntil } from '../../utils/poll.js';
 import { READ_ONLY } from '../annotations.js';
 import { TIME_INPUT, timeInput } from '../chart/index.js';
-import { pageWaitMs, POLL_INTERVAL_MS } from '../chart/strategies.js';
+import { CLIENT_SAFE_BUDGET_MS, pageWaitMs, POLL_INTERVAL_MS } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import {
   alreadyActiveError,
@@ -62,9 +62,6 @@ import {
 // tools never call the paper trading of the replay API, nor goToRealtime, which keeps replay on and
 // can show a statistics dialog.
 
-// The longest replay_step takes from its start: below the 60 s a common MCP client waits for a call,
-// since a client that gives up would step again from where the replay went on.
-export const STEP_BUDGET_MS = 45_000;
 // The longest one step is waited for, with the date it shows, within the page wait of the call
 // timeout as well: the replay session answers a step within a moment.
 const STEP_WAIT_MS = 5000;
@@ -254,7 +251,7 @@ export const replayStep = defineTool({
 export async function stepBars(
   { bars }: { bars: number },
   ctx: ToolContext,
-  budgetMs: number = STEP_BUDGET_MS,
+  budgetMs: number = CLIENT_SAFE_BUDGET_MS,
   now: () => number = () => performance.now(),
 ): Promise<ToolOutput<SteppedReplay>> {
   const startedAt = now();

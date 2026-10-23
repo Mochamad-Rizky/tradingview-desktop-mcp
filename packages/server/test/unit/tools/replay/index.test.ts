@@ -2,13 +2,13 @@ import { z } from 'zod';
 import { TvMcpError } from '../../../../src/core/errors.js';
 import { readPlanFeaturesEnabled } from '../../../../src/core/tv/plan-limits.js';
 import { READ_ONLY } from '../../../../src/tools/annotations.js';
+import { CLIENT_SAFE_BUDGET_MS } from '../../../../src/tools/chart/strategies.js';
 import { allTools } from '../../../../src/tools/index.js';
 import {
   replayAutoplay,
   replayStart,
   replayStatus,
   replayTools,
-  STEP_BUDGET_MS,
   stepBars,
 } from '../../../../src/tools/replay/index.js';
 import {
@@ -232,7 +232,7 @@ describe('the time replay_step allows itself', () => {
 
     const output = await stepBars({ bars: 500 }, run.ctx, undefined, () => run.clock.now);
 
-    expect(STEP_BUDGET_MS).toBe(45_000);
+    expect(CLIENT_SAFE_BUDGET_MS).toBe(45_000);
     // Each step waits at most 5 s, so the last one starts with 5 s of the 45 s left.
     expect(output.data).toEqual({
       date: 1712793600,
@@ -258,7 +258,7 @@ describe('the time replay_step allows itself', () => {
       2000,
     );
 
-    await stepBars({ bars: 2 }, run.ctx, STEP_BUDGET_MS, () => run.clock.now);
+    await stepBars({ bars: 2 }, run.ctx, CLIENT_SAFE_BUDGET_MS, () => run.clock.now);
 
     expect(run.argsOf(stepReplayViaApi)).toEqual([[1000], [1000]]);
   });
@@ -269,7 +269,7 @@ describe('the time replay_step allows itself', () => {
       [stepReplayViaApi, [{ value: stepped(1712793600) }]],
     ]);
 
-    const output = await stepBars({ bars: 3 }, run.ctx, STEP_BUDGET_MS, () => run.clock.now);
+    const output = await stepBars({ bars: 3 }, run.ctx, CLIENT_SAFE_BUDGET_MS, () => run.clock.now);
 
     expect(output.data).toEqual({
       date: 1712707200,
@@ -290,7 +290,7 @@ describe('what replay_step makes of each step', () => {
       [readReplayState, [{ value: RUNNING }]],
       [stepReplayViaApi, steps],
     ]);
-    return stepBars({ bars }, run.ctx, STEP_BUDGET_MS, () => run.clock.now);
+    return stepBars({ bars }, run.ctx, CLIENT_SAFE_BUDGET_MS, () => run.clock.now);
   }
 
   test('returns the bars it stepped, with the reason, when a later step fails', async () => {

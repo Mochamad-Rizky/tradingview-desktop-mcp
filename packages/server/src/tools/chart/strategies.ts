@@ -44,6 +44,10 @@ export const POLL_INTERVAL_MS = 100;
 // The least time the charts of a layout that was loaded or changed are given to report their data,
 // when the page wait leaves that much (dataWaitMs).
 export const MIN_DATA_WAIT_MS = 1500;
+// The longest a tool takes from its start when a call that a client gave up on and made again would
+// act twice: below the 60 s a common MCP client waits for a call. layout_new would create a second
+// layout, and replay_step would step on from where the replay went on.
+export const CLIENT_SAFE_BUDGET_MS = 45_000;
 // A dialog opens within a moment of the key or click that opens it.
 const DIALOG_WAIT_MS = 3000;
 // A preset changes the range at once, or after the data of a new timeframe, which this allows for.
