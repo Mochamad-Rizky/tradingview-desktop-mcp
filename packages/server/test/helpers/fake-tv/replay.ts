@@ -9,7 +9,9 @@ import type { SyntheticBar } from './synthetic-bars.js';
 // - Its watched values: isReplayAvailable() (state.replay.available), isReplayStarted(),
 //   isAutoplayStarted(), isReplayToolbarVisible() (the replay mode, which shows the replay toolbar),
 //   currentDate() (the time of the bar the replay point shows, in Unix seconds, null while it shows
-//   none) and position(), realizedPL() and currency(), which stay null, as on TradingView Desktop.
+//   none), getReplaySelectedDate() (the point replay was started or last reset at, which the manager
+//   of the app keeps: unchanged by steps, null once replay stops) and position(), realizedPL() and
+//   currency(), which stay null, as on TradingView Desktop.
 // - autoplayDelay() is the time between two bars of autoplay, and autoplayDelayList() the nine
 //   speeds of the app, from 10x (100 ms) to 0.1x (10 s). changeAutoplayDelay(ms) takes the nearest
 //   speed, keeps it as a setting of the app (settings.setValue, ReplayAutoplayDelay) and restarts
@@ -27,8 +29,9 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   (the app starts at the time less a second), the first bar replay can reach for
 //   selectFirstAvailableDate (state.replay.depthIndex) and a bar halfway between that one and the
 //   last bar for selectRandomDate, so that two fake windows agree. A time before the first bar
-//   replay can reach starts there, with the notification of the app (not a dialog). The promise
-//   resolves as replay starts, and currentDate shows the point dateMs later.
+//   replay can reach starts there, with the notification of the app (not a dialog). The selected
+//   point is the time of that bar. The promise resolves as replay starts, and currentDate shows the
+//   point dateMs later. A select while replay runs moves the point, as a reset of the app does.
 // - doStep() throws at once while replay is not started (the assert of the app). On the last bar
 //   replay is finished: doStep stops replay and rejects with the text "Replay is finished". A
 //   step error a test stages (state.replay.stepError) rejects with an Error stepMs later and leaves
@@ -39,8 +42,11 @@ import type { SyntheticBar } from './synthetic-bars.js';
 // - leaveReplay(options) records itself with its argument as given. While replay runs and is not
 //   finished, without skipConfirm it opens the "Leave replay" dialog (dialog.leaveReplay) and changes
 //   nothing. Otherwise it leaves: it saves the replay session state, turns the replay mode off,
-//   stops replay and autoplay, clears the point and calls onLeave. stopReplay() leaves the same way
-//   as leaveReplay({ skipConfirm: true }).
+//   stops replay and calls onLeave. stopReplay() leaves the same way as
+//   leaveReplay({ skipConfirm: true }).
+// - Every stop of replay, by leaving it or at the end of the data, stops autoplay and clears the
+//   replay point, so that currentDate answers null, and the selected point, as _stopReplay of the
+//   manager of the app does; the replay mode stays on until replay is left.
 // - Leaving with a replay point saves the session state in the layout with
 //   updateReplaySessionState of the chart widget collection, as the app does: { replayTime,
 //   replayMode, charts } while the setting save_replay_session_state is on
@@ -94,6 +100,9 @@ export interface FakeReplayState {
   // dateMs later; null for none.
   index: number | null;
   shownIndex: number | null;
+  // The point replay was started or last reset at, in Unix seconds, which getReplaySelectedDate()
+  // answers; null while replay is stopped.
+  selectedPoint: number | null;
   delayMs: number;
   timingMode: string;
   sessionState: FakeReplaySessionState | null;
@@ -133,6 +142,7 @@ export interface FakeReplayApi {
   isAutoplayStarted(): FakeWatched<boolean>;
   isReplayToolbarVisible(): FakeWatched<boolean>;
   currentDate(): FakeWatched<number | null>;
+  getReplaySelectedDate(): FakeWatched<number | null>;
   position(): FakeWatched<null>;
   realizedPL(): FakeWatched<null>;
   currency(): FakeWatched<null>;
@@ -198,6 +208,7 @@ export function initialReplayState(): FakeReplayState {
     autoplay: false,
     index: null,
     shownIndex: null,
+    selectedPoint: null,
     delayMs: 1000,
     timingMode: 'manual',
     sessionState: null,
@@ -240,9 +251,14 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
       state.shownIndex = state.index;
     }, dateMs);
   };
+  // _stopReplay of the manager of the app: replay and autoplay stop, and the replay point and the
+  // selected point go away.
   const stop = (): void => {
     state.started = false;
     state.autoplay = false;
+    state.index = null;
+    state.shownIndex = null;
+    state.selectedPoint = null;
   };
   // updateReplaySessionState of the chart widget collection, which the app calls itself on leaving
   // replay, as page code may.
@@ -272,8 +288,6 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
     saveSessionState();
     state.modeOn = false;
     stop();
-    state.index = null;
-    state.shownIndex = null;
     if (typeof onLeave === 'function') {
       (onLeave as () => void)();
     }
@@ -313,6 +327,7 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
           return;
         }
         state.index = pick();
+        state.selectedPoint = timeAt(state.index);
         state.started = true;
         resolve();
         showPointLater();
@@ -326,6 +341,7 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
     isAutoplayStarted: () => watched(() => state.autoplay),
     isReplayToolbarVisible: () => watched(() => state.modeOn),
     currentDate: () => watched(() => timeAt(state.shownIndex)),
+    getReplaySelectedDate: () => watched(() => state.selectedPoint),
     position: () => watched(() => null),
     realizedPL: () => watched(() => null),
     currency: () => watched(() => null),

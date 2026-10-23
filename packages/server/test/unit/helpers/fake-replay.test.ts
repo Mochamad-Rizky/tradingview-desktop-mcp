@@ -60,9 +60,15 @@ function exportsOf(win: FakeTvWindow): Record<string, unknown> {
   return found;
 }
 
-// A replay running at bar `index`, as the user would have started it.
+// A replay running at bar `index`, as the user would have started it there.
 function running(win: FakeTvWindow, index: number): void {
-  Object.assign(stateOf(win), { modeOn: true, started: true, index, shownIndex: index });
+  Object.assign(stateOf(win), {
+    modeOn: true,
+    started: true,
+    index,
+    shownIndex: index,
+    selectedPoint: times[index] ?? null,
+  });
 }
 
 describe('the replay API', () => {
@@ -142,6 +148,7 @@ describe('starting replay', () => {
 
     expect(replay.isReplayStarted().value()).toBe(true);
     expect(stateOf(win).index).toBe(99);
+    expect(replay.getReplaySelectedDate().value()).toBe(times[99]);
     expect(replay.currentDate().value()).toBeNull();
     await delay(60);
     expect(replay.currentDate().value()).toBe(times[99]);
@@ -268,8 +275,34 @@ describe('stepping and autoplay', () => {
 
     expect(replay._replayUIController?._replayManager.isReplayFinished()).toBe(true);
     await expect(replay.doStep()).rejects.toBe('Replay is finished');
-    expect(stateOf(win).started).toBe(false);
-    expect(stateOf(win).modeOn).toBe(true);
+    // The manager of the app stops replay, and the replay point and the selected point go away.
+    expect(stateOf(win)).toMatchObject({ started: false, modeOn: true, index: null });
+    expect([replay.currentDate().value(), replay.getReplaySelectedDate().value()]).toEqual([
+      null,
+      null,
+    ]);
+    expect(replay._replayUIController?._replayManager.isReplayFinished()).toBe(false);
+    // Leaving the replay mode then saves nothing.
+    replay.leaveReplay({ skipConfirm: true });
+    expect(stateOf(win).modeOn).toBe(false);
+    expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([]);
+  });
+
+  test('getReplaySelectedDate keeps the point replay started at while it steps, moves with a new select, and goes away when replay stops', async () => {
+    const win = windowWith();
+    const replay = await replayOf(win);
+
+    await replay.selectFirstAvailableDate();
+    const started = replay.getReplaySelectedDate().value();
+    await replay.doStep();
+    await replay.doStep();
+    const stepped = replay.getReplaySelectedDate().value();
+    await replay.selectDate((times[50] ?? 0) * 1000);
+    const reset = replay.getReplaySelectedDate().value();
+    replay.leaveReplay({ skipConfirm: true });
+
+    expect([started, stepped, reset]).toEqual([times[0], times[0], times[49]]);
+    expect(replay.getReplaySelectedDate().value()).toBeNull();
   });
 
   test('a staged step error rejects and leaves replay running, and a hanging step never settles', async () => {
@@ -346,6 +379,7 @@ describe('leaving replay', () => {
       modeOn: false,
       index: null,
       shownIndex: null,
+      selectedPoint: null,
       sessionState: {
         replayTime: times[50],
         replayMode: 'ActiveChart',
