@@ -1,6 +1,8 @@
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { storeToken } from './api/token';
 import { App } from './app';
+import { TEST_TOKEN } from './test/fixtures';
 
 const html = document.documentElement;
 
@@ -31,9 +33,28 @@ function prefersDark(): void {
   }));
 }
 
+// The shell tests start signed in; the token gate has tests of its own.
+beforeEach(() => {
+  storeToken(TEST_TOKEN);
+});
+
 afterEach(() => {
+  // Unmounted first, so that the router does not render the change of address outside act.
+  cleanup();
   visit('/');
   html.classList.remove('dark');
+});
+
+test('the app asks for the token first, then opens the page in the address', async () => {
+  const user = userEvent.setup();
+  sessionStorage.clear();
+  visit('/tools');
+  render(<App />);
+  expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText('Access token'), `${TEST_TOKEN}{Enter}`);
+  expect(await screen.findByRole('navigation', { name: 'Main' })).toBeInTheDocument();
+  expect(pageHeading()).toHaveTextContent('Tools');
 });
 
 test('the app shell renders the nav and switches pages by path', async () => {
@@ -115,6 +136,8 @@ test('the theme toggle still switches when the browser refuses storage', async (
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
     throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
   });
+  // The token, too, can only be kept in memory then.
+  storeToken(TEST_TOKEN);
   render(<App />);
 
   await user.click(screen.getByRole('button', { name: 'Switch to dark theme' }));
