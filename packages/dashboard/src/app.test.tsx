@@ -1,5 +1,6 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { storeToken } from './api/token';
 import { App } from './app';
 import { TEST_TOKEN } from './test/fixtures';
@@ -74,7 +75,7 @@ test('the app shell renders the nav and switches pages by path', async () => {
 
   await user.click(navLink('Log'));
   expect(window.location.pathname).toBe('/log');
-  expect(pageHeading()).toHaveTextContent('Log');
+  expect(pageHeading()).toHaveTextContent('Live log');
   expect(navLink('Log')).toHaveAttribute('aria-current', 'page');
   expect(navLink('Tools')).not.toHaveAttribute('aria-current');
 
@@ -142,4 +143,51 @@ test('the theme toggle still switches when the browser refuses storage', async (
 
   await user.click(screen.getByRole('button', { name: 'Switch to dark theme' }));
   expect(html).toHaveClass('dark');
+});
+
+test('a skip link is the first thing to focus, and moves the focus to the page', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.tab();
+  expect(screen.getByRole('link', { name: 'Skip to content' })).toHaveFocus();
+  await user.keyboard('{Enter}');
+  expect(screen.getByRole('main')).toHaveFocus();
+  // The address stays as it was.
+  expect(window.location.hash).toBe('');
+});
+
+test('each page names itself in the document title', async () => {
+  const user = userEvent.setup();
+  const { unmount } = render(<App />);
+  expect(document.title).toBe('Status · TradingView MCP Dashboard');
+  await user.click(navLink('Log'));
+  expect(document.title).toBe('Live log · TradingView MCP Dashboard');
+  await user.click(navLink('Tools'));
+  expect(document.title).toBe('Tools · TradingView MCP Dashboard');
+
+  unmount();
+  visit('/no-such-page');
+  render(<App />);
+  expect(document.title).toBe('Page not found · TradingView MCP Dashboard');
+});
+
+test('moving to another page puts the focus on its heading, but the first load does not', async () => {
+  const user = userEvent.setup();
+  // StrictMode runs the effects of the first render twice, which must not count as a move.
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+  expect(pageHeading()).toHaveTextContent('Status');
+  expect(document.body).toHaveFocus();
+
+  await user.click(navLink('Tools'));
+  expect(pageHeading()).toHaveTextContent('Tools');
+  expect(pageHeading()).toHaveFocus();
+
+  await user.click(navLink('Log'));
+  expect(pageHeading()).toHaveTextContent('Live log');
+  expect(pageHeading()).toHaveFocus();
 });
