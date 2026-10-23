@@ -7,3 +7,8 @@ coverage/
 .env.local
 *.log
 .DS_Store
+# What Playwright writes for the dashboard's end-to-end tests, and the address and token of the
+# server that the real-server suite starts.
+test-results/
+playwright-report/
+packages/dashboard/e2e/.real-server.json

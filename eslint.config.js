@@ -5,7 +5,14 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  globalIgnores(['**/dist/', '**/coverage/', '.superpowers/']),
+  globalIgnores([
+    '**/dist/',
+    '**/coverage/',
+    // What Playwright writes: its HTML report bundles JavaScript of its own.
+    '**/playwright-report/',
+    '**/test-results/',
+    '.superpowers/',
+  ]),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,
@@ -25,14 +32,17 @@ export default defineConfig(
     extends: [tseslint.configs.disableTypeChecked],
   },
   {
-    // The plain JavaScript scripts, at the repository root and in a package, are Node programs
-    // outside any tsconfig, so ESLint has to be told that process, console and the timers exist.
-    files: ['scripts/**/*.mjs', 'packages/*/scripts/**/*.mjs'],
+    // The plain JavaScript scripts, at the repository root and in a package, and the mock server of
+    // the dashboard's end-to-end tests are Node programs outside any tsconfig, so ESLint has to be
+    // told that process, console and the timers exist.
+    files: ['scripts/**/*.mjs', 'packages/*/scripts/**/*.mjs', 'packages/dashboard/e2e/**/*.mjs'],
     languageOptions: { globals: globals.node },
   },
   {
-    // The dashboard runs in the browser, and its components follow the rules of hooks.
-    files: ['packages/dashboard/**/*.{ts,tsx}'],
+    // The dashboard runs in the browser, and its components follow the rules of hooks. Its
+    // end-to-end tests run in Node, where the fixtures of Playwright take a callback named `use`
+    // that is no hook.
+    files: ['packages/dashboard/src/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat.recommended],
     languageOptions: { globals: globals.browser },
   },

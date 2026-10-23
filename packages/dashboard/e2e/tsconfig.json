@@ -1,0 +1,18 @@
+{
+  // The end-to-end tests and the mock server run in Node, not in the page. The mock is plain
+  // JavaScript so that `node` starts it as it is; checkJs holds it and its fixtures to the API
+  // contract all the same.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // DOM for the functions that run in the page (page.evaluate).
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": ["."]
+}

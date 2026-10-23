@@ -138,3 +138,49 @@ jobs:
         run: |
           node --version
           node scripts/smoke-node20.mjs
+
+  # The dashboard in Chromium, against the mock server of its end-to-end tests: the built page with
+  # synthetic answers, so neither the server's build nor TradingView is needed.
+  dashboard-e2e:
+    name: Dashboard E2E (Chromium)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The mock server serves the built page.
+      - name: Build the dashboard
+        run: pnpm --filter tradingview-desktop-mcp-dashboard build
+
+      # Chromium alone, with the system libraries it needs.
+      - name: Install Chromium
+        run: pnpm --filter tradingview-desktop-mcp-dashboard exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: pnpm --filter tradingview-desktop-mcp-dashboard test:e2e
+
+      # With the trace and the screenshot of each failed test.
+      - name: Upload the Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: packages/dashboard/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7

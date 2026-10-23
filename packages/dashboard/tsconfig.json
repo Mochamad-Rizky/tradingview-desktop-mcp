@@ -11,7 +11,10 @@
       "@contract": ["../server/src/transports/dashboard/contract.ts"]
     },
     "allowImportingTsExtensions": true,
+    // playwright.config.ts reads the constants of the end-to-end tests' plain JavaScript fixtures,
+    // which e2e/tsconfig.json checks.
+    "allowJs": true,
     "noEmit": true
   },
-  "include": ["src", "vite.config.ts", "vitest.config.ts"]
+  "include": ["src", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }
