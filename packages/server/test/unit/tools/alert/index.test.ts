@@ -1,12 +1,19 @@
 import { z } from 'zod';
-import { alertDelete, alertTools } from '../../../../src/tools/alert/index.js';
-import { deleteAlertsViaApi } from '../../../../src/tools/alert/page.js';
+import { readPlanConfig } from '../../../../src/core/tv/plan-limits.js';
+import { alertDelete, alertTools, createAlert } from '../../../../src/tools/alert/index.js';
+import {
+  createAlertViaApi,
+  deleteAlertsViaApi,
+  readAlertContext,
+  readAlerts,
+} from '../../../../src/tools/alert/page.js';
 import { READ_ONLY } from '../../../../src/tools/annotations.js';
 import { drawingTools } from '../../../../src/tools/drawing/index.js';
 import { allTools } from '../../../../src/tools/index.js';
 import { selectTools } from '../../../../src/tools/registry.js';
 import type { AnyToolDefinition, ToolContext } from '../../../../src/tools/types.js';
-import { createTestContext } from '../../../helpers/tool-context.js';
+import { failureOf } from '../../../helpers/failure-of.js';
+import { createTestContext, testConfig } from '../../../helpers/tool-context.js';
 
 // What the model and the client see of the alert tools: their names, annotations and input
 // schemas. The behavior behind them is tested through a server in
@@ -199,4 +206,96 @@ test('alert_delete lets through a failure that is no error of the server, after 
     'A bug',
   );
   expect(lists).toBe(2);
+});
+
+describe('alert_create within the time a client waits for one call', () => {
+  // A chart page whose page functions answer as `answers` says, each taking `takesMs` of the clock
+  // of the run, which the call reads as its own.
+  function scriptedRun(
+    answers: Map<unknown, { value: unknown; takesMs?: number }>,
+    callTimeoutMs: number,
+  ) {
+    const clock = { now: 0 };
+    const asked: { fn: unknown; args: unknown[] }[] = [];
+    const answer = (fn: unknown, args: unknown[]): Promise<unknown> => {
+      asked.push({ fn, args });
+      const scripted = answers.get(fn);
+      if (scripted === undefined) {
+        return Promise.reject(new Error('Unexpected page function'));
+      }
+      clock.now += scripted.takesMs ?? 0;
+      return Promise.resolve(scripted.value);
+    };
+    const ctx = {
+      ...createTestContext({ config: testConfig({ callTimeoutMs }) }),
+      connection: {
+        chartPage: () => Promise.resolve({ bridge: { evaluate: answer, evaluateWithLib: answer } }),
+      },
+    } as unknown as ToolContext;
+    const argsOf = (fn: unknown): unknown[][] =>
+      asked.filter((call) => call.fn === fn).map(({ args }) => args);
+    return { clock, ctx, argsOf };
+  }
+
+  // A daily chart of a symbol the alert takes, and a plan with room for it.
+  function script(change: [unknown, { value: unknown; takesMs?: number }][] = []) {
+    return new Map<unknown, { value: unknown; takesMs?: number }>([
+      [
+        readAlertContext,
+        {
+          value: {
+            symbol: 'NASDAQ:AAPL',
+            names: ['AAPL'],
+            alertSymbol: 'NASDAQ:AAPL',
+            resolution: '1D',
+            maxExpiration: null,
+            defaultExpiration: null,
+          },
+        },
+      ],
+      [readAlerts, { value: { alerts: [], unreadable: 0 } }],
+      [readPlanConfig, { value: { limit: 3, primitive_limit: 3, overall_limit: 50 } }],
+      [createAlertViaApi, { value: { id: '9001' } }],
+      ...change,
+    ]);
+  }
+
+  // A budget of 4800 ms and a call timeout of 2600 ms make every page wait 1600 ms: what the call
+  // timeout leaves a page call, and a third of the budget.
+  const BUDGET_MS = 4800;
+  const CALL_TIMEOUT_MS = 2600;
+  const INPUT = { condition: 'crossing' as const, price: 150 };
+
+  test('answers TIMEOUT, and sends nothing, when less than one page wait of its time is left before the creation', async () => {
+    const run = scriptedRun(
+      script([[readAlerts, { value: { alerts: [], unreadable: 0 }, takesMs: 3300 }]]),
+      CALL_TIMEOUT_MS,
+    );
+
+    const error = await failureOf(createAlert(INPUT, run.ctx, BUDGET_MS, () => run.clock.now));
+
+    expect(error.toPayload()).toEqual({
+      code: 'TIMEOUT',
+      message: expect.stringContaining('nothing was created') as string,
+      hint: expect.stringContaining('safe to call alert_create again') as string,
+      details: { budgetMs: BUDGET_MS },
+    });
+    expect(run.argsOf(createAlertViaApi)).toEqual([]);
+    expect(run.ctx.session.createdAlertIds.size).toBe(0);
+  });
+
+  test('says that it keeps within 45 s', () => {
+    expect(toolNamed('alert_create').description).toMatch(/45 s/);
+  });
+
+  test('creates the alert while a page wait of its time is left, waiting a third of it at most', async () => {
+    const run = scriptedRun(script(), 120_000);
+
+    const output = await createAlert(INPUT, run.ctx, 45_000, () => run.clock.now);
+
+    expect(output.data).toMatchObject({ id: '9001', condition: 'crossing', price: 150 });
+    expect(run.argsOf(readAlerts)).toEqual([[15_000]]);
+    expect(run.argsOf(createAlertViaApi)[0]?.[1]).toBe(15_000);
+    expect(run.ctx.session.createdAlertIds).toEqual(new Set(['9001']));
+  });
 });

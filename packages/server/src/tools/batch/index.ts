@@ -2,7 +2,8 @@ import type { CallToolResult, ImageContent } from '@modelcontextprotocol/sdk/typ
 import { z } from 'zod';
 import { TvMcpError } from '../../core/errors.js';
 import type { JsonObject } from '../../utils/json.js';
-import { defineTool, type AnyToolDefinition } from '../types.js';
+import { CLIENT_SAFE_BUDGET_MS } from '../chart/strategies.js';
+import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 
 const BATCH_RUN = 'batch_run';
 const MAX_STEPS = 20;
@@ -28,9 +29,11 @@ export const batchRun = defineTool({
     'it needs the same arguments, confirmations included. By default the first step that fails ' +
     'stops the batch and the remaining steps are skipped; set stopOnError to false to run them ' +
     'all. batch_run cannot be one of its own steps. Steps run in order, so the batch takes as ' +
-    'long as its steps together. Returns steps (one entry per step that ran, with tool, ok, and ' +
-    'data or error), completed (how many steps ran) and stopped (true when a failure skipped the ' +
-    'rest).',
+    'long as its steps together, and no step starts once 45 s have gone by, so that no client ' +
+    'gives up on the call and sends its steps again: the steps not started come back as a ' +
+    'warning, to send in another batch. Returns steps (one entry per step that ran, with tool, ' +
+    'ok, and data or error), completed (how many steps ran) and stopped (true when the rest were ' +
+    'skipped, after a failure or for the time).',
   inputSchema: {
     steps: z
       .array(
@@ -62,42 +65,68 @@ export const batchRun = defineTool({
   },
   core: true,
   // In the tool events, a step shows what a call of its tool would (redaction.ts).
-  async handler({ steps, stopOnError }, ctx) {
-    // Checked for every step before the first one runs: a batch refused halfway would have left
-    // the steps before the refusal done.
-    const nested = steps.flatMap((step, index) => (step.tool === BATCH_RUN ? [index] : []));
-    if (nested.length > 0) {
-      throw new TvMcpError('INVALID_INPUT', 'batch_run cannot run batch_run as a step', {
-        hint:
-          'Put the steps of the inner batch into this one, or send them as a batch of their ' +
-          'own.',
-        details: { steps: nested },
-      });
-    }
-
-    const outcomes: JsonObject[] = [];
-    const images: ImageContent[] = [];
-    for (const step of steps) {
-      // Through the registry, so the step is validated and logged like a direct call of its tool.
-      const result = await ctx.registry.call(step.tool, step.arguments, 'batch');
-      outcomes.push({ tool: step.tool, ...envelopeOf(result) });
-      images.push(...result.content.filter((block) => block.type === 'image'));
-      if (result.isError === true && stopOnError) {
-        break;
-      }
-    }
-
-    return {
-      // One outcome per step that ran, in order. `completed` counts them, and `stopped` says that
-      // a failure skipped the steps after it.
-      data: {
-        steps: outcomes,
-        completed: outcomes.length,
-        stopped: outcomes.length < steps.length,
-      },
-      images,
-    };
-  },
+  handler: (input, ctx) => runBatch(input, ctx),
 });
+
+// What batch_run does, within budgetMs from its start, timed by now (a test gives its own): no step
+// starts once the budget is spent, since a client that gave up on the call would send the steps
+// again, and those that ran would run twice. A step that runs when the budget runs out is waited
+// for.
+export async function runBatch(
+  {
+    steps,
+    stopOnError,
+  }: { steps: { tool: string; arguments: Record<string, unknown> }[]; stopOnError: boolean },
+  ctx: ToolContext,
+  budgetMs: number = CLIENT_SAFE_BUDGET_MS,
+  now: () => number = () => performance.now(),
+): Promise<ToolOutput<JsonObject>> {
+  const startedAt = now();
+  // Checked for every step before the first one runs: a batch refused halfway would have left the
+  // steps before the refusal done.
+  const nested = steps.flatMap((step, index) => (step.tool === BATCH_RUN ? [index] : []));
+  if (nested.length > 0) {
+    throw new TvMcpError('INVALID_INPUT', 'batch_run cannot run batch_run as a step', {
+      hint: 'Put the steps of the inner batch into this one, or send them as a batch of their own.',
+      details: { steps: nested },
+    });
+  }
+
+  const outcomes: JsonObject[] = [];
+  const images: ImageContent[] = [];
+  let outOfTime = false;
+  for (const step of steps) {
+    if (now() - startedAt >= budgetMs) {
+      outOfTime = true;
+      break;
+    }
+    // Through the registry, so the step is validated and logged like a direct call of its tool.
+    const result = await ctx.registry.call(step.tool, step.arguments, 'batch');
+    outcomes.push({ tool: step.tool, ...envelopeOf(result) });
+    images.push(...result.content.filter((block) => block.type === 'image'));
+    if (result.isError === true && stopOnError) {
+      break;
+    }
+  }
+
+  const left = steps.length - outcomes.length;
+  return {
+    // One outcome per step that ran, in order. `completed` counts them, and `stopped` says that a
+    // failure, or the time, skipped the steps after them.
+    data: {
+      steps: outcomes,
+      completed: outcomes.length,
+      stopped: left > 0,
+    },
+    images,
+    warnings: outOfTime
+      ? [
+          `Ran ${String(outcomes.length)} of ${String(steps.length)} steps within the ` +
+            `${String(budgetMs / 1000)} s a call allows, and started none after that: send the ` +
+            `other ${String(left)} in another batch_run.`,
+        ]
+      : [],
+  };
+}
 
 export const batchTools: AnyToolDefinition[] = [batchRun];

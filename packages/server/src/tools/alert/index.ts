@@ -11,11 +11,11 @@ import { parseTimeInput, toIso } from '../../utils/time.js';
 import { READ_ONLY } from '../annotations.js';
 import { TIME_INPUT, timeInput } from '../chart/index.js';
 import { sameSymbol } from '../chart/mappers.js';
-import { pageWaitMs } from '../chart/strategies.js';
+import { CLIENT_SAFE_BUDGET_MS, pageWaitMs } from '../chart/strategies.js';
 import { mapSearchResult } from '../data/mappers.js';
 import { searchSymbolsViaApi } from '../data/page.js';
 import { listed } from '../drawing/mappers.js';
-import { defineTool, type AnyToolDefinition } from '../types.js';
+import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import {
   ALERT_CONDITIONS,
   ALERT_STATUSES,
@@ -25,6 +25,7 @@ import {
   expirationWindow,
   isSecondsResolution,
   notDeletedWarning,
+  outOfTimeError,
   plainSymbol,
   refusalError,
   resolveExpiration,
@@ -237,7 +238,9 @@ export const alertCreate = defineTool({
     'unchanged. A symbol other than the chart symbol must be known to the symbol search of ' +
     'TradingView, else the call fails with INVALID_INPUT. A chart ' +
     'on a timeframe in seconds needs a plan that allows alerts on seconds. No dialog opens. ' +
-    'alert_delete deletes what this tool created without confirm.',
+    'A call keeps within 45 s, so that no client gives up on it and creates the alert again: ' +
+    'when too little of that is left before the alert is sent, it fails with TIMEOUT and nothing ' +
+    'is created. alert_delete deletes what this tool created without confirm.',
   inputSchema: {
     symbol: z
       .string()
@@ -281,75 +284,115 @@ export const alertCreate = defineTool({
   },
   core: true,
   // The message stays out of the tool events (redaction.ts): it can carry the secret of a webhook.
-  async handler({ symbol, condition, price, message, expiration }, ctx) {
-    // All of it before the app is asked anything.
-    const wanted = symbol?.trim();
-    if (wanted === '') {
-      throw new TvMcpError('INVALID_INPUT', 'The symbol is blank', {
-        hint: 'Give a symbol such as NASDAQ:AAPL, or leave it out for the chart symbol.',
-      });
-    }
-    if (message?.trim() === '') {
-      throw new TvMcpError('INVALID_INPUT', 'The message is blank', {
-        hint:
-          'Give a message with something to show, or leave message out for a short description ' +
-          'of the alert.',
-      });
-    }
-    const expiresAt = expiration === undefined ? undefined : parseTimeInput(expiration);
-    const page = await ctx.connection.chartPage();
-    const chart = await page.bridge.evaluateWithLib(readAlertContext, []);
-    const { resolution } = chart;
-    if (resolution === null) {
-      throw new TvMcpError(
-        'NOT_AVAILABLE',
-        'The chart does not report its timeframe, which the alert would watch',
-        { hint: 'Check app_health: the chart may still be loading.' },
-      );
-    }
-    await requireResolutionAllowed(page, resolution);
-    const now = Math.floor(Date.now() / 1000);
-    const expiresOn = resolveExpiration(
-      expiresAt,
-      now,
-      expirationWindow(now, chart.maxExpiration, chart.defaultExpiration),
-    );
-    const target = await alertSymbol(page, wanted, chart);
-    const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
-    // From the check of the limit to the end of the creation, the other actions on plan limits
-    // wait.
-    const id = await inPlanLimitedTurn(async () => {
-      await requireAlertRoom(page, waitMs);
-      const created = await page.bridge.evaluateWithLib(createAlertViaApi, [
-        {
-          symbol: target.sent,
-          resolution,
-          condition: CONDITION_TYPES[condition],
-          price,
-          message: message ?? defaultMessage(target.plain, condition, price),
-          expiresAt: expiresOn,
-        },
-        waitMs,
-      ]);
-      if ('refused' in created) {
-        throw refusalError(created.refused, 'create the alert');
-      }
-      return created.id;
-    });
-    ctx.session.createdAlertIds.add(id);
-    return {
-      data: {
-        id,
-        symbol: target.plain,
-        condition,
-        price,
-        expiration: expiresOn,
-        expirationIso: toIso(expiresOn),
-      },
-      via: 'internal',
-    };
-  },
+  handler: (input, ctx) => createAlert(input, ctx),
 });
+
+// What alert_create returns. A type alias, not an interface: it goes to the client as JSON.
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+type CreatedAlert = {
+  id: string;
+  symbol: string;
+  condition: (typeof ALERT_CONDITIONS)[number];
+  price: number;
+  expiration: number;
+  expirationIso: string;
+};
+
+// What alert_create does, within budgetMs from its start, timed by now (a test gives its own). Each
+// page call waits at most a third of the budget, so that the checks and the creation fit in it
+// whatever the call timeout, and the creation is sent only while a page wait of the budget is left:
+// a creation whose answer the call could not wait for might land after the call failed, and a
+// client would create the alert again.
+export async function createAlert(
+  {
+    symbol,
+    condition,
+    price,
+    message,
+    expiration,
+  }: {
+    symbol?: string | undefined;
+    condition: (typeof ALERT_CONDITIONS)[number];
+    price: number;
+    message?: string | undefined;
+    expiration?: string | number | undefined;
+  },
+  ctx: ToolContext,
+  budgetMs: number = CLIENT_SAFE_BUDGET_MS,
+  now: () => number = () => performance.now(),
+): Promise<ToolOutput<CreatedAlert>> {
+  const startedAt = now();
+  const remainingMs = (): number => budgetMs - (now() - startedAt);
+  // All of it before the app is asked anything.
+  const wanted = symbol?.trim();
+  if (wanted === '') {
+    throw new TvMcpError('INVALID_INPUT', 'The symbol is blank', {
+      hint: 'Give a symbol such as NASDAQ:AAPL, or leave it out for the chart symbol.',
+    });
+  }
+  if (message?.trim() === '') {
+    throw new TvMcpError('INVALID_INPUT', 'The message is blank', {
+      hint:
+        'Give a message with something to show, or leave message out for a short description ' +
+        'of the alert.',
+    });
+  }
+  const expiresAt = expiration === undefined ? undefined : parseTimeInput(expiration);
+  const page = await ctx.connection.chartPage();
+  const chart = await page.bridge.evaluateWithLib(readAlertContext, []);
+  const { resolution } = chart;
+  if (resolution === null) {
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      'The chart does not report its timeframe, which the alert would watch',
+      { hint: 'Check app_health: the chart may still be loading.' },
+    );
+  }
+  await requireResolutionAllowed(page, resolution);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expiresOn = resolveExpiration(
+    expiresAt,
+    nowSeconds,
+    expirationWindow(nowSeconds, chart.maxExpiration, chart.defaultExpiration),
+  );
+  const target = await alertSymbol(page, wanted, chart);
+  const waitMs = Math.min(pageWaitMs(ctx.config.callTimeoutMs), Math.floor(budgetMs / 3));
+  // From the check of the limit to the end of the creation, the other actions on plan limits
+  // wait.
+  const id = await inPlanLimitedTurn(async () => {
+    await requireAlertRoom(page, waitMs);
+    if (remainingMs() < waitMs) {
+      throw outOfTimeError(budgetMs);
+    }
+    const created = await page.bridge.evaluateWithLib(createAlertViaApi, [
+      {
+        symbol: target.sent,
+        resolution,
+        condition: CONDITION_TYPES[condition],
+        price,
+        message: message ?? defaultMessage(target.plain, condition, price),
+        expiresAt: expiresOn,
+      },
+      waitMs,
+    ]);
+    if ('refused' in created) {
+      throw refusalError(created.refused, 'create the alert');
+    }
+    return created.id;
+  });
+  ctx.session.createdAlertIds.add(id);
+  return {
+    data: {
+      id,
+      symbol: target.plain,
+      condition,
+      price,
+      expiration: expiresOn,
+      expirationIso: toIso(expiresOn),
+    },
+    via: 'internal',
+  };
+}
 
 export const alertList = defineTool({
   name: 'alert_list',

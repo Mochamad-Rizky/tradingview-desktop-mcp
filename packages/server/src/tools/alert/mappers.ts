@@ -308,6 +308,20 @@ export function unreadableAlertsWarning(count: number): string {
     : `TradingView listed ${String(count)} alerts that could not be read, so they are left out.`;
 }
 
+// The refusal of alert_create when too little of its time is left to wait for the answer to the
+// creation: nothing was sent.
+export function outOfTimeError(budgetMs: number): TvMcpError {
+  return new TvMcpError(
+    'TIMEOUT',
+    'Too little of the time alert_create allows itself was left to send the alert, so nothing ' +
+      'was created',
+    {
+      hint: 'Nothing was created, so it is safe to call alert_create again.',
+      details: { budgetMs },
+    },
+  );
+}
+
 // The warning of alert_delete for the alerts TradingView still lists after the deletion.
 export function notDeletedWarning(ids: readonly string[]): string {
   return (
