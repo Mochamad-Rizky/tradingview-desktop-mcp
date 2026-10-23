@@ -7,6 +7,7 @@ import type {
   DashboardTool,
   JsonValue,
 } from '@contract';
+import type { ToolCall } from '@/api/event-log';
 
 // What the fake API of the tests answers with. Every value is made up: the tools are a few of the
 // server's own, cut short, and the symbols are the placeholders the server tests use.
@@ -325,3 +326,21 @@ export const events: DashboardEvent[] = [
   endEvent(4, callId(2), 'chart_set_symbol', { durationMs: 30000, errorCode: 'TIMEOUT' }),
   startEvent(5, callId(3), 'drawing_list', { origin: 'batch', args: { limit: 10 } }),
 ];
+
+// Call `n` as the event log holds it while it runs: chart_get_state of origin mcp, unless `fields`
+// say otherwise.
+export function runningCall(n: number, fields: Partial<ToolCall> = {}): ToolCall {
+  return {
+    id: callId(n),
+    tool: 'chart_get_state',
+    origin: 'mcp',
+    startedAt: at(n * 100),
+    seq: n,
+    ...fields,
+  };
+}
+
+// Call `n` once its end came: OK after 42 ms, unless `fields` say otherwise.
+export function endedCall(n: number, fields: Partial<ToolCall> = {}): ToolCall {
+  return runningCall(n, { endedAt: at(n * 100 + 42), durationMs: 42, ok: true, ...fields });
+}

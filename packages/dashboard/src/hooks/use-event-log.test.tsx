@@ -285,6 +285,168 @@ test('after a server restart the log keeps its calls, says some were missed, and
   expect(fourth.lastEventId).toBe(streamId(1, 'c0ffee00'));
 });
 
+test('a gap marks the calls still running as result not seen, and a later end still completes them', async () => {
+  const stream = serveStream();
+  const { result } = renderEventLog();
+  const connection = await stream.next();
+  connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  connection.send(startEvent(2, callId(2), 'drawing_list'));
+  connection.send(endEvent(3, callId(2), 'drawing_list'));
+  connection.send(startEvent(4, callId(3), 'chart_set_symbol'));
+  await waitFor(() => {
+    expect(result.current.calls).toHaveLength(3);
+  });
+  const notSeen = () => result.current.calls.map((call) => [call.id, call.resultNotSeen]);
+  expect(notSeen()).toEqual([
+    [callId(1), undefined],
+    [callId(2), undefined],
+    [callId(3), undefined],
+  ]);
+
+  // The server lost events: the calls running then may have ended unseen.
+  connection.gap();
+  await waitFor(() => {
+    expect(result.current.missed).toBe(true);
+  });
+  expect(notSeen()).toEqual([
+    [callId(1), true],
+    [callId(2), undefined],
+    [callId(3), true],
+  ]);
+
+  // Its replay brings the end of one of them after all, and a call that starts now is not marked.
+  connection.send(endEvent(5, callId(1), 'chart_get_state', { errorCode: 'TIMEOUT' }));
+  connection.send(startEvent(6, callId(4), 'app_health'));
+  await waitFor(() => {
+    expect(result.current.calls).toHaveLength(4);
+  });
+  expect(result.current.calls[0]).toEqual({
+    id: callId(1),
+    tool: 'chart_get_state',
+    origin: 'mcp',
+    startedAt: at(100),
+    args: {},
+    seq: 1,
+    endedAt: at(500),
+    durationMs: 42,
+    ok: false,
+    errorCode: 'TIMEOUT',
+  });
+  expect(notSeen()).toEqual([
+    [callId(1), undefined],
+    [callId(2), undefined],
+    [callId(3), true],
+    [callId(4), undefined],
+  ]);
+});
+
+test('a gap while paused marks the calls running at that point once the log resumes', async () => {
+  const stream = serveStream();
+  const { result } = renderEventLog();
+  const connection = await stream.next();
+  connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  await waitFor(() => {
+    expect(result.current.calls).toHaveLength(1);
+  });
+  act(() => {
+    result.current.pause();
+  });
+  const shown = result.current.calls;
+  connection.send(startEvent(2, callId(2), 'drawing_list'));
+  connection.gap();
+  connection.send(startEvent(3, callId(3), 'chart_set_symbol'));
+  await waitFor(() => {
+    expect(result.current.buffered).toBe(2);
+  });
+  // The stream's state shows at once; the calls shown stand still until the log resumes.
+  expect(result.current.missed).toBe(true);
+  expect(result.current.calls).toBe(shown);
+  expect(result.current.calls[0]?.resultNotSeen).toBeUndefined();
+
+  act(() => {
+    result.current.resume();
+  });
+  expect(result.current.calls.map((call) => [call.id, call.resultNotSeen])).toEqual([
+    [callId(1), true],
+    [callId(2), true],
+    [callId(3), undefined],
+  ]);
+});
+
+test('an end the paused log had to let go of leaves its call marked as result not seen', async () => {
+  const stream = serveStream();
+  const { result } = renderEventLog();
+  const connection = await stream.next();
+  connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  connection.send(startEvent(2, callId(2), 'drawing_list'));
+  await waitFor(() => {
+    expect(result.current.calls).toHaveLength(2);
+  });
+  act(() => {
+    result.current.pause();
+  });
+  // The end of call 1, then more events than the log holds while paused (replays of the start of
+  // call 2, say): that end is let go of. Call 2 lost nothing, and runs on.
+  connection.send(endEvent(3, callId(1), 'chart_get_state'));
+  for (let n = 0; n < 2000; n += 1) {
+    connection.send(startEvent(2, callId(2), 'drawing_list'));
+  }
+  // A new call last: once it is counted, every event before it was taken.
+  connection.send(startEvent(4, callId(3), 'app_health'));
+  await waitFor(() => {
+    expect(result.current.buffered).toBe(1);
+  });
+  act(() => {
+    result.current.resume();
+  });
+  expect(result.current.calls.map((call) => [call.id, call.endedAt, call.resultNotSeen])).toEqual([
+    [callId(1), undefined, true],
+    [callId(2), undefined, undefined],
+    [callId(3), undefined, undefined],
+  ]);
+});
+
+test('a gap while paused keeps its place among the events held when older ones are let go of', async () => {
+  const stream = serveStream();
+  const { result } = renderEventLog();
+  const connection = await stream.next();
+  connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  connection.send(endEvent(2, callId(1), 'chart_get_state'));
+  await waitFor(() => {
+    expect(result.current.calls[0]?.ok).toBe(true);
+  });
+  act(() => {
+    result.current.pause();
+  });
+  // Replays of call 1, which ended, fill what the log holds; call 2 starts before the gap, call 3
+  // after it. More replays then push the oldest out, which moves the gap up with the rest.
+  const replay = () => {
+    connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  };
+  for (let n = 0; n < 1998; n += 1) {
+    replay();
+  }
+  connection.send(startEvent(3, callId(2), 'drawing_list'));
+  connection.gap();
+  connection.send(startEvent(4, callId(3), 'app_health'));
+  for (let n = 0; n < 10; n += 1) {
+    replay();
+  }
+  connection.send(startEvent(5, callId(4), 'chart_set_symbol'));
+  await waitFor(() => {
+    expect(result.current.buffered).toBe(3);
+  });
+  act(() => {
+    result.current.resume();
+  });
+  expect(result.current.calls.map((call) => [call.id, call.resultNotSeen])).toEqual([
+    [callId(1), undefined],
+    [callId(2), true],
+    [callId(3), undefined],
+    [callId(4), undefined],
+  ]);
+});
+
 test('the event log waits 1 s, 2 s, 4 s and at most 15 s between attempts, and starts over once connected', async () => {
   expect([0, 1, 2, 3, 4, 5, 30].map(reconnectDelay)).toEqual([
     1000, 2000, 4000, 8000, 15_000, 15_000, 15_000,

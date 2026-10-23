@@ -4,18 +4,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useEventLog } from '@/hooks/use-event-log';
 import { formatDuration, formatTime } from '@/lib/format';
-import { callOutcome, callStatus, type CallOutcome } from '@/lib/tool-call';
+import { CALL_STATUS_CLASS, callOutcome, callStatus } from '@/lib/tool-call';
 import { cn } from '@/lib/utils';
 import { StatusCard } from './status-card';
 
 const SHOWN = 5;
-
-// The words carry the status; the colour only repeats it.
-const STATUS_CLASS: Record<CallOutcome, string> = {
-  running: 'text-muted-foreground',
-  ok: 'text-emerald-700 dark:text-emerald-400',
-  error: 'text-destructive',
-};
 
 function CallRow({ call }: { call: ToolCall }) {
   return (
@@ -27,7 +20,7 @@ function CallRow({ call }: { call: ToolCall }) {
       <td className="py-2 pr-4">
         <Badge variant="outline">{call.origin}</Badge>
       </td>
-      <td className={cn('py-2 pr-4 font-medium', STATUS_CLASS[callOutcome(call)])}>
+      <td className={cn('py-2 pr-4 font-medium', CALL_STATUS_CLASS[callOutcome(call)])}>
         {callStatus(call)}
       </td>
       <td className="py-2 tabular-nums">

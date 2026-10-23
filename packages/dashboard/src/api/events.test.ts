@@ -140,11 +140,13 @@ test('streamEvents decodes a character split between two chunks of bytes', async
 test('streamEvents takes only a 200 answer of type text/event-stream, and fails on anything else', async () => {
   storeToken(TEST_TOKEN);
   const letGo: string[] = [];
-  // A body that never ends, and says when the client lets go of it.
+  // A body that never ends, and says when the client lets go of it. Letting go fails, as it may
+  // once the connection is gone; that must not surface as an unhandled rejection.
   const body = (name: string) =>
     new ReadableStream<Uint8Array>({
       cancel() {
         letGo.push(name);
+        throw new TypeError('The connection is gone');
       },
     });
   const answers: [string, () => Response][] = [

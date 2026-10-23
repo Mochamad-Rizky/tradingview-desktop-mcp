@@ -30,11 +30,11 @@ export function EventLogProvider({ children }: { children: ReactNode }) {
 
 export interface EventLogView extends EventLogState {
   // Holds the calls that come from now on, so that the log stands still to be read.
-  pause(): void;
+  pause: () => void;
   // Shows the calls held while paused.
-  resume(): void;
+  resume: () => void;
   // Empties the log on this page only: the server and the stream are left alone.
-  clear(): void;
+  clear: () => void;
 }
 
 // The live tool calls of the server: the calls (oldest first, at most 1000), the state of the

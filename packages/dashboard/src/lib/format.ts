@@ -10,6 +10,11 @@ const TIME = new Intl.DateTimeFormat('en-GB', {
   hourCycle: 'h23',
 });
 const DATE_TIME = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+const FULL_TIME = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'medium',
+  hourCycle: 'h23',
+});
 
 export function formatCount(value: number): string {
   return COUNT.format(value);
@@ -33,6 +38,11 @@ export function formatTime(iso: string): string {
 // An ISO 8601 time with its date, such as "1 Jan 2026, 09:30".
 export function formatDateTime(iso: string): string {
   return formatWith(DATE_TIME, iso);
+}
+
+// An ISO 8601 time with its date, to the second, such as "1 Jan 2026, 09:30:05".
+export function formatFullTime(iso: string): string {
+  return formatWith(FULL_TIME, iso);
 }
 
 // Why a request failed, to follow a colon: the server's own message, or that it could not be

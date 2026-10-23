@@ -1,5 +1,12 @@
 import { ApiError } from '@/api/client';
-import { failureText, formatCount, formatDateTime, formatDuration, formatTime } from './format';
+import {
+  failureText,
+  formatCount,
+  formatDateTime,
+  formatDuration,
+  formatFullTime,
+  formatTime,
+} from './format';
 
 test('numbers and durations are written in English, with grouped digits', () => {
   expect(formatCount(1000)).toBe('1,000');
@@ -15,8 +22,12 @@ test('times are shown on the browser clock, and a value that is no time as it is
     `${pad(local.getHours())}:${pad(local.getMinutes())}:${pad(local.getSeconds())}`,
   );
   expect(formatDateTime(at)).toContain(String(local.getFullYear()));
+  // With the date, to the second.
+  expect(formatFullTime(at)).toContain(String(local.getFullYear()));
+  expect(formatFullTime(at)).toContain(formatTime(at));
   expect(formatTime('not a time')).toBe('not a time');
   expect(formatDateTime('')).toBe('');
+  expect(formatFullTime('soon')).toBe('soon');
 });
 
 test('a failure is told by the message of the server, or as a server out of reach', () => {

@@ -20,6 +20,15 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 });
 
+// jsdom has no pointer capture and does not scroll, both of which the select of Radix calls when it
+// opens and moves through its options.
+Object.assign(Element.prototype, {
+  hasPointerCapture: () => false,
+  releasePointerCapture: () => undefined,
+  setPointerCapture: () => undefined,
+  scrollIntoView: () => undefined,
+});
+
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' });
 });

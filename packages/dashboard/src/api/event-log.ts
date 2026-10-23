@@ -20,7 +20,8 @@ export type StreamStatus = 'connecting' | 'live' | 'reconnecting';
 
 // One tool call. startedAt, args and seq come from its start event and the rest from its end
 // event, which is missing while the call runs. For a call whose start the stream did not replay,
-// startedAt is the end time less the duration, and args are unknown.
+// startedAt is the end time less the duration, and args are unknown. A call still running when the
+// stream had a gap may never get its end, and says so.
 export interface ToolCall {
   id: string;
   tool: string;
@@ -31,6 +32,9 @@ export interface ToolCall {
   durationMs?: number;
   ok?: boolean;
   errorCode?: DashboardErrorCode;
+  // The call ran when the stream had a gap, so its end may have been lost: the server crashed or
+  // restarted, or fell too far behind to replay it. An end that comes after all clears it.
+  resultNotSeen?: boolean;
   // The seq of its start event, or of its end while its start is unknown (the end came first).
   seq: number;
 }
@@ -130,6 +134,11 @@ export class EventLog {
   #pending: DashboardEvent[] = [];
   // The calls those events would add, by id, with how many of the events are about each.
   readonly #buffered = new Map<string, number>();
+  // Where among those events the last gap came: the calls running at that point are marked when
+  // the log resumes. Null when none came.
+  #gapInPending: number | null = null;
+  // The calls shown whose end was among the events let go of while paused, to mark on resume.
+  readonly #endsDropped = new Set<ToolCall>();
   #status: StreamStatus = 'connecting';
   #missed = false;
   #paused = false;
@@ -176,10 +185,23 @@ export class EventLog {
     }
     this.#paused = false;
     const pending = this.#pending;
+    const gapAt = this.#gapInPending;
     this.#pending = [];
+    this.#gapInPending = null;
     this.#buffered.clear();
-    for (const event of pending) {
+    // The events let go of came before every event held.
+    for (const call of this.#endsDropped) {
+      this.#update({ ...call, resultNotSeen: true });
+    }
+    this.#endsDropped.clear();
+    pending.forEach((event, index) => {
+      if (index === gapAt) {
+        this.#markRunning();
+      }
       this.#merge(event);
+    });
+    if (gapAt === pending.length) {
+      this.#markRunning();
     }
     this.#changed(true);
   };
@@ -198,6 +220,8 @@ export class EventLog {
     this.#withoutStart.clear();
     this.#pending = [];
     this.#buffered.clear();
+    this.#gapInPending = null;
+    this.#endsDropped.clear();
     this.#missed = false;
     this.#changed(true);
   };
@@ -235,12 +259,7 @@ export class EventLog {
             this.#receive(event);
           },
           onGap: () => {
-            // The server could not resume from the id: it starts afresh, and the id means nothing
-            // to it any more. The calls the log has stay, and an event of one replayed later is
-            // taken once all the same.
-            this.#lastEventId = null;
-            this.#missed = true;
-            this.#changed();
+            this.#gap();
           },
         });
       } catch (error) {
@@ -257,6 +276,29 @@ export class EventLog {
       this.#setStatus(this.#connectedOnce ? 'reconnecting' : 'connecting');
       if (!(await sleep(reconnectDelay(attempt), signal))) {
         return;
+      }
+    }
+  }
+
+  // The server could not resume from the id: it starts afresh, and the id means nothing to it any
+  // more. The calls the log has stay, and an event of one replayed later is taken once all the
+  // same. The calls running then may have ended unseen; while paused, they are marked on resume,
+  // in the order the events came.
+  #gap(): void {
+    this.#lastEventId = null;
+    this.#missed = true;
+    if (this.#paused) {
+      this.#gapInPending = this.#pending.length;
+    } else {
+      this.#markRunning();
+    }
+    this.#changed();
+  }
+
+  #markRunning(): void {
+    for (const call of this.#calls.values()) {
+      if (call.endedAt === undefined && call.resultNotSeen !== true) {
+        this.#update({ ...call, resultNotSeen: true });
       }
     }
   }
@@ -282,6 +324,8 @@ export class EventLog {
     return this.#buffered.size !== before;
   }
 
+  // Lets go of the oldest event held. When it is the end of a call shown, the log will not learn
+  // how that call ended: as after a gap, the call is marked on resume.
   #dropOldestHeld(): void {
     const dropped = this.#pending.shift();
     if (dropped === undefined) {
@@ -292,6 +336,13 @@ export class EventLog {
       this.#buffered.set(dropped.id, count - 1);
     } else {
       this.#buffered.delete(dropped.id);
+    }
+    if (this.#gapInPending !== null) {
+      this.#gapInPending = Math.max(this.#gapInPending - 1, 0);
+    }
+    const shown = this.#calls.get(dropped.id);
+    if (dropped.phase === 'end' && shown !== undefined && shown.endedAt === undefined) {
+      this.#endsDropped.add(shown);
     }
   }
 
@@ -324,7 +375,9 @@ export class EventLog {
     if (known.endedAt !== undefined) {
       return false;
     }
-    this.#update({ ...known, ...endFields(event) });
+    const ended: ToolCall = { ...known, ...endFields(event) };
+    delete ended.resultNotSeen;
+    this.#update(ended);
     return true;
   }
 
