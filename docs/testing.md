@@ -60,6 +60,10 @@ The fake window models what the real app was seen to do, among others:
   few kilobytes whatever its size, after checking the clip the way Chrome does. The calls it
   receives are recorded, so a test reads the clip and the scale from them, and the size in the
   header of the picture says whether the clip was the right one.
+- Bar replay starts as on the app: the replay date shows a moment after the start, and with the replay option
+  `barsMs` the main series holds no bars for that long after it. The step that reaches the last bar resolves, and
+  replay then stops by itself before it shows that bar, its toolbar staying on. The line-tool registry answers the
+  point counts of the app for the curated shapes (three for the ellipse).
 - Options model the rest of the real behavior where a test needs it: `sessionOffsetSeconds` (the
   chart reports a daily bar as its day at 00:00 UTC while its row holds the session start),
   `futurePoints` (the time points the time scale keeps after the last bar), `feeds` (the chart
@@ -107,7 +111,10 @@ The suites in `packages/server/test/e2e/` drive the TradingView Desktop of the p
 
 1. Start TradingView with its debug port: `pnpm build`, then `node packages/server/dist/cli.js
 launch`, or the `app_launch` tool.
-2. Run `TV_E2E=1 pnpm test:e2e`. Without `TV_E2E=1` every suite is skipped.
+2. Run `TV_E2E=1 pnpm test:e2e`. Without `TV_E2E=1` every suite is skipped. To see the `observed`
+   lines of the suites, run it in `packages/server` with `--reporter=verbose --silent=false`.
+3. Bring the TradingView window into view (not covered by other windows) for the tab suite and
+   the captures of the chart.
 
 Only `TV_CDP_HOST`, `TV_CDP_PORT` and `TV_CALL_TIMEOUT_MS` are read from the environment, so a
 profile or a tool filter set for daily use cannot hide the tools under test. The files run one at a
@@ -126,6 +133,40 @@ time, because they share one window.
 - `indicator.e2e.test.ts`: the chart's indicators, the last value of the first one, the search for
   RSI, `indicator_add` on a full chart, and, on a chart with a free slot, RSI added, its inputs and
   visibility changed and changed back, and removed.
+- `drawing.e2e.test.ts`: the drawings of the chart are listed and one is read; the line-tool
+  registry answers the point count the server expects for every curated shape; a horizontal line,
+  a trend line and a text of the test's own are drawn, read back (points, text, style) and
+  removed, two with `drawing_remove` and the third with `drawing_clear_all` and scope
+  `created_by_mcp`.
+- `alert.e2e.test.ts`: the alerts of the account are listed; with room under `SERVER_SIDE_ALERTS`, a
+  price alert of the test's own, crossing up ten times the last price, expiring a day ahead and
+  with a message that says what it is, is created, read back (its record by key names and types)
+  and deleted.
+- `watchlist.e2e.test.ts`: the watchlists are listed and the active one read; with room in it, one
+  symbol it does not hold is added, found there, added again (already listed) and removed, and an
+  unknown symbol is refused.
+- `layout.e2e.test.ts`: the saved layouts are listed; on a full plan `layout_new` must refuse
+  (`PLAN_LIMIT`, or `CONFIRMATION_REQUIRED` while the layout has unsaved changes) and create
+  nothing; `layout_switch` refuses an unknown id; the panes are listed, `pane_focus` keeps the
+  active chart and refuses a chart the layout lacks, and on a one-chart plan `pane_set_layout` to
+  two charts must refuse with `PLAN_LIMIT`. Creating a layout on a plan with room runs only when
+  allowed (below).
+- `tab.e2e.test.ts`: the tabs are listed; closing the only tab, or a tab of the user without
+  confirm, is refused before anything is clicked; when allowed and while the window is in view, a
+  tab is opened on the New tab page, switched to and from twice and closed, while a watcher of its
+  own measures how long the chart page takes to follow the strip.
+- `replay.e2e.test.ts`: on a daily chart (a chart on another timeframe is switched to 1D within the
+  chart snapshot), replay starts at a date, steps, plays and stops; a second start is accepted; and
+  a replay stepped to its end stops itself. After each, nothing is left: no replay running or saved
+  in the layout, and the setting of the replay button and the speed of autoplay as they were. The
+  chart and its exact view are put back after the last test.
+- `screenshot.e2e.test.ts`: the chart is captured as a png the size of its container, the page as a
+  jpeg within `maxWidth`, and the window chrome; only the sizes are read.
+- `ui.e2e.test.ts`: elements are looked up by selector and by name, trading controls reported
+  unsafe; a header button is hovered; the symbol search is opened with a click, typed into and
+  closed with Escape; the watchlist panel is opened and closed as it was found; and, when allowed,
+  `ui_evaluate` runs one expression that reads (`document.title.length`), while a server without
+  the variable refuses it.
 - `pine.e2e.test.ts`: `pine_analyze` offline; compile-only of synthetic scripts (an error and its
   position, a valid script and `pine_get_errors`, positions after a tab, `é` and an emoji, a script
   without `//@version`); `pine_smart_compile` with the real compiler; the shape of
@@ -152,8 +193,13 @@ The end-to-end suites work on the user's own, logged-in app, so they follow thes
   older bars (TradingView keeps them until the chart loads again); the Pine Editor, under the guard
   below; and studies a test added itself, within the plan limits, which the test removes again,
   together with any study a call left on the chart under the name the test added (below).
-  Compiling a synthetic script without the editor changes nothing in the app. Nothing else, and
-  nothing is left behind in the account, unless the person running the suites allows it (below).
+  Compiling a synthetic script without the editor changes nothing in the app. The suites of Plan 3
+  also change objects of their own, each removed again however the test ended: three drawings, an
+  alert within the alert limit of the plan, a watchlist symbol the active list did not hold, and,
+  when allowed, a tab on the New tab page. They run bar replay on a daily chart and leave it, open
+  and close the symbol search and the watchlist panel, and ask the layout and pane tools only for
+  what the plan refuses. Nothing else, and nothing is left behind in the account, unless the person
+  running the suites allows it (below).
 - **What they check first:** before its first change, a suite that changes the chart checks by
   reading only that the chart API has every member the chart tools use (`symbol`, `resolution`,
   `chartType`, `getVisibleRange` and the three setters of the active chart, `zoomToBarsRange` of the
@@ -176,13 +222,18 @@ The end-to-end suites work on the user's own, logged-in app, so they follow thes
   back exactly: the same bars from edge to edge, with the bar spacing worked out for the width the
   pane has then, because TradingView can resize the price axis while a suite runs. Each of the two
   steps is tried whatever the other did. Restoring runs whether the tests passed or failed.
-- **What they never touch:** drawings (no `drawing_clear_all`); the user's indicators (no
+- **What they never touch:** the user's drawings (no `drawing_clear_all` with scope `all`, no
+  `drawing_remove` of a drawing a test did not draw); the user's indicators (no
   `indicator_remove`, `indicator_set_inputs` or `indicator_set_visibility` on a study a test did not
   add); saved scripts (no `pine_save`, no `pine_smart_compile` with `writeBack`, no `pine_open` but
-  of the script the editor showed); alerts, layouts and layout switching, replay, watchlists, and
-  anything that trades. They never click or press keys: the check above makes the chart tools take
-  the chart API, so none of them falls back to the interface (whose strategies the integration tests
-  cover). They never reload the tab, and never quit, launch or restart TradingView.
+  of the script the editor showed); the user's alerts, watchlist symbols and tabs; saved layouts and
+  layout switching (`layout_switch` only to an id that does not exist); a replay of the user's,
+  running or saved in the layout (the replay suite then skips); the page zoom; and anything that
+  trades. The chart tools take the chart API, so none of them falls back to the interface (whose
+  strategies the integration tests cover). Clicks and keys come only from the interface suite (the
+  symbol search button, the watchlist button, text in the search field, Escape) and the tab suite
+  (the tab strip), never on the chart or a trading control. They never reload the tab, and never
+  quit, launch or restart TradingView.
 - **The layout autosave** of TradingView saves the changed chart while a suite runs; the restore
   saves it back as it was.
 - **What they print:** a skip reason, a log line and an error of the harness name the part of the
@@ -192,12 +243,15 @@ The end-to-end suites work on the user's own, logged-in app, so they follow thes
   (`describeFailure`, `ToolCallError`).
 - **An interrupted run** (Ctrl+C inside a test) can stop before the restore. Note the symbol,
   timeframe, chart type and range, and what the Pine Editor shows, before a run, and put them back
-  by hand if a run is cut short.
+  by hand if a run is cut short. Objects of a test then stay too, each told by its name: a drawing
+  with the text `tradingview-mcp E2E drawing (safe to delete)` and two lines next to it, an alert
+  with the message `tradingview-mcp E2E alert (safe to delete)`, the watchlist symbol the test
+  added, a tab on the New tab page, or a running replay; remove them in TradingView.
 
 ### What a run may leave behind, when allowed
 
-By default a run leaves nothing in the account: no study, no script, no draft. Two variables allow
-the tests that would, each set to `1`:
+By default a run leaves nothing in the account: no study, no script, no draft, no drawing, alert,
+watchlist symbol, layout or tab. Four variables allow the tests that would, each set to `1`:
 
 - `TV_E2E_ALLOW_DRAFTS` runs `adds a script that draws, …` and `adds a strategy, …`, which add a
   script from the Pine Editor to the chart (`pine_compile` with `addToChart`). TradingView saves
@@ -211,6 +265,20 @@ the tests that would, each set to `1`:
   the next open; the test puts the script back and closes the editor again, but a run cut short in
   between leaves the editor reopening on the test text. Without the variable the suite instead
   closes an unmodified editor without typing, opens it again and compares its text.
+- `TV_E2E_ALLOW_LAYOUTS` runs `creates a layout and switches back, …` on a plan with room for a
+  saved layout: `layout_new` saves `tradingview-mcp E2E layout` in the account and opens it, and the
+  test switches back to the layout of before. No tool deletes a layout, so each run that gets to it
+  leaves that layout, to delete in TradingView. On a full plan the test is skipped either way, and
+  `layout_new on a full plan refuses and creates nothing` runs instead.
+- `TV_E2E_ALLOW_TABS` runs `opens a New tab page, switches between it and the chart tab, and closes
+it`, which a run cut short leaves open. It runs only while the TradingView window is in view (its
+  window chrome reports `visible`): `tab_close` refuses while the window is covered or minimized,
+  so the test could not close its own tab, and it is skipped with that reason.
+
+`ui_evaluate` is off unless the server is started with `TV_MCP_ALLOW_EVAL=true`. Only the interface
+suite starts a server with it, and only when the run sets `TV_MCP_ALLOW_EVAL=true`; it then
+evaluates one expression that reads (`document.title.length`) in the chart page, and never prints
+its value. Without it that test is skipped.
 
 ### Plan-aware skips
 
@@ -284,8 +352,14 @@ None of it is a saved script, and nothing is saved.
 
 Note before a run, by reading only, the studies on the chart, what the Pine Editor shows (open or
 closed, and the script id and version), and the symbol, timeframe, chart type and visible range,
-and compare them after it. They should be the same, apart from the history the data suite loaded
-and the editor's local storage described above. A visible range whose left edge moved while its
+and compare them after it; for the suites of Plan 3 also the number of drawings, alerts and
+watchlist entries, the saved layouts and the one shown, the tabs, that replay is off and no replay
+is saved in the layout, and the panels (`app_get_ui_state`). They should be the same, apart from
+the history the data suite loaded, the editor's local storage described above, and two things the
+app does itself: the layout counts as changed after the run (leaving replay and the chart changes
+mark it), which its autosave then saves as it is; and a click on a button of the right toolbar
+changes the page the collapsed panel remembers (the watchlist after the interface suite), which
+the panel does not show until it opens without a button. A visible range whose left edge moved while its
 right edge, the bar spacing and the right offset stayed was not changed by a suite: TradingView
 keeps the bar spacing and the right offset, which is what a layout stores of the view, when its
 window gets narrower or wider, such as when it moves to a display of another width.

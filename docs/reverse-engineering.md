@@ -235,17 +235,17 @@ All paths below are evaluated inside the chart page through `Runtime.evaluate`.
 
 Signatures below come from method bodies; parameters marked `?` are optional.
 
-| Domain        | Members                                                                                                                                                                                                                                                                                                                                             |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Charts        | `activeChart()`, `chart(index = 0)`, `charts()`, `chartsCount()`, `activeChartIndex()`, `setActiveChart(index)`, `changeSymbol(symbol, interval, onLoaded?)`, `getSymbolInterval(cb?) → {symbol, interval}`, `getIntervals()`, `supportedChartTypes()`                                                                                              |
-| Layout        | `layout()` (for example `"s"`), `setLayout(type, {withUndo}?)`, `layoutName()`, `layoutId()`, `getSavedCharts(cb?) → Promise<records>`, `loadChartFromServer(record)`, `loadLayoutFromServerByLayoutId(id, …)`, `createNewLayout(name) → layoutId \| null`, `saveChartToServer(onOk?, onFail?, opts?)`, `hasChartChanges()`, `unloadUnusedCharts()` |
-| Sub-APIs      | `replayApi() → Promise<ReplayApi>`, `pineEditorApi()`, `alerts()`, `alertService()`                                                                                                                                                                                                                                                                 |
-| Search        | `searchSymbols({text, exchange, type}) → {symbols_remaining, symbols[]}`                                                                                                                                                                                                                                                                            |
-| Drawing state | `selectLineTool(name, …)`, `selectedLineTool()`, `hideAllDrawingTools()`, `lockAllDrawingTools()`, `hideAllIndicators()`, `drawOnAllCharts(bool)`                                                                                                                                                                                                   |
-| History       | `undo()`, `redo()`, `undoRedoState()`, `clearUndoHistory()`                                                                                                                                                                                                                                                                                         |
-| View          | `startFullscreen()`, `exitFullscreen()`, `takeClientScreenshot(opts?)` (local render), `takeScreenshot()` (server snapshot)                                                                                                                                                                                                                         |
-| Connection    | `isConnected()`, `connect()`, `disconnect()`, `onConnectionStatusChanged(cb)`                                                                                                                                                                                                                                                                       |
-| Events        | `subscribe(event, cb)`, `unsubscribe(event, cb)`                                                                                                                                                                                                                                                                                                    |
+| Domain        | Members                                                                                                                                                                                                                                                                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Charts        | `activeChart()`, `chart(index = 0)`, `charts()`, `chartsCount()`, `activeChartIndex()`, `setActiveChart(index)`, `changeSymbol(symbol, interval, onLoaded?)`, `getSymbolInterval(cb?) → {symbol, interval}`, `getIntervals()`, `supportedChartTypes()`                                                                                               |
+| Layout        | `layout()` (for example `"s"`), `setLayout(type, {withUndo}?)`, `layoutName()`, `layoutId()`, `getSavedCharts(cb?) → Promise<records>`, `loadChartFromServer(record)`, `loadLayoutFromServerByLayoutId(id, …)`, `createNewLayout(opts?) → layoutId \| null`, `saveChartToServer(onOk?, onFail?, opts?)`, `hasChartChanges()`, `unloadUnusedCharts()` |
+| Sub-APIs      | `replayApi() → Promise<ReplayApi>`, `pineEditorApi()`, `alerts()`, `alertService()`                                                                                                                                                                                                                                                                  |
+| Search        | `searchSymbols({text, exchange, type}) → {symbols_remaining, symbols[]}`                                                                                                                                                                                                                                                                             |
+| Drawing state | `selectLineTool(name, …)`, `selectedLineTool()`, `hideAllDrawingTools()`, `lockAllDrawingTools()`, `hideAllIndicators()`, `drawOnAllCharts(bool)`                                                                                                                                                                                                    |
+| History       | `undo()`, `redo()`, `undoRedoState()`, `clearUndoHistory()`                                                                                                                                                                                                                                                                                          |
+| View          | `startFullscreen()`, `exitFullscreen()`, `takeClientScreenshot(opts?)` (local render), `takeScreenshot()` (server snapshot)                                                                                                                                                                                                                          |
+| Connection    | `isConnected()`, `connect()`, `disconnect()`, `onConnectionStatusChanged(cb)`                                                                                                                                                                                                                                                                        |
+| Events        | `subscribe(event, cb)`, `unsubscribe(event, cb)`                                                                                                                                                                                                                                                                                                     |
 
 `getIntervals()` merges the default resolutions of the data connection with the user's custom ones. The
 analysis account got 30: ticks (`1T`, `10T`, `100T`, `1000T`), seconds (`1S` to `45S`), minutes (`1` to `240`), `1D`,
@@ -308,6 +308,18 @@ Seen on the app (probe script, chart-change experiments with an exact restore, a
 - `getAllShapes()` answers `{id, name}` with the tool type as `name` (`rectangle`, `horizontal_line`, `text`), and
   `getAllStudies()` answers `{id, name}` with the study title as `name` and six-character ids. Neither carries the
   text of a drawing.
+- Drawing (end-to-end suite, a horizontal line, a trend line and a text of its own, removed again):
+  `createShape` and `createMultipointShape` resolve the id of the new drawing, six letters and digits. Each creation
+  adds one step to the undo history (`undoRedoState().undoCommandCount`) and each `removeEntity` one more, so an undo
+  in TradingView can bring a removed drawing back. A text drawing made through the API starts no inline editing and
+  opens no dialog: the focus stays where it was. `getPoints()` answers the public time (the bar's day at 00:00 UTC
+  on a daily chart), not the session time a point was given in. The overrides `linecolor`, `linewidth` and
+  `linestyle` of a trend line and `color` and `fontsize` of a text read back as given, colors in the same letters.
+- The line-tool registry (`ensureLineToolLoaded(class)`, then `getLoadedLineTool(class).prototype.pointsCount()`)
+  answered for every curated class, each named as `supportedLineTools` names it: 1 point for `horizontal_line`,
+  `vertical_line`, `horizontal_ray`, `text`, `note`, `price_label`, `arrow_up`, `arrow_down` and `flag`; 2 for
+  `trend_line`, `ray`, `extended`, `arrow`, `rectangle`, `circle` and `fib_retracement`; 3 for `ellipse`, `triangle`
+  and `parallel_channel`.
 
 `createStudy(nameOrDescriptor, forceOverlay, lock, inputs, overrides, options)` takes two kinds of first argument
 (method bodies):
@@ -416,14 +428,38 @@ Seen on the app (probe script and chart-change experiments with an exact restore
 
 ### 4.5 Replay API (`await TradingViewApi.replayApi()`)
 
-| Group         | Members                                                                                                                                                                                                                                      |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Availability  | `isReplayAvailable()` (watched value, `true` on a daily chart), `isReadyToPlay()`, `replayResolutions()`, `currentReplayResolution()`                                                                                                        |
-| Lifecycle     | `selectDate(unixMs)` (enables replay mode, then selects the date), `selectFirstAvailableDate()`, `selectRandomDate()`, `stopReplay()`, `goToRealtime()`, `leaveReplay({skipConfirm, onLeave})`, `showReplayToolbar()`, `hideReplayToolbar()` |
-| Playback      | `doStep()`, `toggleAutoplay()`, `isAutoplayStarted()`, `changeAutoplayDelay(ms)`, `autoplayDelayList()` (100 ms to 10 s, labeled 10x to 0.1x), `currentDate()`, `isReplayStarted()`                                                          |
-| Paper trading | `buy(qty)`, `sell(qty)` (market orders in the replay trading model), `closePosition()`, `position()`, `realizedPL()`, `currency()`                                                                                                           |
+| Group         | Members                                                                                                                                                                                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Availability  | `isReplayAvailable()` (watched value, `true` on a daily chart), `isReadyToPlay()`, `replayResolutions()`, `currentReplayResolution()`                                                                                                                                            |
+| Lifecycle     | `selectDate(unixMs)` (enables replay mode, then selects the date), `selectFirstAvailableDate()`, `selectRandomDate()`, `stopReplay()`, `goToRealtime()`, `leaveReplay({skipConfirm, onLeave})`, `showReplayToolbar()`, `hideReplayToolbar()`                                     |
+| Playback      | `doStep()`, `toggleAutoplay()`, `isAutoplayStarted()`, `changeAutoplayDelay(ms)`, `autoplayDelayList()` (100 ms to 10 s, labeled 10x to 0.1x), `currentDate()`, `isReplayStarted()`                                                                                              |
+| Paper trading | `buy(qty)`, `sell(qty)`, `closePosition()`, `position()`, `realizedPL()`, `currency()`: on Desktop these reach no trading model (silent no-ops, `null` values); paper trading in replay runs through the app's trading service with an internal replay broker, so no tool trades |
 
 Many getters return watched values; read them with `.value()`.
+
+Seen on the app (end-to-end suite, on a daily chart, with replays of its own only):
+
+- A select (`selectDate`, `selectRandomDate`) resolves as replay starts; `currentDate()` shows the replay point
+  shortly after, and the main series of the chart holds **no bars** for a moment after that, until the bars of the
+  replay come: a step then is not taken up (the replay date does not move) and a read of the bars finds none.
+  `replay_start` therefore waits for the bars as well (0.5 to 0.6 s for the whole start).
+- `currentDate()` is in the time base of the bar rows (the session start for a daily bar), not 00:00 UTC. Right
+  after `selectDate(t)` it equals `t` of the bar the point was given at, the chart shows the bars before that bar,
+  and each step shows one more bar. `getReplaySelectedDate()` is a finite number at readiness, equal to the replay
+  date of the start, unchanged by steps, and `null` after the stop.
+- The step that reaches the end of the data resolves, and TradingView then stops replay by itself: it never rejects
+  that step with "Replay is finished" and never shows a new date. Afterwards `isReplayStarted()` is false, the
+  replay toolbar stays (`isReplayToolbarVisible()` true), `_replayManager.isReplayFinished()` is false and the replay
+  date and selected point are `null`. Leaving then saves no replay in the layout.
+- `leaveReplay({ skipConfirm: true })` opens no dialog. After a replay of the session's own, `replaySessionState()`
+  is `null` again once the tool cleared it, and a second start is accepted. Neither `replayTimingMode()` nor the
+  autoplay delay changes when the tools start replay without a speed. Leaving marks the layout changed, so the next
+  `layout_new` or `layout_switch` asks for `confirm`.
+- Leaving replay brings the chart back to its last bars at the default right offset: a view the user had scrolled
+  elsewhere is not restored. The live bars come back within a few milliseconds of the leave, and the view keeps
+  moving for up to about a second after that.
+- Autoplay at the user's own speed moved the replay within 1.3 s; `position()`, `realizedPL()` and `currency()` stay
+  `null`.
 
 ### 4.6 Pine Script
 
@@ -611,13 +647,20 @@ Seen on the app: every id exists. `#header-toolbar-symbol-search` is a `button` 
 finds nothing there. `#header-toolbar-layouts` carries `data-qa-id="layouts-menu-button"`, and the quick search,
 properties and fullscreen buttons carry their id as `data-name` too.
 
+A click on `#header-toolbar-symbol-search` opens the symbol search, `data-name="symbol-search-items-dialog"` in the
+overlap root, within a few milliseconds. Its search field (`input type="text"`) has the focus and is **not empty**:
+it holds text when it opens (typing replaced it rather than adding to it). One Escape closes the dialog without
+changing the symbol, and the focus goes back to the body. A hover over the button opens no dialog.
+
 ### 5.2 Page regions
 
 `#drawing-toolbar`, `#bottom-area`, `#footer-chart-panel`, `#overlap-manager-root` (portal for dialogs and menus),
 `#tooltip-root-element`, `#snackbar-container`, `[data-qa-id="chart-container"]`, `[data-qa-id="pane"]`,
 `canvas[data-name="pane-canvas"]`.
 
-Seen on the app: `#bottom-area` is `display: none` while the bottom panel is closed, so it is not always shown.
+Seen on the app: `#bottom-area` is `display: none` while the bottom panel is closed, so it is not always shown. A capture of
+`[data-qa-id="chart-container"]` over CDP is the box of the container times the pixel ratio (2 on Retina), and it
+moves neither the box nor the view of the chart.
 `#overlap-manager-root` holds one empty layer of no size when nothing is open. `[data-name="widgetbar-wrap"]` holds the
 45 px wide right toolbar (`[data-name="right-toolbar"]`) and the pages of the right panel
 (`[data-name="widgetbar-pages-with-tabs"]`), which are a border of 1 px while the panel is collapsed: the wrapper is
@@ -641,6 +684,15 @@ Seen on the app: the replay button (`#header-toolbar-replay`), the Pine Editor b
 buttons of the right toolbar carry `aria-pressed`; the fullscreen button carries neither `aria-pressed` nor
 `aria-selected`. The right toolbar also holds `base`, `copilot-dialog-button`, `screener-dialog-button`,
 `calendar-dialog-button`, `community-hub-button`, `notifications-button`, `chats-button` and `help-button`.
+Each of `[data-name="base"]`, `alerts`, `object_tree` and `pine-dialog-button` matches one element in the whole
+document, and the right toolbar holds eleven elements with `aria-pressed`. A click on `base` sets its `aria-pressed`
+to `"true"` and opens the watchlist; a second click collapses the panel. While collapsed, the widget bar remembers the
+last page a button showed (`widgetbar.layout.activeIndex` and `activeName`, kept in the settings of the app), so
+these clicks change which page it remembers even though the panel looks as before.
+
+Of the 169 visible buttons of the chart page, 112 carry an `aria-label`, 26 are named only by a `title` (no
+`aria-label`, no text), none uses `aria-labelledby` and 3 have no name at all. The name rule of the input helpers
+reads a title-only button as unnamed, so it is found by selector, not by text.
 `startFullscreen()` calls `requestFullscreen()` of the chart's resizer bridge; whether that is the browser's
 Fullscreen API was not seen (`document.fullscreenElement` was `null`, and fullscreen was not turned on).
 
@@ -660,7 +712,9 @@ Fullscreen API was not seen (`document.fullscreenElement` was `null`, and fullsc
 
 `[data-name="buy-order-button"]`, `[data-name="sell-order-button"]`, `[data-name="buy-sell-buttons"]`,
 `[data-qa-id="trade-button"]`, `#header-toolbar-trade-desktop`, and anything inside a broker order ticket.
-All five matched elements of the analyzed chart, the trade button four times.
+All five matched elements of the analyzed chart, the trade button four times. A later run found five elements again,
+all reported `unsafe` by `ui_find_element`, and the body reported as holding one (`holdsUnsafe`), so a point click
+whose hit is the body itself is refused.
 The low-level UI tools refuse a click on a target that matches one of these selectors, contains one, sits inside one,
 or has one over the point where the click would land. They also refuse a click when a dialog, a menu or a popup of the
 overlap root, or a frame, lies over that point, because the click would go to it and what it is cannot be told, and
@@ -695,6 +749,22 @@ Target: `file://…/app/window/index.html`.
 This renderer has Node integration. `tradingview-mcp` only reads its DOM and dispatches input events; it never calls
 `require` there.
 
+Seen on the app (end-to-end suite, one tab of the suite's own on the New tab page, closed again):
+
+- A chart tab shows `span.symbol` (its text is the symbol), `span.layout-name` and `img.logo-image` in its title. A
+  tab on the New tab page has none of the three: its title is a text of its own and it has a close button. A tab
+  showing a symbol is therefore never a New tab page.
+- `button.tab-close-button` is absent while the window has one tab, and shown on the tab in front once it has two.
+  `button.create-new-tab-button` opens the New tab page in front, with its own CDP target
+  (`app/new-tab/index.html`); a click on the close button of that tab brings the neighbouring tab to the front.
+- The page of the tab in front reports `document.visibilityState` `"visible"` and every other chart tab
+  `"hidden"` (macOS). In six switches, three each way, the chart page changed its visibility within the same reading
+  as the strip changed its active tab, readings a few milliseconds apart. While the whole window is covered by other
+  windows, the window chrome and the chart page both report `"hidden"`.
+- The viewport of the window chrome spans the whole window, the strip at its top: a CDP capture of it is the size of
+  the window (1920 × 1114 pixels here, a png of about 16 kB), and below the strip it is blank, since the tab views are
+  composited apart from it.
+
 ---
 
 ## 6. Feature-to-mechanism matrix
@@ -702,42 +772,42 @@ This renderer has Node integration. `tradingview-mcp` only reads its DOM and dis
 Status legend: ✅ verified at runtime (read-only) · 🔎 verified statically (method body or bundle) · ❓ to verify during implementation.
 Tiers: **T1** public JS API · **T2** internal model or webpack service · **T3** DOM · **T4** keyboard ([§9](#9-fallback-strategy)).
 
-| Domain            | Capability                                                           | Primary                                                                                                                                               | Fallbacks                                                             | Status                                                                   |
-| ----------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Connection        | launch                                                               | Spawn binary with `--remote-debugging-port`, honoring the single-instance lock                                                                        | —                                                                     | ✅ flag works · ❓ launcher                                              |
-|                   | health / discover                                                    | `/json/version`, `/json/list`, `TradingViewApi.isConnected()`                                                                                         | —                                                                     | ✅                                                                       |
-|                   | UI state                                                             | Widget bar, bottom area, open dialogs in `#overlap-manager-root`                                                                                      | T3                                                                    | ✅ read (probe)                                                          |
-|                   | reconnect                                                            | Re-resolve target, reattach; `TradingViewApi.connect()`                                                                                               | `TVD.reloadTab()`                                                     | 🔎                                                                       |
-| Chart             | get state                                                            | `symbol()`, `resolution()`, `chartType()`, `getVisibleRange()`, studies, shapes, layout                                                               | —                                                                     | ✅                                                                       |
-|                   | set symbol / timeframe / type                                        | `setSymbol`, `setResolution`, `setChartType` (T1)                                                                                                     | Header toolbar (T3), typing a symbol or interval on the chart (T4)    | ✅ T1 · ❓ T3/T4 on the app                                              |
-|                   | set visible range                                                    | Core time scale `zoomToBarsRange` after mapping times to bar indices (T2)                                                                             | Date range presets (T3)                                               | ✅ T1 disabled · ✅ T2                                                   |
-|                   | scroll to date                                                       | Core time scale `zoomToBarsRange` around the bar, keeping the width (T2)                                                                              | Go-to-date dialog (T3)                                                | 🔎 (`zoomToBarsRange` ✅)                                                |
-|                   | OHLCV                                                                | `mainSeries().bars().valueAt(i)` (T2); older history through `requestMoreData`                                                                        | —                                                                     | ✅ (`exportData` disabled; history loading ✅)                           |
-|                   | quote                                                                | `mainSeries().quotes()` (T2)                                                                                                                          | Quote caches that create no session ([§4.8](#48-chartapi-and-quotes)) | ✅ chart symbol · 🔎 other symbols                                       |
-|                   | symbol info                                                          | `mainSeries().symbolInfo()` (T2)                                                                                                                      | Symbol search for another symbol (part of the fields)                 | ✅                                                                       |
-|                   | symbol search                                                        | `searchSymbols({text, exchange, type})`                                                                                                               | Symbol search dialog (T3)                                             | ✅ (items seen)                                                          |
-|                   | market depth                                                         | Top of the book from the quote (T2)                                                                                                                   | — (no depth session)                                                  | ✅ top of the book · full depth not offered                              |
-| Indicators        | search                                                               | Standard Pine scripts (`requestBuiltinScripts`) and the study metadata repository (T2)                                                                | Indicators dialog search (T3)                                         | ✅                                                                       |
-|                   | add / remove                                                         | `canCreateStudy` and the plan limit, then `createStudy` (a Pine descriptor, or a built-in by description with `checkLimit: true`); `removeEntity(id)` | Indicators dialog (T3)                                                | ✅ `PLAN_LIMIT` on a full chart · ❓ adding and removing (no free slot)  |
-|                   | set inputs / visibility                                              | `getStudyById(id).setInputValues()`, `setVisible()`                                                                                                   | Legend actions (T3)                                                   | 🔎 (`getInputValues` ✅; not run on the app: no study of the tests' own) |
-|                   | read values                                                          | Study core `data().valueAt(i)` + `metaInfo().plots` (T2)                                                                                              | Data window values (T3)                                               | ✅                                                                       |
-| Pine              | new / open / get / set source                                        | Editor facade `openNewScript`, `openScript`, `getSource`, `setScript`                                                                                 | Monaco through the DOM (T3)                                           | ✅                                                                       |
-|                   | compile                                                              | Compile-only `translateScriptAsync` (T2); facade `addToChart()` to add to the chart                                                                   | —                                                                     | ✅ compile-only · ❓ adding (no free slot)                               |
-|                   | errors / console                                                     | Compile result, the console of the editor store, study `logs()`                                                                                       | `pine_logs` widget (T3)                                               | ✅ errors and console · ❓ `log.*` output (no script with logs)          |
-|                   | save / list                                                          | Facade `saveScript`, `pineEditorApi().listSavedScripts()`                                                                                             | —                                                                     | 🔎 save (paywall-checked; never run on the app) · ✅ list                |
-|                   | smart compile / static analysis                                      | Server-side logic on top of compile results                                                                                                           | —                                                                     | ✅ with the real compiler                                                |
-| Pine outputs      | lines, labels, boxes, tables                                         | Study core `graphics()`, `tables()` (T2)                                                                                                              | —                                                                     | ✅ empty collections · ❓ item shapes (no script that draws)             |
-| Strategy Tester   | results / trades / equity                                            | `reportData()` of the strategy study; `getActiveStrategyReportData` (T2)                                                                              | Strategy Tester panel (T3)                                            | 🔎 · ❓ (no strategy could be added)                                     |
-| Drawings          | create                                                               | `createShape` / `createMultipointShape`                                                                                                               | Drawing toolbar (T3)                                                  | 🔎                                                                       |
-|                   | list / get / remove / clear                                          | `getAllShapes()` ✅, `getShapeById()`, `removeEntity()`, `removeAllShapes()`                                                                          | Object tree (T3)                                                      | ✅ / 🔎                                                                  |
-| Alerts            | list / create / delete                                               | `getAlertsRestApi()` (T2)                                                                                                                             | Alert dialog and alerts panel (T3)                                    | 🔎 · ❓ create payload                                                   |
-| Watchlist         | get / add / bulk / remove                                            | Symbol-list service and selectors (T2); `TVD.getActiveWatchlistId()`                                                                                  | Watchlist widget rows (T3)                                            | 🔎 · ❓ store wiring                                                     |
-| Layouts and panes | list / new / switch                                                  | `getSavedCharts()`, `createNewLayout()`, `loadChartFromServer()`                                                                                      | Layouts menu (T3)                                                     | 🔎 (plan-limited)                                                        |
-|                   | panes / multi-chart / focus / pane symbol                            | `getPanes()`, `setLayout(type)`, `setActiveChart(i)`, `chart(i).setSymbol()`                                                                          | Layout setup menu (T3)                                                | 🔎 (plan-limited)                                                        |
-| Tabs              | list / new / switch / close                                          | Window-chrome DOM + chart targets                                                                                                                     | Shortcuts (T4)                                                        | ✅ selectors · ❓ switching and closing                                  |
-| Replay            | start / step / autoplay / status / stop / trade                      | Replay API ([§4.5](#45-replay-api-await-tradingviewapireplayapi))                                                                                     | Replay toolbar (T3)                                                   | ✅ availability · 🔎 actions                                             |
-| Screenshot        | chart / window                                                       | CDP `Page.captureScreenshot` on the chart target                                                                                                      | `takeClientScreenshot()` canvas                                       | ✅ (REA capture)                                                         |
-| Low-level UI      | click, hover, type, keys, scroll, find, panels, fullscreen, evaluate | CDP `Input.*`, `Runtime.evaluate`, `startFullscreen()`                                                                                                | —                                                                     | standard CDP                                                             |
+| Domain            | Capability                                                           | Primary                                                                                                                                               | Fallbacks                                                             | Status                                                                                                 |
+| ----------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Connection        | launch                                                               | Spawn binary with `--remote-debugging-port`, honoring the single-instance lock                                                                        | —                                                                     | ✅ flag works · ❓ launcher                                                                            |
+|                   | health / discover                                                    | `/json/version`, `/json/list`, `TradingViewApi.isConnected()`                                                                                         | —                                                                     | ✅                                                                                                     |
+|                   | UI state                                                             | Widget bar, bottom area, open dialogs in `#overlap-manager-root`                                                                                      | T3                                                                    | ✅ read (probe)                                                                                        |
+|                   | reconnect                                                            | Re-resolve target, reattach; `TradingViewApi.connect()`                                                                                               | `TVD.reloadTab()`                                                     | 🔎                                                                                                     |
+| Chart             | get state                                                            | `symbol()`, `resolution()`, `chartType()`, `getVisibleRange()`, studies, shapes, layout                                                               | —                                                                     | ✅                                                                                                     |
+|                   | set symbol / timeframe / type                                        | `setSymbol`, `setResolution`, `setChartType` (T1)                                                                                                     | Header toolbar (T3), typing a symbol or interval on the chart (T4)    | ✅ T1 · ❓ T3/T4 on the app                                                                            |
+|                   | set visible range                                                    | Core time scale `zoomToBarsRange` after mapping times to bar indices (T2)                                                                             | Date range presets (T3)                                               | ✅ T1 disabled · ✅ T2                                                                                 |
+|                   | scroll to date                                                       | Core time scale `zoomToBarsRange` around the bar, keeping the width (T2)                                                                              | Go-to-date dialog (T3)                                                | 🔎 (`zoomToBarsRange` ✅)                                                                              |
+|                   | OHLCV                                                                | `mainSeries().bars().valueAt(i)` (T2); older history through `requestMoreData`                                                                        | —                                                                     | ✅ (`exportData` disabled; history loading ✅)                                                         |
+|                   | quote                                                                | `mainSeries().quotes()` (T2)                                                                                                                          | Quote caches that create no session ([§4.8](#48-chartapi-and-quotes)) | ✅ chart symbol · 🔎 other symbols                                                                     |
+|                   | symbol info                                                          | `mainSeries().symbolInfo()` (T2)                                                                                                                      | Symbol search for another symbol (part of the fields)                 | ✅                                                                                                     |
+|                   | symbol search                                                        | `searchSymbols({text, exchange, type})`                                                                                                               | Symbol search dialog (T3)                                             | ✅ (items seen)                                                                                        |
+|                   | market depth                                                         | Top of the book from the quote (T2)                                                                                                                   | — (no depth session)                                                  | ✅ top of the book · full depth not offered                                                            |
+| Indicators        | search                                                               | Standard Pine scripts (`requestBuiltinScripts`) and the study metadata repository (T2)                                                                | Indicators dialog search (T3)                                         | ✅                                                                                                     |
+|                   | add / remove                                                         | `canCreateStudy` and the plan limit, then `createStudy` (a Pine descriptor, or a built-in by description with `checkLimit: true`); `removeEntity(id)` | Indicators dialog (T3)                                                | ✅ `PLAN_LIMIT` on a full chart · ❓ adding and removing (no free slot)                                |
+|                   | set inputs / visibility                                              | `getStudyById(id).setInputValues()`, `setVisible()`                                                                                                   | Legend actions (T3)                                                   | 🔎 (`getInputValues` ✅; not run on the app: no study of the tests' own)                               |
+|                   | read values                                                          | Study core `data().valueAt(i)` + `metaInfo().plots` (T2)                                                                                              | Data window values (T3)                                               | ✅                                                                                                     |
+| Pine              | new / open / get / set source                                        | Editor facade `openNewScript`, `openScript`, `getSource`, `setScript`                                                                                 | Monaco through the DOM (T3)                                           | ✅                                                                                                     |
+|                   | compile                                                              | Compile-only `translateScriptAsync` (T2); facade `addToChart()` to add to the chart                                                                   | —                                                                     | ✅ compile-only · ❓ adding (no free slot)                                                             |
+|                   | errors / console                                                     | Compile result, the console of the editor store, study `logs()`                                                                                       | `pine_logs` widget (T3)                                               | ✅ errors and console · ❓ `log.*` output (no script with logs)                                        |
+|                   | save / list                                                          | Facade `saveScript`, `pineEditorApi().listSavedScripts()`                                                                                             | —                                                                     | 🔎 save (paywall-checked; never run on the app) · ✅ list                                              |
+|                   | smart compile / static analysis                                      | Server-side logic on top of compile results                                                                                                           | —                                                                     | ✅ with the real compiler                                                                              |
+| Pine outputs      | lines, labels, boxes, tables                                         | Study core `graphics()`, `tables()` (T2)                                                                                                              | —                                                                     | ✅ empty collections · ❓ item shapes (no script that draws)                                           |
+| Strategy Tester   | results / trades / equity                                            | `reportData()` of the strategy study; `getActiveStrategyReportData` (T2)                                                                              | Strategy Tester panel (T3)                                            | 🔎 · ❓ (no strategy could be added)                                                                   |
+| Drawings          | create                                                               | `createShape` / `createMultipointShape`, the point count confirmed with the line-tool registry first                                                  | Drawing toolbar (T3)                                                  | ✅ (three shapes drawn and read back; the counts of all 19 curated shapes read)                        |
+|                   | list / get / remove / clear                                          | `getAllShapes()`, `getShapeById()`, `removeEntity()` one by one (never `removeAllShapes()`, which can ask in a dialog)                                | Object tree (T3)                                                      | ✅                                                                                                     |
+| Alerts            | list / create / delete                                               | `getAlertsRestApi()` (T2): `listAlerts`, `createAlert` with the payload of `convertEditableAlertState`, `deleteAlerts`                                | Alert dialog and alerts panel (T3)                                    | ✅ (a test alert created, read back and deleted)                                                       |
+| Watchlist         | get / add / bulk / remove                                            | Store of `SYMBOL_LIST_SERVICE` and its selectors (T2); REST append and remove, then `getCustomWatchlistsThunk`                                        | Watchlist widget rows (T3)                                            | ✅ get, add, remove · 🔎 bulk                                                                          |
+| Layouts and panes | list / new / switch                                                  | `getSavedCharts()`, the export `createNewChart` and `loadLayoutFromServerByLayoutId(id, false, true)`                                                 | Layouts menu (T3)                                                     | ✅ list · ✅ `PLAN_LIMIT` on a full plan · 🔎 creating and switching (never run on the user's layouts) |
+|                   | panes / multi-chart / focus / pane symbol                            | `getPanes()`, `setLayout(type, {withUndo: true})`, `setActiveChart(i)`, `chart(i).setSymbol()`                                                        | Layout setup menu (T3)                                                | ✅ list and focus · ✅ `PLAN_LIMIT` on a one-chart plan · 🔎 multi-chart (plan-limited)                |
+| Tabs              | list / new / switch / close                                          | Window-chrome DOM and clicks, chart targets mapped by visibility                                                                                      | Shortcuts (T4)                                                        | ✅ (a New tab page opened, switched to and from, and closed)                                           |
+| Replay            | start / step / autoplay / status / stop                              | Replay API ([§4.5](#45-replay-api-await-tradingviewapireplayapi)); no trading                                                                         | Replay toolbar (T3)                                                   | ✅                                                                                                     |
+| Screenshot        | chart / page / window                                                | CDP `Page.captureScreenshot` on the chart target or the window chrome                                                                                 | — (`takeClientScreenshot()` draws the user name)                      | ✅                                                                                                     |
+| Low-level UI      | click, hover, type, keys, scroll, find, panels, fullscreen, evaluate | CDP `Input.*` through the guarded helpers, `Runtime.evaluate`, `startFullscreen()`                                                                    | —                                                                     | ✅ find, hover, click, type, key, panel, evaluate · 🔎 scroll, fullscreen                              |
 
 ---
 
@@ -763,6 +833,11 @@ name to its value (an export `ProductFeaturesEnum` exists too), `getConfig(value
 for no limit. `app_get_plan_limits` reports them, `null` for a feature the app does not report. For
 `INDICATORS_ON_CHART` the app's own check is `canCreateStudy` ([§4.3](#43-chart-widget-api-activechart)), which
 answered the same limit on a full chart.
+
+Seen on the app with the interaction tools: `layout_new` refuses with `PLAN_LIMIT` (`CHART_STORAGE`, one layout saved
+of one) when the layout on the chart has no unsaved changes, and asks for `confirm` first when it has some;
+`pane_set_layout` refuses a layout of two charts with `PLAN_LIMIT` (`MULTIPLE_CHARTS`, limit 1); `alert_create` made an
+alert within `SERVER_SIDE_ALERTS`; a watchlist of 22 entries (section markers counted) took one more.
 
 Tools check the relevant limit **before** acting and return a typed `PLAN_LIMIT` error naming the feature and limit,
 rather than triggering the app's paywall dialog. Server-side limit errors are passed through unchanged. Nothing tries
@@ -831,8 +906,9 @@ User data lives in `~/Library/Application Support/TradingView` on macOS (`%APPDA
   flag when automation is not needed.
 - The `RunAsNode` fuse is enabled, so `ELECTRON_RUN_AS_NODE=1` turns the TradingView binary into a plain Node.js
   runtime. This is outside this project's control and is noted for completeness.
-- `tradingview-mcp` exposes **no broker trading tools**. Replay trades are paper trades inside Bar Replay, and the
-  tool refuses to run unless replay is active.
+- `tradingview-mcp` exposes **no broker trading tools**, and no replay trading tool either: on Desktop the paper
+  trading of Bar Replay runs through the app's trading service with an internal replay broker, which the server never
+  calls ([§4.5](#45-replay-api-await-tradingviewapireplayapi)).
 - `ui_evaluate` is disabled unless explicitly enabled, and denylists credential and identity surfaces (`TVD.getCredentials`,
   `TVD.setCredentials`, `TVD.insertCredentialsText`, `document.cookie`, `window.user`).
 - The HTTP transport requires a bearer token, binds to `127.0.0.1` by default, and validates `Origin` to prevent DNS
@@ -850,25 +926,54 @@ These are resolved during implementation of the corresponding domain, each with 
    code ([§4.6](#46-pine-script)). Monaco markers are not read: the tools take the compile result and the console.
 2. Strategy report keys for the trade list and equity curve (`trades`, `equity`, `equityHistory`, …). Not observable
    on the analysis account: the chart had no free indicator slot for a test strategy.
-3. The watchlist store instance behind the `getCustomLists` selectors once the watchlist widget is open.
-4. The `createAlert` payload schema (condition, series, expiration, notification options).
+3. **Answered.** The watchlist store instance behind the `getCustomLists` selectors once the watchlist widget is open.
+   It is the Redux store of the service `SYMBOL_LIST_SERVICE` of the service locator, which the chart page creates at
+   boot, before any widget opens. A symbol added and removed through the REST client of the app, each change followed
+   by `getCustomWatchlistsThunk`, showed in the store at once; an added symbol goes to the end of the list, inside its
+   last section.
+4. **Answered.** The `createAlert` payload schema (condition, series, expiration, notification options). The payload
+   `convertEditableAlertState` builds from the state of the alert dialog, plus `active` and `ignore_warnings`, makes a
+   price alert. The record the server keeps has `alert_id`, `symbol` (the encoded `={...}` form), `pro_symbol` (not a
+   plain `EXCHANGE:TICKER`), `resolution`, `type` (`price`), `kinds` (`regular`), `complexity` (`primitive`),
+   `conditions` (one: `type`, `frequency`, `series`, `cross_interval`, `resolution`) and a `condition` object besides,
+   `expiration_policy` (`policy` `fixed_date` and `time`) and the legacy `expiration` too, `create_time`,
+   `last_fire_time`, `last_fire_bar_time`, `last_error`, `last_stop_reason`, `active`, `auto_deactivate`, `message`,
+   `popup`, `email`, `sms_over_email`, `mobile_push`, `sound_file`, `sound_duration`, `web_hook`, `name`,
+   `cross_interval` and `presentation_data`. The bar set series is `{type: "barset"}` alone, and times are ISO 8601 in
+   UTC without fractions; the expiration reads back to the second.
 5. Shapes of Pine `graphics()` primitives (lines, labels, boxes, polylines) and `tables()`. Partly answered:
    `graphics()` exists on Pine studies, and its collections are `Map`s, empty on studies that draw nothing
    ([§4.4](#44-chart-model-internals)). The items and the ids of tables and cells wait for a study that draws, which
    could not be added on the analysis account.
-6. Tab-to-target mapping with several tabs, and whether background tabs report `visibilityState: "hidden"`.
-7. Whether `takeClientScreenshot()` resolves to a canvas.
+6. **Answered** on macOS. Tab-to-target mapping with several tabs, and whether background tabs report
+   `visibilityState: "hidden"`. Each chart tab is a chart target, a tab on the New tab page a target of its own
+   (`app/new-tab/index.html`), and the tab in front is the one whose page reports `"visible"`: a chart tab behind
+   another reports `"hidden"`, and its page follows the strip within a few milliseconds of a switch. While the whole
+   window is covered, every page and the window chrome report `"hidden"`, so visibility then says nothing about the
+   tab in front ([§5.6](#56-window-chrome-tabs)). Windows and Linux were not observed.
+7. **Answered.** Whether `takeClientScreenshot()` resolves to a canvas. It does, a disconnected `canvas` in device
+   pixels, and its header draws the name of the signed-in user, so it is not used: CDP `Page.captureScreenshot`
+   captures the chart, the page and the window chrome ([§5.2](#52-page-regions)).
 8. **Not needed.** Market depth availability per symbol and plan. No depth session is opened:
    `data_get_market_depth` reads the top of the book from the quote ([§4.8](#48-chartapi-and-quotes)).
 9. Windows and Linux launch behavior.
-10. Which element has the focus after a click on the chart pane, and whether the symbol search input opens empty in
-    the main document. Not observed: both need input to the user's chart.
+10. **Partly answered.** Which element has the focus after a click on the chart pane, and whether the symbol search
+    input opens empty in the main document. The symbol search opens with its field focused, in the overlap root, and
+    not empty ([§5.1](#51-header-toolbar-ids)); after Escape the focus is on the body. A click on the chart pane was
+    not tried: with a drawing tool selected, it would draw on the user's chart.
 11. Whether `Input.dispatchMouseEvent` coordinates match `getBoundingClientRect()` at a page zoom other than 100%. The
-    analysis ran at 100% (`devicePixelRatio` 2 on a Retina screen, the page as wide as the screen).
+    analysis ran at 100% (`devicePixelRatio` 2 on a Retina screen, the page as wide as the screen), where a hover
+    landed inside the box `ui_find_element` reported and a capture of the chart was its box times the pixel ratio.
+    Another zoom was not tried: the end-to-end suites never change the zoom of the user's window.
 12. Which attribute names the interval of a favorite interval button in `#header-toolbar-intervals`: only the button
     of the current interval was seen, without `data-value`.
-13. Whether the fullscreen button shows its state, and whether `startFullscreen()` uses the browser's Fullscreen API.
-14. Whether order tickets and context menus open inside `#overlap-manager-root` (none was open).
+13. **Answered.** Whether the fullscreen button shows its state, and whether `startFullscreen()` uses the browser's
+    Fullscreen API. The button shows no state, and `startFullscreen()` is the app's own fullscreen inside the page
+    (static analysis): `document.fullscreenElement` stays `null`, and `_chartWidgetCollection.fullscreen()` is a
+    watched boolean that reports it. The mode was not turned on in the end-to-end suites.
+14. **Partly answered.** Whether order tickets and context menus open inside `#overlap-manager-root` (none was open).
+    The symbol search dialog does, and the shared portal of the app renders into the overlap root unless a component
+    supplies its own (static analysis). Order tickets and context menus were not opened.
 15. `setSymbol` and `setResolution` on `chart(i)` activate that chart unless `doNotActivateChart` is passed (seen in
     their bodies), so the server passes it when a call names a chart. How the app behaves with several charts was not
     exercised: the analysis plan allows one chart per layout. `setResolution` also calls `dataReady` at once, changing
@@ -888,6 +993,13 @@ empty space after the last bar ([§4.3](#43-chart-widget-api-activechart)); the 
 `timePointToIndex()`, the bar container, what `zoomToBarsRange` shows, and the time points after the last bar
 ([§4.4](#44-chart-model-internals)); the interval list ([§4.2](#42-tradingviewapi)); the capability flags, all true on
 a booted chart tab; and the header toolbar, panels and trading controls ([§5](#5-dom-selectors)).
+
+Answered while the interaction tools were built, on Desktop 3.4.1 (web `BUILD_TIME` 2026-10-19T17:32:06), with
+read-only probes and the end-to-end suites of Plan 3: the drawing creation return, undo and point counts of the
+curated shapes ([§4.3](#43-chart-widget-api-activechart)); replay readiness, stepping, its end and leaving it
+([§4.5](#45-replay-api-await-tradingviewapireplayapi)); the symbol search, the right toolbar, the names of the buttons
+and the window chrome with its tabs ([§5](#5-dom-selectors)); and questions 3, 4, 6, 7 and 13 above, 10 and 14 in
+part.
 
 Answered while the data and Pine tools were built, on the same build (web `BUILD_TIME` 2026-10-16T17:55:37), with
 read-only probes, compile-only of synthetic scripts and the end-to-end suites: the symbol search items
@@ -928,8 +1040,9 @@ which could not be observed on the analysis host. No code was copied.
    text.
 6. End-to-end suites: `TV_E2E=1 pnpm test:e2e` runs the tools against the app. They change only the symbol, the
    timeframe, the chart type and the visible range of the active chart, the history it has loaded, the Pine Editor
-   (under a guard that puts back the script it showed) and studies they add themselves within the plan limits, and
-   restore all of it ([testing.md](testing.md)). Their `observed` lines print what they saw of the app as key names,
+   (under a guard that puts back the script it showed), studies, drawings, an alert and a watchlist symbol they add
+   themselves within the plan limits, bar replay, the symbol search and the watchlist panel, and, when allowed, a tab
+   of their own, and restore or remove all of it ([testing.md](testing.md)). Their `observed` lines print what they saw of the app as key names,
    types, counts and booleans.
 
 Re-run steps 3 to 6 after a TradingView update, and compare results with this document.
