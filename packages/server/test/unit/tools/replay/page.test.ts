@@ -1254,6 +1254,29 @@ describe('leaveReplayViaApi', () => {
     expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([]);
   });
 
+  test('clears nothing for a replay mode left on without a running replay, even where the point it kept and a saved replay match the run of the caller', async () => {
+    // Replay reached its end, or was stopped by TradingView, and the selected point it kept is the
+    // start point of the run of the caller; a saved replay is in the layout: it is not the run of
+    // the caller that the leave ends, so what is saved stays.
+    const saved = { replayTime: time(40), replayMode: 'ActiveChart', charts: [] };
+    const { result, win } = await resultOf(
+      leaveReplayViaApi,
+      [time(40), WAIT_MS],
+      chart((win) => {
+        Object.assign(replayOf(win), {
+          modeOn: true,
+          started: false,
+          selectedPoint: time(40),
+          sessionState: saved,
+        });
+      }),
+    );
+
+    expect(result).toEqual({ left: true, stopped: true, cleared: null });
+    expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([]);
+    expect(replayOf(win).sessionState).toEqual(saved);
+  });
+
   test('answers stopped: false, and clears nothing, when replay does not stop in time', async () => {
     const { result, win } = await resultOf(
       leaveReplayViaApi,
