@@ -145,9 +145,9 @@ time, because they share one window.
 - `watchlist.e2e.test.ts`: the watchlists are listed and the active one read; with room in it, one
   symbol it does not hold is added, found there, added again (already listed) and removed, and an
   unknown symbol is refused.
-- `layout.e2e.test.ts`: the saved layouts are listed; on a full plan `layout_new` must refuse
-  (`PLAN_LIMIT`, or `CONFIRMATION_REQUIRED` while the layout has unsaved changes) and create
-  nothing; `layout_switch` refuses an unknown id; the panes are listed, `pane_focus` keeps the
+- `layout.e2e.test.ts`: the saved layouts are listed; on a full plan `layout_new` must refuse with
+  `PLAN_LIMIT`, which it checks before the unsaved changes, and create nothing; `layout_switch`
+  refuses an unknown id; the panes are listed, `pane_focus` keeps the
   active chart and refuses a chart the layout lacks, and on a one-chart plan `pane_set_layout` to
   two charts must refuse with `PLAN_LIMIT`. Creating a layout on a plan with room runs only when
   allowed (below).
