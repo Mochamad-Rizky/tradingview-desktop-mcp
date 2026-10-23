@@ -119,11 +119,24 @@ test('ui_click and ui_scroll can change anything a user can, so they are destruc
   expect(readonly).not.toContain('ui_scroll');
 });
 
-test('ui_hover and ui_find_element only read, so the readonly profile offers them', () => {
-  expect(uiHover.annotations).toBe(READ_ONLY);
+test('ui_find_element only reads, so the readonly profile offers it', () => {
   expect(uiFindElement.annotations).toBe(READ_ONLY);
-  expect(names(selectTools(allTools, { profile: 'readonly', patterns: [] }))).toEqual(
-    expect.arrayContaining(['ui_hover', 'ui_find_element']),
+  expect(names(selectTools(allTools, { profile: 'readonly', patterns: [] }))).toContain(
+    'ui_find_element',
+  );
+});
+
+// It sends mouse moves, which can open a tooltip or a menu of the app; hovering again at the same
+// place changes nothing more.
+test('ui_hover moves the pointer, so the readonly profile leaves it out', () => {
+  expect(uiHover.annotations).toEqual({
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  });
+  expect(names(selectTools(allTools, { profile: 'readonly', patterns: [] }))).not.toContain(
+    'ui_hover',
   );
 });
 

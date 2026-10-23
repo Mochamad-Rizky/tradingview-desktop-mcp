@@ -243,7 +243,14 @@ export const uiHover = defineTool({
     y: coordinateInput('y'),
     target: targetInput(),
   },
-  annotations: READ_ONLY,
+  // It sends mouse moves, which can open a tooltip or a menu of the app, so it does not only read;
+  // hovering again at the same place changes nothing more.
+  annotations: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async handler({ selector, text, x, y, target }, ctx) {
     const aimed = pointerTargetOf({ selector, text, x, y }, true);
     const page = await uiTargetPage(ctx, target);
