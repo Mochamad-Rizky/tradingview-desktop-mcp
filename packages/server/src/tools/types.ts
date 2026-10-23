@@ -60,6 +60,11 @@ export interface SessionState {
   // The ids of the tabs tab_new opened, as the tab strip names them, until tab_close closes them.
   // Closing them needs no confirmation; closing any other tab does.
   openedTabIds: Set<string>;
+  // Whether replay_start started a replay, until replay_stop leaves it. TradingView saves a replay
+  // in the layout when it is left before its end, and offers to continue it in a dialog the next
+  // time replay starts: replay_stop clears what a replay of this session left, and never what a
+  // replay the user started left.
+  replayStartedBySession: boolean;
 }
 
 // What a handler works with. Over HTTP the connection, the launcher, the logger and the event bus

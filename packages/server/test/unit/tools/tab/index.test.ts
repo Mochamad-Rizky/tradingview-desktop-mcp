@@ -32,7 +32,7 @@ test('tabTools lists the tab tools in the order of the catalog', () => {
   expect(new Set(tabTools.map(({ domain }) => domain))).toEqual(new Set(['tab']));
 });
 
-test('the catalog lists the tab tools after the pane tools and before the screenshot', () => {
+test('the catalog lists the tab tools after the pane tools and before the replay tools', () => {
   const names = allTools.map(({ name }) => name);
   const lastPane = paneTools.at(-1);
   if (lastPane === undefined) {
@@ -40,7 +40,7 @@ test('the catalog lists the tab tools after the pane tools and before the screen
   }
 
   expect(names.indexOf('tab_list')).toBe(names.indexOf(lastPane.name) + 1);
-  expect(names.indexOf('tab_close')).toBe(names.indexOf('screenshot_capture') - 1);
+  expect(names.indexOf('tab_close')).toBe(names.indexOf('replay_start') - 1);
 });
 
 test('tab_list only reads, so the readonly profile offers it and no other tab tool', () => {

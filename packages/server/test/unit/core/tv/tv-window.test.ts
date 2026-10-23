@@ -1,4 +1,4 @@
-import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
+import type { ReplayApiLike, TvWindow } from '../../../../src/core/tv/tv-window.js';
 import { loadTvFixture } from '../../../helpers/fake-tv/fixture.js';
 import { syntheticBars } from '../../../helpers/fake-tv/synthetic-bars.js';
 import { createFakeTvWindow, inspectFakeWindow } from '../../../helpers/fake-tv/window.js';
@@ -185,6 +185,40 @@ describe('the TvWindow contract', () => {
     expect(inspectFakeWindow(win).callsTo('TradingViewApi.setLayout')).toEqual([
       ['s', { withUndo: true }],
     ]);
+  });
+
+  test('is satisfied by the shared fake window for bar replay and the replay session it saves', async () => {
+    const fake = createFakeTvWindow(fixture);
+    const win: TvWindow = fake;
+    const replay: ReplayApiLike | undefined = await fake.TradingViewApi?.replayApi?.();
+    const modelId = win.TradingViewApi?.activeChart()._chartWidget?.model().id?.();
+
+    expect([replay?.isReplayAvailable().value(), replay?.isReplayStarted().value()]).toEqual([
+      true,
+      false,
+    ]);
+    expect([replay?.isAutoplayStarted().value(), replay?.isReplayToolbarVisible().value()]).toEqual(
+      [false, false],
+    );
+    expect(replay?.currentDate().value()).toBeNull();
+    expect([replay?.autoplayDelay(), replay?.autoplayDelayList()]).toEqual([
+      1000,
+      expect.arrayContaining([
+        { label: '1x', description: expect.any(String) as string, value: 1000 },
+      ]),
+    ]);
+    expect(replay?.replayTimingMode().value()).toBe('manual');
+    expect(replay?.position().value()).toBeNull();
+    // A Map from the id of the chart model, which the contract types loosely.
+    const availability = replay?._replayUIController?.replayAvailability?.() as
+      Map<unknown, unknown> | undefined;
+    expect(availability?.get(modelId)).toEqual({ isAvailable: true, unavailabilityReason: '' });
+    expect(replay?._replayUIController?._replayManager?.isReplayFinished?.()).toBe(false);
+    expect(win.TradingViewApi?._chartWidgetCollection?.replaySessionState?.()).toBeNull();
+    win.TradingViewApi?._chartWidgetCollection?.updateReplaySessionState?.(null);
+    expect(
+      inspectFakeWindow(fake).callsTo('chartWidgetCollection.updateReplaySessionState'),
+    ).toEqual([[null]]);
   });
 
   test('is satisfied by a fake tab whose app has not booted', () => {

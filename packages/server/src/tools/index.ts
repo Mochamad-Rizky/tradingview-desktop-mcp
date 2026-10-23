@@ -8,6 +8,7 @@ import { indicatorTools } from './indicator/index.js';
 import { layoutTools } from './layout/index.js';
 import { paneTools } from './pane/index.js';
 import { pineTools } from './pine/index.js';
+import { replayTools } from './replay/index.js';
 import { screenshotTools } from './screenshot/index.js';
 import { strategyTools } from './strategy/index.js';
 import { tabTools } from './tab/index.js';
@@ -30,6 +31,7 @@ export const allTools: AnyToolDefinition[] = [
   ...layoutTools,
   ...paneTools,
   ...tabTools,
+  ...replayTools,
   ...screenshotTools,
   ...uiTools,
   ...batchTools,

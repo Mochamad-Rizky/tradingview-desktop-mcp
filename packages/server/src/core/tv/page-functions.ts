@@ -75,6 +75,13 @@ import {
   readSavedPineScripts,
   savePineScript,
 } from '../../tools/pine/page.js';
+import {
+  leaveReplayViaApi,
+  readReplayState,
+  setAutoplayViaApi,
+  startReplayViaApi,
+  stepReplayViaApi,
+} from '../../tools/replay/page.js';
 import { readChartBox } from '../../tools/screenshot/page.js';
 import { readStrategyReport } from '../../tools/strategy/page.js';
 import { readTabs, readUnsavedLayout } from '../../tools/tab/page.js';
@@ -116,6 +123,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   findElements,
   focusChart,
   insertStudy,
+  leaveReplayViaApi,
   loadLayoutInPlace,
   probeCapabilities,
   readAppInfo,
@@ -138,6 +146,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readPanelControls,
   readPanes,
   readPineGraphics,
+  readReplayState,
   readSavedLayouts,
   readStrategyReport,
   readStudies,
@@ -154,12 +163,15 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   requestHistory,
   scrollToTime,
   searchSymbolsViaApi,
+  setAutoplayViaApi,
   setChartTypeViaApi,
   setFullscreen,
   setLayoutViaApi,
   setResolutionViaApi,
   setStudyVisibility,
   setSymbolViaApi,
+  startReplayViaApi,
+  stepReplayViaApi,
   zoomToTimeRange,
 };
 

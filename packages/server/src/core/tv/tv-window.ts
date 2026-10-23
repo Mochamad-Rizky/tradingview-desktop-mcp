@@ -127,8 +127,9 @@ export interface TradingViewApiLike {
   // (notes of Plan 3, section 6.2). The collection of the charts reports it (fullscreen).
   startFullscreen?(): void;
   exitFullscreen?(): void;
-  // The replay API (notes, section 4.5) is not described here, so page code can only check that it
-  // is there.
+  // The replay API (notes, section 4.5, and notes of Plan 3, section 4), the same object on every
+  // call once the app made it; it rejects while the chart API is not up. Typed loosely: page code
+  // takes what it resolves with for a Partial<ReplayApiLike> and checks each member.
   replayApi?(): Promise<unknown>;
   // The Pine Editor API (notes of Plan 2, section Q1), the same object on every call.
   pineEditorApi?(): PineEditorApiLike;
@@ -148,10 +149,79 @@ export interface ChartWidgetCollectionLike {
   // Whether TradingView's own fullscreen mode is on, as a watched value of a boolean (notes of
   // Plan 3, section 6.2).
   fullscreen?(): { value(): unknown };
+  // The replay TradingView saved in the layout when replay was left before its end, a plain value:
+  // null when there is none (notes of Plan 3, section 4.6). While it holds one, the next start of
+  // replay opens the "continue replay" dialog of the app. Typed loosely, because page code only asks
+  // whether it is null.
+  replaySessionState?(): unknown;
+  // Replaces the saved replay and marks the layout as changed. Page code only ever passes null,
+  // which is what the "Start new" button of the "continue replay" dialog does.
+  updateReplaySessionState?(state: null): void;
 }
 
 export interface ChartWidgetDefLike {
   readonly container?: { value(): unknown };
+}
+
+// The replay API that TradingViewApi.replayApi() resolves with, as far as page code uses it (notes,
+// section 4.5, and notes of Plan 3, section 4; seen on the app). Many members answer watched values,
+// read with value(). Its paper trading (buy, sell and closePosition) and goToRealtime, which keeps
+// replay on and can show the statistics dialog of the app, are left out on purpose: on TradingView
+// Desktop the paper trading of replay goes through the trading service of the app, and no tool
+// trades.
+export interface ReplayApiLike {
+  // Whether a chart of the layout can be replayed. The plan is not part of it: intraday replay
+  // needs BAR_REPLAY_INTRADAY, without which the app opens its paywall at the start.
+  isReplayAvailable(): { value(): unknown };
+  isReplayStarted(): { value(): unknown };
+  isAutoplayStarted(): { value(): unknown };
+  // Whether the replay mode is on, which shows the replay toolbar. It stays on when replay reaches
+  // the end of the data, until replay is left.
+  isReplayToolbarVisible(): { value(): unknown };
+  // The replay point, in Unix seconds, and null while replay shows none.
+  currentDate(): { value(): unknown };
+  // The paper trading of replay, which stays null on TradingView Desktop.
+  position(): { value(): unknown };
+  realizedPL(): { value(): unknown };
+  currency(): { value(): unknown };
+  // The time between two bars of autoplay, in milliseconds, and the speeds of the app, each with a
+  // label such as 10x or 0.5x and its delay as value.
+  autoplayDelay(): unknown;
+  autoplayDelayList(): unknown;
+  // Takes the nearest speed, keeps it as a setting of the app (ReplayAutoplayDelay) and restarts
+  // autoplay while it runs.
+  changeAutoplayDelay(delayMs: number): void;
+  // The property of the setting replay_timing_mode (manual, date, first_available_date or random),
+  // which tells how the replay button of the toolbar starts a replay. The selects below set it, and
+  // setValue keeps it as a setting of the app.
+  replayTimingMode(): { value(): unknown; setValue?(value: unknown): void };
+  // Start replay a second before a time in Unix milliseconds, at the first bar replay can reach, or
+  // at a random bar. Each turns the replay mode on when it is off, which opens the sign-in wall of
+  // the app for a signed-out account and its "continue replay" dialog for a layout that holds a
+  // saved replay. Each resolves once the point is selected; the replay date shows later.
+  selectDate(ms: number): Promise<unknown>;
+  selectFirstAvailableDate(): Promise<unknown>;
+  selectRandomDate(): Promise<unknown>;
+  // One bar forward. It throws at once while replay is not started, resolves once the replay
+  // session took the step, before the replay date shows it, and at the end of the data it stops
+  // replay and rejects with the text "Replay is finished".
+  doStep(): Promise<unknown>;
+  // Starts autoplay, or stops it while it runs. At the end of the data it stops replay instead, and
+  // it throws while replay is not started.
+  toggleAutoplay(): void;
+  // Leaves replay: saves the replay in the layout (ChartWidgetCollectionLike.replaySessionState),
+  // turns the replay mode off and stops replay. While replay runs and has not reached the end of
+  // the data, it asks in the "Leave replay" dialog of the app unless skipConfirm, which page code
+  // always passes. Its neighbor stopReplay leaves the same way.
+  leaveReplay(options: { skipConfirm: boolean }): void;
+  // The internal replay controller. replayAvailability() answers a Map from the id of the chart
+  // model of each visible chart (ChartModelLike.id) to whether the chart can be replayed
+  // (isAvailable) and why not (unavailabilityReason, empty when it can). Its manager tells whether
+  // replay reached the end of the data.
+  readonly _replayUIController?: {
+    replayAvailability?(): unknown;
+    readonly _replayManager?: { isReplayFinished?(): unknown };
+  };
 }
 
 // The options of searchSymbols that page code passes. The app knows more (paging, language, broker
@@ -328,6 +398,10 @@ export interface ChartWidgetLike {
 
 // _chartWidget.model() (notes, section 4.4).
 export interface ChartModelLike {
+  // The id of the chart model, a string, by which the replay controller keys the replay
+  // availability of the charts (notes of Plan 3, section 4.4; seen on the app). A build may not
+  // have it.
+  id?(): unknown;
   mainSeries(): SeriesLike;
   // The core model under the chart model, which owns the time scale.
   model(): CoreModelLike;

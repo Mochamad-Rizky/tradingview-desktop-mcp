@@ -273,6 +273,15 @@ test('registers the page functions, so the checks below are not vacuous', () => 
     expect(Object.keys(pageFunctions)).toContain(name);
   }
   for (const name of [
+    'readReplayState',
+    'startReplayViaApi',
+    'stepReplayViaApi',
+    'setAutoplayViaApi',
+    'leaveReplayViaApi',
+  ]) {
+    expect(Object.keys(pageFunctions)).toContain(name);
+  }
+  for (const name of [
     'readPineEditorState',
     'openPineEditor',
     'closePineEditor',
@@ -513,6 +522,25 @@ describe('the checks catch what they are meant to', () => {
       'formatSymbol is not defined',
       'formatSymbol is not defined',
     ]);
+  });
+
+  test('the default fake windows carry the replay API, so a page function runs past its lookup', async () => {
+    // Gets the replay API the way the replay tools do, then calls a helper of its module.
+    async function callsModuleHelperAfterReplayLookup(win: TvWindow): Promise<string | null> {
+      const replay = await win.TradingViewApi?.replayApi?.();
+      return typeof replay === 'object' && replay !== null ? formatSymbol('x') : null;
+    }
+    const source = callsModuleHelperAfterReplayLookup.toString();
+
+    // Only the booted chart has the replay API.
+    expect(await referenceErrorsIn(plainCall(source))).toEqual(['formatSymbol is not defined']);
+    // A window built without it stops at the lookup.
+    expect(
+      await referenceErrorsIn(
+        plainCall(source),
+        fakeWindows({ replay: { withoutReplayApi: true } }),
+      ),
+    ).toEqual([]);
   });
 
   test('method shorthand, whose source is not an expression', () => {
