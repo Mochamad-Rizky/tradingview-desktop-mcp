@@ -5,6 +5,7 @@ import { READ_ONLY } from '../../../../src/tools/annotations.js';
 import { CLIENT_SAFE_BUDGET_MS } from '../../../../src/tools/chart/strategies.js';
 import { allTools } from '../../../../src/tools/index.js';
 import {
+  refuseWhileSessionReplayRuns,
   replayAutoplay,
   replayStart,
   replayStatus,
@@ -784,5 +785,52 @@ describe('what replay_status reports', () => {
 
     expect(run.argsOf(readPlanFeaturesEnabled)).toEqual([]);
     expect(run.argsOf(readReplayState)).toEqual([[]]);
+  });
+});
+
+// The check the tab and layout tools make before they change the tab in front or the layout.
+describe('refuseWhileSessionReplayRuns', () => {
+  const ownRun = (run: ReturnType<typeof scriptedRun>, point: number | null) => {
+    run.ctx.session.replayRunStartedBySession = point;
+    return run;
+  };
+
+  test('refuses while the run of this session runs on the chart in front, and asks nothing without one', async () => {
+    const running = ownRun(
+      scriptedRun([[readReplayState, [{ value: RUNNING }]]]),
+      RUNNING.selectedPoint,
+    );
+    const none = scriptedRun([[readReplayState, [{ value: RUNNING }]]]);
+
+    const error = await failureOf(refuseWhileSessionReplayRuns(running.ctx));
+    await refuseWhileSessionReplayRuns(none.ctx);
+
+    expect(error.toPayload()).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: expect.stringContaining('replay_stop') as string,
+    });
+    expect(none.argsOf(readReplayState)).toEqual([]);
+  });
+
+  test('forgets a run that is over, and refuses nothing for a chart it cannot read', async () => {
+    const over = ownRun(scriptedRun([[readReplayState, [{ value: OFF }]]]), RUNNING.selectedPoint);
+    const unreadable = ownRun(
+      scriptedRun([
+        [readReplayState, [{ error: new TvMcpError('CAPABILITY_UNAVAILABLE', 'No replay API') }]],
+      ]),
+      RUNNING.selectedPoint,
+    );
+    const bug = new Error('A bug in the page call');
+    const broken = ownRun(
+      scriptedRun([[readReplayState, [{ error: bug }]]]),
+      RUNNING.selectedPoint,
+    );
+
+    await refuseWhileSessionReplayRuns(over.ctx);
+    await refuseWhileSessionReplayRuns(unreadable.ctx);
+
+    expect(over.ctx.session.replayRunStartedBySession).toBeNull();
+    expect(unreadable.ctx.session.replayRunStartedBySession).toBe(RUNNING.selectedPoint);
+    await expect(refuseWhileSessionReplayRuns(broken.ctx)).rejects.toBe(bug);
   });
 });

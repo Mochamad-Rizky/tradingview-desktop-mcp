@@ -6,7 +6,12 @@ import {
   type PageFunction,
 } from '../../../../src/core/tv/page-bridge.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
-import { readTabs, readUnsavedLayout, TAB_STRIP } from '../../../../src/tools/tab/page.js';
+import {
+  readSignedIn,
+  readTabs,
+  readUnsavedLayout,
+  TAB_STRIP,
+} from '../../../../src/tools/tab/page.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
@@ -295,5 +300,16 @@ describe('readUnsavedLayout', () => {
     await bridgeTo(win).evaluate(readUnsavedLayout, []);
 
     expect(inspectFakeWindow(win).calls).toEqual([]);
+  });
+});
+
+describe('readSignedIn', () => {
+  test('says whether an account is signed in, and null when the page does not say', async () => {
+    const signed = (flag: unknown) => () => ({ is_authenticated: flag, document: {} });
+
+    expect(await resultOf(readSignedIn, [], signed(true))).toEqual({ signedIn: true });
+    expect(await resultOf(readSignedIn, [], signed(false))).toEqual({ signedIn: false });
+    expect(await resultOf(readSignedIn, [], signed('yes'))).toEqual({ signedIn: null });
+    expect(await resultOf(readSignedIn, [], () => ({ document: {} }))).toEqual({ signedIn: null });
   });
 });

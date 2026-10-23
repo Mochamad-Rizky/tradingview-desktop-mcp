@@ -540,6 +540,13 @@ describe('readStripBox', () => {
         }),
       ),
       () => ({ document: { visibilityState: 'visible' } }),
+      () => ({
+        document: {
+          querySelector: () => {
+            throw new Error('Not ready');
+          },
+        },
+      }),
     ];
     for (const make of pages) {
       const error = await failureOfBoth(readStripBox, [STRIP], make);

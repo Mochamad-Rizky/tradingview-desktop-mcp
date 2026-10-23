@@ -1127,6 +1127,21 @@ describe('removeDrawings', () => {
     }
   });
 
+  test('names one removal the drawings cannot be listed after in the singular', async () => {
+    const { error } = await failureOfBoth(
+      removeDrawings,
+      [null, ['SHAPE02']],
+      listsAfterRemovalWith(() => {
+        throw new Error('busy');
+      }),
+    );
+
+    expect(error.message).toBe(
+      'TradingView took the removal of 1 drawing, but the drawings of the chart could not be ' +
+        'listed afterwards to confirm it',
+    );
+  });
+
   test('nothing to remove needs no listing afterwards, and an empty list of ids removes nothing', async () => {
     const { result, win } = await resultOf(removeDrawings, [null, []], chart());
     const unlisted = await resultOf(

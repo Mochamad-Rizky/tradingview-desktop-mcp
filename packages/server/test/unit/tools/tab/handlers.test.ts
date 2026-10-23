@@ -155,6 +155,24 @@ test('tab_new passes on a failure of the target list that is not one of the conn
   expect(resets).toBe(0);
 });
 
+test('tab_new passes on a failure of the chart page that is not one of the connection, and clicks nothing', async () => {
+  const chrome = createFakeWindowChrome({
+    tabs: [{ id: A, title: ['AAPL'] }],
+    active: A,
+    newTabIds: [OPENED],
+  });
+  const bug = new Error('A bug in the chart page');
+  const ctx = contextWith({
+    windowChromePage: () => Promise.resolve(chromePage(chrome)),
+    targets: () => Promise.resolve([]),
+    chartPage: () => Promise.reject(bug),
+  });
+
+  await expect(tabNew.handler({}, ctx)).rejects.toBe(bug);
+  expect(chrome.clicks).toEqual([]);
+  expect(ctx.session.openedTabIds.size).toBe(0);
+});
+
 test('tab_close passes on a failure to reach the chart tab, and clicks nothing', async () => {
   const chrome = createFakeWindowChrome({
     tabs: [

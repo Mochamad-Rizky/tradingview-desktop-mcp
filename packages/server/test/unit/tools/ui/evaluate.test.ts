@@ -175,6 +175,9 @@ describe('EVAL_DENYLIST', () => {
     ['tvd', "window[('T')/* a gap */+('VD')]"],
     ['cookies', "document[('coo')/**/+('kie')]"],
     ['storage', "window[('local')//\n+('Storage')]"],
+    // A comment that runs to the end of the text, closed or not.
+    ['network', "window[('fe')/* a gap */+('tch')] // the end"],
+    ['network', "window[('fe')+('tch')] /* never closed"],
   ])('refuses %s joined in parentheses or around comments in %j', (category, expression) => {
     expect(deniedSurface(expression)?.category).toBe(category);
   });
