@@ -700,13 +700,41 @@ describe('layout_new', () => {
       ) as string,
       details: { unsavedChanges: true },
     });
-    expect(inspectFakeWindow(win).calls).toEqual([]);
+    // Asked only after the limit and the permission, which read and change nothing.
+    expect(creations(win)).toEqual([]);
+    expect(loads(win)).toEqual([]);
 
     const confirmed = await callTool(client, 'layout_new', { name: NEW_NAME, confirm: true });
 
     expect(dataOf(confirmed)).toEqual({ id: 'NEW00001', name: NEW_NAME, opened: true });
     expect(layoutsOf(win).unsaved).toBe(false);
     expectNothingElseTouched(win);
+  });
+
+  test('layout_new on a full plan answers PLAN_LIMIT before it asks about unsaved changes, and creates nothing', async () => {
+    const full = createFakeTvWindow(withChartStorage(3));
+    layoutsOf(full).unsaved = true;
+    const refusing = createFakeTvWindow(withChartStorage(5));
+    layoutsOf(refusing).unsaved = true;
+    // The count request of the permission check is refused, which the app takes for no.
+    layoutsOf(refusing).errors.getChartsCount = { status: 403, code: null, message: 'Forbidden' };
+    const { client: fullClient } = await startHarnessWith(full);
+    const { client: refusingClient } = await startHarnessWith(refusing);
+
+    const onFull = await callTool(fullClient, 'layout_new', { name: NEW_NAME });
+    const onRefusal = await callTool(refusingClient, 'layout_new', { name: NEW_NAME });
+
+    for (const [result, win] of [
+      [onFull, full],
+      [onRefusal, refusing],
+    ] as const) {
+      expect(errorOf(result)).toMatchObject({
+        code: 'PLAN_LIMIT',
+        details: { feature: 'CHART_STORAGE' },
+      });
+      expect(creations(win)).toEqual([]);
+      expect(loads(win)).toEqual([]);
+    }
   });
 
   test('layout_new reports the layout it created unopened, and loads nothing, when unsaved changes appear before the load', async () => {

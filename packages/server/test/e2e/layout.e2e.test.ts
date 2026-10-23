@@ -121,7 +121,8 @@ describe.skipIf(!e2eEnabled())('the layout and pane tools against TradingView De
     }
     const uiBefore = await callOk<{ dialogs: string[] }>(client, 'app_get_ui_state');
 
-    // Never with confirm: on a full plan the call must refuse whichever check comes first.
+    // Never with confirm: on a full plan the limit is checked before the unsaved changes, so the
+    // call refuses with PLAN_LIMIT whether the layout has unsaved changes or not.
     const result = await callTool(client, 'layout_new', { name: TEST_LAYOUT_NAME });
 
     if (result.isError !== true) {
@@ -131,10 +132,8 @@ describe.skipIf(!e2eEnabled())('the layout and pane tools against TradingView De
       );
     }
     const { error } = result.structuredContent as { error: ToolFailure };
-    expect(['PLAN_LIMIT', 'CONFIRMATION_REQUIRED']).toContain(error.code);
-    if (error.code === 'PLAN_LIMIT') {
-      expect(error.details?.feature).toBe('CHART_STORAGE');
-    }
+    expect(error.code).toBe('PLAN_LIMIT');
+    expect(error.details?.feature).toBe('CHART_STORAGE');
     const after = await listLayouts();
     expect(
       sameJson(layoutsOf(after), layoutsOf(before)),
@@ -146,10 +145,6 @@ describe.skipIf(!e2eEnabled())('the layout and pane tools against TradingView De
       code: error.code,
       feature: typeof error.details?.feature === 'string' ? error.details.feature : null,
       limitReported: typeof error.details?.limit === 'number',
-      unsavedChangesReported:
-        error.code === 'CONFIRMATION_REQUIRED' && typeof error.details?.unsavedChanges === 'boolean'
-          ? error.details.unsavedChanges
-          : null,
     });
   });
 

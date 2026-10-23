@@ -240,13 +240,12 @@ export async function newLayout(
   // From the checks to the end of the creation and of the load, the other actions on plan limits
   // wait.
   return inPlanLimitedTurn(async (): Promise<ToolOutput<NewLayout>> => {
+    // Signed out first, then what refuses whatever the user does (the limit of the plan and the
+    // check of the app), then a replay of this session, and the unsaved changes last, so that a full
+    // plan is not answered with a confirmation that cannot lead anywhere.
     const state = await page.bridge.evaluate(readLayoutState, []);
     if (!state.signedIn) {
       throw signedOutError();
-    }
-    await refuseWhileSessionReplayRuns(ctx);
-    if (state.unsaved !== false && confirm !== true) {
-      throw unsavedChangesError('new', state.unsaved);
     }
     const saved = await page.bridge.evaluate(readSavedLayouts, [waitMs]);
     const { CHART_STORAGE: limit = null } = await getPlanLimits(page, ['CHART_STORAGE']);
@@ -258,6 +257,10 @@ export async function newLayout(
     if (permission.allowed === false) {
       // requireBelowLimit has refused a limit that is not a number.
       throw permissionRefusedError(Number(limit));
+    }
+    await refuseWhileSessionReplayRuns(ctx);
+    if (state.unsaved !== false && confirm !== true) {
+      throw unsavedChangesError('new', state.unsaved);
     }
     // A creation whose answer the call could not wait for might land after the call failed, and a
     // client would create the layout again.
