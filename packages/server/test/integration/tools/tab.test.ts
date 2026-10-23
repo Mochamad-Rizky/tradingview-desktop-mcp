@@ -473,7 +473,9 @@ describe('tab_close', () => {
     for (const result of [refused, declined]) {
       expect(errorOf(result)).toMatchObject({
         code: 'CONFIRMATION_REQUIRED',
-        hint: expect.stringContaining('confirm: true') as string,
+        hint: expect.stringContaining(
+          'Make sure the user wants it closed, then call tab_close again with confirm: true',
+        ) as string,
         details: { tabId: B },
       });
     }

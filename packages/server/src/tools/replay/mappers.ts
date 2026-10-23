@@ -17,7 +17,11 @@ type AvailabilityReading = Pick<
 >;
 
 const STATUS_HINT = 'Check replay_status.';
-const END_HINT = 'Call replay_stop to leave replay, and replay_start to replay again.';
+// A replay this session did not start may be the user's, which a hint never tells to stop without
+// asking the user.
+const END_HINT =
+  'replay_stop leaves replay, and replay_start replays again. Ask the user before stopping a ' +
+  'replay this session did not start: it may be theirs.';
 const TIMEFRAME_HINT =
   'Switch the chart to a daily, weekly or monthly timeframe with chart_set_timeframe';
 
@@ -219,8 +223,8 @@ export function requireWithinHistory(
 export function alreadyActiveError(): TvMcpError {
   return new TvMcpError('NOT_AVAILABLE', 'Replay is already running on the chart', {
     hint:
-      'Call replay_step to go on from where it is, or replay_stop and then replay_start to start ' +
-      'again.',
+      'Call replay_step to go on from where it is. A replay this session did not start may be the ' +
+      "user's: ask the user before stopping it with replay_stop.",
   });
 }
 
@@ -298,7 +302,9 @@ export function startFailedError(reason: string | null): TvMcpError {
 
 export function startTimeoutError(waitMs: number): TvMcpError {
   return new TvMcpError('TIMEOUT', `TradingView did not start replay within ${String(waitMs)} ms`, {
-    hint: 'Replay may still start: check replay_status, and call replay_stop to leave it.',
+    hint:
+      'Replay may still start: check replay_status. This session does not count a replay that ' +
+      'starts late as its own, so ask the user before stopping it with replay_stop.',
     details: { waitMs },
   });
 }

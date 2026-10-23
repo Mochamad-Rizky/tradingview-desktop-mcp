@@ -618,7 +618,9 @@ describe('what replay_autoplay makes of the change', () => {
       message:
         'TradingView ended the replay instead of playing it: it had reached the end of the ' +
         'loaded bars',
-      hint: 'Call replay_stop to leave replay, and replay_start to replay again.',
+      hint:
+        'replay_stop leaves replay, and replay_start replays again. Ask the user before ' +
+        'stopping a replay this session did not start: it may be theirs.',
     });
   });
 

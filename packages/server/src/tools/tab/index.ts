@@ -711,8 +711,8 @@ export const tabClose = defineTool({
         'Closing this tab needs confirm: true: this session did not open it',
         {
           hint:
-            'The tab belongs to the user. Pass confirm: true to close it all the same; its saved ' +
-            'layout stays saved.',
+            'The tab belongs to the user. Make sure the user wants it closed, then call ' +
+            'tab_close again with confirm: true; its saved layout stays saved.',
           details: { tabId: tab.id },
         },
       );

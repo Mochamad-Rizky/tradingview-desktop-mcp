@@ -661,8 +661,8 @@ describe('startReplayViaApi', () => {
       code: 'NOT_AVAILABLE',
       message: 'Replay is already running on the chart',
       hint:
-        'Call replay_step to go on from where it is, or replay_stop and then replay_start to ' +
-        'start again.',
+        'Call replay_step to go on from where it is. A replay this session did not start may be ' +
+        "the user's: ask the user before stopping it with replay_stop.",
     });
     expect(unknown.toPayload()).toEqual({
       code: 'NOT_AVAILABLE',
@@ -1059,7 +1059,9 @@ describe('setAutoplayViaApi', () => {
     expect(atEnd.toPayload()).toEqual({
       code: 'NOT_AVAILABLE',
       message: 'Replay has reached the end of the loaded bars, so it cannot play on',
-      hint: 'Call replay_stop to leave replay, and replay_start to replay again.',
+      hint:
+        'replay_stop leaves replay, and replay_start replays again. Ask the user before ' +
+        'stopping a replay this session did not start: it may be theirs.',
     });
     expect(callNames(win)).toEqual([]);
     expect(callNames(ended)).toEqual([]);

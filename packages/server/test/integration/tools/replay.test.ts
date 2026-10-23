@@ -390,7 +390,10 @@ describe('replay_start', () => {
     const result = await callTool(client, 'replay_start', { date: 'first' });
 
     expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
-    expect(errorOf(result)?.hint).toMatch(/replay_step.*replay_stop.*replay_start/);
+    // The replay may be the user's: the hint never tells to stop it without asking.
+    expect(errorOf(result)?.hint).toMatch(
+      /replay_step.*ask the user before stopping it with replay_stop/,
+    );
     expect(selects(win)).toEqual([]);
     expect(replayOf(win)).toMatchObject({ started: true, index: 40 });
   });
@@ -457,7 +460,9 @@ describe('replay_start', () => {
     const result = await callTool(client, 'replay_start', { date: 'first' });
 
     expect(errorOf(result)).toMatchObject({ code: 'TIMEOUT', details: { waitMs: 500 } });
-    expect(errorOf(result)?.hint).toMatch(/replay_status.*replay_stop/);
+    expect(errorOf(result)?.hint).toMatch(
+      /replay_status.*ask the user before stopping it with replay_stop/,
+    );
     // A start the session did not see come cannot be told from one of the user: replay_stop will
     // not clear what TradingView saves for it.
     expect(ctx.session.replayRunStartedBySession).toBeNull();
