@@ -42,11 +42,12 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   stops replay and autoplay, clears the point and calls onLeave. stopReplay() leaves the same way
 //   as leaveReplay({ skipConfirm: true }).
 // - Leaving with a replay point saves the session state in the layout with
-//   updateReplaySessionState of the chart widget collection: { replayTime, replayMode, charts }
-//   while the setting save_replay_session_state is on (state.replay.saveSessionState) and replay
-//   had not finished, null otherwise. _chartWidgetCollection.replaySessionState() answers it
-//   (state.replay.sessionState), and updateReplaySessionState(state) records itself and sets it.
-//   Either way the layout counts as changed (state.layouts.unsaved).
+//   updateReplaySessionState of the chart widget collection, as the app does: { replayTime,
+//   replayMode, charts } while the setting save_replay_session_state is on
+//   (state.replay.saveSessionState) and replay had not finished, null otherwise.
+//   _chartWidgetCollection.replaySessionState() answers it (state.replay.sessionState), and
+//   updateReplaySessionState(state), whoever calls it, records itself and sets it. Either way the
+//   layout counts as changed (state.layouts.unsaved).
 // - The internal replay controller (_replayUIController of the replay API) answers
 //   replayAvailability(), a Map from the id of the chart model of chart 0 (model().id()) to
 //   state.replay.availability, and _replayManager.isReplayFinished().
@@ -243,8 +244,11 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
     state.started = false;
     state.autoplay = false;
   };
-  const updateSessionState = (saved: FakeReplaySessionState | null): void => {
-    state.sessionState = saved;
+  // updateReplaySessionState of the chart widget collection, which the app calls itself on leaving
+  // replay, as page code may.
+  const updateSessionState = (saved: unknown): void => {
+    record('chartWidgetCollection.updateReplaySessionState', [saved]);
+    state.sessionState = saved === null ? null : (saved as FakeReplaySessionState);
     deps.markLayoutChanged();
   };
   // _updateReplaySessionState of the app, on leaving replay.
@@ -471,10 +475,7 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
         : {
             replaySessionState: () =>
               state.sessionState === null ? null : structuredClone(state.sessionState),
-            updateReplaySessionState(saved) {
-              record('chartWidgetCollection.updateReplaySessionState', [saved]);
-              updateSessionState(saved === null ? null : (saved as FakeReplaySessionState));
-            },
+            updateReplaySessionState: updateSessionState,
           },
     modules: {
       // Module IDs are arbitrary numbers, as in a production build.

@@ -353,6 +353,10 @@ describe('leaving replay', () => {
       },
     });
     expect(left).toBe(1);
+    // The app saves it with updateReplaySessionState of the collection, which records itself.
+    expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([
+      [stateOf(win).sessionState],
+    ]);
     expect(inspectFakeWindow(win).state.layouts.unsaved).toBe(true);
     expect(win.TradingViewApi?._chartWidgetCollection?.replaySessionState?.()).toEqual(
       stateOf(win).sessionState,
@@ -374,10 +378,12 @@ describe('leaving replay', () => {
     (await replayOf(neverStarted)).leaveReplay({ skipConfirm: false });
 
     expect(stateOf(finished)).toMatchObject({ started: false, sessionState: null });
+    expect(calls(finished, 'chartWidgetCollection.updateReplaySessionState')).toEqual([[null]]);
     expect(inspectFakeWindow(finished).state.layouts.unsaved).toBe(true);
     expect(stateOf(settingOff)).toMatchObject({ started: false, sessionState: null });
     expect(calls(settingOff, 'replayApi.stopReplay')).toEqual([[]]);
     expect(stateOf(neverStarted).modeOn).toBe(false);
+    expect(calls(neverStarted, 'chartWidgetCollection.updateReplaySessionState')).toEqual([]);
     expect(inspectFakeWindow(neverStarted).state.layouts.unsaved).toBe(false);
     expect(dialogs(finished)).toEqual([]);
   });
