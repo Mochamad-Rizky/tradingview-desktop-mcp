@@ -84,7 +84,7 @@ import {
 } from '../../tools/replay/page.js';
 import { readChartBox, readStripBox } from '../../tools/screenshot/page.js';
 import { readStrategyReport } from '../../tools/strategy/page.js';
-import { readTabs, readUnsavedLayout } from '../../tools/tab/page.js';
+import { readSignedIn, readTabs, readUnsavedLayout } from '../../tools/tab/page.js';
 import {
   evaluateExpression,
   readFullscreen,
@@ -148,6 +148,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readPineGraphics,
   readReplayState,
   readSavedLayouts,
+  readSignedIn,
   readStrategyReport,
   readStripBox,
   readStudies,

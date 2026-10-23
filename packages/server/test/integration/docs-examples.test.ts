@@ -432,6 +432,18 @@ describe('the README', () => {
     expect(safety).toMatch(/drawing, alert, watchlist symbol or tab that this session did not/);
   });
 
+  test('the README names what can still open a dialog of TradingView', () => {
+    const safety = sectionOf('### Safety').replaceAll(/\s+/g, ' ');
+
+    expect(safety).not.toMatch(
+      /does not let TradingView open its upgrade dialog or any other dialog/,
+    );
+    expect(safety).toMatch(/layout_switch/);
+    expect(safety).toMatch(/layout_new/);
+    expect(safety).toMatch(/Close tab\?/);
+    expect(safety).toMatch(/ui_\*/);
+  });
+
   test('the README states how many tools each profile offers, as the registry counts them', () => {
     const profiles = sectionOf('### Tool profiles').replaceAll(/\s+/g, ' ');
     const count = (profile: Profile): string =>

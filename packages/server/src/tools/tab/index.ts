@@ -16,7 +16,7 @@ import { READ_ONLY } from '../annotations.js';
 import { pageWaitMs, POLL_INTERVAL_MS } from '../chart/strategies.js';
 import { refuseWhileSessionReplayRuns } from '../replay/index.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
-import { readTabs, readUnsavedLayout, TAB_STRIP, type StripTab } from './page.js';
+import { readSignedIn, readTabs, readUnsavedLayout, TAB_STRIP, type StripTab } from './page.js';
 
 // The tab tools (design spec 7, domain Tabs): the tabs of the TradingView window, read from the tab
 // strip of the window chrome and changed with clicks on it (reverse-engineering notes of Plan 3,
@@ -244,6 +244,31 @@ async function bringToFront(
     );
   }
   return awaitPageInFront(ctx, before, tab.showsSymbol);
+}
+
+// A new tab opens TradingView's New tab page for a signed-in account only: signed out, the shell
+// opens a chart in it instead (notes of Plan 3, section 3.2), which no tool here waits for. The page
+// of the chart in front tells; with no chart in front, or a page that does not say, nothing is
+// refused.
+async function requireSignedIn(ctx: ToolContext): Promise<void> {
+  let page: PageHandle;
+  try {
+    page = await ctx.connection.chartPage();
+  } catch (error) {
+    if (isTvMcpError(error)) {
+      return;
+    }
+    throw error;
+  }
+  const { signedIn } = await page.bridge.evaluate(readSignedIn, []);
+  if (signedIn === false) {
+    throw new TvMcpError(
+      'AUTH_REQUIRED',
+      'TradingView is signed out, and a new tab of a signed-out app opens a chart instead of the ' +
+        'New tab page',
+      { hint: 'Sign in to TradingView, then try again.' },
+    );
+  }
 }
 
 // The ids of the New tab pages the debug port lists, or null while it cannot list them.
@@ -516,10 +541,13 @@ export const tabNew = defineTool({
     'with tab_close, which needs no confirm for a tab this session opened. (While the TradingView ' +
     'window is covered or minimized, which tab is in front cannot be told, and the chart tools use ' +
     'the only chart tab, if there is just one.) Returns id and index ' +
-    'of the new tab, and a warning when its page did not open in time. TIMEOUT when no new tab ' +
-    'shows in time: check tab_list before trying again, as the tab may still open. While a ' +
-    'replay this session started runs, the call fails with NOT_AVAILABLE before any click: stop ' +
-    'the replay with replay_stop first.',
+    'of the new tab, with a warning when its page did not open in time, or when the chart tab it ' +
+    'covers does not show in time that it is behind it: for a moment, the chart tools may still ' +
+    'act on that chart. TIMEOUT when no new tab shows in time: check tab_list before trying ' +
+    'again, as the tab may still open. AUTH_REQUIRED while TradingView is signed out, since a ' +
+    'new tab then opens a chart instead of the New tab page. While a replay this session started ' +
+    'runs, the call fails with NOT_AVAILABLE before any click: stop the replay with replay_stop ' +
+    'first.',
   inputSchema: {},
   // A new tab every time; nothing of the user is changed.
   annotations: {
@@ -535,6 +563,7 @@ export const tabNew = defineTool({
       findNewTabPages(await ctx.connection.targets()).map(({ id }) => id),
     );
     await refuseWhileSessionReplayRuns(ctx);
+    await requireSignedIn(ctx);
     const frontBefore = await frontPage(ctx);
     const waitMs = tabWaitMs(ctx);
     await clickElement(chrome, SELECTORS.windowChrome.newTab);
@@ -671,7 +700,14 @@ export const tabClose = defineTool({
     'layout, or wait for autosave, first. NOT_AVAILABLE as well, before anything is clicked, while ' +
     'the TradingView window is covered or minimized, since which page the tab in front shows ' +
     'cannot be told then, and when the server cannot tell it otherwise, or the tab shows no close ' +
-    'button (a pinned tab). INVALID_INPUT for ' +
+    'button (a pinned tab). error.details.reason says why where it can: page-not-in-front (the ' +
+    'strip shows the tab in front, its page is not there yet), front-unknown (which page is in ' +
+    'front cannot be told, or it changed while it was read) or window-out-of-view. A tab brought ' +
+    'to the front and then refused stays in front (error.details.inFront), where the chart tools ' +
+    'act on it. The "Close tab?" dialog can still open where the checks cannot see it coming: ' +
+    'TradingView counts a page that takes more than 250 ms to say whether its layout has unsaved ' +
+    'changes as unsaved, and asks as well for a page that reports a recording in progress when ' +
+    'it is left. INVALID_INPUT for ' +
     'neither or both of tabId and index, and for a tab the window does not have. TIMEOUT when the ' +
     'tab does not close in time. While a replay this session started runs, the call fails with ' +
     'NOT_AVAILABLE before any click: stop the replay with replay_stop first.',

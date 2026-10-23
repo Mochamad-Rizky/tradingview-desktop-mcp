@@ -105,3 +105,10 @@ export function readUnsavedLayout(win: TvWindow): { shouldBeSaved: boolean | nul
     return { shouldBeSaved: null };
   }
 }
+
+// Whether an account is signed in, as the page of a chart tab tells it (window.is_authenticated):
+// null when the page does not say. Changes nothing.
+export function readSignedIn(win: TvWindow): { signedIn: boolean | null } {
+  const flag: unknown = win.is_authenticated;
+  return { signedIn: typeof flag === 'boolean' ? flag : null };
+}

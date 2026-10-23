@@ -249,6 +249,17 @@ describe('tab_new', () => {
     expect(evaluatedIn(app, world.targetOf(A)).length).toBeGreaterThan(1);
   });
 
+  test('tab_new refuses AUTH_REQUIRED while TradingView is signed out, and clicks nothing', async () => {
+    const { client, world } = await startHarness({ tabs: [chartA] });
+    inspectFakeWindow(chartOf(world, A)).state.pineEditor.signedIn = false;
+
+    const result = await callTool(client, 'tab_new');
+
+    expect(errorOf(result)).toMatchObject({ code: 'AUTH_REQUIRED' });
+    expect(world.chrome.clicks).toEqual([]);
+    expect(tabIds(world)).toEqual([A]);
+  });
+
   test('tab_new fails TIMEOUT, and records nothing, when no new tab shows in time', async () => {
     const { client, world } = await startHarness(
       { tabs: [chartA], changeMs: Infinity },

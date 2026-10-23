@@ -145,6 +145,15 @@ test('the descriptions say what the model must know before it calls', () => {
   expect(close).toMatch(/autosave/);
   expect(close).toMatch(/NOT_AVAILABLE/);
   expect(close).toMatch(/remaining/);
+  // What it cannot see coming, and how a refusal says why.
+  expect(close).toMatch(/250 ms/);
+  expect(close).toMatch(/recording/);
+  expect(close).toMatch(/page-not-in-front/);
+  expect(close).toMatch(/front-unknown/);
+  expect(close).toMatch(/inFront/);
+  // A late page of the New tab, and a signed-out app, which opens a chart instead.
+  expect(open).toMatch(/chart tab it covers/);
+  expect(open).toMatch(/AUTH_REQUIRED/);
 });
 
 describe('cssString, the id of a tab as a CSS string for an attribute selector', () => {

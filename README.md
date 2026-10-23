@@ -242,9 +242,16 @@ layout with unsaved changes, and changing to a multi-chart layout with fewer cha
 shows, whose next save would drop the others. A plan limit, such as the number of indicators on a
 chart, of saved scripts, of alerts or of the charts of a layout, is checked before anything is
 added and reported as a `PLAN_LIMIT` error with the limit; when the limit cannot be read on your
-TradingView build, the tool does nothing and says so. The server does not work around a limit and
-does not let TradingView open its upgrade dialog or any other dialog. It deletes and renames no
-script.
+TradingView build, the tool does nothing and says so. The server does not work around a limit. The
+tools check first what would make TradingView open its upgrade dialog, or another dialog of its
+own, and refuse instead, but a few prompts remain that these checks cannot foresee:
+`layout_switch` and `layout_new` can meet an upgrade prompt for a saved multi-chart layout on a plan
+with fewer charts, for a layout the server of TradingView refuses as beyond the limit, and for one
+that the list TradingView keeps for itself marks over the limit while `layout_list` does not; and
+`tab_close` can meet the "Close tab?" dialog for a page that takes longer than TradingView waits to
+say whether its layout has unsaved changes, or that reports a recording in progress. The low-level
+`ui_*` tools click and type what you ask for, so they can open dialogs of TradingView by design. It
+deletes and renames no script.
 
 No tool places orders: bar replay is for practice, and the assistant keeps any practice trades in
 the conversation. Screenshots go to the client as images, and the server writes none to disk.
