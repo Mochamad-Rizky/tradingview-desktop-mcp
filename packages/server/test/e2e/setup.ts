@@ -1,7 +1,9 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { z } from 'zod';
 import { loadConfig } from '../../src/config/load.js';
+import type { Visibility } from '../../src/core/cdp/targets.js';
 import type { PageLib } from '../../src/core/tv/page-lib.js';
+import { readVisibilityState } from '../../src/core/tv/probes.js';
 import type {
   BarsLike,
   ChartWidgetApiLike,
@@ -59,25 +61,44 @@ import { quietLogger } from '../helpers/tool-context.js';
 // restoreEditor): only while it holds no unsaved changes, and it is put back afterwards, the script
 // it showed open again and the editor closed again when it was closed. Indicators and scripts are
 // added only within the plan limits (planLimitSkipReason) and removed again by the test that added
-// them. Nothing else of the app is touched: no drawing, indicator or saved script of the user, no
-// alert, layout, replay, watchlist or trading control, nothing is saved, and the app is never
-// reloaded, quit or started.
+// them.
+//
+// The suites of Plan 3 work on objects of their own only, each removed again in a finally block by
+// the test that made it: three drawings, one alert within the alert limit of the plan, one symbol
+// that the active watchlist does not hold yet, within its limit, and one tab on the New tab page
+// (only with TV_E2E_ALLOW_TABS and the window in view). They run bar replay on a daily chart and
+// leave it, open and close the symbol search and the watchlist panel as they found them, and ask the
+// layout and pane tools only for what the plan refuses (a new layout on a full plan, a multi-chart
+// layout on a one-chart plan), so that nothing changes. Nothing else of the app is touched: no
+// drawing, indicator, alert, watchlist entry, tab, layout or saved script of the user, no trading
+// control, nothing is saved, and the app is never reloaded, quit or started.
 
 export function e2eEnabled(): boolean {
   return process.env.TV_E2E === '1';
 }
 
-// What a run may leave behind only when the person running it allows it, each by setting its
+// What a run may leave behind or do only when the person running it allows it, each by setting its
 // variable to 1 (docs/testing.md):
 // - TV_E2E_ALLOW_DRAFTS: the tests that add a script from the Pine Editor to the chart, which
 //   TradingView keeps in the account as a server draft (version 0.x) that no tool deletes;
 // - TV_E2E_ALLOW_EDITOR_TEXT: the test that closes the Pine Editor on unsaved text of its own,
 //   which TradingView keeps for the next open, so that a run cut short leaves the editor reopening
-//   on that text.
-export type E2eOptIn = 'TV_E2E_ALLOW_DRAFTS' | 'TV_E2E_ALLOW_EDITOR_TEXT';
+//   on that text;
+// - TV_E2E_ALLOW_LAYOUTS: the test that creates a saved layout with layout_new on a plan with room
+//   for one, which no tool deletes, and switches back to the layout of before;
+// - TV_E2E_ALLOW_TABS: the test that opens a tab on the New tab page, switches between it and the
+//   chart tab and closes it, which a run cut short leaves open.
+export type E2eOptIn =
+  'TV_E2E_ALLOW_DRAFTS' | 'TV_E2E_ALLOW_EDITOR_TEXT' | 'TV_E2E_ALLOW_LAYOUTS' | 'TV_E2E_ALLOW_TABS';
 
 export function optedIn(name: E2eOptIn): boolean {
   return process.env[name] === '1';
+}
+
+// Whether the person running the suites allows ui_evaluate for the run (TV_MCP_ALLOW_EVAL=true).
+// Only the suite of the interface tools starts a server with it, for one expression that reads.
+export function evalAllowed(): boolean {
+  return process.env.TV_MCP_ALLOW_EVAL === 'true';
 }
 
 export interface ChartSnapshot {
@@ -100,14 +121,18 @@ export interface E2eServer {
 
 // A server for the app on this machine, with a client over the in-memory transport. Only the debug
 // port is read from the environment, so that a profile or a tool filter someone set for daily use
-// cannot hide the tools under test.
-export async function startE2eServer(): Promise<E2eServer> {
+// cannot hide the tools under test; with allowEval, TV_MCP_ALLOW_EVAL as well, when the run sets it
+// (evalAllowed).
+export async function startE2eServer(options: { allowEval?: boolean } = {}): Promise<E2eServer> {
   const env: NodeJS.ProcessEnv = {};
   for (const name of ['TV_CDP_HOST', 'TV_CDP_PORT', 'TV_CALL_TIMEOUT_MS']) {
     const value = process.env[name];
     if (value !== undefined) {
       env[name] = value;
     }
+  }
+  if (options.allowEval === true && evalAllowed()) {
+    env.TV_MCP_ALLOW_EVAL = 'true';
   }
   const { config } = loadConfig({ argv: [], env });
   const { server, ctx } = createMcpServer(config, { logger: quietLogger });
@@ -284,6 +309,20 @@ export interface ChartState {
 
 export async function readChartState(client: Client): Promise<ChartState> {
   return (await callOk<ChartState>(client, 'chart_get_state')).data;
+}
+
+// The visibility of the window chrome, a property of its document read like the rest of its DOM: it
+// reports hidden while the window is covered by other windows or minimized (seen on the app), and
+// then every page of the window reports hidden too.
+export async function readWindowVisibility(ctx: ToolContext): Promise<Visibility> {
+  const chrome = await ctx.connection.windowChromePage();
+  return chrome.bridge.evaluate(readVisibilityState, []);
+}
+
+// The visibility of the chart page the chart tools act on.
+export async function readChartVisibility(ctx: ToolContext): Promise<Visibility> {
+  const page = await ctx.connection.chartPage();
+  return page.bridge.evaluate(readVisibilityState, []);
 }
 
 // Whether `args` pass the input schema of a tool, as the registry parses them.
