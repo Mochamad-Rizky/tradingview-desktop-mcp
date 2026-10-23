@@ -161,7 +161,7 @@ time, because they share one window.
   in the layout, and the setting of the replay button and the speed of autoplay as they were. The
   chart and its exact view are put back after the last test.
 - `screenshot.e2e.test.ts`: the chart is captured as a png the size of its container, the page as a
-  jpeg within `maxWidth`, and the window chrome; only the sizes are read.
+  jpeg within `maxWidth`, and the window as its tab strip; only the sizes are read.
 - `ui.e2e.test.ts`: elements are looked up by selector and by name, trading controls reported
   unsafe; a header button is hovered; the symbol search is opened with a click, typed into and
   closed with Escape; the watchlist panel is opened and closed as it was found; and, when allowed,
