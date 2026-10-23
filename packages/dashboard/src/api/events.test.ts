@@ -137,9 +137,101 @@ test('streamEvents decodes a character split between two chunks of bytes', async
   expect(record.seen).toEqual([{ kind: 'open' }, { kind: 'event', event, lastEventId: 'b1-1' }]);
 });
 
+test('streamEvents takes only a 200 answer of type text/event-stream, and fails on anything else', async () => {
+  storeToken(TEST_TOKEN);
+  const letGo: string[] = [];
+  // A body that never ends, and says when the client lets go of it.
+  const body = (name: string) =>
+    new ReadableStream<Uint8Array>({
+      cancel() {
+        letGo.push(name);
+      },
+    });
+  const answers: [string, () => Response][] = [
+    // The page itself, as a proxy in front of an older server might answer.
+    [
+      'html',
+      () => new Response(body('html'), { headers: { 'Content-Type': 'text/html; charset=utf-8' } }),
+    ],
+    ['no type', () => new Response(body('no type'), { status: 200 })],
+    [
+      'partial',
+      () =>
+        new Response(body('partial'), {
+          status: 206,
+          headers: { 'Content-Type': 'text/event-stream' },
+        }),
+    ],
+    [
+      'no content',
+      () => new Response(null, { status: 204, headers: { 'Content-Type': 'text/event-stream' } }),
+    ],
+  ];
+  // Answered here rather than through MSW, which hands the client a copy of the body: letting go of
+  // the copy does not reach the body above.
+  const fetchSpy = vi.spyOn(globalThis, 'fetch');
+  for (const [name, answer] of answers) {
+    fetchSpy.mockImplementationOnce(() => Promise.resolve(answer()));
+    const record = recorder();
+    await expect(
+      streamEvents({ lastEventId: null, signal: new AbortController().signal, ...record }),
+      name,
+    ).rejects.toThrow('The server did not answer with an event stream');
+    expect(record.seen, name).toEqual([]);
+  }
+  await vi.waitFor(() => {
+    expect(letGo).toEqual(['html', 'no type', 'partial']);
+  });
+  fetchSpy.mockRestore();
+
+  // The type counts without its parameters, in any case.
+  server.use(
+    http.get(
+      '/api/events',
+      () =>
+        new HttpResponse('event: gap\ndata: {}\n\n', {
+          headers: { 'Content-Type': 'Text/Event-Stream; charset=UTF-8' },
+        }),
+    ),
+  );
+  const record = recorder();
+  await streamEvents({ lastEventId: null, signal: new AbortController().signal, ...record });
+  expect(record.seen).toEqual([{ kind: 'open' }, { kind: 'gap' }]);
+});
+
+test('streamEvents opens nothing when it is aborted while the answer comes in', async () => {
+  storeToken(TEST_TOKEN);
+  const controller = new AbortController();
+  let letGo = false;
+  const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      letGo = true;
+    },
+  });
+  // The answer arrives, and the abort lands before streamEvents goes on with it.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+    controller.abort();
+    return Promise.resolve(
+      new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }),
+    );
+  });
+  const record = recorder();
+  await streamEvents({ lastEventId: null, signal: controller.signal, ...record });
+  expect(record.seen).toEqual([]);
+  await vi.waitFor(() => {
+    expect(letGo).toBe(true);
+  });
+});
+
 test('streamEvents rejects a stream answer without a body', async () => {
   storeToken(TEST_TOKEN);
-  server.use(http.get('/api/events', () => new HttpResponse(null, { status: 200 })));
+  server.use(
+    http.get(
+      '/api/events',
+      () =>
+        new HttpResponse(null, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+    ),
+  );
   const record = recorder();
   await expect(
     streamEvents({ lastEventId: null, signal: new AbortController().signal, ...record }),

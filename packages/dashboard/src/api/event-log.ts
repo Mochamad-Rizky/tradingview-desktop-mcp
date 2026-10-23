@@ -31,7 +31,7 @@ export interface ToolCall {
   durationMs?: number;
   ok?: boolean;
   errorCode?: DashboardErrorCode;
-  // The seq of the event the call was first known by: its start, or its end when that came first.
+  // The seq of its start event, or of its end while its start is unknown (the end came first).
   seq: number;
 }
 
@@ -42,7 +42,8 @@ export interface EventLogState {
   // Events were missed while the stream was down: the server could not resume where it left off.
   missed: boolean;
   paused: boolean;
-  // How many calls the events held while paused are about.
+  // How many calls resume() would add: the calls the events held while paused are about, less
+  // those shown already and those the log forgot.
   buffered: number;
 }
 
@@ -127,6 +128,8 @@ export class EventLog {
   readonly #forgotten = new Set<string>();
   // The events that came while paused, oldest first.
   #pending: DashboardEvent[] = [];
+  // The calls those events would add, by id, with how many of the events are about each.
+  readonly #buffered = new Map<string, number>();
   #status: StreamStatus = 'connecting';
   #missed = false;
   #paused = false;
@@ -136,6 +139,9 @@ export class EventLog {
 
   readonly #listeners = new Set<() => void>();
   #snapshot: EventLogState | null = null;
+  // The calls as an array, made again only once they change: while paused the snapshot changes
+  // with the count of what is held, and the calls a table shows stay the same array.
+  #callList: readonly ToolCall[] | null = null;
   #notifyQueued = false;
 
   subscribe = (listener: () => void): (() => void) => {
@@ -146,12 +152,13 @@ export class EventLog {
   };
 
   getSnapshot = (): EventLogState => {
+    this.#callList ??= [...this.#calls.values()];
     this.#snapshot ??= {
-      calls: [...this.#calls.values()],
+      calls: this.#callList,
       status: this.#status,
       missed: this.#missed,
       paused: this.#paused,
-      buffered: new Set(this.#pending.map((event) => event.id)).size,
+      buffered: this.#buffered.size,
     };
     return this.#snapshot;
   };
@@ -170,6 +177,7 @@ export class EventLog {
     this.#paused = false;
     const pending = this.#pending;
     this.#pending = [];
+    this.#buffered.clear();
     for (const event of pending) {
       this.#merge(event);
     }
@@ -186,8 +194,10 @@ export class EventLog {
       this.#forget(event.id);
     }
     this.#calls.clear();
+    this.#callList = null;
     this.#withoutStart.clear();
     this.#pending = [];
+    this.#buffered.clear();
     this.#missed = false;
     this.#changed(true);
   };
@@ -251,50 +261,80 @@ export class EventLog {
     }
   }
 
+  // What the stream brings is told only when it changes what shows: an event seen before changes
+  // nothing, and while paused only the count of the calls held does.
   #receive(event: DashboardEvent): void {
-    if (this.#paused) {
-      this.#pending.push(event);
-      if (this.#pending.length > MAX_PENDING_EVENTS) {
-        this.#pending.shift();
-      }
-    } else {
-      this.#merge(event);
+    if (this.#paused ? this.#hold(event) : this.#merge(event)) {
+      this.#changed();
     }
-    this.#changed();
   }
 
-  // Takes `event` into the log. A call is known by its id, and each of its two events counts once:
-  // a start or an end that comes again (a replay after a reconnect or a restart) changes nothing.
-  #merge(event: DashboardEvent): void {
-    if (this.#forgotten.has(event.id)) {
+  // Keeps `event` for resume(), and tells whether that changes how many calls it would add.
+  #hold(event: DashboardEvent): boolean {
+    const before = this.#buffered.size;
+    this.#pending.push(event);
+    if (!this.#calls.has(event.id) && !this.#forgotten.has(event.id)) {
+      this.#buffered.set(event.id, (this.#buffered.get(event.id) ?? 0) + 1);
+    }
+    if (this.#pending.length > MAX_PENDING_EVENTS) {
+      this.#dropOldestHeld();
+    }
+    return this.#buffered.size !== before;
+  }
+
+  #dropOldestHeld(): void {
+    const dropped = this.#pending.shift();
+    if (dropped === undefined) {
       return;
+    }
+    const count = this.#buffered.get(dropped.id) ?? 0;
+    if (count > 1) {
+      this.#buffered.set(dropped.id, count - 1);
+    } else {
+      this.#buffered.delete(dropped.id);
+    }
+  }
+
+  // Takes `event` into the log, and tells whether it changed anything. A call is known by its id,
+  // and each of its two events counts once: a start or an end that comes again (a replay after a
+  // reconnect or a restart) changes nothing.
+  #merge(event: DashboardEvent): boolean {
+    if (this.#forgotten.has(event.id)) {
+      return false;
     }
     const known = this.#calls.get(event.id);
     if (event.phase === 'start') {
       if (known === undefined) {
         this.#add(callFromStart(event));
-      } else if (this.#withoutStart.delete(event.id)) {
-        // The end came first: the start brings the arguments and the real start time.
-        const { startedAt, args, seq } = callFromStart(event);
-        this.#calls.set(event.id, {
-          ...known,
-          startedAt,
-          seq,
-          ...(args === undefined ? {} : { args }),
-        });
+        return true;
       }
-      return;
+      if (!this.#withoutStart.delete(event.id)) {
+        return false;
+      }
+      // The end came first: the start brings the arguments and the real start time.
+      const { startedAt, args, seq } = callFromStart(event);
+      this.#update({ ...known, startedAt, seq, ...(args === undefined ? {} : { args }) });
+      return true;
     }
     if (known === undefined) {
       this.#withoutStart.add(event.id);
       this.#add(callFromEnd(event));
-    } else if (known.endedAt === undefined) {
-      this.#calls.set(event.id, { ...known, ...endFields(event) });
+      return true;
     }
+    if (known.endedAt !== undefined) {
+      return false;
+    }
+    this.#update({ ...known, ...endFields(event) });
+    return true;
+  }
+
+  #update(call: ToolCall): void {
+    this.#calls.set(call.id, call);
+    this.#callList = null;
   }
 
   #add(call: ToolCall): void {
-    this.#calls.set(call.id, call);
+    this.#update(call);
     if (this.#calls.size > MAX_CALLS) {
       const oldest = this.#calls.keys().next().value;
       if (oldest !== undefined) {

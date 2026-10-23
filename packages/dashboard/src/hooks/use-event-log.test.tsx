@@ -343,8 +343,9 @@ test('useEventLog buffers while paused and appends on resume', async () => {
   connection.send(startEvent(3, callId(2), 'drawing_list'));
   connection.send(endEvent(4, callId(2), 'drawing_list'));
   connection.send(startEvent(5, callId(3), 'chart_set_symbol'));
+  // Two calls to add: the end of the call shown adds none.
   await waitFor(() => {
-    expect(result.current.buffered).toBe(3);
+    expect(result.current.buffered).toBe(2);
   });
   // What was shown stays as it was, the running call included.
   expect(result.current.calls).toEqual([expect.objectContaining({ id: callId(1) })]);
@@ -369,6 +370,118 @@ test('useEventLog buffers while paused and appends on resume', async () => {
     result.current.pause();
   });
   expect(result.current.paused).toBe(true);
+});
+
+test('while paused, events that only fill the buffer leave the calls array as it was', async () => {
+  const stream = serveStream();
+  const { result } = renderEventLog();
+  const connection = await stream.next();
+  connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  await waitFor(() => {
+    expect(result.current.calls).toHaveLength(1);
+  });
+  act(() => {
+    result.current.pause();
+  });
+  const shown = result.current.calls;
+
+  connection.send(endEvent(2, callId(1), 'chart_get_state'));
+  connection.send(startEvent(3, callId(2), 'drawing_list'));
+  await waitFor(() => {
+    expect(result.current.buffered).toBe(1);
+  });
+  connection.send(endEvent(4, callId(2), 'drawing_list'));
+  connection.send(startEvent(5, callId(3), 'drawing_list'));
+  await waitFor(() => {
+    expect(result.current.buffered).toBe(2);
+  });
+  // The same array, so that a table given it has nothing to render again.
+  expect(result.current.calls).toBe(shown);
+
+  act(() => {
+    result.current.resume();
+  });
+  expect(result.current.calls).not.toBe(shown);
+  expect(result.current.calls).toHaveLength(3);
+});
+
+test('buffered counts only the calls that resume will add', async () => {
+  const stream = serveStream();
+  const { result } = renderEventLog();
+  const connection = await stream.next();
+  connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  await waitFor(() => {
+    expect(result.current.calls).toHaveLength(1);
+  });
+  // Call 1 is cleared, and call 2 is shown.
+  act(() => {
+    result.current.clear();
+  });
+  connection.send(startEvent(2, callId(2), 'chart_set_symbol'));
+  await waitFor(() => {
+    expect(result.current.calls).toHaveLength(1);
+  });
+
+  act(() => {
+    result.current.pause();
+  });
+  // A cleared call and a call shown add no row, however many of their events come.
+  connection.send(endEvent(3, callId(1), 'chart_get_state'));
+  connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  connection.send(endEvent(4, callId(2), 'chart_set_symbol'));
+  connection.send(startEvent(2, callId(2), 'chart_set_symbol'));
+  // A new call, and the end of another whose start never came: two rows.
+  connection.send(startEvent(5, callId(3), 'drawing_list'));
+  connection.send(endEvent(6, callId(3), 'drawing_list'));
+  connection.send(endEvent(8, callId(4), 'app_health'));
+  // The gap comes after everything else, so once it shows, every event before it was taken.
+  connection.gap();
+  await waitFor(() => {
+    expect(result.current.missed).toBe(true);
+  });
+  expect(result.current.buffered).toBe(2);
+
+  act(() => {
+    result.current.resume();
+  });
+  expect(result.current.calls.map((call) => [call.id, call.ok])).toEqual([
+    [callId(2), true],
+    [callId(3), true],
+    [callId(4), true],
+  ]);
+});
+
+test('an answer that is no event stream counts as a failed connection, tried again later', async () => {
+  vi.useFakeTimers({
+    shouldAdvanceTime: true,
+    toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+  });
+  const stream = serveStream();
+  let answers = 0;
+  // The first answer is the page itself, as a proxy in front of an older server might send.
+  server.use(
+    http.get('/api/events', () => {
+      answers += 1;
+      return answers === 1
+        ? HttpResponse.html('<!doctype html><title>TradingView MCP Dashboard</title>')
+        : undefined;
+    }),
+  );
+  const { result } = renderEventLog();
+  await waitFor(() => {
+    expect(answers).toBe(1);
+  });
+  await advance(10);
+  // It never opened, so it is still connecting.
+  expect(result.current.status).toBe('connecting');
+  expect(stream.connections).toHaveLength(0);
+
+  await advance(1000);
+  await stream.next();
+  await waitFor(() => {
+    expect(result.current.status).toBe('live');
+  });
+  expect(answers).toBe(2);
 });
 
 test('clear empties the log and the missed flag, keeps the stream, and forgets the calls it removed', async () => {

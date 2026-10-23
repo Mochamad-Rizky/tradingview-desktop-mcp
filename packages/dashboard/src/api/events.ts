@@ -135,6 +135,16 @@ function toolEvent(data: string): DashboardEvent | null {
   return value as DashboardEvent;
 }
 
+// Whether `response` is an event stream, whatever the parameters and the case of its type.
+function isEventStream(response: Response): boolean {
+  return /^\s*text\/event-stream\s*(;|$)/i.test(response.headers.get('Content-Type') ?? '');
+}
+
+// Lets go of the body of an answer that will not be read, so that its connection is freed.
+function discard(response: Response): void {
+  response.body?.cancel().catch(() => undefined);
+}
+
 export interface StreamEventsOptions {
   // The id of the last event seen, sent as Last-Event-ID so the server resumes after it; null on a
   // first connection.
@@ -149,8 +159,9 @@ export interface StreamEventsOptions {
 }
 
 // Reads one connection of the event stream until it ends. It resolves when the server ends the
-// stream or `signal` aborts it, and rejects when the connection fails or the server refuses it
-// (an ApiError; a 401 goes to the token gate first). Reconnecting is the caller's.
+// stream or `signal` aborts it, and rejects when the connection fails, the server refuses it (an
+// ApiError; a 401 goes to the token gate first), or the answer is no event stream: only a 200 of
+// type text/event-stream opens it. Reconnecting is the caller's.
 export async function streamEvents(options: StreamEventsOptions): Promise<void> {
   const { signal } = options;
   const token = readToken();
@@ -162,17 +173,36 @@ export async function streamEvents(options: StreamEventsOptions): Promise<void> 
     headers['Last-Event-ID'] = options.lastEventId;
   }
   const response = await fetch(EVENTS_PATH, { headers, signal });
+  // An abort that came with the answer has fired already, and the listener below would never hear
+  // of it.
+  if (signal.aborted) {
+    discard(response);
+    return;
+  }
   if (!response.ok) {
     throw await errorFrom(response, token);
+  }
+  // A 204, say, or the dashboard page from a proxy that knows no /api: nothing to read events from.
+  if (response.status !== 200 || !isEventStream(response)) {
+    discard(response);
+    throw new Error('The server did not answer with an event stream');
   }
   if (response.body === null) {
     throw new Error('The event stream came without a body');
   }
   options.onOpen();
+  await readEvents(response.body, options);
+}
 
+// Reads the events of an open stream until it ends or `options.signal` aborts it.
+async function readEvents(
+  body: ReadableStream<Uint8Array>,
+  options: StreamEventsOptions,
+): Promise<void> {
+  const { signal } = options;
   const parser = new SseParser(options.lastEventId);
   const decoder = new TextDecoder();
-  const reader = response.body.getReader();
+  const reader = body.getReader();
   // An abort does not always end a body that is being read, so the reader lets go of it itself.
   const cancel = () => {
     reader.cancel().catch(() => undefined);
