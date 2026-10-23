@@ -8,6 +8,7 @@ import { toolInputJsonSchema, toolProfiles } from '../../tools/schema-export.js'
 import type { AnyToolDefinition, ToolRegistry } from '../../tools/types.js';
 import type { JsonObject, JsonValue } from '../../utils/json.js';
 import { PACKAGE_NAME } from '../../version.js';
+import { sendJson } from '../respond.js';
 import { BodyError, discardBody, readJsonBody } from './body.js';
 import type {
   DashboardCallResult,
@@ -40,7 +41,7 @@ export interface DashboardApi {
   // Answers one request whose path starts with /api.
   handle(req: IncomingMessage, res: ServerResponse, path: string): Promise<void>;
   // Ends every open event stream after what it sent, for a server that shuts down: its clients see
-  // the stream end rather than the connection break.
+  // the stream end rather than the connection break. A stream asked for after it is refused.
   close(): void;
 }
 
@@ -51,23 +52,6 @@ const MAX_REPLAY = 500;
 const WHOLE_NUMBER = /^\d+$/;
 // A tool name is one segment, matched as sent: the names of tools need no escapes.
 const TOOL_ROUTE = /^\/api\/tools\/([^/]+)$/;
-
-// Every answer describes the running server at the moment it was asked, so no cache may keep one.
-function sendJson(
-  res: ServerResponse,
-  status: number,
-  body: JsonValue,
-  headers: OutgoingHttpHeaders = {},
-): void {
-  const text = JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(text),
-    'Cache-Control': 'no-store',
-    ...headers,
-  });
-  res.end(text);
-}
 
 function sendError(
   res: ServerResponse,
@@ -252,6 +236,8 @@ export function createDashboardApi(deps: DashboardApiDeps): DashboardApi {
   const { config, registry, events, connection, version, startedAt, mcpEndpoint, logger } = deps;
   // The event streams that are open, so that close() can end them.
   const streams = new Set<SseStream>();
+  // Set by close(). A stream opened after it would be cut when the server drops its connections.
+  let closed = false;
 
   const info = (): DashboardInfo => ({
     name: PACKAGE_NAME,
@@ -302,6 +288,10 @@ export function createDashboardApi(deps: DashboardApiDeps): DashboardApi {
   };
 
   const openEvents = (req: IncomingMessage, res: ServerResponse): void => {
+    if (closed) {
+      sendError(res, 503, 'The server is shutting down');
+      return;
+    }
     const limit = replayLimit(req.url ?? '');
     if (limit === undefined) {
       sendError(res, 400, `limit must be a whole number from 0 to ${String(MAX_REPLAY)}`);
@@ -385,6 +375,7 @@ export function createDashboardApi(deps: DashboardApiDeps): DashboardApi {
       }
     },
     close() {
+      closed = true;
       for (const stream of [...streams]) {
         stream.close();
       }

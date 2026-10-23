@@ -6,6 +6,8 @@ export interface BannerInfo {
   transport: string;
   // Where an HTTP client connects. It must never hold the token, since the banner ends up in logs.
   endpoint?: string;
+  // Where the dashboard page is. It must never hold the token either.
+  dashboard?: string;
   // TradingView's debug port.
   cdp: string;
 }
@@ -17,6 +19,9 @@ export function renderBanner(info: BannerInfo, options: { color?: boolean } = {}
   const rows: [label: string, value: string][] = [['transport', info.transport]];
   if (info.endpoint !== undefined) {
     rows.push(['endpoint', info.endpoint]);
+  }
+  if (info.dashboard !== undefined) {
+    rows.push(['dashboard', info.dashboard]);
   }
   rows.push(['cdp', info.cdp]);
   const width = Math.max(...rows.map(([label]) => label.length)) + 2;

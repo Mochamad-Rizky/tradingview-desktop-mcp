@@ -666,6 +666,25 @@ test('close() ends every open stream after what it sent and lets go of the bus',
   expect(events.subscribers).toBe(0);
 });
 
+// A request on a connection that stays open while the server shuts down would otherwise start a
+// stream that the end of the connection cuts at once.
+test('after close() a new events stream is refused with 503 and nothing subscribes', async () => {
+  const { port, api, events } = await serve();
+  emitCalls(events, 2);
+
+  api.close();
+  const response = await send(port, { path: '/api/events' });
+  const info = await send(port, { path: '/api/info' });
+
+  expect(response.status).toBe(503);
+  expect(response.headers['content-type']).toBe('application/json');
+  expect(response.headers['cache-control']).toBe('no-store');
+  expect(JSON.parse(response.body)).toEqual({ error: 'The server is shutting down' });
+  expect(events.subscribers).toBe(0);
+  // The other routes answer as before: only a stream would outlive the server.
+  expect(info.status).toBe(200);
+});
+
 // A response whose client is gone already, as a request that waited its turn may find it.
 class GoneResponse extends EventEmitter {
   written = '';

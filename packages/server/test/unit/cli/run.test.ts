@@ -5,6 +5,8 @@ import { runCli, type CliDeps } from '../../../src/cli/run.js';
 import { ConnectionManager, type HealthReport } from '../../../src/core/connection.js';
 import { TvMcpError } from '../../../src/core/errors.js';
 import type { Launcher, LaunchResult } from '../../../src/core/launcher/launch.js';
+import { freePort } from '../../helpers/dashboard-client.js';
+import { createDashboardFiles } from '../../helpers/dashboard-files.js';
 import { CaptureStream } from '../../helpers/streams.js';
 import {
   capturingLogger,
@@ -334,4 +336,38 @@ test('once it shuts down it stops listening for signals, so a second one ends th
   await running;
   expect(code).toBe(0);
   expect(signals.eventNames()).toEqual([]);
+});
+
+// The banner and the log end up where others read them, such as a terminal shared on a call.
+test('the banner shows the dashboard URL and never the token', async () => {
+  const built = createDashboardFiles();
+  const token = 'synthetic-token-0123456789abcdef0123456789abcdef';
+
+  try {
+    for (const flags of [['--transport', 'http'], ['--dashboard']]) {
+      const { logger, lines } = capturingLogger();
+      const port = await freePort();
+      const signals = new EventEmitter();
+      const stderr = new CaptureStream();
+      const running = runCli(
+        [...flags, '--port', String(port)],
+        { ...ENV, TV_MCP_AUTH_TOKEN: token },
+        { stdin: new PassThrough(), stdout: new PassThrough(), stderr, process: signals },
+        offlineDeps({ logger, dashboardDir: built.dir }),
+      );
+      const url = `http://127.0.0.1:${String(port)}/`;
+      const row = new RegExp(`dashboard +${url.replaceAll('.', '\\.')}\n`);
+      await expect.poll(() => stderr.text).toMatch(row);
+
+      expect(lines).toContainEqual(
+        expect.objectContaining({ level: 30, url, msg: 'The dashboard is served' }),
+      );
+      signals.emit('SIGTERM');
+      expect(await running).toBe(0);
+      expect(stderr.text).not.toContain(token);
+      expect(JSON.stringify(lines)).not.toContain(token);
+    }
+  } finally {
+    built.remove();
+  }
 });

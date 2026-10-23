@@ -31,7 +31,7 @@ export function allowedHostsFor(httpHost: string, port: number): string[] {
   return [...names].map((name) => `${name}:${String(port)}`);
 }
 
-export function isAllowedHost(host: string | undefined, allowedHosts: string[]): boolean {
+export function isAllowedHost(host: string | undefined, allowedHosts: readonly string[]): boolean {
   if (host === undefined) {
     return false;
   }
@@ -42,7 +42,10 @@ export function isAllowedHost(host: string | undefined, allowedHosts: string[]):
 // A request without an Origin comes from a program, not from a web page, and the token guards it.
 // A page may only call in when it was served by this server itself (the dashboard): a page from
 // any other origin, even one on this machine, is another site to the browser.
-export function isAllowedOrigin(origin: string | undefined, allowedHosts: string[]): boolean {
+export function isAllowedOrigin(
+  origin: string | undefined,
+  allowedHosts: readonly string[],
+): boolean {
   if (origin === undefined) {
     return true;
   }

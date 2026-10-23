@@ -6,7 +6,9 @@ import { debugPortEndpoint } from '../core/cdp/discovery.js';
 import { isTvMcpError } from '../core/errors.js';
 import { createMcpServer, createServerDeps, type ServerDeps } from '../server.js';
 import { createDashboardApi, type DashboardApi } from '../transports/dashboard/api.js';
-import { mcpUrl, startHttpTransport } from '../transports/http.js';
+import { startDashboardServer } from '../transports/dashboard/server.js';
+import { resolveDashboardDir } from '../transports/dashboard/static.js';
+import { dashboardUrl, mcpUrl, startHttpTransport } from '../transports/http.js';
 import { startStdioTransport } from '../transports/stdio.js';
 import { withTimeout } from '../utils/timeout.js';
 import { VERSION } from '../version.js';
@@ -36,8 +38,9 @@ export interface CliIo {
   process?: CliProcess;
 }
 
-// Dependencies to use instead of the ones the CLI creates from the configuration.
-export type CliDeps = Partial<ServerDeps>;
+// Dependencies to use instead of the ones the CLI creates from the configuration, and the folder
+// of a built dashboard to serve instead of the one beside the bundle (null: none was built).
+export type CliDeps = Partial<ServerDeps> & { dashboardDir?: string | null };
 
 type Command = Exclude<CliCommand, 'config'>;
 
@@ -46,6 +49,8 @@ interface CommandContext {
   deps: ServerDeps;
   io: CliIo;
   env: NodeJS.ProcessEnv;
+  // Where the built dashboard is, or null when it was not built.
+  dashboardDir: () => string | null;
 }
 
 const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM'];
@@ -135,34 +140,98 @@ function dashboardApi(
   });
 }
 
+function warnDashboardFilesMissing({ logger }: ServerDeps): void {
+  logger.warn(
+    'Dashboard files not found, so the dashboard page is not served, only its API. Build them ' +
+      'with "pnpm build"',
+  );
+}
+
 interface Serving {
   // Where an HTTP client connects, without the token.
   endpoint?: string;
+  // Where the dashboard page is, without the token.
+  dashboard?: string;
   close(): Promise<void>;
 }
 
-async function startServing(
-  { config, deps, io }: CommandContext,
-  stop: Deferred<string>,
-): Promise<Serving> {
-  if (config.transport === 'stdio') {
-    const { server } = createMcpServer(config, deps);
-    server.server.onclose = () => {
-      stop.resolve('the client closed the connection');
-    };
-    await startStdioTransport(server, { stdin: io.stdin ?? process.stdin, stdout: io.stdout });
-    return { close: () => server.close() };
+interface StdioDashboard {
+  // Where the page is, when its files were built.
+  page?: string;
+  close(): Promise<void>;
+}
+
+// The dashboard next to a stdio server, on a listener of its own. Neither a missing token nor a
+// listener that cannot start stops the MCP server: the dashboard is left out, with a warning.
+async function startStdioDashboard({
+  config,
+  deps,
+  dashboardDir,
+}: CommandContext): Promise<StdioDashboard | undefined> {
+  if (config.authToken === undefined) {
+    deps.logger.warn(
+      'The dashboard needs TV_MCP_AUTH_TOKEN, the secret its API asks for, so it is off. Set it ' +
+        'to a random secret, such as the output of "openssl rand -hex 32"',
+    );
+    return undefined;
   }
+  const dir = dashboardDir();
+  const handle = await startDashboardServer({
+    config,
+    logger: deps.logger,
+    api: dashboardApi(config, deps, null),
+    ...(dir === null ? {} : { dir }),
+  });
+  if (handle === null) {
+    return undefined;
+  }
+  if (dir === null) {
+    warnDashboardFilesMissing(deps);
+  }
+  return { ...(dir === null ? {} : { page: handle.url }), close: () => handle.close() };
+}
+
+async function serveStdio(context: CommandContext, stop: Deferred<string>): Promise<Serving> {
+  const { config, deps, io } = context;
+  const { server } = createMcpServer(config, deps);
+  server.server.onclose = () => {
+    stop.resolve('the client closed the connection');
+  };
+  await startStdioTransport(server, { stdin: io.stdin ?? process.stdin, stdout: io.stdout });
+  const dashboard = config.dashboard ? await startStdioDashboard(context) : undefined;
+  return {
+    ...(dashboard?.page === undefined ? {} : { dashboard: dashboard.page }),
+    close: async () => {
+      await server.close();
+      await dashboard?.close();
+    },
+  };
+}
+
+async function serveHttp({ config, deps, dashboardDir }: CommandContext): Promise<Serving> {
+  const dir = config.dashboard ? dashboardDir() : null;
   // One server per MCP session, all on the dependencies of this process.
   const handle = await startHttpTransport({
     config,
     logger: deps.logger,
     createServer: () => createMcpServer(config, deps).server,
     ...(config.dashboard
-      ? { dashboard: { api: dashboardApi(config, deps, mcpUrl(config.httpHost, config.httpPort)) } }
+      ? {
+          dashboard: {
+            api: dashboardApi(config, deps, mcpUrl(config.httpHost, config.httpPort)),
+            ...(dir === null ? {} : { dir }),
+          },
+        }
       : {}),
   });
-  return { endpoint: handle.url, close: () => handle.close() };
+  if (config.dashboard && dir === null) {
+    warnDashboardFilesMissing(deps);
+  }
+  return {
+    endpoint: handle.url,
+    ...(dir === null ? {} : { dashboard: dashboardUrl(config.httpHost, handle.port) }),
+    close: () => handle.close(),
+  };
 }
 
 async function serve(context: CommandContext): Promise<number> {
@@ -180,19 +249,24 @@ async function serve(context: CommandContext): Promise<number> {
     }
   };
   try {
-    const serving = await startServing(context, stop);
-    const { endpoint } = serving;
+    const serving =
+      config.transport === 'stdio' ? await serveStdio(context, stop) : await serveHttp(context);
+    const { endpoint, dashboard } = serving;
     io.stderr.write(
       renderBanner(
         {
           version: VERSION,
           transport: config.transport,
           ...(endpoint === undefined ? {} : { endpoint }),
+          ...(dashboard === undefined ? {} : { dashboard }),
           cdp: debugPortEndpoint(config.cdpHost, config.cdpPort),
         },
         { color: colorEnabled(env, io.stderr) },
       ),
     );
+    if (dashboard !== undefined) {
+      deps.logger.info({ url: dashboard }, 'The dashboard is served');
+    }
     const reason = await stop.promise;
     // A second signal now gets Node's default handling, which ends the process at once: the way
     // out of a shutdown that hangs.
@@ -260,7 +334,8 @@ export async function runCli(
     return 2;
   }
 
-  const shared = createServerDeps(config, deps);
+  const { dashboardDir, ...given } = deps;
+  const shared = createServerDeps(config, given);
   const fatal = deferred<number>();
   let ended = false;
   const unlisten = FATAL_EVENTS.map((event) =>
@@ -277,7 +352,13 @@ export async function runCli(
   );
   try {
     return await Promise.race([
-      COMMANDS[command]({ config, deps: shared, io, env }),
+      COMMANDS[command]({
+        config,
+        deps: shared,
+        io,
+        env,
+        dashboardDir: () => (dashboardDir === undefined ? resolveDashboardDir() : dashboardDir),
+      }),
       fatal.promise,
     ]);
   } catch (error) {

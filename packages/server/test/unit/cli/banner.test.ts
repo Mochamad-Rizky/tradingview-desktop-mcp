@@ -36,3 +36,13 @@ test('renderBanner adds colors only when asked, and says the same either way', (
   expect(plain).not.toContain('\u001b[');
   expect(stripVTControlCharacters(colored)).toBe(plain);
 });
+
+test('renderBanner shows where the dashboard is, after the endpoint', () => {
+  const text = renderBanner({ ...HTTP, dashboard: 'http://127.0.0.1:8787/' }, { color: false });
+
+  expect(text).toMatch(/dashboard +http:\/\/127\.0\.0\.1:8787\/\n/);
+  expect(text.indexOf('endpoint')).toBeLessThan(text.indexOf('dashboard'));
+  expect(text.indexOf('dashboard')).toBeLessThan(text.indexOf('cdp'));
+  // Without a dashboard there is no row for it.
+  expect(renderBanner(HTTP, { color: false })).not.toContain('dashboard');
+});
