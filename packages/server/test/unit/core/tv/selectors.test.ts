@@ -200,10 +200,11 @@ describe('SELECTORS', () => {
     expect(SELECTORS.windowChrome).toEqual({
       tab: 'div.tab[draggable="true"][id]',
       // The tab strip of the notes of Plan 3 (section 3.1): every tab in the order of the strip,
-      // the title of a tab and its close button.
+      // the title of a tab, the symbol a chart tab shows in it, and its close button.
       tabs: 'div.tabs-container > div.tab[id]',
       activeTab: 'div.tab.active',
       tabTitle: '.tab-title',
+      tabSymbol: 'span.symbol',
       tabCloseButton: 'button.tab-close-button',
       newTab: 'button.create-new-tab-button',
       newWindow: '#new-window-button',
