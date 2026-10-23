@@ -263,7 +263,8 @@ export const drawingRemove = defineTool({
     'not, and without a dialog. A drawing this session drew with drawing_create goes without ' +
     "more ado; any other one was the user's and needs confirm: true, else the call fails with " +
     'CONFIRMATION_REQUIRED and changes nothing. Returns removed, the id. An id that is not a ' +
-    'drawing on the chart fails with INVALID_INPUT; take ids from drawing_list.',
+    'drawing on the chart fails with INVALID_INPUT; take ids from drawing_list. A removal the ' +
+    'chart cannot list its drawings after is not confirmed: NOT_AVAILABLE, check drawing_list.',
   inputSchema: {
     id: idInput(),
     confirm: z
@@ -314,7 +315,8 @@ export const drawingClearAll = defineTool({
     "drawing_list reports, the user's own among them, and needs confirm: true, else the call " +
     'fails with CONFIRMATION_REQUIRED (error.details says how many drawings there are, and how ' +
     'many this session drew) and changes nothing. Returns removed, how many drawings went, and ' +
-    'failed, the ids of drawings TradingView kept.',
+    'failed, the ids of drawings TradingView kept. Removals the chart cannot list its drawings ' +
+    'after are not confirmed: NOT_AVAILABLE, check drawing_list.',
   inputSchema: {
     scope: z
       .enum(['created_by_mcp', 'all'])

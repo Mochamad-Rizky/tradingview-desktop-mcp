@@ -121,6 +121,28 @@ function userShapes(count: number): FixtureShape[] {
   }));
 }
 
+// Makes getAllShapes of the chart throw once removeEntity has been called, as a chart that can no
+// longer list its drawings after a removal.
+function failListingAfterRemoval(win: FakeTvWindow): void {
+  const chart = win.TradingViewApi?.activeChart();
+  if (chart === undefined) {
+    throw new Error('The fake window has no chart');
+  }
+  const remove = chart.removeEntity.bind(chart);
+  const list = chart.getAllShapes.bind(chart);
+  let removing = false;
+  chart.removeEntity = (id, options) => {
+    removing = true;
+    remove(id, options);
+  };
+  chart.getAllShapes = () => {
+    if (removing) {
+      throw new Error('busy');
+    }
+    return list();
+  };
+}
+
 // The properties of a shape like the rectangle of the fake app, without `key`.
 function withoutKey(key: string): Record<string, string | number | boolean> {
   const properties: Record<string, string | number | boolean> = {
@@ -638,6 +660,22 @@ describe('drawing_remove', () => {
     expect(calls(win, 'chart.removeEntity')).toEqual([]);
   });
 
+  test('drawing_remove of a drawing the chart cannot list afterwards reports it unconfirmed, and the session keeps it', async () => {
+    const { client, win, session } = await startHarness();
+    await callTool(client, 'drawing_create', { shape: 'horizontal_line', points: pointsOf(1) });
+    failListingAfterRemoval(win);
+
+    const result = await callTool(client, 'drawing_remove', { id: 'DRW001' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: 'Check drawing_list.',
+      details: { id: 'DRW001' },
+    });
+    expect(calls(win, 'chart.removeEntity')).toEqual([['DRW001']]);
+    expect(session.createdDrawingIds).toEqual(new Set(['DRW001']));
+  });
+
   test('drawing_remove of a drawing the session created needs no confirm, and the session forgets it', async () => {
     const { client, win, session } = await startHarness();
     await callTool(client, 'drawing_create', { shape: 'horizontal_line', points: pointsOf(1) });
@@ -686,6 +724,37 @@ describe('drawing_clear_all', () => {
     expect(dataOf(result)).toEqual({ removed: 1, failed: [] });
     expect(calls(win, 'chart.removeEntity')).toEqual([['DRW001']]);
     expect(session.createdDrawingIds).toEqual(new Set(['ELSE01']));
+  });
+
+  test('clear_all created_by_mcp with nothing drawn by the session removes nothing', async () => {
+    const { client, win, session } = await startHarness();
+
+    const result = await callTool(client, 'drawing_clear_all', { scope: 'created_by_mcp' });
+
+    expect(dataOf(result)).toEqual({ removed: 0, failed: [] });
+    expect(calls(win, 'chart.removeEntity')).toEqual([]);
+    expect(shapesOn(win)).toEqual(['SHAPE01', 'SHAPE02', 'SHAPE03']);
+    expect(session.createdDrawingIds.size).toBe(0);
+  });
+
+  test('clear_all created_by_mcp reports removals the chart cannot list afterwards as unconfirmed, and the session keeps them', async () => {
+    const { client, win, session } = await startHarness();
+    for (const count of [1, 2]) {
+      await callTool(client, 'drawing_create', {
+        shape: count === 1 ? 'horizontal_line' : 'trend_line',
+        points: pointsOf(count),
+      });
+    }
+    failListingAfterRemoval(win);
+
+    const result = await callTool(client, 'drawing_clear_all', { scope: 'created_by_mcp' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      hint: 'Check drawing_list.',
+      details: { ids: ['DRW001', 'DRW002'] },
+    });
+    expect(session.createdDrawingIds).toEqual(new Set(['DRW001', 'DRW002']));
   });
 
   test('clear_all all requires confirm', async () => {

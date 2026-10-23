@@ -598,7 +598,8 @@ export function createDrawing(
 // Removes one drawing with removeEntity, the way the user could undo, which removes a locked one
 // too; without confirmed it only checks that the drawing is there and removes nothing. Answers
 // whether it removed it and the type of the drawing. An id that is not a drawing of the chart is
-// INVALID_INPUT either way, and a drawing that is still there afterwards NOT_AVAILABLE.
+// INVALID_INPUT either way, and a drawing that is still there afterwards NOT_AVAILABLE, as is a
+// removal after which the drawings cannot be listed: it is not confirmed.
 export function removeDrawing(
   win: TvWindow,
   chartIndex: number | null,
@@ -625,13 +626,15 @@ export function removeDrawing(
       },
     };
   }
-  const entryOf = (): { name?: unknown } | undefined => {
+  // The drawings getAllShapes lists, null when it throws or answers no list.
+  const listing = (): unknown[] | null => {
     const listed = attempt(() => chart.getAllShapes?.());
-    return (Array.isArray(listed) ? (listed as unknown[]) : []).find(
-      (item) => (item as { id?: unknown } | null | undefined)?.id === id,
-    ) as { name?: unknown } | undefined;
+    return Array.isArray(listed) ? (listed as unknown[]) : null;
   };
-  const entry = entryOf();
+  const entryIn = (listed: unknown[] | null): { name?: unknown } | undefined =>
+    (listed ?? []).find((item) => (item as { id?: unknown } | null | undefined)?.id === id) as
+      { name?: unknown } | undefined;
+  const entry = entryIn(listing());
   if (entry === undefined) {
     return {
       __tvmcpError: {
@@ -659,7 +662,18 @@ export function removeDrawing(
       },
     };
   }
-  if (entryOf() !== undefined) {
+  const after = listing();
+  if (after === null) {
+    return {
+      __tvmcpError: {
+        code: 'NOT_AVAILABLE',
+        message: `TradingView took the removal of the drawing ${id}, but the drawings of the chart could not be listed afterwards to confirm it`,
+        hint: 'Check drawing_list.',
+        details: { id },
+      },
+    };
+  }
+  if (entryIn(after) !== undefined) {
     return {
       __tvmcpError: {
         code: 'NOT_AVAILABLE',
@@ -675,7 +689,8 @@ export function removeDrawing(
 // Removes drawings one by one with removeEntity, the way the user could undo, locked ones
 // included: those of `ids` that are on the chart, or with null every drawing getAllShapes lists.
 // Answers the ids it removed and those still there afterwards, in the order it went through them.
-// An id of `ids` that is not on the chart is passed over.
+// An id of `ids` that is not on the chart is passed over. Removals after which the drawings cannot
+// be listed are NOT_AVAILABLE: none of them is confirmed.
 export function removeDrawings(
   win: TvWindow,
   chartIndex: number | null,
@@ -698,22 +713,30 @@ export function removeDrawings(
     };
   }
   const found = chart;
-  const listedIds = (): Set<string> => {
+  // The ids getAllShapes lists, null when it throws or answers no list.
+  const listedIds = (): Set<string> | null => {
     let listed: unknown;
     try {
       listed = found.getAllShapes?.();
     } catch {
-      listed = [];
+      return null;
+    }
+    if (!Array.isArray(listed)) {
+      return null;
     }
     return new Set(
-      (Array.isArray(listed) ? (listed as unknown[]) : []).flatMap((entry) => {
+      (listed as unknown[]).flatMap((entry) => {
         const id: unknown = (entry as { id?: unknown } | null | undefined)?.id;
         return typeof id === 'string' ? [id] : [];
       }),
     );
   };
-  const before = listedIds();
+  // A list that cannot be read holds no drawings to remove.
+  const before = listedIds() ?? new Set<string>();
   const targets = ids === null ? [...before] : ids.filter((id) => before.has(id));
+  if (targets.length === 0) {
+    return { removed: [], failed: [] };
+  }
   for (const id of targets) {
     try {
       found.removeEntity?.(id);
@@ -722,6 +745,16 @@ export function removeDrawings(
     }
   }
   const after = listedIds();
+  if (after === null) {
+    return {
+      __tvmcpError: {
+        code: 'NOT_AVAILABLE',
+        message: `TradingView took the removal of ${String(targets.length)} ${targets.length === 1 ? 'drawing' : 'drawings'}, but the drawings of the chart could not be listed afterwards to confirm it`,
+        hint: 'Check drawing_list.',
+        details: { ids: targets },
+      },
+    };
+  }
   return {
     removed: targets.filter((id) => !after.has(id)),
     failed: targets.filter((id) => after.has(id)),

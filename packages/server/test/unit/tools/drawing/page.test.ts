@@ -160,6 +160,20 @@ function changed(
   };
 }
 
+// A fake chart whose getAllShapes answers as the app does the first time, and with `listing` every
+// time after: a list that can no longer be read once a removal has gone out.
+function listsAfterRemovalWith(listing: () => unknown): Make {
+  return changed((api) => {
+    const chartApi = api.activeChart();
+    const list = chartApi.getAllShapes.bind(chartApi);
+    let looks = 0;
+    chartApi.getAllShapes = () => {
+      looks += 1;
+      return (looks === 1 ? list() : listing()) as ReturnType<typeof list>;
+    };
+  });
+}
+
 function request(change: Partial<DrawingRequest> = {}): DrawingRequest {
   return {
     shape: 'horizontal_line',
@@ -1003,6 +1017,31 @@ describe('removeDrawing', () => {
     );
   });
 
+  test('a removal the drawings cannot be listed after is NOT_AVAILABLE, never removed', async () => {
+    for (const listing of [
+      () => {
+        throw new Error('busy');
+      },
+      () => 'nonsense',
+    ]) {
+      const { error, win } = await failureOfBoth(
+        removeDrawing,
+        [null, 'SHAPE02', true],
+        listsAfterRemovalWith(listing),
+      );
+
+      expect(error.toPayload()).toEqual({
+        code: 'NOT_AVAILABLE',
+        message:
+          'TradingView took the removal of the drawing SHAPE02, but the drawings of the chart ' +
+          'could not be listed afterwards to confirm it',
+        hint: 'Check drawing_list.',
+        details: { id: 'SHAPE02' },
+      });
+      expect(calls(win, 'chart.removeEntity')).toEqual([['SHAPE02']]);
+    }
+  });
+
   test('a page without the chart API to remove drawings with is CAPABILITY_UNAVAILABLE', async () => {
     const { error } = await failureOfBoth(
       removeDrawing,
@@ -1061,6 +1100,51 @@ describe('removeDrawings', () => {
     const { result } = await resultOf(removeDrawings, [null, null], make);
 
     expect(result).toEqual({ removed: ['SHAPE01'], failed: ['SHAPE02', 'SHAPE03'] });
+  });
+
+  test('removals the drawings cannot be listed after are NOT_AVAILABLE, none of them removed', async () => {
+    for (const listing of [
+      () => {
+        throw new Error('busy');
+      },
+      () => 'nonsense',
+    ]) {
+      const { error, win } = await failureOfBoth(
+        removeDrawings,
+        [null, ['SHAPE03', 'SHAPE01']],
+        listsAfterRemovalWith(listing),
+      );
+
+      expect(error.toPayload()).toEqual({
+        code: 'NOT_AVAILABLE',
+        message:
+          'TradingView took the removal of 2 drawings, but the drawings of the chart could not ' +
+          'be listed afterwards to confirm it',
+        hint: 'Check drawing_list.',
+        details: { ids: ['SHAPE03', 'SHAPE01'] },
+      });
+      expect(calls(win, 'chart.removeEntity')).toEqual([['SHAPE03'], ['SHAPE01']]);
+    }
+  });
+
+  test('nothing to remove needs no listing afterwards, and an empty list of ids removes nothing', async () => {
+    const { result, win } = await resultOf(removeDrawings, [null, []], chart());
+    const unlisted = await resultOf(
+      removeDrawings,
+      [null, ['GONE01']],
+      listsAfterRemovalWith(() => {
+        throw new Error('busy');
+      }),
+    );
+
+    expect(result).toEqual({ removed: [], failed: [] });
+    expect(calls(win, 'chart.removeEntity')).toEqual([]);
+    expect(inspectFakeWindow(win).state.drawings.list.map(({ id }) => id)).toEqual([
+      'SHAPE01',
+      'SHAPE02',
+      'SHAPE03',
+    ]);
+    expect(unlisted.result).toEqual({ removed: [], failed: [] });
   });
 
   test('a page without the chart API is CAPABILITY_UNAVAILABLE', async () => {
