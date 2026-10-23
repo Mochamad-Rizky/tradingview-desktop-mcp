@@ -106,3 +106,44 @@ export function readChartBox(
   }
   return { box, byPosition };
 }
+
+// Where the tab strip is in the window chrome: the box of its element (`stripSelector`) in CSS
+// pixels, from the top left of the viewport. The window chrome spans the whole window and the strip
+// only its top (seen on the app), so a capture of the window is cut to this box. NOT_AVAILABLE when
+// the page shows no strip, or one without a size. It runs in the window chrome, whose renderer has
+// Node integration, and reads its DOM and nothing else.
+export function readStripBox(
+  win: TvWindow,
+  stripSelector: string,
+): { box: { x: number; y: number; width: number; height: number } } | PageErrorSentinel {
+  let rect: { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | null | undefined;
+  try {
+    const strip = win.document.querySelector?.(stripSelector) as
+      Partial<BoxElementLike> | null | undefined;
+    rect = strip?.getBoundingClientRect?.();
+  } catch {
+    rect = undefined;
+  }
+  const { x, y, width, height } = rect ?? {};
+  if (
+    typeof x === 'number' &&
+    Number.isFinite(x) &&
+    typeof y === 'number' &&
+    Number.isFinite(y) &&
+    typeof width === 'number' &&
+    Number.isFinite(width) &&
+    width > 0 &&
+    typeof height === 'number' &&
+    Number.isFinite(height) &&
+    height > 0
+  ) {
+    return { box: { x, y, width, height } };
+  }
+  return {
+    __tvmcpError: {
+      code: 'NOT_AVAILABLE',
+      message: 'The window chrome shows no tab strip to capture',
+      hint: 'Check app_health: the window of TradingView may still be loading.',
+    },
+  };
+}

@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Logger } from '../../../src/core/logger.js';
 import { createMcpServer } from '../../../src/server.js';
+import { readStripBox } from '../../../src/tools/screenshot/page.js';
 import { solidImage } from '../../helpers/fake-cdp/images.js';
 import { CDP_ERROR } from '../../helpers/fake-cdp/protocol.js';
 import {
@@ -11,9 +12,10 @@ import {
   type FakeCdpServer,
 } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
-import type { FakeRect } from '../../helpers/fake-tv/dom.js';
+import { createFakeDomWindow, fakeElement, type FakeRect } from '../../helpers/fake-tv/dom.js';
 import { loadTvFixture, type TvStateFixture } from '../../helpers/fake-tv/fixture.js';
 import type { FakeScreenOptions } from '../../helpers/fake-tv/screen.js';
+import { createFakeWindowChrome, STRIP_HEIGHT } from '../../helpers/fake-tv/window-chrome.js';
 import { createFakeTvWindow, inspectFakeWindow } from '../../helpers/fake-tv/window.js';
 import { callTool, connectInMemoryClient, textOf } from '../../helpers/mcp-client.js';
 import {
@@ -116,16 +118,23 @@ async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   return { client: await connect(server), app, events: () => ctx.events.recent() };
 }
 
-// A window chrome page of the given size, which has nothing of the chart API: should the tool run
-// page code in it, the fake debug port would show an evaluation.
+// A window chrome page as large as the window, with the tab strip at its top (seen on the app), and
+// nothing of the chart API.
 function chromeOf(width: number, height: number, devicePixelRatio: number): () => object {
-  return () => ({
-    innerWidth: width,
-    innerHeight: height,
-    devicePixelRatio,
-    location: { href: 'file:///app.asar/app/window/index.html' },
-    document: { visibilityState: 'visible' },
-  });
+  return () =>
+    Object.assign(
+      createFakeDomWindow(
+        [
+          fakeElement({
+            tag: 'header',
+            matches: ['header.header'],
+            rect: { x: 0, y: 0, width, height: STRIP_HEIGHT },
+          }),
+        ],
+        { viewport: { width, height } },
+      ),
+      { devicePixelRatio, location: { href: 'file:///app.asar/app/window/index.html' } },
+    );
 }
 
 interface Envelope {
@@ -277,7 +286,7 @@ describe('screenshot_capture', () => {
     {
       target: 'window',
       targetId: CHROME_ID,
-      options: (): HarnessOptions => ({ chromeWindow: chromeOf(1600, 34, 2) }),
+      options: (): HarnessOptions => ({ chromeWindow: chromeOf(1600, 1000, 2) }),
       clip: { x: 0, y: 0, width: 1600, height: 34, scale: 0.25 },
       size: { width: 800, height: 17 },
     },
@@ -342,9 +351,9 @@ describe('screenshot_capture', () => {
     expect(capturesOf(app)).toEqual([]);
   });
 
-  test('page captures the whole chart tab and window captures the window chrome target', async () => {
+  test('page captures the whole chart tab and window the tab strip at the top of the window chrome', async () => {
     const win = screen({ width: 1280, height: 720, devicePixelRatio: 1 });
-    const { client, app } = await startHarness({ win, chromeWindow: chromeOf(1280, 34, 1) });
+    const { client, app } = await startHarness({ win, chromeWindow: chromeOf(1280, 800, 1) });
 
     const page = await callTool(client, 'screenshot_capture', { target: 'page' });
     const chrome = await callTool(client, 'screenshot_capture', { target: 'window' });
@@ -352,20 +361,57 @@ describe('screenshot_capture', () => {
     expect(dataOf(page)).toMatchObject({ target: 'page' });
     expect(dataOf(chrome)).toMatchObject({ target: 'window' });
     expectImage(page, { width: 1280, height: 720 });
+    // The window chrome spans the whole window, and nothing but the strip at its top shows.
     expectImage(chrome, { width: 1280, height: 34 });
-    // Each is captured in its own target, as the page shows itself.
+    // Each is captured in its own target.
     expect(capturesOf(app, CHART_ID)).toEqual([{ format: 'png', captureBeyondViewport: false }]);
-    expect(capturesOf(app, CHROME_ID)).toEqual([{ format: 'png', captureBeyondViewport: false }]);
+    expect(capturesOf(app, CHROME_ID)).toEqual([
+      {
+        format: 'png',
+        captureBeyondViewport: false,
+        clip: { x: 0, y: 0, width: 1280, height: 34, scale: 1 },
+      },
+    ]);
   });
 
-  test('window evaluates nothing in the window chrome, which has Node integration', async () => {
-    const { client, app } = await startHarness({ chromeWindow: chromeOf(1280, 34, 1) });
+  test('window reads only the box of the strip in the window chrome, which has Node integration', async () => {
+    const chrome = createFakeWindowChrome({
+      tabs: [{ id: 'TAB1', title: ['AAPL', 'Fixture Layout'] }],
+      active: 'TAB1',
+    });
+    const { client, app } = await startHarness({ chromeWindow: () => chrome.window });
 
-    await callTool(client, 'screenshot_capture', { target: 'window', maxWidth: 400 });
+    const result = await callTool(client, 'screenshot_capture', {
+      target: 'window',
+      maxWidth: 400,
+    });
 
-    expect(methodsOf(app, CHROME_ID)).toEqual(['Page.getLayoutMetrics', 'Page.captureScreenshot']);
+    expect(result.isError).not.toBe(true);
+    expect(methodsOf(app, CHROME_ID)).toEqual([
+      'Runtime.evaluate',
+      'Page.getLayoutMetrics',
+      'Page.captureScreenshot',
+    ]);
+    const [evaluated] = app.calls.filter(
+      (call) => call.targetId === CHROME_ID && call.method === 'Runtime.evaluate',
+    );
+    expect((evaluated?.params as { expression: string }).expression).toBe(
+      `(${readStripBox.toString()})(window, ...${JSON.stringify(['header.header'])})`,
+    );
+    expect(chrome.nodeAccess).toEqual([]);
     // Nor did it open a session to the chart tab for it.
     expect(methodsOf(app, CHART_ID)).toEqual([]);
+  });
+
+  test('window fails NOT_AVAILABLE, and captures nothing, when the window chrome shows no strip', async () => {
+    const { client, app } = await startHarness({
+      chromeWindow: () => createFakeDomWindow([], { viewport: { width: 1280, height: 800 } }),
+    });
+
+    const result = await callTool(client, 'screenshot_capture', { target: 'window' });
+
+    expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE' });
+    expect(capturesOf(app, CHROME_ID)).toEqual([]);
   });
 
   test('jpeg uses quality 80 and png none', async () => {
@@ -462,7 +508,7 @@ describe('screenshot_capture', () => {
   test.each(['page', 'window'])(
     'chartIndex is ignored for the %s target, with a warning',
     async (target) => {
-      const { client } = await startHarness({ chromeWindow: chromeOf(1280, 34, 1) });
+      const { client } = await startHarness({ chromeWindow: chromeOf(1280, 800, 1) });
 
       // The layout has one chart, so 5 would be refused for the chart target.
       const result = await callTool(client, 'screenshot_capture', { target, chartIndex: 5 });
@@ -876,7 +922,7 @@ describe('screenshot_capture on a tab that is hidden', () => {
 
   test('the window chrome does not depend on the chart tab being in front', async () => {
     const win = createFakeTvWindow(fixture, { visibilityState: 'hidden' });
-    const { client, app } = await startHarness({ win, chromeWindow: chromeOf(1280, 34, 1) });
+    const { client, app } = await startHarness({ win, chromeWindow: chromeOf(1280, 800, 1) });
 
     const result = await callTool(client, 'screenshot_capture', { target: 'window' });
 
@@ -908,7 +954,7 @@ describe('screenshot_capture and the size of the image', () => {
   });
 
   test('a capture under 1920 pixels wide is left as it is when maxWidth is left out', async () => {
-    const { client, app } = await startHarness({ chromeWindow: chromeOf(1280, 34, 1) });
+    const { client, app } = await startHarness({ chromeWindow: chromeOf(1280, 800, 1) });
 
     const page = await callTool(client, 'screenshot_capture', { target: 'page' });
     const chrome = await callTool(client, 'screenshot_capture', { target: 'window' });
@@ -917,7 +963,11 @@ describe('screenshot_capture and the size of the image', () => {
     expectImage(chrome, { width: 1280, height: 34 });
     expect(capturesOf(app).concat(capturesOf(app, CHROME_ID))).toEqual([
       { format: 'png', captureBeyondViewport: false },
-      { format: 'png', captureBeyondViewport: false },
+      {
+        format: 'png',
+        captureBeyondViewport: false,
+        clip: { x: 0, y: 0, width: 1280, height: 34, scale: 1 },
+      },
     ]);
   });
 

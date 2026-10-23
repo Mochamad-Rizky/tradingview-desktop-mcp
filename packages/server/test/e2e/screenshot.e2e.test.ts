@@ -214,7 +214,8 @@ describe.skipIf(!e2eEnabled())('screenshot_capture against TradingView Desktop',
     const capture = captureOf(result);
     expect(imageOf(result)).toEqual({ mimeType: 'image/png', hasData: true });
     expect(capture.target).toBe('window');
-    expect(capture.width).toBeGreaterThan(capture.height);
+    // Cut to the strip at the top of the window chrome, which spans the whole window.
+    expect(capture.height * 10 < capture.width, 'the capture is cut to the tab strip').toBe(true);
     observe('screenshot of the window chrome', {
       width: capture.width,
       height: capture.height,

@@ -20,7 +20,8 @@ import {
 // a title of its own and no span.symbol, as seen on the app) and its close button
 // (button.tab-close-button, "Close"), which the shell renders the way the app does: not on a pinned
 // tab, not on the only tab of the last window, and on a tab that is not active only at the normal
-// size. The page is 34 CSS pixels high, at a zoom of 1 (the app keeps its local pages at 1).
+// size. The page spans the whole window, the strip its top 34 CSS pixels and nothing below it, at a
+// zoom of 1 (the app keeps its local pages at 1), as seen on the app.
 //
 // The shell, as the notes record it (section 3.1): a left click on a tab, pressed and released on
 // it once, makes it the active tab; a left click on its close button closes it, unless its page
@@ -164,7 +165,9 @@ export function tabPartSelector(tabId: string, part: string): string {
   return `div.tab[id=${quotedId(tabId)}] ${part}`;
 }
 
-const VIEWPORT = { width: 1280, height: 34 };
+const VIEWPORT = { width: 1280, height: 800 };
+// How high the strip is, at the top of the page.
+export const STRIP_HEIGHT = 34;
 const TRAFFIC_LIGHTS = 76;
 const TAB_WIDTH: Record<FakeTabSize, number> = {
   normal: 200,
@@ -316,8 +319,8 @@ export function createFakeWindowChrome(options: FakeWindowChromeOptions): FakeWi
         fakeElement({ tag: 'html', rect: box(0, 0, VIEWPORT.width, VIEWPORT.height) }),
         fakeElement({
           tag: 'header',
-          matches: ['header.header'],
-          rect: box(0, 0, VIEWPORT.width, VIEWPORT.height),
+          matches: [SELECTORS.windowChrome.strip],
+          rect: box(0, 0, VIEWPORT.width, STRIP_HEIGHT),
           children: [
             fakeElement({ matches: ['div.darwin'], rect: box(0, 0, TRAFFIC_LIGHTS, 34) }),
             fakeElement({

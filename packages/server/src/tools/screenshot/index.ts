@@ -16,7 +16,7 @@ import {
   outputSize,
   type Box,
 } from './mappers.js';
-import { readChartBox } from './page.js';
+import { readChartBox, readStripBox } from './page.js';
 
 // The tool that takes a picture of the app (design spec 7, domain Screenshot). The picture is a
 // capture over CDP of what is on the screen: TradingView's own screenshot functions are not used,
@@ -81,8 +81,9 @@ export const screenshotCapture = defineTool({
     'picture. target chart (default) is the chart container of the active chart, or of ' +
     'chartIndex: the chart with its legend, panes and scales, without the toolbars. target page ' +
     'is the chart tab as it is shown, toolbars, side panels and open dialogs included. target ' +
-    'window is the window chrome, the strip with the tabs, which shows the titles of the open ' +
-    'tabs (symbols and prices). chartIndex is only used with target chart. Returns target, ' +
+    'window is the strip with the tabs at the top of the window, which shows the titles of the ' +
+    'open tabs (symbols and prices): the window chrome spans the whole window, and the capture is ' +
+    'cut to its strip. chartIndex is only used with target chart. Returns target, ' +
     'format, width and height (the pixels of the image, read from the image itself: a 2x ' +
     'display has two for each CSS pixel, so an image can be wider than the area looks) and ' +
     'bytes (the size of the encoded image). The image is a png, which keeps every pixel, or a ' +
@@ -101,7 +102,7 @@ export const screenshotCapture = defineTool({
       .describe(
         'What to capture: chart (default) is the chart container of the active chart, or of ' +
           'chartIndex; page is the chart tab as it is shown, with its toolbars, panels and ' +
-          'dialogs; window is the window chrome, the strip with the tabs.',
+          'dialogs; window is the strip with the tabs at the top of the window.',
       ),
     format: z
       .enum(FORMATS)
@@ -139,9 +140,13 @@ export const screenshotCapture = defineTool({
         ? await ctx.connection.windowChromePage()
         : await ctx.connection.chartPage();
     // What the caller asked for, in CSS pixels from the top left of the viewport: the box of the
-    // chart for a chart, and the whole viewport otherwise (which takes the viewport to know).
-    let chartBox: Box | undefined;
-    if (target === 'chart') {
+    // chart for a chart, the box of the tab strip for the window, whose page spans the whole window
+    // with nothing below the strip, and the whole viewport for the page (which takes the viewport
+    // to know).
+    let part: Box | undefined;
+    if (target === 'window') {
+      part = (await page.bridge.evaluate(readStripBox, [SELECTORS.windowChrome.strip])).box;
+    } else if (target === 'chart') {
       // The index is checked against the layout before anything is looked at or captured, and
       // readChartBox refuses a hidden tab before it looks for the chart.
       const chart = await resolveChartTarget(page, chartIndex);
@@ -149,23 +154,20 @@ export const screenshotCapture = defineTool({
         chart.index,
         SELECTORS.regions.chartContainer,
       ]);
-      chartBox = found.box;
+      part = found.box;
       if (found.byPosition) {
         warnings.push(
           'The app did not name the container of the chart, so the chart container at the same ' +
             'position in the page was captured. It may not be the chart you meant.',
         );
       }
-    } else if (
-      target === 'page' &&
-      (await page.bridge.evaluate(readVisibilityState, [])) === 'hidden'
-    ) {
+    } else if ((await page.bridge.evaluate(readVisibilityState, [])) === 'hidden') {
       throw tabHidden();
     }
     const viewport = await readViewport(page.session);
 
-    // A capture does not go beyond the viewport, so a chart that reaches out of it is cut to it.
-    const wanted = chartBox ?? { x: 0, y: 0, width: viewport.width, height: viewport.height };
+    // A capture does not go beyond the viewport, so a part that reaches out of it is cut to it.
+    const wanted = part ?? { x: 0, y: 0, width: viewport.width, height: viewport.height };
     const visible = clampToViewport(wanted, viewport);
     if (visible === null) {
       throw outsideTheViewport();
@@ -179,9 +181,9 @@ export const screenshotCapture = defineTool({
     const area = visible.box;
     const scale = captureScale(area.width, viewport.devicePixelRatio, maxWidth);
 
-    // A clip is how Chrome is told which part to take and how much to scale it. Only a chart is a
-    // part. The page and the window are taken as they are shown, unless they have to be scaled
-    // down, and for that a clip of all of the viewport is the only way. The clip is in DIPs and in
+    // A clip is how Chrome is told which part to take and how much to scale it: a chart, or the
+    // strip of the window. The page is taken as it is shown, unless it has to be scaled down, and
+    // for that a clip of all of the viewport is the only way. The clip is in DIPs and in
     // the space of the page (see clipOf), which at the default zoom of an unscrolled page are the
     // CSS pixels of the viewport. That Chrome reads a clip so, and that the zoom of the metrics is
     // the DIPs in a CSS pixel, is what the protocol and the source of Chrome say; on the real app
@@ -190,7 +192,7 @@ export const screenshotCapture = defineTool({
       format,
       ...(format === 'jpeg' ? { quality: JPEG_QUALITY } : {}),
       captureBeyondViewport: false,
-      ...(chartBox !== undefined || scale < 1 ? { clip: clipOf(area, viewport, scale) } : {}),
+      ...(part !== undefined || scale < 1 ? { clip: clipOf(area, viewport, scale) } : {}),
     });
     if (data === '') {
       throw new TvMcpError('NOT_AVAILABLE', 'The page answered the capture without an image', {

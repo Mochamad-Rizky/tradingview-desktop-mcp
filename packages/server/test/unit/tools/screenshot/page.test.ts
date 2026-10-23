@@ -7,12 +7,13 @@ import {
 } from '../../../../src/core/tv/page-bridge.js';
 import { SELECTORS } from '../../../../src/core/tv/selectors.js';
 import type { TvWindow } from '../../../../src/core/tv/tv-window.js';
-import { readChartBox } from '../../../../src/tools/screenshot/page.js';
+import { readChartBox, readStripBox } from '../../../../src/tools/screenshot/page.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
-import type { FakeRect } from '../../../helpers/fake-tv/dom.js';
+import { createFakeDomWindow, fakeElement, type FakeRect } from '../../../helpers/fake-tv/dom.js';
 import { loadTvFixture, type TvStateFixture } from '../../../helpers/fake-tv/fixture.js';
+import { createFakeWindowChrome, STRIP_HEIGHT } from '../../../helpers/fake-tv/window-chrome.js';
 import {
   createFakeTvWindow,
   inspectFakeWindow,
@@ -508,4 +509,55 @@ test('readChartBox changes nothing on the page', async () => {
 
   expect(inspectFakeWindow(win).calls).toEqual([]);
   expect(inspectFakeWindow(win).state.activeChartIndex).toBe(0);
+});
+
+describe('readStripBox', () => {
+  const STRIP = SELECTORS.windowChrome.strip;
+  const chrome = () =>
+    createFakeWindowChrome({ tabs: [{ id: 'TAB1', title: ['AAPL', 'Layout'] }], active: 'TAB1' });
+  // A window chrome whose strip is `strip`, or that has none.
+  const pageWith =
+    (strip: ReturnType<typeof fakeElement> | null): Make =>
+    () =>
+      createFakeDomWindow(strip === null ? [] : [strip], {
+        viewport: { width: 1280, height: 800 },
+      });
+
+  test('returns the box of the tab strip at the top of the window chrome, which spans the window', async () => {
+    expect(await resultOf(readStripBox, [STRIP], () => chrome().window)).toEqual({
+      box: { x: 0, y: 0, width: 1280, height: STRIP_HEIGHT },
+    });
+  });
+
+  test('fails NOT_AVAILABLE on a window chrome without a strip, or with one of no size', async () => {
+    const pages = [
+      pageWith(null),
+      pageWith(
+        fakeElement({
+          tag: 'header',
+          matches: [STRIP],
+          rect: { x: 0, y: 0, width: 1280, height: 0 },
+        }),
+      ),
+      () => ({ document: { visibilityState: 'visible' } }),
+    ];
+    for (const make of pages) {
+      const error = await failureOfBoth(readStripBox, [STRIP], make);
+
+      expect(error.toPayload()).toEqual({
+        code: 'NOT_AVAILABLE',
+        message: 'The window chrome shows no tab strip to capture',
+        hint: 'Check app_health: the window of TradingView may still be loading.',
+      });
+    }
+  });
+
+  test('reads the DOM only, and nothing of Node, in the window chrome', async () => {
+    const page = chrome();
+
+    await bridgeTo(page.window).evaluate(readStripBox, [STRIP]);
+    readStripBox(page.window as TvWindow, STRIP);
+
+    expect(page.nodeAccess).toEqual([]);
+  });
 });

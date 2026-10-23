@@ -82,7 +82,7 @@ import {
   startReplayViaApi,
   stepReplayViaApi,
 } from '../../tools/replay/page.js';
-import { readChartBox } from '../../tools/screenshot/page.js';
+import { readChartBox, readStripBox } from '../../tools/screenshot/page.js';
 import { readStrategyReport } from '../../tools/strategy/page.js';
 import { readTabs, readUnsavedLayout } from '../../tools/tab/page.js';
 import {
@@ -149,6 +149,7 @@ export const pageFunctions: Record<string, (...args: never[]) => unknown> = {
   readReplayState,
   readSavedLayouts,
   readStrategyReport,
+  readStripBox,
   readStudies,
   readStudyValues,
   readTabs,

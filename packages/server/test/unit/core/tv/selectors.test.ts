@@ -198,6 +198,8 @@ describe('SELECTORS', () => {
 
   test('names the tabs and buttons of the window chrome', () => {
     expect(SELECTORS.windowChrome).toEqual({
+      // The strip at the top of the window chrome, which spans the whole window.
+      strip: 'header.header',
       tab: 'div.tab[draggable="true"][id]',
       // The tab strip of the notes of Plan 3 (section 3.1): every tab in the order of the strip,
       // the title of a tab, the symbol a chart tab shows in it, and its close button.

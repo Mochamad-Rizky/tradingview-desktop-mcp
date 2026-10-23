@@ -142,6 +142,9 @@ export const SELECTORS = {
   // notes of Plan 3 (section 3.1) record it: every tab, whose place among them is its index, the
   // title of a tab and its close button, which the shell shows only on some tabs.
   windowChrome: {
+    // The strip of tabs at the top of the window chrome, which spans the whole window (seen on the
+    // app): what a capture of the window shows.
+    strip: 'header.header',
     tab: 'div.tab[draggable="true"][id]',
     tabs: 'div.tabs-container > div.tab[id]',
     activeTab: 'div.tab.active',
