@@ -139,6 +139,7 @@ const running =
       started: true,
       index,
       shownIndex: index,
+      selectedPoint: time(index),
       ...also,
     });
   };
@@ -176,7 +177,7 @@ const EVERY = [
   ['startReplayViaApi', startReplayViaApi, ['first', null, false, WAIT_MS]],
   ['stepReplayViaApi', stepReplayViaApi, [WAIT_MS]],
   ['setAutoplayViaApi', setAutoplayViaApi, [true, null, WAIT_MS]],
-  ['leaveReplayViaApi', leaveReplayViaApi, [false, WAIT_MS]],
+  ['leaveReplayViaApi', leaveReplayViaApi, [null, WAIT_MS]],
 ] as const;
 
 describe('every page function', () => {
@@ -283,6 +284,7 @@ describe('readReplayState', () => {
       finished: false,
       autoplay: false,
       date: null,
+      selectedPoint: null,
       delayMs: 1000,
       speeds: SPEEDS,
       resolution: '1D',
@@ -310,6 +312,7 @@ describe('readReplayState', () => {
       finished: false,
       autoplay: true,
       date: time(40),
+      selectedPoint: time(40),
       delayMs: 200,
     });
     expect(atEnd).toMatchObject({ started: true, finished: true, date: time(LAST) });
@@ -363,6 +366,7 @@ describe('readReplayState', () => {
           };
           replay.autoplayDelay = () => Number.NaN;
           Reflect.deleteProperty(replay, 'currentDate');
+          Reflect.deleteProperty(replay, 'getReplaySelectedDate');
         },
         () => undefined,
         { replay: { withoutController: true, withoutSessionState: true } },
@@ -376,6 +380,7 @@ describe('readReplayState', () => {
       started: null,
       finished: null,
       date: null,
+      selectedPoint: null,
       delayMs: null,
       speeds: [],
       savedSession: null,
@@ -772,8 +777,8 @@ describe('startReplayViaApi', () => {
         'The layout holds a replay TradingView saved when it was left, so starting replay would ' +
         'open the "continue replay" dialog of TradingView',
       hint:
-        'Nothing was started. Continue or discard the saved replay in TradingView itself (its ' +
-        'replay button asks), then try again.',
+        'Nothing was started. The user continues or discards the saved replay in TradingView ' +
+        'itself (its replay button asks); no tool clears it. Then try again.',
     });
     expect(unknown.message).toBe(
       'TradingView does not tell whether the layout holds a saved replay, which would open its ' +
@@ -1132,10 +1137,10 @@ describe('setAutoplayViaApi', () => {
 });
 
 describe('leaveReplayViaApi', () => {
-  test('stops autoplay first, leaves replay without the dialog and clears the replay TradingView saved when asked', async () => {
+  test('stops autoplay first, leaves replay without the dialog and clears what TradingView saved for the replay the caller started', async () => {
     const { result, win } = await resultOf(
       leaveReplayViaApi,
-      [true, WAIT_MS],
+      [time(40), WAIT_MS],
       chart(running(40, { autoplay: true })),
     );
 
@@ -1155,18 +1160,45 @@ describe('leaveReplayViaApi', () => {
     expect(replayOf(win)).toMatchObject({ started: false, modeOn: false, sessionState: null });
   });
 
-  test('keeps the replay TradingView saved unless asked to clear it', async () => {
-    const { result, win } = await resultOf(leaveReplayViaApi, [false, WAIT_MS], chart(running(40)));
+  test('keeps what TradingView saved when the caller started no replay, or another one than this', async () => {
+    const { result: none, win: noneWin } = await resultOf(
+      leaveReplayViaApi,
+      [null, WAIT_MS],
+      chart(running(40)),
+    );
+    // The replay the caller started began at bar 5; this one began at bar 40.
+    const { result: other, win: otherWin } = await resultOf(
+      leaveReplayViaApi,
+      [time(5), WAIT_MS],
+      chart(running(40)),
+    );
+    // A replay whose start point TradingView does not tell is never taken for the caller's.
+    const { result: unknown, win: unknownWin } = await resultOf(
+      leaveReplayViaApi,
+      [time(40), WAIT_MS],
+      withReplay((replay) => {
+        Reflect.deleteProperty(replay, 'getReplaySelectedDate');
+      }, running(40)),
+    );
 
-    expect(result).toEqual({ left: true, stopped: true, cleared: null });
-    expect(replayOf(win).sessionState).toMatchObject({ replayTime: time(40) });
+    for (const [result, win] of [
+      [none, noneWin],
+      [other, otherWin],
+      [unknown, unknownWin],
+    ] as const) {
+      expect(result).toEqual({ left: true, stopped: true, cleared: null });
+      expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([
+        [expect.objectContaining({ replayTime: time(40) })],
+      ]);
+      expect(replayOf(win).sessionState).toMatchObject({ replayTime: time(40) });
+    }
   });
 
-  test('leaves nothing while replay is off, and clears a replay saved earlier when asked', async () => {
-    const { result: off, win } = await resultOf(leaveReplayViaApi, [false, WAIT_MS], chart());
+  test('leaves nothing while replay is off, and clears nothing then, not even for the replay the caller started', async () => {
+    const { result: off, win } = await resultOf(leaveReplayViaApi, [null, WAIT_MS], chart());
     const { result: saved, win: savedWin } = await resultOf(
       leaveReplayViaApi,
-      [true, WAIT_MS],
+      [time(5), WAIT_MS],
       chart((win) => {
         replayOf(win).sessionState = { replayTime: time(5), replayMode: 'ActiveChart', charts: [] };
       }),
@@ -1174,14 +1206,15 @@ describe('leaveReplayViaApi', () => {
 
     expect(off).toEqual({ left: false, stopped: true, cleared: null });
     expect(callNames(win)).toEqual([]);
-    expect(saved).toEqual({ left: false, stopped: true, cleared: true });
-    expect(callNames(savedWin)).toEqual(['chartWidgetCollection.updateReplaySessionState']);
+    expect(saved).toEqual({ left: false, stopped: true, cleared: null });
+    expect(callNames(savedWin)).toEqual([]);
+    expect(replayOf(savedWin).sessionState).toMatchObject({ replayTime: time(5) });
   });
 
-  test('closes the replay mode TradingView keeps on without a running replay', async () => {
+  test('closes the replay mode TradingView keeps on without a running replay, and clears nothing', async () => {
     const { result, win } = await resultOf(
       leaveReplayViaApi,
-      [false, WAIT_MS],
+      [time(5), WAIT_MS],
       chart((win) => {
         replayOf(win).modeOn = true;
       }),
@@ -1189,12 +1222,13 @@ describe('leaveReplayViaApi', () => {
 
     expect(result).toEqual({ left: true, stopped: true, cleared: null });
     expect(replayOf(win).modeOn).toBe(false);
+    expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([]);
   });
 
   test('answers stopped: false, and clears nothing, when replay does not stop in time', async () => {
     const { result, win } = await resultOf(
       leaveReplayViaApi,
-      [true, SHORT_WAIT_MS],
+      [time(40), SHORT_WAIT_MS],
       withReplay((replay) => {
         replay.leaveReplay = () => undefined;
       }, running(40)),
@@ -1207,12 +1241,12 @@ describe('leaveReplayViaApi', () => {
   test('answers cleared: false when the layout does not let the saved replay be cleared', async () => {
     const { result } = await resultOf(
       leaveReplayViaApi,
-      [true, WAIT_MS],
+      [time(40), WAIT_MS],
       chart(running(40), fixture, { replay: { withoutSessionState: true } }),
     );
     const { result: throwing } = await resultOf(
       leaveReplayViaApi,
-      [true, WAIT_MS],
+      [time(40), WAIT_MS],
       chart((win) => {
         running(40)(win);
         const collection = win.TradingViewApi?._chartWidgetCollection;
@@ -1228,15 +1262,12 @@ describe('leaveReplayViaApi', () => {
     expect(throwing).toEqual({ left: true, stopped: true, cleared: false });
   });
 
-  test('clears nothing when TradingView saved nothing, and reads a replay mode it does not tell as off', async () => {
+  test('clears nothing when TradingView saved nothing for the replay the caller started', async () => {
     const { result, win } = await resultOf(
       leaveReplayViaApi,
-      [true, WAIT_MS],
-      withReplay((replay, win) => {
-        replay.isReplayToolbarVisible = () =>
-          ({ subscribe: () => undefined }) as unknown as ReturnType<
-            FakeReplayApi['isReplayToolbarVisible']
-          >;
+      [time(40), WAIT_MS],
+      chart((win) => {
+        running(40)(win);
         const collection = win.TradingViewApi?._chartWidgetCollection;
         if (collection !== undefined) {
           collection.replaySessionState = () => undefined as unknown as null;
@@ -1244,14 +1275,33 @@ describe('leaveReplayViaApi', () => {
       }),
     );
 
-    expect(result).toEqual({ left: false, stopped: true, cleared: true });
+    expect(result).toEqual({ left: true, stopped: true, cleared: true });
+    // Only TradingView saved, as it left replay.
+    expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([
+      [expect.objectContaining({ replayTime: time(40) })],
+    ]);
+  });
+
+  test('reads a replay mode TradingView does not tell as off', async () => {
+    const { result, win } = await resultOf(
+      leaveReplayViaApi,
+      [null, WAIT_MS],
+      withReplay((replay) => {
+        replay.isReplayToolbarVisible = () =>
+          ({ subscribe: () => undefined }) as unknown as ReturnType<
+            FakeReplayApi['isReplayToolbarVisible']
+          >;
+      }),
+    );
+
+    expect(result).toEqual({ left: false, stopped: true, cleared: null });
     expect(callNames(win)).toEqual([]);
   });
 
   test('refuses when TradingView does not tell whether replay runs, and fails on a build that cannot leave it', async () => {
     const { error: unknown } = await failureOfBoth(
       leaveReplayViaApi,
-      [true, WAIT_MS],
+      [time(40), WAIT_MS],
       withReplay((replay) => {
         replay.isReplayStarted = () => {
           throw new Error('Not ready');
@@ -1260,14 +1310,14 @@ describe('leaveReplayViaApi', () => {
     );
     const { error: noLeave } = await failureOfBoth(
       leaveReplayViaApi,
-      [true, WAIT_MS],
+      [time(40), WAIT_MS],
       withReplay((replay) => {
         Reflect.deleteProperty(replay, 'leaveReplay');
       }, running(40)),
     );
     const { error: refused } = await failureOfBoth(
       leaveReplayViaApi,
-      [true, WAIT_MS],
+      [time(40), WAIT_MS],
       withReplay((replay) => {
         replay.leaveReplay = () => {
           throw new Error('The replay toolbar is busy');

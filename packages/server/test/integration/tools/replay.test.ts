@@ -124,7 +124,24 @@ const selects = (win: FakeTvWindow) =>
 
 // A replay the user started at bar `index`, without the tools.
 function startedByUser(win: FakeTvWindow, index: number): void {
-  Object.assign(replayOf(win), { modeOn: true, started: true, index, shownIndex: index });
+  Object.assign(replayOf(win), {
+    modeOn: true,
+    started: true,
+    index,
+    shownIndex: index,
+    selectedPoint: time(index),
+  });
+}
+
+// The user closes the replay of the session from the replay toolbar, answering its "Leave replay"
+// dialog, so that TradingView saves it; then starts replay with the replay button, answering "Start
+// new" in the "continue replay" dialog, which clears what was saved, and replays from bar 40.
+async function userTakesOver(win: FakeTvWindow): Promise<void> {
+  const api = win.TradingViewApi;
+  const replay = await api?.replayApi?.();
+  replay?.leaveReplay({ skipConfirm: true });
+  api?._chartWidgetCollection?.updateReplaySessionState?.(null);
+  startedByUser(win, 40);
 }
 
 describe('replay_start', () => {
@@ -151,7 +168,8 @@ describe('replay_start', () => {
     expect(JSON.parse(textOf(result))).toStrictEqual(result.structuredContent);
     expect(calls(win, 'replayApi.selectDate')).toEqual([[time(100) * 1000]]);
     expect(replayOf(win)).toMatchObject({ started: true, index: 99, shownIndex: 99 });
-    expect(ctx.session.replayStartedBySession).toBe(true);
+    // The session knows its replay by the point it started at.
+    expect(ctx.session.replayRunStartedBySession).toBe(time(99));
     expect(dialogs(win)).toEqual([]);
   });
 
@@ -440,13 +458,14 @@ describe('replay_start', () => {
 
     expect(errorOf(result)).toMatchObject({ code: 'TIMEOUT', details: { waitMs: 500 } });
     expect(errorOf(result)?.hint).toMatch(/replay_status.*replay_stop/);
-    // The start may still come, so a replay_stop of this session clears what it leaves.
-    expect(ctx.session.replayStartedBySession).toBe(true);
+    // A start the session did not see come cannot be told from one of the user: replay_stop will
+    // not clear what TradingView saves for it.
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
     expect(replayOf(win).timingMode).toBe('manual');
   });
 
   test('replay_start reports a replay date TradingView has not reported in time as null, with a warning', async () => {
-    const { client } = await startHarness(
+    const { client, ctx } = await startHarness(
       fixture,
       { replay: { dateMs: 3000 } },
       { callTimeoutMs: 1500 },
@@ -456,6 +475,8 @@ describe('replay_start', () => {
 
     expect(dataOf(result)).toMatchObject({ active: true, date: null, dateIso: null });
     expect(warningsOf(result)).toEqual([expect.stringMatching(/did not report the replay date/)]);
+    // Replay was not seen ready, so the session does not count it as its own.
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
   });
 });
 
@@ -762,7 +783,7 @@ describe('replay_stop', () => {
       [null],
     ]);
     expect(replayOf(win).sessionState).toBeNull();
-    expect(ctx.session.replayStartedBySession).toBe(false);
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
     // A new replay starts without the "continue replay" dialog.
     expect(dataOf(await callTool(client, 'replay_start', { date: 'first' }))).toMatchObject({
       active: true,
@@ -781,6 +802,62 @@ describe('replay_stop', () => {
       [expect.objectContaining({ replayTime: time(40) })],
     ]);
     expect(replayOf(win).sessionState).toMatchObject({ replayTime: time(40) });
+  });
+
+  test('replay_stop keeps what TradingView saves for a replay the user started after closing the one of this session', async () => {
+    const { client, win, ctx } = await startHarness();
+    await callTool(client, 'replay_start', { date: 'first' });
+    await userTakesOver(win);
+
+    expect(dataOf(await callTool(client, 'replay_stop'))).toEqual({ active: false });
+
+    // The replay of the user was left, and what TradingView saved for it stays.
+    expect(calls(win, 'replayApi.leaveReplay').at(-1)).toEqual([{ skipConfirm: true }]);
+    expect(calls(win, 'chartWidgetCollection.updateReplaySessionState').at(-1)).toEqual([
+      expect.objectContaining({ replayTime: time(40) }),
+    ]);
+    expect(replayOf(win).sessionState).toMatchObject({ replayTime: time(40) });
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
+  });
+
+  test('replay_stop with nothing running keeps the replay the user saved after closing the one of this session', async () => {
+    const { client, win, ctx } = await startHarness();
+    await callTool(client, 'replay_start', { date: 'first' });
+    await userTakesOver(win);
+    // The user leaves their replay as well, and TradingView saves it.
+    (await win.TradingViewApi?.replayApi?.())?.leaveReplay({ skipConfirm: true });
+    const saved = replayOf(win).sessionState;
+    const before = inspectFakeWindow(win).calls.length;
+
+    expect(dataOf(await callTool(client, 'replay_stop'))).toEqual({ active: false });
+
+    expect(saved).toMatchObject({ replayTime: time(40) });
+    expect(replayOf(win).sessionState).toEqual(saved);
+    expect(inspectFakeWindow(win).calls.slice(before)).toEqual([]);
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
+  });
+
+  test('a replay tool that reads another replay than the one this session started forgets it', async () => {
+    const { client, win, ctx } = await startHarness();
+    await callTool(client, 'replay_start', { date: 'first' });
+    await userTakesOver(win);
+
+    await callTool(client, 'replay_status');
+
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
+    // The replay of the user is left without clearing what TradingView saves for it.
+    await callTool(client, 'replay_stop');
+    expect(replayOf(win).sessionState).toMatchObject({ replayTime: time(40) });
+  });
+
+  test('a replay tool that reads the replay of this session at another bar keeps it', async () => {
+    const { client, ctx } = await startHarness();
+    await callTool(client, 'replay_start', { date: 'first' });
+    await callTool(client, 'replay_step', { bars: 2 });
+
+    await callTool(client, 'replay_status');
+
+    expect(ctx.session.replayRunStartedBySession).toBe(time(0));
   });
 
   test('replay_stop with replay off answers { active: false } and calls nothing', async () => {
@@ -806,7 +883,7 @@ describe('replay_stop', () => {
 
     expect(calls(win, 'replayApi.leaveReplay')).toEqual([[{ skipConfirm: true }]]);
     expect(replayOf(win)).toMatchObject({ modeOn: false, sessionState: null });
-    expect(ctx.session.replayStartedBySession).toBe(false);
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
     expect(dialogs(win)).toEqual([]);
   });
 
@@ -822,7 +899,7 @@ describe('replay_stop', () => {
 
     expect(dataOf(result)).toEqual({ active: false });
     expect(warningsOf(result)).toEqual([expect.stringMatching(/could not be cleared/)]);
-    expect(ctx.session.replayStartedBySession).toBe(false);
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
   });
 
   test('replay_stop answers TIMEOUT when replay does not stop, and opens no dialog', async () => {
@@ -839,7 +916,7 @@ describe('replay_stop', () => {
     expect(errorOf(result)).toMatchObject({ code: 'TIMEOUT', details: { waitMs: 500 } });
     expect(dialogs(win)).toEqual([]);
     // The replay of this session still runs, so a later replay_stop still clears what it leaves.
-    expect(ctx.session.replayStartedBySession).toBe(true);
+    expect(ctx.session.replayRunStartedBySession).toBe(time(0));
   });
 });
 

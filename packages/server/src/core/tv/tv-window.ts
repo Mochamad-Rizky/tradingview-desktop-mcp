@@ -182,6 +182,10 @@ export interface ReplayApiLike {
   isReplayToolbarVisible(): { value(): unknown };
   // The replay point, in Unix seconds, and null while replay shows none.
   currentDate(): { value(): unknown };
+  // The point replay was started or last reset at, in Unix seconds, as the replay manager of the
+  // app keeps it: a start or a reset sets it, a step leaves it, and every stop clears it to null. It
+  // tells one run of replay from another.
+  getReplaySelectedDate(): { value(): unknown };
   // The paper trading of replay, which stays null on TradingView Desktop.
   position(): { value(): unknown };
   realizedPL(): { value(): unknown };

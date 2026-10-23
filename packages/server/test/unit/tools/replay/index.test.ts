@@ -8,10 +8,12 @@ import {
   replayAutoplay,
   replayStart,
   replayStatus,
+  replayStop,
   replayTools,
   stepBars,
 } from '../../../../src/tools/replay/index.js';
 import {
+  leaveReplayViaApi,
   readReplayState,
   setAutoplayViaApi,
   startReplayViaApi,
@@ -54,6 +56,7 @@ const RUNNING: ReplayReading = {
   finished: false,
   autoplay: false,
   date: 1712707200,
+  selectedPoint: 1712620800,
   delayMs: 1000,
   speeds: SPEEDS,
   resolution: '1D',
@@ -63,7 +66,13 @@ const RUNNING: ReplayReading = {
   realizedPL: null,
   currency: null,
 };
-const OFF: ReplayReading = { ...RUNNING, started: false, modeOn: false, date: null };
+const OFF: ReplayReading = {
+  ...RUNNING,
+  started: false,
+  modeOn: false,
+  date: null,
+  selectedPoint: null,
+};
 // What the plan says of intraday replay.
 const NO_INTRADAY = { value: { BAR_REPLAY_INTRADAY: false } };
 // What one step answers.
@@ -150,6 +159,7 @@ test('the descriptions name the start points, the refusals, the speeds, the sett
   expect(stop).toMatch(/"Leave replay" dialog/);
   expect(stop).toMatch(/autoplay first/);
   expect(stop).toMatch(/user started keeps/);
+  expect(stop).toMatch(/With nothing to leave it changes nothing/);
   for (const tool of replayTools) {
     expect(tool.description, tool.name).not.toMatch(/replay_trade/);
   }
@@ -435,7 +445,7 @@ describe('what replay_start makes of the start', () => {
       hint: 'Check replay_status; replay_stop closes the replay toolbar if TradingView left it open.',
     });
     expect(run.argsOf(readReplayState)).toHaveLength(2);
-    expect(run.ctx.session.replayStartedBySession).toBe(false);
+    expect(run.ctx.session.replayRunStartedBySession).toBeNull();
   });
 
   test('fails NOT_AVAILABLE with the reason of TradingView when the select rejected', async () => {
@@ -462,7 +472,17 @@ describe('what replay_start makes of the start', () => {
     );
 
     expect((await call).data).toMatchObject({ active: true, date: 1712707200, start: 'first' });
-    expect(run.ctx.session.replayStartedBySession).toBe(true);
+    expect(run.ctx.session.replayRunStartedBySession).toBe(1712620800);
+  });
+
+  test('counts no replay as its own whose start point TradingView does not tell', async () => {
+    const { run, call } = startWith(
+      { value: { ended: 'resolved', reason: null, timingModeKept: true } },
+      [{ ...RUNNING, selectedPoint: null }],
+    );
+
+    expect((await call).data).toMatchObject({ active: true });
+    expect(run.ctx.session.replayRunStartedBySession).toBeNull();
   });
 
   test('passes the start, the time in milliseconds, what the plan says of intraday replay and the page wait to the page', async () => {
@@ -535,6 +555,94 @@ describe('what replay_autoplay makes of the change', () => {
 
     expect(error.code).toBe('NOT_AVAILABLE');
     expect(run.argsOf(setAutoplayViaApi)).toEqual([]);
+  });
+});
+
+describe('what replay_stop does with the replay this session started', () => {
+  function stopWith(own: number | null, answer: Scripted) {
+    const run = scriptedRun([[leaveReplayViaApi, [answer]]]);
+    run.ctx.session.replayRunStartedBySession = own;
+    return { run, call: replayStop.handler({}, run.ctx) };
+  }
+
+  test('passes the start point of that replay to the page, and forgets it once replay stopped', async () => {
+    const { run, call } = stopWith(1712620800, {
+      value: { left: true, stopped: true, cleared: true },
+    });
+
+    expect(await call).toEqual({ data: { active: false }, via: 'api', warnings: [] });
+    expect(run.argsOf(leaveReplayViaApi)).toEqual([[1712620800, 14_000]]);
+    expect(run.ctx.session.replayRunStartedBySession).toBeNull();
+  });
+
+  test('says so when that replay was left but what TradingView saved for it could not be cleared', async () => {
+    const { run, call } = stopWith(1712620800, {
+      value: { left: true, stopped: true, cleared: false },
+    });
+
+    expect((await call).warnings).toEqual([expect.stringMatching(/could not be cleared/)]);
+    expect(run.ctx.session.replayRunStartedBySession).toBeNull();
+  });
+
+  test('warns of nothing when the replay left was another one, or there was none', async () => {
+    const other = stopWith(1712620800, { value: { left: true, stopped: true, cleared: null } });
+    const none = stopWith(null, { value: { left: false, stopped: true, cleared: null } });
+
+    expect((await other.call).warnings).toEqual([]);
+    expect((await none.call).warnings).toEqual([]);
+    expect(other.run.ctx.session.replayRunStartedBySession).toBeNull();
+  });
+
+  test('keeps that replay while it did not stop', async () => {
+    const { run, call } = stopWith(1712620800, {
+      value: { left: true, stopped: false, cleared: false },
+    });
+
+    expect((await failureOf(call)).code).toBe('TIMEOUT');
+    expect(run.ctx.session.replayRunStartedBySession).toBe(1712620800);
+  });
+});
+
+describe('what a reading of replay does with the replay this session started', () => {
+  // The replay the session started is known by its start point, 1712620800.
+  async function afterStatus(reading: ReplayReading) {
+    const run = scriptedRun([
+      [readReplayState, [{ value: reading }]],
+      [readPlanFeaturesEnabled, [NO_INTRADAY]],
+    ]);
+    run.ctx.session.replayRunStartedBySession = 1712620800;
+    await replayStatus.handler({}, run.ctx);
+    return run.ctx.session.replayRunStartedBySession;
+  }
+
+  test('forgets it when another replay runs, or none', async () => {
+    expect(await afterStatus({ ...RUNNING, selectedPoint: 1712000000 })).toBeNull();
+    expect(await afterStatus({ ...RUNNING, selectedPoint: null })).toBeNull();
+    expect(await afterStatus(OFF)).toBeNull();
+  });
+
+  test('keeps it while it runs, or while TradingView does not tell whether replay runs', async () => {
+    expect(await afterStatus(RUNNING)).toBe(1712620800);
+    expect(await afterStatus({ ...RUNNING, started: null, selectedPoint: null })).toBe(1712620800);
+  });
+
+  test('is done by every replay tool that reads replay', async () => {
+    const reading = { ...RUNNING, selectedPoint: 1712000000 };
+    for (const call of [
+      (ctx: ToolContext) => stepBars({ bars: 1 }, ctx),
+      (ctx: ToolContext) => replayAutoplay.handler({ enabled: false }, ctx),
+      (ctx: ToolContext) => replayStart.handler({}, ctx),
+    ]) {
+      const run = scriptedRun([
+        [readReplayState, [{ value: reading }]],
+        [stepReplayViaApi, [{ value: stepped(1712793600) }]],
+        [setAutoplayViaApi, [{ value: { started: true, autoplay: false, delayMs: 1000 } }]],
+      ]);
+      run.ctx.session.replayRunStartedBySession = 1712620800;
+      // replay_start refuses a running replay, after it read it.
+      await call(run.ctx).catch(() => undefined);
+      expect(run.ctx.session.replayRunStartedBySession).toBeNull();
+    }
   });
 });
 

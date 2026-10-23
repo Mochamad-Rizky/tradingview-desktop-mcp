@@ -54,8 +54,10 @@ import {
 // without BAR_REPLAY_INTRADAY (design spec 5.3, rule 3), and its "continue replay" dialog for a layout
 // that holds a replay saved on leaving it; it checks the timeframe again in the same turn as the
 // start. replay_stop leaves replay with skipConfirm, which never asks in the "Leave replay" dialog,
-// and clears the replay TradingView then saves in the layout only for a replay this session started
-// (design spec 5.3, rule 2).
+// and clears what TradingView then saves in the layout only for the run of replay this session
+// started, which the session knows by the point it started at (design spec 5.3, rule 2). A replay
+// tool that reads another run of replay, or none, forgets that run: a run never comes back once it
+// stopped.
 //
 // There is no trading tool (design spec 5.3, rule 1): on TradingView Desktop the paper trading of
 // replay goes through the trading service of the app, the machinery of real orders, with an internal
@@ -126,6 +128,22 @@ async function intradayAllowed(page: PageHandle, reading: ReplayReading): Promis
   return planAllowsIntraday(page);
 }
 
+// Forgets the run of replay this session started once a reading shows that it is over: another run
+// runs, with another start point or one TradingView does not tell, or none does. A run never comes
+// back once it stopped, and replay_stop then clears nothing for it.
+function forgetEndedRun(
+  ctx: ToolContext,
+  reading: Pick<ReplayReading, 'started' | 'selectedPoint'>,
+): void {
+  const own = ctx.session.replayRunStartedBySession;
+  if (
+    own !== null &&
+    (reading.started === false || (reading.started === true && reading.selectedPoint !== own))
+  ) {
+    ctx.session.replayRunStartedBySession = null;
+  }
+}
+
 export const replayStart = defineTool({
   name: 'replay_start',
   domain: 'replay',
@@ -162,6 +180,7 @@ export const replayStart = defineTool({
     const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
     // Checked in this order, before anything changes.
     const reading = await page.bridge.evaluate(readReplayState, []);
+    forgetEndedRun(ctx, reading);
     if (reading.started === true) {
       throw alreadyActiveError();
     }
@@ -200,10 +219,11 @@ export const replayStart = defineTool({
       { intervalMs: POLL_INTERVAL_MS, timeoutMs: left() },
     );
     const state = ready.last;
-    // A start that did not end in time may still come, and replay_stop then clears what it leaves.
-    if (state.started === true || outcome.ended === 'late') {
-      ctx.session.replayStartedBySession = true;
-    }
+    // The run of replay this session started, by its start point, once it is seen ready. A start not
+    // seen ready may still come, but nothing tells it from a replay the user starts meanwhile, so
+    // replay_stop will not clear what TradingView saves for it.
+    ctx.session.replayRunStartedBySession =
+      state.started === true && state.date !== null ? state.selectedPoint : null;
     if (state.started !== true) {
       throw outcome.ended === 'late' ? startTimeoutError(waitMs) : startFailedError(outcome.reason);
     }
@@ -267,6 +287,7 @@ export async function stepBars(
   const page = await ctx.connection.chartPage();
   const stepWait = Math.min(STEP_WAIT_MS, pageWaitMs(ctx.config.callTimeoutMs));
   const reading = await page.bridge.evaluate(readReplayState, []);
+  forgetEndedRun(ctx, reading);
   if (reading.started !== true) {
     throw notStartedError();
   }
@@ -349,6 +370,7 @@ export const replayAutoplay = defineTool({
   async handler({ enabled, speed }, ctx) {
     const page = await ctx.connection.chartPage();
     const reading = await page.bridge.evaluate(readReplayState, []);
+    forgetEndedRun(ctx, reading);
     const delayMs = speed === undefined ? null : speedDelayOf(speed, reading.speeds);
     if (reading.started !== true) {
       throw notStartedError();
@@ -393,6 +415,7 @@ export const replayStatus = defineTool({
   async handler(_input, ctx) {
     const page = await ctx.connection.chartPage();
     const reading = await page.bridge.evaluate(readReplayState, []);
+    forgetEndedRun(ctx, reading);
     const { available, reason } = availabilityOf(reading, await intradayAllowed(page, reading));
     return {
       data: {
@@ -422,27 +445,29 @@ export const replayStop = defineTool({
     'without the "Leave replay" dialog of TradingView, and the chart shows its live bars again; ' +
     'the replay toolbar TradingView keeps open after replay reached its end is closed too. ' +
     'TradingView saves a replay left before its end in the layout, to offer to continue it in a ' +
-    'dialog the next time replay starts: when this session started the replay, the call clears ' +
-    'that (TradingView counts it as a change of the layout), while a replay the user started keeps ' +
-    'it. With nothing to leave it changes nothing.',
+    'dialog the next time replay starts: when the replay left is the one replay_start of this ' +
+    'session started, known by the point it started at, the call clears that (TradingView counts ' +
+    'it as a change of the layout), while a replay the user started keeps it, as does any replay ' +
+    'saved before. With nothing to leave it changes nothing.',
   inputSchema: {},
   annotations: SETS,
   async handler(_input, ctx) {
     const page = await ctx.connection.chartPage();
-    const clearSaved = ctx.session.replayStartedBySession;
     const waitMs = pageWaitMs(ctx.config.callTimeoutMs);
-    const result = await page.bridge.evaluate(leaveReplayViaApi, [clearSaved, waitMs]);
+    const result = await page.bridge.evaluate(leaveReplayViaApi, [
+      ctx.session.replayRunStartedBySession,
+      waitMs,
+    ]);
     if (!result.stopped) {
+      // The run may still be the one of this session, whose saved state a later call then clears.
       throw stopTimeoutError(waitMs);
     }
-    const warnings: string[] = [];
-    if (clearSaved) {
-      ctx.session.replayStartedBySession = false;
-      if (result.cleared !== true) {
-        warnings.push(NOT_CLEARED_WARNING);
-      }
-    }
-    return { data: { active: false }, via: 'api', warnings };
+    ctx.session.replayRunStartedBySession = null;
+    return {
+      data: { active: false },
+      via: 'api',
+      warnings: result.cleared === false ? [NOT_CLEARED_WARNING] : [],
+    };
   },
 });
 

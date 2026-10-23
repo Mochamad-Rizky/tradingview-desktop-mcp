@@ -88,7 +88,7 @@ export function createTestContext(
       lastWrittenPineText: null,
       addedWatchlistSymbols: new Map(),
       openedTabIds: new Set(),
-      replayStartedBySession: false,
+      replayRunStartedBySession: null,
     },
     ...overrides,
   };

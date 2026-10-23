@@ -19,8 +19,8 @@ import type {
 // that service, with an internal replay broker the app itself selects for its trading panel during
 // replay and swaps back afterwards. Replay is left with leaveReplay and skipConfirm, which never asks
 // in the "Leave replay" dialog. The replay TradingView saves in the layout on leaving, which would
-// open its "continue replay" dialog at the next start, is cleared only when the caller says the
-// replay was its own.
+// open its "continue replay" dialog at the next start, is cleared only right after leaving the run
+// of replay the caller started, told by the point it started at (getReplaySelectedDate).
 
 // A speed of autoplay: its label, such as 10x, and the time between two bars in milliseconds. A type
 // alias, not an interface: it comes back from the page as JSON, which a type must satisfy JsonValue
@@ -37,8 +37,9 @@ export type ReplaySpeed = { label: string; value: number };
 // - started: whether replay runs; modeOn: whether the replay mode, which shows the replay toolbar,
 //   is on (it stays on when replay reaches the end of the data, until replay is left); finished:
 //   whether replay reached the end of the data;
-// - autoplay, date (the replay point in Unix seconds, as currentDate gives it), delayMs (the time
-//   between two bars of autoplay) and speeds (those TradingView lists);
+// - autoplay, date (the replay point in Unix seconds, as currentDate gives it), selectedPoint (the
+//   point the run of replay started or was last reset at, in Unix seconds, null while replay is
+//   stopped), delayMs (the time between two bars of autoplay) and speeds (those TradingView lists);
 // - resolution: the timeframe of the active chart; savedSession: whether the layout holds a replay
 //   TradingView saved on leaving it; history: the earliest and the latest time of the loaded bars of
 //   the active chart, null without bars;
@@ -54,6 +55,7 @@ export type ReplayReading = {
   finished: boolean | null;
   autoplay: boolean | null;
   date: number | null;
+  selectedPoint: number | null;
   delayMs: number | null;
   speeds: ReplaySpeed[];
   resolution: string | null;
@@ -95,8 +97,9 @@ export type AutoplayOutcome = {
 };
 
 // What leaving replay did: whether there was a replay or a replay mode to leave (left), whether
-// replay is stopped now, and whether the replay saved in the layout is cleared: null when the caller
-// did not ask, false when it could not be cleared.
+// replay is stopped now, and whether what TradingView saved for the replay it left is cleared: null
+// when the replay left was not the run the caller started, or there was none, false when it could
+// not be cleared.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type LeaveOutcome = { left: boolean; stopped: boolean; cleared: boolean | null };
 
@@ -231,6 +234,7 @@ export async function readReplayState(win: TvWindow): Promise<ReplayReading | Pa
     finished: flag(attempt(() => replay._replayUIController?._replayManager?.isReplayFinished?.())),
     autoplay: flag(watched(() => replay.isAutoplayStarted?.())),
     date: finite(watched(() => replay.currentDate?.())),
+    selectedPoint: finite(watched(() => replay.getReplaySelectedDate?.())),
     delayMs: finite(attempt(() => replay.autoplayDelay?.())),
     speeds,
     resolution: text(attempt(() => chart?.resolution?.())),
@@ -405,8 +409,8 @@ export async function startReplayViaApi(
             : 'TradingView does not tell whether the layout holds a saved replay, which would ' +
               'open its "continue replay" dialog',
         hint:
-          'Nothing was started. Continue or discard the saved replay in TradingView itself (its ' +
-          'replay button asks), then try again.',
+          'Nothing was started. The user continues or discards the saved replay in TradingView ' +
+          'itself (its replay button asks); no tool clears it. Then try again.',
       },
     };
   }
@@ -821,15 +825,17 @@ export async function setAutoplayViaApi(
 // reached the end of the data, say): stops autoplay first while it plays, then calls
 // leaveReplay({ skipConfirm: true }), which never asks in the "Leave replay" dialog, and waits, within
 // waitMs, until replay is stopped and the mode off. Leaving saves the replay in the layout, unless it
-// had reached its end. With clearSaved, once replay is stopped, the saved replay is cleared with
-// updateReplaySessionState(null), as the "Start new" button of the "continue replay" dialog does; the
-// caller asks only for a replay of its own. Answers what it did (LeaveOutcome). With nothing to leave
-// it changes nothing but what clearSaved asks. Replay TradingView does not tell about is
-// NOT_AVAILABLE, a build without leaveReplay CAPABILITY_UNAVAILABLE, and a leave the app refuses
-// NOT_AVAILABLE.
+// had reached its end. ownRun is the start point of the run of replay the caller started (its
+// getReplaySelectedDate), or null: when the replay running before the leave is that run, by the start
+// point read right before the leave, what TradingView saved for it is cleared once replay is stopped,
+// with updateReplaySessionState(null), as the "Start new" button of the "continue replay" dialog does.
+// Any other replay, a replay whose start point TradingView does not tell, and a replay saved before
+// keep what was saved. Answers what it did (LeaveOutcome). With nothing to leave it changes nothing.
+// Replay TradingView does not tell about is NOT_AVAILABLE, a build without leaveReplay
+// CAPABILITY_UNAVAILABLE, and a leave the app refuses NOT_AVAILABLE.
 export async function leaveReplayViaApi(
   win: TvWindow,
-  clearSaved: boolean,
+  ownRun: number | null,
   waitMs: number,
 ): Promise<LeaveOutcome | PageErrorSentinel> {
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
@@ -910,6 +916,10 @@ export async function leaveReplayViaApi(
       },
     };
   }
+  // Whether the replay about to be left is the run the caller started, by its start point, read
+  // before the leave clears it.
+  const point = watched(() => replay.getReplaySelectedDate?.());
+  const own = before && typeof ownRun === 'number' && typeof point === 'number' && point === ownRun;
   let leaving = false;
   if (before || modeOn()) {
     if (typeof replay.leaveReplay !== 'function') {
@@ -945,7 +955,7 @@ export async function leaveReplayViaApi(
   }
   const stopped = started() === false;
   let cleared: boolean | null = null;
-  if (clearSaved) {
+  if (own) {
     cleared = false;
     try {
       const collection = api._chartWidgetCollection;

@@ -253,7 +253,8 @@ export function signedOutError(): TvMcpError {
 }
 
 // A layout that holds a replay TradingView saved on leaving it (saved true), or does not tell (null):
-// the next start would open the "continue replay" dialog of the app.
+// the next start would open the "continue replay" dialog of the app. No tool clears such a replay:
+// replay_stop clears only what TradingView saves as it leaves the replay this session started.
 export function savedSessionError(saved: boolean | null): TvMcpError {
   return new TvMcpError(
     'NOT_AVAILABLE',
@@ -264,8 +265,8 @@ export function savedSessionError(saved: boolean | null): TvMcpError {
           '"continue replay" dialog',
     {
       hint:
-        'Nothing was started. Continue or discard the saved replay in TradingView itself (its ' +
-        'replay button asks), then try again.',
+        'Nothing was started. The user continues or discards the saved replay in TradingView ' +
+        'itself (its replay button asks); no tool clears it. Then try again.',
     },
   );
 }

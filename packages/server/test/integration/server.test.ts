@@ -649,7 +649,7 @@ test('createMcpServer creates the dependencies it is not given', () => {
     lastWrittenPineText: null,
     addedWatchlistSymbols: new Map(),
     openedTabIds: new Set(),
-    replayStartedBySession: false,
+    replayRunStartedBySession: null,
   });
   expect(registry.list().map(({ name }) => name)).toEqual([
     ...APP_TOOL_NAMES,
