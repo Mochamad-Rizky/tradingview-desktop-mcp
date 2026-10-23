@@ -8,7 +8,7 @@ import {
   requireBelowLimit,
 } from '../../core/tv/plan-limits.js';
 import { parseTimeInput, toIso } from '../../utils/time.js';
-import { READ_ONLY } from '../annotations.js';
+import { DESTRUCTIVE, READ_ONLY } from '../annotations.js';
 import { TIME_INPUT, timeInput } from '../chart/index.js';
 import { sameSymbol } from '../chart/mappers.js';
 import { CLIENT_SAFE_BUDGET_MS, pageWaitMs } from '../chart/strategies.js';
@@ -60,13 +60,6 @@ const MAX_MESSAGE = 400;
 const MAX_DELETE = 50;
 // The id of an alert of the server, a positive integer, as alert_list reports it.
 const ALERT_ID = /^[1-9]\d{0,14}$/;
-
-const DESTRUCTIVE = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: false,
-} as const;
 
 const ACTIVE_LIMIT_HINT =
   'The plan allows that many active price alerts at a time. Delete one with alert_delete, or ' +

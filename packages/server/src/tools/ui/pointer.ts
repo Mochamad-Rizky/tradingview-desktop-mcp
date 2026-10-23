@@ -10,7 +10,7 @@ import {
   type PointerTarget,
 } from '../../core/tv/input.js';
 import { UNSAFE_SELECTORS } from '../../core/tv/selectors.js';
-import { READ_ONLY } from '../annotations.js';
+import { CHANGES_IDEMPOTENT, DESTRUCTIVE, READ_ONLY } from '../annotations.js';
 import { defineTool, type ToolContext } from '../types.js';
 
 // The pointer tools of the low-level interface (design spec 7, domain Low-level UI): a click, a
@@ -39,15 +39,6 @@ const MAX_TEXT = 200;
 const MAX_DELTA = 10_000;
 const MAX_LIMIT = 50;
 const DEFAULT_LIMIT = 10;
-
-// A click or a turn of the wheel can change anything a click or a turn of the wheel of the user
-// can, and doing one twice is not doing it once. A key and a text likewise.
-export const ACTS = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: false,
-} as const;
 
 // The refusals that the descriptions of the three tools that move the pointer share, word for word
 // but for what the tool does.
@@ -209,7 +200,9 @@ export const uiClick = defineTool({
     y: coordinateInput('y'),
     target: targetInput(),
   },
-  annotations: ACTS,
+  // A click or a turn of the wheel can change anything one of the user can, and doing one twice is
+  // not doing it once.
+  annotations: DESTRUCTIVE,
   async handler({ selector, text, x, y, target }, ctx) {
     const aimed = pointerTargetOf({ selector, text, x, y }, true);
     const page = await uiTargetPage(ctx, target);
@@ -245,12 +238,7 @@ export const uiHover = defineTool({
   },
   // It sends mouse moves, which can open a tooltip or a menu of the app, so it does not only read;
   // hovering again at the same place changes nothing more.
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
+  annotations: CHANGES_IDEMPOTENT,
   async handler({ selector, text, x, y, target }, ctx) {
     const aimed = pointerTargetOf({ selector, text, x, y }, true);
     const page = await uiTargetPage(ctx, target);
@@ -303,7 +291,9 @@ export const uiScroll = defineTool({
       ),
     target: targetInput(),
   },
-  annotations: ACTS,
+  // A click or a turn of the wheel can change anything one of the user can, and doing one twice is
+  // not doing it once.
+  annotations: DESTRUCTIVE,
   async handler({ selector, x, y, deltaX, deltaY, target }, ctx) {
     const aimed = pointerTargetOf({ selector, x, y }, false);
     const page = await uiTargetPage(ctx, target);

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { PageHandle } from '../../core/connection.js';
 import { isTvMcpError } from '../../core/errors.js';
 import { inPlanLimitedTurn } from '../../core/tv/plan-limits.js';
-import { READ_ONLY } from '../annotations.js';
+import { CHANGES_IDEMPOTENT, DESTRUCTIVE_IDEMPOTENT, READ_ONLY } from '../annotations.js';
 import { pageWaitMs } from '../chart/strategies.js';
 import { mapSearchResult } from '../data/mappers.js';
 import { searchSymbolsViaApi } from '../data/page.js';
@@ -62,20 +62,9 @@ const MAX_LIST_ID_LENGTH = 200;
 // How many symbol searches an addition runs at once.
 const SEARCHES_AT_ONCE = 4;
 
-// An addition changes the list without destroying anything, and adding again adds nothing more.
-const ADDS = {
-  readOnlyHint: false,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-} as const;
-// A removal destroys an entry of the user's list; removing again removes nothing more.
-const REMOVES = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: true,
-  openWorldHint: false,
-} as const;
+// An addition changes the list without destroying anything, and adding again adds nothing more
+// (CHANGES_IDEMPOTENT); a removal destroys an entry of the user's list, and removing again removes
+// nothing more (DESTRUCTIVE_IDEMPOTENT).
 
 const LIMIT_TEXT =
   'The size of a watchlist is limited, and every entry counts, section markers included: when ' +
@@ -398,7 +387,7 @@ export const watchlistAdd = defineTool({
     ),
     listId: LIST_ID,
   },
-  annotations: ADDS,
+  annotations: CHANGES_IDEMPOTENT,
   core: true,
   async handler({ symbol, listId }, ctx) {
     const plan = await planAddition(ctx, trimmedSymbols([symbol]), listId);
@@ -446,7 +435,7 @@ export const watchlistAddBulk = defineTool({
       ),
     listId: LIST_ID,
   },
-  annotations: ADDS,
+  annotations: CHANGES_IDEMPOTENT,
   async handler({ symbols, listId }, ctx) {
     const plan = await planAddition(ctx, trimmedSymbols(symbols), listId);
     const { planned, added, warnings } = await commitAddition(ctx, plan);
@@ -492,7 +481,7 @@ export const watchlistRemove = defineTool({
           'needed for symbols added with watchlist_add or watchlist_add_bulk in this session.',
       ),
   },
-  annotations: REMOVES,
+  annotations: DESTRUCTIVE_IDEMPOTENT,
   async handler({ symbols, listId, confirm }, ctx) {
     const given = trimmedSymbols(symbols);
     const page = await ctx.connection.chartPage();

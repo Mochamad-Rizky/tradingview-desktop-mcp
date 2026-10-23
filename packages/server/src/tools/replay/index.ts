@@ -3,7 +3,7 @@ import type { PageHandle } from '../../core/connection.js';
 import { isTvMcpError } from '../../core/errors.js';
 import { getPlanFeaturesEnabled } from '../../core/tv/plan-limits.js';
 import { pollUntil } from '../../utils/poll.js';
-import { READ_ONLY } from '../annotations.js';
+import { CHANGES, CHANGES_IDEMPOTENT, READ_ONLY } from '../annotations.js';
 import { TIME_INPUT, timeInput } from '../chart/index.js';
 import { CLIENT_SAFE_BUDGET_MS, pageWaitMs, POLL_INTERVAL_MS } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
@@ -77,20 +77,8 @@ const MAX_BARS = 500;
 const MAX_SPEED_INPUT = 20;
 
 // replay_start and replay_step change what the chart shows, which replay_stop puts back, and each
-// call does more.
-const ACTS = {
-  readOnlyHint: false,
-  destructiveHint: false,
-  idempotentHint: false,
-  openWorldHint: false,
-} as const;
-// replay_autoplay and replay_stop bring replay to a state, which a second call leaves as it is.
-const SETS = {
-  readOnlyHint: false,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-} as const;
+// call does more (CHANGES); replay_autoplay and replay_stop bring replay to a state, which a second
+// call leaves as it is (CHANGES_IDEMPOTENT).
 
 // What the replay tools return. Type aliases, not interfaces: they go to the client as JSON.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
@@ -207,7 +195,7 @@ export const replayStart = defineTool({
           'within the loaded bars of the chart.',
       ),
   },
-  annotations: ACTS,
+  annotations: CHANGES,
   core: true,
   async handler({ date }, ctx): Promise<ToolOutput<StartedReplay>> {
     const choice = startOf(date);
@@ -308,7 +296,7 @@ export const replayStep = defineTool({
       .default(1)
       .describe(`How many bars to step, 1 to ${String(MAX_BARS)} (default 1).`),
   },
-  annotations: ACTS,
+  annotations: CHANGES,
   core: true,
   handler: (input, ctx) => stepBars(input, ctx),
 });
@@ -429,7 +417,7 @@ export const replayAutoplay = defineTool({
           'stays.',
       ),
   },
-  annotations: SETS,
+  annotations: CHANGES_IDEMPOTENT,
   async handler({ enabled, speed }, ctx) {
     const page = await ctx.connection.chartPage();
     const reading = await page.bridge.evaluate(readReplayState, []);
@@ -513,7 +501,7 @@ export const replayStop = defineTool({
     'it as a change of the layout), while a replay the user started keeps it, as does any replay ' +
     'saved before. With nothing to leave it changes nothing.',
   inputSchema: {},
-  annotations: SETS,
+  annotations: CHANGES_IDEMPOTENT,
   core: true,
   async handler(_input, ctx) {
     const page = await ctx.connection.chartPage();

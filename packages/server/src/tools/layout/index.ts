@@ -3,7 +3,7 @@ import type { PageHandle } from '../../core/connection.js';
 import { isTvMcpError } from '../../core/errors.js';
 import { getPlanLimits, inPlanLimitedTurn, requireBelowLimit } from '../../core/tv/plan-limits.js';
 import { pollUntil } from '../../utils/poll.js';
-import { READ_ONLY } from '../annotations.js';
+import { DESTRUCTIVE, DESTRUCTIVE_IDEMPOTENT, READ_ONLY } from '../annotations.js';
 import {
   CLIENT_SAFE_BUDGET_MS,
   dataWaitMs,
@@ -72,15 +72,6 @@ const MAX_LAYOUT_ID = 100;
 // Less time than this left to open a created layout counts as none: a load the call could not wait
 // for might switch the layout after the call reported it unopened.
 const MIN_OPEN_MS = 1000;
-
-// Switching to a layout, or to a new one, loads it in place of the current layout, which discards its
-// unsaved changes (with confirm: true); doing it again undoes nothing of that.
-const DESTRUCTIVE = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: false,
-} as const;
 
 // What layout_new returns: the id of the new layout (null when TradingView did not say it), its name
 // and whether it was opened; and what layout_switch returns: the layout the chart shows and whether
@@ -225,6 +216,8 @@ export const layoutNew = defineTool({
           'opening the new layout in its place discards them. Not needed otherwise.',
       ),
   },
+  // A new layout loads in place of the current one, which discards its unsaved changes (with
+  // confirm: true), and a second call creates another layout.
   annotations: DESTRUCTIVE,
   handler: (input, ctx) => newLayout(input, ctx),
 });
@@ -357,7 +350,9 @@ export const layoutSwitch = defineTool({
           'loading another layout discards them. Not needed otherwise.',
       ),
   },
-  annotations: DESTRUCTIVE,
+  // Loading another layout discards the unsaved changes of the current one (with confirm: true);
+  // switching again to the layout shown answers changed: false and changes nothing more.
+  annotations: DESTRUCTIVE_IDEMPOTENT,
   async handler({ layoutId, confirm }, ctx) {
     const page = await ctx.connection.chartPage();
     const waitMs = pageWaitMs(ctx.config.callTimeoutMs);

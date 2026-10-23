@@ -58,15 +58,20 @@ test('layout_list only reads, so the readonly profile offers it and no other lay
   ).toEqual(['layout_list']);
 });
 
-test('layout_new and layout_switch can discard unsaved changes, and neither is idempotent', () => {
-  for (const name of ['layout_new', 'layout_switch']) {
-    expect(toolNamed(name).annotations, name).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: false,
-    });
-  }
+test('layout_new and layout_switch can discard unsaved changes, and a second layout_switch changes nothing more', () => {
+  expect(toolNamed('layout_new').annotations).toEqual({
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: false,
+  });
+  // Switching again to the layout shown answers changed: false.
+  expect(toolNamed('layout_switch').annotations).toEqual({
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  });
 });
 
 test('the layout tools are left out of the core profile', () => {

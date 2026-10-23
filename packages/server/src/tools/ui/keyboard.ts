@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { pressKey, SUPPORTED_KEYS, typeText } from '../../core/tv/input.js';
+import { DESTRUCTIVE } from '../annotations.js';
 import { defineTool } from '../types.js';
-import { ACTS, targetInput, TRADING_NAMES, uiTargetPage } from './pointer.js';
+import { targetInput, TRADING_NAMES, uiTargetPage } from './pointer.js';
 
 // The keyboard tools of the low-level interface (design spec 7, domain Low-level UI): text typed
 // into the focused field of TradingView, and a key pressed on the focused element. They go through
@@ -37,7 +38,7 @@ export const uiTypeText = defineTool({
       .describe('The text to type, 1 to 1000 characters, as it is.'),
     target: targetInput(),
   },
-  annotations: ACTS,
+  annotations: DESTRUCTIVE,
   // The text can be the user's own words: it stays out of the tool events (redaction.ts).
   async handler({ text, target }, ctx) {
     const page = await uiTargetPage(ctx, target);
@@ -83,7 +84,7 @@ export const uiPressKey = defineTool({
       .describe('The modifiers held with the key: Alt, Control, Meta and Shift. None by default.'),
     target: targetInput(),
   },
-  annotations: ACTS,
+  annotations: DESTRUCTIVE,
   async handler({ key, modifiers, target }, ctx) {
     const page = await uiTargetPage(ctx, target);
     await pressKey(page, key, modifiers ?? []);

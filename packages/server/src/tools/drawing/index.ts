@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { TvMcpError } from '../../core/errors.js';
 import { parseTimeInput } from '../../utils/time.js';
-import { READ_ONLY } from '../annotations.js';
+import { DESTRUCTIVE, READ_ONLY } from '../annotations.js';
 import { chartIndexInput, TIME_INPUT, timeInput } from '../chart/index.js';
 import { pageWaitMs, resolveChartTarget } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition } from '../types.js';
@@ -54,13 +54,6 @@ const COLOR_PATTERN =
   /^(?:#[0-9a-fA-F]{6}|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(?:,\s*(?:0|1|0?\.\d+|1\.0+)\s*)?\))$/;
 
 const LINE_STYLE_NAMES = Object.keys(LINE_STYLES) as [LineStyleName, ...LineStyleName[]];
-
-const DESTRUCTIVE = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: false,
-} as const;
 
 const idInput = () =>
   z.string().min(1).max(64).describe('The id of the drawing, from drawing_list or drawing_create.');
