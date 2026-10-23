@@ -71,9 +71,11 @@ puts a server that can control your TradingView on the internet.
 
 ### JavaScript in the app
 
-`--allow-eval` (`TV_MCP_ALLOW_EVAL`) is for `ui_evaluate`, a tool planned for a later release that
-runs any JavaScript inside TradingView. It is off by default. Leave it off unless you need it, and
-never turn it on for a remote or shared endpoint.
+`--allow-eval` (`TV_MCP_ALLOW_EVAL`) turns on `ui_evaluate`, which runs JavaScript in TradingView's
+chart page (never in the window around it). It is off by default. Its code is left out of tool
+events, and it refuses code that names the account, credentials or trading, but that check is best
+effort and not a sandbox. Leave it off unless you need it, and never turn it on for a remote or
+shared endpoint.
 
 ### Trading
 
