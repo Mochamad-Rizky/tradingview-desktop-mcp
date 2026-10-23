@@ -92,7 +92,7 @@ function stripWith(options: Partial<FakeWindowChromeOptions> = {}): FakeWindowCh
     tabs: [
       { id: A, title: ['AAPL', '123.45', '+0.67%', 'Morning plan'] },
       { id: B, title: ['MSFT', '234.56', '-0.12%', 'Second layout'] },
-      { id: C, title: ['New tab'] },
+      { id: C, title: ['New tab'], newTabPage: true },
     ],
     active: B,
     ...options,
@@ -110,9 +110,21 @@ describe('readTabs', () => {
   test('lists the tabs in the order of the strip, with the title as the strip shows it', async () => {
     expect(await resultOf(readTabs, args, strip())).toEqual({
       tabs: [
-        { id: A, title: 'AAPL 123.45 +0.67% Morning plan', active: false, closable: true },
-        { id: B, title: 'MSFT 234.56 -0.12% Second layout', active: true, closable: true },
-        { id: C, title: 'New tab', active: false, closable: true },
+        {
+          id: A,
+          title: 'AAPL 123.45 +0.67% Morning plan',
+          active: false,
+          closable: true,
+          showsSymbol: true,
+        },
+        {
+          id: B,
+          title: 'MSFT 234.56 -0.12% Second layout',
+          active: true,
+          closable: true,
+          showsSymbol: true,
+        },
+        { id: C, title: 'New tab', active: false, closable: true, showsSymbol: false },
       ],
     });
   });
@@ -137,7 +149,15 @@ describe('readTabs', () => {
     const tabs = [{ id: A, title: ['  AAPL\n', '\t123.45  ', '', 'My   layout '] }];
 
     expect(await resultOf(readTabs, args, strip({ tabs, active: A }))).toEqual({
-      tabs: [{ id: A, title: 'AAPL 123.45 My layout', active: true, closable: false }],
+      tabs: [
+        {
+          id: A,
+          title: 'AAPL 123.45 My layout',
+          active: true,
+          closable: false,
+          showsSymbol: true,
+        },
+      ],
     });
   });
 
@@ -179,10 +199,22 @@ describe('readTabs', () => {
 
     expect(await resultOf(readTabs, args, make)).toEqual({
       tabs: [
-        { id: A, title: 'AAPL Layout', active: true, closable: false },
-        { id: B, title: '', active: false, closable: false },
+        { id: A, title: 'AAPL Layout', active: true, closable: false, showsSymbol: false },
+        { id: B, title: '', active: false, closable: false, showsSymbol: false },
       ],
     });
+  });
+
+  test('says whether each tab shows a symbol, by the length of its symbol alone', async () => {
+    const tabs = [
+      { id: A, title: ['AAPL', 'Morning plan'] },
+      { id: B, title: ['   ', 'Unnamed'] },
+      { id: C, title: ['New tab'], newTabPage: true },
+    ];
+
+    const { tabs: read } = await resultOf(readTabs, args, strip({ tabs, active: A }));
+
+    expect(read.map(({ showsSymbol }) => showsSymbol)).toEqual([true, false, false]);
   });
 
   test('reads the DOM only, and nothing of Node, in the window chrome', async () => {

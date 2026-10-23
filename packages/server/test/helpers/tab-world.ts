@@ -1,8 +1,11 @@
 import type { FakeCdpServer, FakeTarget } from './fake-cdp/server.js';
 import { loadTargetsFixture } from './fake-cdp/targets.js';
 import type { TvStateFixture } from './fake-tv/fixture.js';
+import type { FakeElement } from './fake-tv/dom.js';
 import {
+  CHROME_SELECTORS,
   createFakeWindowChrome,
+  tabPartSelector,
   type FakeChromeTab,
   type FakeShellAction,
   type FakeTabSize,
@@ -93,6 +96,9 @@ export interface TabWorld {
   attach(app: FakeCdpServer): void;
   // The connections to New tab pages and the CDP methods sent to them: both must stay empty.
   newTabPageAccess(): { connections: number; calls: string[] };
+  // Brings a tab to the front as the user does, with a click on its title, so that the pages hear of
+  // it as of any switch (pageLag). Resolves once the strip shows the tab in front.
+  userSwitchesTo(tabId: string): Promise<void>;
 }
 
 // The chart of the fixture under another layout, as a second tab shows it.
@@ -235,6 +241,7 @@ export function createTabWorld(options: TabWorldOptions): TabWorld {
           ? ['New tab']
           : [tickerOf(tab.fixture.symbol), tab.fixture.layout.name]),
       ...(tab.pinned === undefined ? {} : { pinned: tab.pinned }),
+      newTabPage: tab.kind === 'new-tab',
     })),
     active: options.active ?? options.tabs[0]?.id ?? '',
     ...(options.size === undefined ? {} : { size: options.size }),
@@ -281,6 +288,32 @@ export function createTabWorld(options: TabWorldOptions): TabWorld {
     },
     attach(server) {
       app = server;
+    },
+    async userSwitchesTo(tabId) {
+      const { document } = chrome.window as {
+        document: { querySelector(selectors: string): FakeElement | null };
+      };
+      const title = document.querySelector(tabPartSelector(tabId, CHROME_SELECTORS.title));
+      if (title === null) {
+        throw new Error(`The strip shows no tab ${tabId}`);
+      }
+      const { x, y, width, height } = title.getBoundingClientRect();
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        chrome.dispatchMouseEvent({
+          type,
+          x: x + width / 2,
+          y: y + height / 2,
+          button: 'left',
+          clickCount: 1,
+        });
+      }
+      const until = Date.now() + 1000;
+      while (chrome.state.active !== tabId) {
+        if (Date.now() > until) {
+          throw new Error(`The strip did not show the tab ${tabId} in front`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
     },
     newTabPageAccess() {
       const ids = new Set(allNewTabPageIds);

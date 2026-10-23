@@ -15,8 +15,9 @@ import {
 // then div.tabs with div.tabs-container, which holds a div.tab[id] for each tab in the order of the
 // strip, the active one with the class active, then the button that opens a new tab
 // (button.create-new-tab-button, "New tab"), and at the right end the buttons of a new window and
-// of the main menu. A tab holds its title (.tab-title, whose pieces are the symbol, the last price,
-// the change and the name of the layout, or the title of a New tab page) and its close button
+// of the main menu. A tab holds its title (.tab-title, whose pieces are the symbol in span.symbol,
+// the last price, the change and the name of the layout in span.layout-name, or, on a New tab page,
+// a title of its own and no span.symbol, as seen on the app) and its close button
 // (button.tab-close-button, "Close"), which the shell renders the way the app does: not on a pinned
 // tab, not on the only tab of the last window, and on a tab that is not active only at the normal
 // size. The page is 34 CSS pixels high, at a zoom of 1 (the app keeps its local pages at 1).
@@ -44,11 +45,13 @@ import {
 
 export type FakeTabSize = 'normal' | 'small' | 'xsmall' | 'xxsmall';
 
-// A tab of the strip. title holds the pieces the title shows, in order.
+// A tab of the strip. title holds the pieces the title shows, in order; a tab on the New tab page
+// shows them without a symbol.
 export interface FakeChromeTab {
   readonly id: string;
   title: string[];
   pinned: boolean;
+  newTabPage: boolean;
 }
 
 // The live state of the strip. A test may change it and call render to show the change.
@@ -98,7 +101,7 @@ export interface FakeShellHooks {
 }
 
 export interface FakeWindowChromeOptions {
-  tabs: { id: string; title: string[]; pinned?: boolean }[];
+  tabs: { id: string; title: string[]; pinned?: boolean; newTabPage?: boolean }[];
   // The id of the tab in front.
   active: string;
   size?: FakeTabSize;
@@ -192,10 +195,11 @@ function syntheticUuid(count: number): string {
 
 export function createFakeWindowChrome(options: FakeWindowChromeOptions): FakeWindowChrome {
   const state: FakeWindowChromeState = {
-    tabs: options.tabs.map(({ id, title, pinned }) => ({
+    tabs: options.tabs.map(({ id, title, pinned, newTabPage }) => ({
       id,
       title: [...title],
       pinned: pinned === true,
+      newTabPage: newTabPage === true,
     })),
     active: options.active,
     size: options.size ?? 'normal',
@@ -238,7 +242,7 @@ export function createFakeWindowChrome(options: FakeWindowChromeOptions): FakeWi
     const pieces = tab.title.map((text, at) =>
       fakeElement({
         tag: 'span',
-        matches: [pieceClasses[at] ?? 'span'],
+        matches: [tab.newTabPage ? 'span' : (pieceClasses[at] ?? 'span')],
         text,
         rect: box(title.x + at * pieceWidth, 8, pieceWidth, 18),
       }),
@@ -471,7 +475,7 @@ export function createFakeWindowChrome(options: FakeWindowChromeOptions): FakeWi
   const open = (): void => {
     opened += 1;
     const tabId = newTabIds.shift() ?? syntheticUuid(opened);
-    state.tabs.push({ id: tabId, title: ['New tab'], pinned: false });
+    state.tabs.push({ id: tabId, title: ['New tab'], pinned: false, newTabPage: true });
     state.active = tabId;
     tell({ action: 'new', tabId });
   };

@@ -146,6 +146,8 @@ export const SELECTORS = {
     tabs: 'div.tabs-container > div.tab[id]',
     activeTab: 'div.tab.active',
     tabTitle: '.tab-title',
+    // The symbol a chart tab shows in its title; a tab on the New tab page has none.
+    tabSymbol: 'span.symbol',
     tabCloseButton: 'button.tab-close-button',
     newTab: 'button.create-new-tab-button',
     newWindow: '#new-window-button',

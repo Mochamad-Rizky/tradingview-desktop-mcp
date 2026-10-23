@@ -11,30 +11,38 @@ import type { TvWindow } from '../../core/tv/tv-window.js';
 // chart tab.
 
 // Where readTabs looks in the tab strip (notes of Plan 3, section 3.1): every tab, in the order of
-// the strip, the class of the active one, and in a tab, its title and its close button.
+// the strip, the class of the active one, and in a tab, its title, its symbol and its close button.
 export const TAB_STRIP = {
   tabs: SELECTORS.windowChrome.tabs,
   activeTab: SELECTORS.windowChrome.activeTab,
   title: SELECTORS.windowChrome.tabTitle,
+  symbol: SELECTORS.windowChrome.tabSymbol,
   closeButton: SELECTORS.windowChrome.tabCloseButton,
 };
 
 // A tab as the strip shows it. A type alias, not an interface: it comes back from the page as
 // JSON, which a type must satisfy JsonValue for.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
-export type StripTab = { id: string; title: string; active: boolean; closable: boolean };
+export type StripTab = {
+  id: string;
+  title: string;
+  active: boolean;
+  closable: boolean;
+  showsSymbol: boolean;
+};
 
 // The tabs of the window, in the order of the strip, which makes the place of a tab in the list
 // its index. Of each: its id, the id the shell gives the tab; its title, the text of its title with
 // a space between the texts of different elements and every run of white space one space, as the
 // symbol, the last price, the change and the name of the layout stand apart on the screen; whether
-// it is the active tab; and whether it shows its close button, which the shell leaves out on a
-// pinned tab, on the only tab of the last window, and on a tab in the background at small widths.
-// Titles are what the user named and watches: the caller never logs them. NOT_AVAILABLE on a page
-// without a DOM.
+// it is the active tab; whether it shows its close button, which the shell leaves out on a pinned
+// tab, on the only tab of the last window, and on a tab in the background at small widths; and
+// whether it shows a symbol, which a chart tab shows in its title and a tab on the New tab page does
+// not (seen on the app), told by the length of the symbol and never by its text. Titles are what the
+// user named and watches: the caller never logs them. NOT_AVAILABLE on a page without a DOM.
 export function readTabs(
   win: TvWindow,
-  strip: { tabs: string; activeTab: string; title: string; closeButton: string },
+  strip: { tabs: string; activeTab: string; title: string; symbol: string; closeButton: string },
 ): { tabs: StripTab[] } | PageErrorSentinel {
   const doc = win.document;
   if (typeof doc.querySelectorAll !== 'function') {
@@ -68,11 +76,13 @@ export function readTabs(
     // A real page lists elements, of which the type of the window records only the box.
     const tab = listed as Element;
     const title = tab.querySelector(strip.title);
+    const symbol = tab.querySelector(strip.symbol);
     return {
       id: tab.id,
       title: title === null ? '' : shown(title),
       active: tab.matches(strip.activeTab),
       closable: tab.querySelector(strip.closeButton) !== null,
+      showsSymbol: symbol !== null && shown(symbol).length > 0,
     };
   });
   return { tabs };

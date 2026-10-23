@@ -911,6 +911,85 @@ describe('pages that hear of a switch later than the strip shows it', () => {
     expect(tabIds(world)).toEqual([N, A]);
   });
 
+  // A tab that shows a symbol is a chart tab, whose page may lag past the settle of a reading of no
+  // chart in front: it is never taken for a New tab page, which has no layout to ask about.
+  test.each([
+    [1500, 5000],
+    [60_000, 1500],
+  ])(
+    'tab_close of a chart tab behind a New tab page, whose page lags %d ms, never takes it for a New tab page',
+    async (showMs, callTimeoutMs) => {
+      const { client, world } = await startHarness(
+        { tabs: [newTabPage, chartA], active: N, pageLag: { hideMs: 0, showMs } },
+        { callTimeoutMs },
+      );
+      inspectFakeWindow(chartOf(world, A)).state.layouts.unsaved = true;
+
+      const result = await callTool(client, 'tab_close', { tabId: A, confirm: true });
+
+      expect(errorOf(result)).toMatchObject({ code: 'NOT_AVAILABLE', details: { tabId: A } });
+      // Brought to the front, never closed: no "Close tab?" dialog.
+      expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: A }]);
+      expect(tabIds(world)).toEqual([N, A]);
+    },
+  );
+
+  test('tab_switch from a New tab page to a chart tab whose page lags past the wait is NOT_AVAILABLE', async () => {
+    const { client } = await startHarness(
+      { tabs: [newTabPage, chartA], active: N, pageLag: { hideMs: 0, showMs: 60_000 } },
+      { callTimeoutMs: 1500 },
+    );
+
+    const result = await callTool(client, 'tab_switch', { tabId: A });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: 'The tab is selected in the tab strip, but its page has not come to the front yet',
+      details: { tabId: A },
+    });
+  });
+
+  test('tab_close of a chart tab in front whose page has not come to the front refuses, as a tab that shows a symbol is never a New tab page', async () => {
+    const { client, world } = await startHarness({
+      tabs: [newTabPage, chartA],
+      active: N,
+      pageLag: { hideMs: 0, showMs: 60_000 },
+    });
+    inspectFakeWindow(chartOf(world, A)).state.layouts.unsaved = true;
+    // The user has just brought the chart tab to the front.
+    await world.userSwitchesTo(A);
+
+    const result = await callTool(client, 'tab_close', { tabId: A, confirm: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { tabId: A, reason: 'page-not-in-front' },
+    });
+    expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: A }]);
+    expect(tabIds(world)).toEqual([N, A]);
+  });
+
+  test('tab_close of the tab in front reads which page is in front twice, a settle apart, before it asks about unsaved changes', async () => {
+    const { client, world } = await startHarness({
+      tabs: [chartA, chartB],
+      active: A,
+      pageLag: LAG,
+    });
+    inspectFakeWindow(chartOf(world, B)).state.layouts.unsaved = true;
+    // The user has just brought tab B to the front, and the page of tab A reports itself visible
+    // for a while yet.
+    await world.userSwitchesTo(B);
+
+    const result = await callTool(client, 'tab_close', { tabId: B, confirm: true });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      details: { tabId: B, reason: 'front-unknown' },
+    });
+    expect(world.chrome.actions).toEqual([{ action: 'switch', tabId: B }]);
+    expect(tabIds(world)).toEqual([A, B]);
+  });
+
   test('tab_switch answers once the page of the tab is in front, so the next chart call acts on that tab', async () => {
     const { client } = await startHarness({ tabs: [chartA, chartB], active: A, pageLag: LAG });
 

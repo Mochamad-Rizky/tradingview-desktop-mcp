@@ -11,6 +11,7 @@ import { clickElement, type ClickOptions } from '../../core/tv/input.js';
 import { readVisibilityState } from '../../core/tv/probes.js';
 import { SELECTORS } from '../../core/tv/selectors.js';
 import { pollUntil } from '../../utils/poll.js';
+import { sleep } from '../../utils/timeout.js';
 import { READ_ONLY } from '../annotations.js';
 import { pageWaitMs, POLL_INTERVAL_MS } from '../chart/strategies.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
@@ -164,9 +165,15 @@ type Arrival = 'chart' | 'none' | 'covered' | 'late' | 'unconfirmed';
 // Waits until the mapping of the chart tools shows the change of the tab in front that the strip
 // shows already: a chart tab other than the one in front before the click (`before`), or no chart in
 // front that lasts NO_CHART_SETTLE_MS. When nothing was known before the click, a chart tab counts
-// only once it lasts as long. The wait is the tab wait, and never shorter than a settle and a few
-// polls, which the call timeout always leaves room for.
-async function awaitPageInFront(ctx: ToolContext, before: FrontPage): Promise<Arrival> {
+// only once it lasts as long. No chart in front never counts for a tab that shows a symbol
+// (showsSymbol): that is a chart tab whose page has not come to the front yet, never a New tab page.
+// The wait is the tab wait, and never shorter than a settle and a few polls, which the call timeout
+// always leaves room for.
+async function awaitPageInFront(
+  ctx: ToolContext,
+  before: FrontPage,
+  showsSymbol: boolean,
+): Promise<Arrival> {
   const waitMs = Math.max(tabWaitMs(ctx), NO_CHART_SETTLE_MS + 3 * POLL_INTERVAL_MS);
   let held: { reading: string; since: number } | undefined;
   const { satisfied, last } = await pollUntil(
@@ -186,7 +193,7 @@ async function awaitPageInFront(ctx: ToolContext, before: FrontPage): Promise<Ar
       // A reading that counts once it lasts: no chart in front, or a chart tab when nothing was
       // known before the click.
       const lasting =
-        front.kind === 'none'
+        front.kind === 'none' && !showsSymbol
           ? 'none'
           : front.kind === 'chart' && before.kind === 'unknown'
             ? front.targetId
@@ -235,7 +242,7 @@ async function bringToFront(
       },
     );
   }
-  return awaitPageInFront(ctx, before);
+  return awaitPageInFront(ctx, before, tab.showsSymbol);
 }
 
 // The ids of the New tab pages the debug port lists, or null while it cannot list them.
@@ -254,17 +261,23 @@ async function newTabPageIds(ctx: ToolContext): Promise<string[] | null> {
 // (notes of Plan 3, section 3.4), which no tool may open, so the page of the tab is asked first. The
 // tab is in front by now, so a chart it shows is the chart page the connection manager maps to the
 // tab in front. No chart tab in front while a New tab page is open, every chart tab hidden, means
-// that the tab is a New tab page, which has no layout to save, but only while the window is in
-// view: while it is covered by other windows or minimized, every page of it reports hidden, the
-// chart in front too, and so does the window chrome (seen on the app), whose own visibility tells
-// the two apart. It is asked again here, as the window may have gone out of view since the tool
-// first asked. Anything else cannot be told, and is refused.
-async function assertClosesWithoutDialog(ctx: ToolContext, tabId: string): Promise<void> {
+// that the tab is a New tab page, which has no layout to save, unless the tab shows a symbol, which
+// a New tab page never does (seen on the app): that is a chart tab whose page has not come to the
+// front yet, and is refused. Nor while the window is out of view: while it is covered by other
+// windows or minimized, every page of it reports hidden, the chart in front too, and so does the
+// window chrome (seen on the app), whose own visibility tells the two apart. It is asked again here,
+// as the window may have gone out of view since the tool first asked. Anything else cannot be told,
+// and is refused.
+async function assertClosesWithoutDialog(ctx: ToolContext, tab: ListedTab): Promise<void> {
+  const tabId = tab.id;
   let page: PageHandle;
   try {
     page = await ctx.connection.chartPage();
   } catch (error) {
     if (isNoChartInFrontError(error) && isEveryChartTabHidden(error)) {
+      if (tab.showsSymbol) {
+        throw pageNotInFront(tabId);
+      }
       await assertWindowInView(ctx, tabId);
       return;
     }
@@ -297,6 +310,42 @@ async function assertClosesWithoutDialog(ctx: ToolContext, tabId: string): Promi
       {
         hint: 'Save the layout in TradingView first, or check app_health.',
         details: { tabId },
+      },
+    );
+  }
+}
+
+// The refusal of tab_close when the strip shows the tab in front and its page is not there yet.
+function pageNotInFront(tabId: string): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    'The tab is selected in the tab strip, but its page has not come to the front yet, so ' +
+      'whether closing it would open the "Close tab?" dialog of TradingView cannot be told',
+    { hint: 'Try again shortly.', details: { tabId, reason: 'page-not-in-front' } },
+  );
+}
+
+// Whether two readings of the page in front agree.
+function sameFront(first: FrontPage, second: FrontPage): boolean {
+  return first.kind === 'chart' && second.kind === 'chart'
+    ? first.targetId === second.targetId
+    : first.kind === second.kind;
+}
+
+// The page in front, read twice a settle apart, must read the same for tab_close of the tab in front:
+// a page hears of a switch later than the strip shows it, so that right after a switch of the user
+// the mapping may still show the page of the tab before, whose layout is not the one that closes.
+async function assertFrontSettled(ctx: ToolContext, tabId: string): Promise<void> {
+  const first = await frontPage(ctx);
+  await sleep(NO_CHART_SETTLE_MS);
+  if (!sameFront(first, await frontPage(ctx))) {
+    throw new TvMcpError(
+      'NOT_AVAILABLE',
+      'Which page is in front of the window changed while it was read, so whether closing the ' +
+        'tab would open the "Close tab?" dialog of TradingView cannot be checked',
+      {
+        hint: 'Try again shortly, or close the tab in TradingView yourself.',
+        details: { tabId, reason: 'front-unknown' },
       },
     );
   }
@@ -523,7 +572,7 @@ export const tabNew = defineTool({
     }
     // The chart tab it covers may hear of it later than the strip: the chart tools are left to
     // the mapping once that shows the new tab in front too.
-    const arrival = await awaitPageInFront(ctx, frontBefore);
+    const arrival = await awaitPageInFront(ctx, frontBefore, false);
     return {
       data: { id: tab.id, index: tab.index },
       via: 'dom',
@@ -689,19 +738,12 @@ export const tabClose = defineTool({
           throw windowOutOfView(tab.id);
         }
         if (arrival === 'late' || arrival === 'unconfirmed') {
-          throw new TvMcpError(
-            'NOT_AVAILABLE',
-            'The tab is selected in the tab strip, but its page has not come to the front yet, ' +
-              'so whether closing it would open the "Close tab?" dialog of TradingView cannot be ' +
-              'told',
-            {
-              hint: 'Try again shortly.',
-              details: { tabId: tab.id, reason: 'page-not-in-front' },
-            },
-          );
+          throw pageNotInFront(tab.id);
         }
+      } else {
+        await assertFrontSettled(ctx, tab.id);
       }
-      await assertClosesWithoutDialog(ctx, tab.id);
+      await assertClosesWithoutDialog(ctx, tab);
       return await clickClose(ctx, tab.id);
     } catch (error) {
       throw broughtToFront ? leftInFront(error) : error;
