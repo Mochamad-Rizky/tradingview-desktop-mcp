@@ -69,3 +69,23 @@ test('the token is kept for the page when the browser refuses storage', () => {
   clearToken();
   expect(readToken()).toBeNull();
 });
+
+test('a token the browser would not write is read from memory, before an older stored one', () => {
+  // Some private windows read storage but refuse to write to it.
+  sessionStorage.setItem('tvmcp.token', 'from-an-earlier-session');
+  const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+  });
+  storeToken('entered-now');
+  expect(readToken()).toBe('entered-now');
+  // The older token is gone too, so that a reload asks again rather than send it.
+  expect(sessionStorage.getItem('tvmcp.token')).toBeNull();
+
+  // Once the browser writes again, storage holds the token and memory lets go of its copy.
+  setItem.mockRestore();
+  storeToken('stored');
+  expect(sessionStorage.getItem('tvmcp.token')).toBe('stored');
+  expect(readToken()).toBe('stored');
+  clearToken();
+  expect(readToken()).toBeNull();
+});

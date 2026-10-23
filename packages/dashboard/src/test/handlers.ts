@@ -243,7 +243,3 @@ export function createFakeApi(options: FakeApiOptions = {}): FakeApi {
   ];
   return { handlers, stream, calls };
 }
-
-// The routes every test starts with (src/test/server.ts); a test that needs other answers adds its
-// own with server.use().
-export const handlers: HttpHandler[] = createFakeApi().handlers;

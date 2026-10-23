@@ -4,11 +4,20 @@ import { server } from '@/test/server';
 import { ApiError, apiGet, apiPost, onUnauthorized } from './client';
 import { readToken, storeToken } from './token';
 
-afterEach(() => {
-  server.events.removeAllListeners();
+test('apiGet sends the stored token as a Bearer header and returns the JSON', async () => {
+  storeToken(TEST_TOKEN);
+  let seen: string | null = null;
+  server.events.on('request:start', ({ request }) => {
+    seen = request.headers.get('Authorization');
+  });
+  await expect(apiGet('/api/info')).resolves.toEqual(info);
+  expect(seen).toBe(`Bearer ${TEST_TOKEN}`);
 });
 
-test('apiGet sends the stored token as a Bearer header and returns the JSON', async () => {
+test('a token the browser would not write to storage still goes out with each request', async () => {
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+  });
   storeToken(TEST_TOKEN);
   let seen: string | null = null;
   server.events.on('request:start', ({ request }) => {

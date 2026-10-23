@@ -4,16 +4,20 @@
 
 const KEY = 'tvmcp.token';
 
-// Where the token is kept when the browser refuses storage (cookies blocked, say), so that the
-// dashboard still works for as long as the page is open.
+// Where the token is kept when the browser refuses to store it (cookies blocked, say), so that the
+// dashboard still works for as long as the page is open. It comes first: some browsers read
+// storage but refuse to write to it, and storage then holds no token or an older one.
 let unstored: string | null = null;
 
 export function readToken(): string | null {
+  if (unstored !== null) {
+    return unstored;
+  }
   try {
     const token = sessionStorage.getItem(KEY);
     return token === '' ? null : token;
   } catch {
-    return unstored;
+    return null;
   }
 }
 
@@ -29,16 +33,22 @@ export function storeToken(t: string): void {
     unstored = null;
   } catch {
     unstored = token;
+    // An older token left in storage would come back with a reload.
+    removeStored();
   }
 }
 
-export function clearToken(): void {
-  unstored = null;
+function removeStored(): void {
   try {
     sessionStorage.removeItem(KEY);
   } catch {
     // Nothing was stored.
   }
+}
+
+export function clearToken(): void {
+  unstored = null;
+  removeStored();
 }
 
 // The token in a fragment such as `token=…` or `a=1&token=…`, as written: a plus sign stays a plus

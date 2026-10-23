@@ -25,10 +25,6 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 test('useHealth never starts a second request while one is in flight', async () => {
   let requests = 0;
   let inFlight = 0;

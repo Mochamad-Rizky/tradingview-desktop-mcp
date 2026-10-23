@@ -1,7 +1,8 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { http, HttpResponse } from 'msw';
-import { readToken, storeToken } from '@/api/token';
+import { readToken, storeToken, takeTokenFromLocation } from '@/api/token';
 import { useCallTool } from '@/hooks/use-call-tool';
 import { EventLogProvider, useEventLog } from '@/hooks/use-event-log';
 import { useHealth } from '@/hooks/use-health';
@@ -84,15 +85,38 @@ afterEach(() => {
   visit('/');
 });
 
-test('a token in the URL fragment is stored trimmed and removed from the address', async () => {
-  visit(`/log?origin=mcp#token=%20${TEST_TOKEN}%0A`);
+test('rendering the gate only reads the token: the address and storage stay as they are', () => {
+  // The entry takes a token from the address before the first render (main.tsx), not the gate.
+  visit(`/log#token=${TEST_TOKEN}`);
+  const replaceState = vi.spyOn(window.history, 'replaceState');
+  const pushState = vi.spyOn(window.history, 'pushState');
+  const setItem = vi.spyOn(Storage.prototype, 'setItem');
+  const removeItem = vi.spyOn(Storage.prototype, 'removeItem');
+  const Wrapper = withQueryClient();
+  // StrictMode renders twice, as it does to find what a render must not do.
+  render(
+    <StrictMode>
+      <Wrapper>
+        <TokenGate>
+          <EventLogProvider>
+            <Inside />
+          </EventLogProvider>
+        </TokenGate>
+      </Wrapper>
+    </StrictMode>,
+  );
+  expect(tokenInput()).toBeInTheDocument();
+  expect(replaceState).not.toHaveBeenCalled();
+  expect(pushState).not.toHaveBeenCalled();
+  expect(setItem).not.toHaveBeenCalled();
+  expect(removeItem).not.toHaveBeenCalled();
+  expect(window.location.hash).toBe(`#token=${TEST_TOKEN}`);
+});
+
+test('a stored token opens the app at once', async () => {
+  storeToken(TEST_TOKEN);
   renderGate();
-  expect(await screen.findByText('Inside the app')).toBeInTheDocument();
-  expect(sessionStorage.getItem('tvmcp.token')).toBe(TEST_TOKEN);
-  expect(window.location.hash).toBe('');
-  expect(window.location.pathname).toBe('/log');
-  expect(window.location.search).toBe('?origin=mcp');
-  expect(window.location.href).not.toContain(TEST_TOKEN);
+  expect(screen.getByText('Inside the app')).toBeInTheDocument();
   expect(await screen.findByText('Version 0.0.0-test')).toBeInTheDocument();
 });
 
@@ -118,7 +142,6 @@ test('a pasted token with spaces and a newline connects', async () => {
   // The check of the token filled in the server facts, so they show at once.
   expect(screen.getByText('Version 0.0.0-test')).toBeInTheDocument();
   expect(sent[0]).toBe(`Bearer ${TEST_TOKEN}`);
-  server.events.removeAllListeners();
 });
 
 test('a wrong token shows the not-accepted message and stays on the form', async () => {
@@ -162,7 +185,6 @@ test('an empty token, a token no header can carry and a server that cannot be re
   await user.type(tokenInput(), 'abc def{Enter}');
   expect(screen.getByRole('alert')).toHaveTextContent('Check what was pasted.');
   expect(checks).toBe(0);
-  server.events.removeAllListeners();
 
   server.use(http.get('/api/info', () => HttpResponse.error()));
   await user.clear(tokenInput());
@@ -252,7 +274,6 @@ test('a 401 on reconnecting the event stream returns to the token form', async (
   });
   expect(await screen.findByRole('alert')).toHaveTextContent('That token was not accepted.');
   expect(readToken()).toBeNull();
-  vi.useRealTimers();
 });
 
 test('the token travels only in the Authorization header, never in a URL or a log', async () => {
@@ -267,6 +288,8 @@ test('the token travels only in the Authorization header, never in a URL or a lo
   const api = createFakeApi();
   server.use(...api.handlers);
   visit(`/#token=${TEST_TOKEN}`);
+  // As the entry does before the first render.
+  takeTokenFromLocation();
   renderGate();
 
   expect(await screen.findByText('Health read')).toBeInTheDocument();
@@ -294,5 +317,4 @@ test('the token travels only in the Authorization header, never in a URL or a lo
   for (const spy of consoleCalls) {
     expect(JSON.stringify(spy.mock.calls)).not.toContain(TEST_TOKEN);
   }
-  server.events.removeAllListeners();
 });

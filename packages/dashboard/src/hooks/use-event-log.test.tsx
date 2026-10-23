@@ -38,10 +38,6 @@ beforeEach(() => {
   storeToken(TEST_TOKEN);
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 test('useEventLog merges start and end events into one call by id', async () => {
   const stream = serveStream();
   const { result } = renderEventLog();
