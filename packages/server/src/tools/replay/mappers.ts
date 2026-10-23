@@ -113,27 +113,15 @@ export function availabilityRefusal(
     return null;
   }
   if (intradayAllowed === null) {
-    return new TvMcpError(
-      'NOT_AVAILABLE',
-      'Whether the plan includes bar replay on intraday timeframes cannot be read on this ' +
-        `TradingView build, and the chart is on ${resolution ?? 'a timeframe it does not report'}`,
-      {
-        hint: `${TIMEFRAME_HINT}, or start replay in TradingView itself.`,
-        details: { feature: 'BAR_REPLAY_INTRADAY', resolution },
-      },
-    );
+    return intradayUnreadableError(resolution);
   }
-  if (resolution === null) {
-    return new TvMcpError(
-      'NOT_AVAILABLE',
-      'The chart does not report its timeframe, and the plan replays daily, weekly and monthly ' +
-        'charts only',
-      {
-        hint: 'Check chart_get_state, or start replay in TradingView itself.',
-        details: { feature: 'BAR_REPLAY_INTRADAY' },
-      },
-    );
-  }
+  return resolution === null ? noTimeframeError() : intradayPlanError(resolution);
+}
+
+// The refusals of an intraday chart, which startReplayViaApi repeats word for word right before the
+// select: the plan does not include intraday replay, it cannot be read, or the chart does not
+// report its timeframe on a plan that replays daily, weekly and monthly charts only.
+export function intradayPlanError(resolution: string): TvMcpError {
   return new TvMcpError(
     'PLAN_LIMIT',
     'The plan does not include bar replay on intraday timeframes (BAR_REPLAY_INTRADAY), and the ' +
@@ -141,6 +129,30 @@ export function availabilityRefusal(
     {
       hint: `${TIMEFRAME_HINT} to replay it, or upgrade the plan in TradingView.`,
       details: { feature: 'BAR_REPLAY_INTRADAY', resolution },
+    },
+  );
+}
+
+export function intradayUnreadableError(resolution: string | null): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    'Whether the plan includes bar replay on intraday timeframes cannot be read on this ' +
+      `TradingView build, and the chart is on ${resolution ?? 'a timeframe it does not report'}`,
+    {
+      hint: `${TIMEFRAME_HINT}, or start replay in TradingView itself.`,
+      details: { feature: 'BAR_REPLAY_INTRADAY', resolution },
+    },
+  );
+}
+
+export function noTimeframeError(): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    'The chart does not report its timeframe, and the plan replays daily, weekly and monthly ' +
+      'charts only',
+    {
+      hint: 'Check chart_get_state, or start replay in TradingView itself.',
+      details: { feature: 'BAR_REPLAY_INTRADAY' },
     },
   );
 }

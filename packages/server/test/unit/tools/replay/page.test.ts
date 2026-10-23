@@ -12,6 +12,18 @@ import {
   startReplayViaApi,
   stepReplayViaApi,
 } from '../../../../src/tools/replay/page.js';
+import {
+  alreadyActiveError,
+  autoplayRunningError,
+  endOfHistoryError,
+  intradayPlanError,
+  intradayUnreadableError,
+  noTimeframeError,
+  notStartedError,
+  savedSessionError,
+  signedOutError,
+  unknownStateError,
+} from '../../../../src/tools/replay/mappers.js';
 import type { JsonValue } from '../../../../src/utils/json.js';
 import { failureOf } from '../../../helpers/failure-of.js';
 import { createPageRuntime } from '../../../helpers/fake-cdp/runtime.js';
@@ -161,7 +173,7 @@ const callNames = (win: object) => inspectFakeWindow(win).calls.map(({ name }) =
 // Every page function, with arguments it takes, for the checks every one of them shares.
 const EVERY = [
   ['readReplayState', readReplayState, []],
-  ['startReplayViaApi', startReplayViaApi, ['first', null, WAIT_MS]],
+  ['startReplayViaApi', startReplayViaApi, ['first', null, false, WAIT_MS]],
   ['stepReplayViaApi', stepReplayViaApi, [WAIT_MS]],
   ['setAutoplayViaApi', setAutoplayViaApi, [true, null, WAIT_MS]],
   ['leaveReplayViaApi', leaveReplayViaApi, [false, WAIT_MS]],
@@ -471,7 +483,7 @@ describe('startReplayViaApi', () => {
   test('selects the time in milliseconds, starts replay and sets the timing mode back', async () => {
     const { result, win } = await resultOf(
       startReplayViaApi,
-      ['date', time(100) * 1000, WAIT_MS],
+      ['date', time(100) * 1000, false, WAIT_MS],
       chart(),
     );
 
@@ -487,12 +499,12 @@ describe('startReplayViaApi', () => {
   test('starts at the first bar replay can reach, or at a random bar, with the selectors of TradingView', async () => {
     const { result: first, win: fromFirst } = await resultOf(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       chart(),
     );
     const { result: random, win: fromRandom } = await resultOf(
       startReplayViaApi,
-      ['random', null, WAIT_MS],
+      ['random', null, false, WAIT_MS],
       chart(),
     );
 
@@ -507,7 +519,7 @@ describe('startReplayViaApi', () => {
   test('answers how a select that rejects or throws ended, with the reason of TradingView', async () => {
     const { result: rejected } = await resultOf(
       startReplayViaApi,
-      ['random', null, WAIT_MS],
+      ['random', null, false, WAIT_MS],
       withReplay((replay) => {
         replay.selectRandomDate = () =>
           Promise.reject(new Error('Error getting the available data depth'));
@@ -515,7 +527,7 @@ describe('startReplayViaApi', () => {
     );
     const { result: thrown } = await resultOf(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       withReplay((replay) => {
         replay.selectFirstAvailableDate = () => {
           throw new Error('Replay is not available');
@@ -538,7 +550,7 @@ describe('startReplayViaApi', () => {
   test('answers late for a select that does not end in time, and sets the timing mode back all the same', async () => {
     const { result, win } = await resultOf(
       startReplayViaApi,
-      ['first', null, SHORT_WAIT_MS],
+      ['first', null, false, SHORT_WAIT_MS],
       chart(() => undefined, fixture, { replay: { selectMs: 400 } }),
     );
 
@@ -546,25 +558,53 @@ describe('startReplayViaApi', () => {
     expect(replayOf(win)).toMatchObject({ started: false, timingMode: 'manual' });
   });
 
-  test('says when the timing mode cannot be set back or read', async () => {
-    const { result: fixed } = await resultOf(
+  test('refuses before the select when the timing mode cannot be read or set back, so that the setting never stays changed', async () => {
+    const refusal = {
+      code: 'NOT_AVAILABLE',
+      message:
+        'The setting of TradingView for how its replay button starts a replay cannot be read and ' +
+        'set back on this build, and starting replay would change it, so replay was not started',
+      hint: 'Start replay in TradingView itself.',
+    };
+    const { error: fixed, win } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       chart(() => undefined, fixture, { replay: { withoutTimingModeSetter: true } }),
     );
-    const { result: unreadable } = await resultOf(
+    const { error: unreadable } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       withReplay((replay) => {
         replay.replayTimingMode = () => {
           throw new Error('No setting');
         };
       }),
     );
-
-    const { result: refused } = await resultOf(
+    const { error: blank } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
+      withReplay((replay) => {
+        replay.replayTimingMode = () =>
+          ({
+            value: () => undefined,
+            setValue: () => undefined,
+            subscribe: () => undefined,
+            unsubscribe: () => undefined,
+          }) as unknown as ReturnType<FakeReplayApi['replayTimingMode']>;
+      }),
+    );
+
+    expect(fixed.toPayload()).toEqual(refusal);
+    expect(unreadable.toPayload()).toEqual(refusal);
+    expect(blank.toPayload()).toEqual(refusal);
+    expect(callNames(win)).toEqual([]);
+    expect(replayOf(win)).toMatchObject({ timingMode: 'manual', modeOn: false });
+  });
+
+  test('says when TradingView refuses to set the timing mode back', async () => {
+    const { result } = await resultOf(
+      startReplayViaApi,
+      ['first', null, false, WAIT_MS],
       withReplay((replay, win) => {
         // A setter that refuses, on a property that follows the setting the select keeps.
         replay.replayTimingMode = () => ({
@@ -578,20 +618,35 @@ describe('startReplayViaApi', () => {
       }),
     );
 
-    expect(fixed).toEqual({ ended: 'resolved', reason: null, timingModeKept: false });
-    expect(unreadable).toEqual({ ended: 'resolved', reason: null, timingModeKept: false });
-    expect(refused).toEqual({ ended: 'resolved', reason: null, timingModeKept: false });
+    expect(result).toEqual({ ended: 'resolved', reason: null, timingModeKept: false });
+  });
+
+  test('sets a timing mode other than manual back', async () => {
+    const { result, win } = await resultOf(
+      startReplayViaApi,
+      ['random', null, false, WAIT_MS],
+      chart((win) => {
+        replayOf(win).timingMode = 'date';
+      }),
+    );
+
+    expect(result).toEqual({ ended: 'resolved', reason: null, timingModeKept: true });
+    expect(calls(win, 'settings.setValue')).toEqual([
+      ['replay_timing_mode', 'random'],
+      ['replay_timing_mode', 'date'],
+    ]);
+    expect(replayOf(win).timingMode).toBe('date');
   });
 
   test('refuses a running replay, or one TradingView does not tell about, and calls no select', async () => {
     const { error, win } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       chart(running(40)),
     );
     const { error: unknown } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       withReplay((replay) => {
         Reflect.deleteProperty(replay, 'isReplayStarted');
       }),
@@ -615,7 +670,7 @@ describe('startReplayViaApi', () => {
   test('refuses a signed-out account with AUTH_REQUIRED before TradingView would show its sign-in wall', async () => {
     const { error, win } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       chart((win) => {
         inspectFakeWindow(win).state.pineEditor.signedIn = false;
       }),
@@ -629,22 +684,77 @@ describe('startReplayViaApi', () => {
     expect(callNames(win)).toEqual([]);
   });
 
+  test('refuses an intraday chart in the same turn as the select unless the plan includes intraday replay, before TradingView would open its paywall', async () => {
+    const onFifteen = (win: FakeTvWindow): void => {
+      inspectFakeWindow(win).state.resolution = '15';
+    };
+    const { error: gated, win } = await failureOfBoth(
+      startReplayViaApi,
+      ['first', null, false, WAIT_MS],
+      chart(onFifteen),
+    );
+    const { error: unknown } = await failureOfBoth(
+      startReplayViaApi,
+      ['first', null, null, WAIT_MS],
+      chart(onFifteen),
+    );
+    const { result, win: allowed } = await resultOf(
+      startReplayViaApi,
+      ['first', null, true, WAIT_MS],
+      chart(onFifteen, {
+        ...fixture,
+        planConfigs: { ...fixture.planConfigs, BAR_REPLAY_INTRADAY: {} },
+      }),
+    );
+
+    expect(gated.toPayload()).toEqual(intradayPlanError('15').toPayload());
+    expect(unknown.toPayload()).toEqual(intradayUnreadableError('15').toPayload());
+    expect(callNames(win)).toEqual([]);
+    expect(result).toEqual({ ended: 'resolved', reason: null, timingModeKept: true });
+    expect(replayOf(allowed).started).toBe(true);
+    expect(callNames(allowed).filter((name) => name.startsWith('dialog.'))).toEqual([]);
+  });
+
+  test('refuses a chart whose timeframe it cannot read unless the plan includes intraday replay', async () => {
+    const unreachable = chart((win) => {
+      const api = win.TradingViewApi;
+      if (api !== undefined) {
+        api.activeChart = () => {
+          throw new Error('No active chart');
+        };
+      }
+    });
+    const { error } = await failureOfBoth(
+      startReplayViaApi,
+      ['first', null, false, WAIT_MS],
+      unreachable,
+    );
+    const { error: unknown } = await failureOfBoth(
+      startReplayViaApi,
+      ['first', null, null, WAIT_MS],
+      unreachable,
+    );
+
+    expect(error.toPayload()).toEqual(noTimeframeError().toPayload());
+    expect(unknown.toPayload()).toEqual(intradayUnreadableError(null).toPayload());
+  });
+
   test('refuses a saved replay session, or a layout that does not tell about one, before the "continue replay" dialog', async () => {
     const { error, win } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       chart((win) => {
         replayOf(win).sessionState = { replayTime: time(5), replayMode: 'ActiveChart', charts: [] };
       }),
     );
     const { error: unknown } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       chart(() => undefined, fixture, { replay: { withoutSessionState: true } }),
     );
     const { error: unreadable } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       chart((win) => {
         const collection = win.TradingViewApi?._chartWidgetCollection;
         if (collection !== undefined) {
@@ -675,12 +785,12 @@ describe('startReplayViaApi', () => {
   test('refuses a start it does not know, a time that is no number and a build without the select', async () => {
     const { error: start } = await failureOfBoth(
       startReplayViaApi,
-      ['sideways', null, WAIT_MS],
+      ['sideways', null, false, WAIT_MS],
       chart(),
     );
     const { error: noTime } = await failureOfBoth(
       startReplayViaApi,
-      ['date', null, WAIT_MS],
+      ['date', null, false, WAIT_MS],
       chart(),
     );
     const withoutSelect = (name: string) =>
@@ -689,17 +799,17 @@ describe('startReplayViaApi', () => {
       });
     const { error: noRandom } = await failureOfBoth(
       startReplayViaApi,
-      ['random', null, WAIT_MS],
+      ['random', null, false, WAIT_MS],
       withoutSelect('selectRandomDate'),
     );
     const { error: noFirst } = await failureOfBoth(
       startReplayViaApi,
-      ['first', null, WAIT_MS],
+      ['first', null, false, WAIT_MS],
       withoutSelect('selectFirstAvailableDate'),
     );
     const { error: noDate } = await failureOfBoth(
       startReplayViaApi,
-      ['date', time(100) * 1000, WAIT_MS],
+      ['date', time(100) * 1000, false, WAIT_MS],
       withoutSelect('selectDate'),
     );
 
@@ -1180,4 +1290,64 @@ describe('leaveReplayViaApi', () => {
       hint: 'Check replay_status.',
     });
   });
+});
+
+test('the refusals the page functions repeat are word for word those of the tools', async () => {
+  const pageError = async (
+    fn: PageFunction<JsonValue[], JsonValue>,
+    args: JsonValue[],
+    make: Make,
+  ): Promise<unknown> => (await failureOfBoth(fn, args, make)).error.toPayload();
+  const start = startReplayViaApi as PageFunction<JsonValue[], JsonValue>;
+  const step = stepReplayViaApi as PageFunction<JsonValue[], JsonValue>;
+  const autoplay = setAutoplayViaApi as PageFunction<JsonValue[], JsonValue>;
+  const startArgs: JsonValue[] = ['first', null, false, WAIT_MS];
+
+  expect(await pageError(start, startArgs, chart(running(40)))).toEqual(
+    alreadyActiveError().toPayload(),
+  );
+  expect(
+    await pageError(
+      start,
+      startArgs,
+      withReplay((replay) => {
+        Reflect.deleteProperty(replay, 'isReplayStarted');
+      }),
+    ),
+  ).toEqual(unknownStateError().toPayload());
+  expect(
+    await pageError(
+      start,
+      startArgs,
+      chart((win) => {
+        inspectFakeWindow(win).state.pineEditor.signedIn = false;
+      }),
+    ),
+  ).toEqual(signedOutError().toPayload());
+  expect(
+    await pageError(
+      start,
+      startArgs,
+      chart((win) => {
+        replayOf(win).sessionState = { replayTime: time(5), replayMode: 'ActiveChart', charts: [] };
+      }),
+    ),
+  ).toEqual(savedSessionError(true).toPayload());
+  expect(
+    await pageError(
+      start,
+      startArgs,
+      chart(() => undefined, fixture, { replay: { withoutSessionState: true } }),
+    ),
+  ).toEqual(savedSessionError(null).toPayload());
+  expect(await pageError(step, [WAIT_MS], chart())).toEqual(notStartedError().toPayload());
+  expect(await pageError(step, [WAIT_MS], chart(running(40, { autoplay: true })))).toEqual(
+    autoplayRunningError().toPayload(),
+  );
+  expect(await pageError(autoplay, [true, null, WAIT_MS], chart())).toEqual(
+    notStartedError().toPayload(),
+  );
+  expect(await pageError(autoplay, [true, null, WAIT_MS], chart(running(LAST)))).toEqual(
+    endOfHistoryError().toPayload(),
+  );
 });

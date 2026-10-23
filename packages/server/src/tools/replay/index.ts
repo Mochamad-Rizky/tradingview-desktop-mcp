@@ -52,9 +52,10 @@ import {
 // (reverse-engineering notes of Plan 3, section 4). replay_start checks first what would make the app
 // open a dialog, and refuses instead: its sign-in wall, its paywall for intraday replay on a plan
 // without BAR_REPLAY_INTRADAY (design spec 5.3, rule 3), and its "continue replay" dialog for a layout
-// that holds a replay saved on leaving it. replay_stop leaves replay with skipConfirm, which never
-// asks in the "Leave replay" dialog, and clears the replay TradingView then saves in the layout only
-// for a replay this session started (design spec 5.3, rule 2).
+// that holds a replay saved on leaving it; it checks the timeframe again in the same turn as the
+// start. replay_stop leaves replay with skipConfirm, which never asks in the "Leave replay" dialog,
+// and clears the replay TradingView then saves in the layout only for a replay this session started
+// (design spec 5.3, rule 2).
 //
 // There is no trading tool (design spec 5.3, rule 1): on TradingView Desktop the paper trading of
 // replay goes through the trading service of the app, the machinery of real orders, with an internal
@@ -104,9 +105,16 @@ type SteppedReplay = {
   finished: boolean;
 };
 
-// What the plan says of intraday replay, asked only where it matters: for a chart TradingView can
-// replay whose timeframe is not daily, weekly or monthly. Null when it is not asked, or cannot be
-// read.
+// What the plan says of intraday replay, null when it cannot be read.
+async function planAllowsIntraday(page: PageHandle): Promise<boolean | null> {
+  const { BAR_REPLAY_INTRADAY: enabled = null } = await getPlanFeaturesEnabled(page, [
+    'BAR_REPLAY_INTRADAY',
+  ]);
+  return enabled;
+}
+
+// The same, asked only where it matters for the availability of the chart: for a chart TradingView
+// can replay whose timeframe is not daily, weekly or monthly. Null when it is not asked.
 async function intradayAllowed(page: PageHandle, reading: ReplayReading): Promise<boolean | null> {
   if (
     reading.available !== true ||
@@ -115,10 +123,7 @@ async function intradayAllowed(page: PageHandle, reading: ReplayReading): Promis
   ) {
     return null;
   }
-  const { BAR_REPLAY_INTRADAY: enabled = null } = await getPlanFeaturesEnabled(page, [
-    'BAR_REPLAY_INTRADAY',
-  ]);
-  return enabled;
+  return planAllowsIntraday(page);
 }
 
 export const replayStart = defineTool({
@@ -166,7 +171,9 @@ export const replayStart = defineTool({
     if (!reading.signedIn) {
       throw signedOutError();
     }
-    const refusal = availabilityRefusal(reading, await intradayAllowed(page, reading));
+    // Read whatever the timeframe, since the page checks it again right before the select.
+    const allowed = await planAllowsIntraday(page);
+    const refusal = availabilityRefusal(reading, allowed);
     if (refusal !== null) {
       throw refusal;
     }
@@ -181,6 +188,7 @@ export const replayStart = defineTool({
     const outcome = await page.bridge.evaluate(startReplayViaApi, [
       choice.start,
       choice.start === 'date' ? choice.seconds * 1000 : null,
+      allowed,
       waitMs,
     ]);
     // A select that ended has started replay by then, or will not; the replay date shows later.

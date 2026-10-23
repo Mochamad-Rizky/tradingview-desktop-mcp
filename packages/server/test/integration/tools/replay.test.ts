@@ -197,10 +197,47 @@ describe('replay_start', () => {
     expect(replayOf(win).timingMode).toBe('manual');
   });
 
-  test('replay_start warns when the replay timing mode cannot be set back', async () => {
+  test('replay_start sets a replay timing mode other than manual back', async () => {
+    const { client, win } = await startHarness();
+    replayOf(win).timingMode = 'random';
+
+    await callTool(client, 'replay_start', { date: 'first' });
+
+    expect(calls(win, 'settings.setValue')).toEqual([
+      ['replay_timing_mode', 'first_available_date'],
+      ['replay_timing_mode', 'random'],
+    ]);
+    expect(replayOf(win).timingMode).toBe('random');
+  });
+
+  test('replay_start refuses, and changes nothing, when the replay timing mode of TradingView cannot be set back', async () => {
     const { client, win } = await startHarness(fixture, {
       replay: { withoutTimingModeSetter: true },
     });
+
+    const result = await callTool(client, 'replay_start', { date: 'first' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'NOT_AVAILABLE',
+      message: expect.stringContaining('how its replay button starts a replay') as string,
+    });
+    expect(selects(win)).toEqual([]);
+    expect(calls(win, 'settings.setValue')).toEqual([]);
+    expect(replayOf(win)).toMatchObject({ timingMode: 'manual', started: false, modeOn: false });
+  });
+
+  test('replay_start warns when TradingView refuses to set its replay timing mode back', async () => {
+    const { client, win } = await startHarness();
+    const replay = await win.TradingViewApi?.replayApi?.();
+    if (replay !== undefined) {
+      const original = replay.replayTimingMode.bind(replay);
+      replay.replayTimingMode = () => ({
+        ...original(),
+        setValue: () => {
+          throw new Error('The setting is read-only');
+        },
+      });
+    }
 
     const result = await callTool(client, 'replay_start', { date: 'first' });
 
@@ -208,7 +245,6 @@ describe('replay_start', () => {
     expect(warningsOf(result)).toEqual([
       expect.stringMatching(/how its replay button starts a replay.*could not be set back/),
     ]);
-    expect(replayOf(win).timingMode).toBe('first_available_date');
   });
 
   test('replay_start a date outside the loaded history is INVALID_INPUT', async () => {
@@ -287,6 +323,33 @@ describe('replay_start', () => {
     const result = await callTool(client, 'replay_start', { date: 'first' });
 
     expect(dataOf(result)).toMatchObject({ active: true, start: 'first', resolution: '15' });
+    expect(dialogs(win)).toEqual([]);
+  });
+
+  test('replay_start refuses a chart that turns intraday while replay starts, and opens no paywall', async () => {
+    const { client, win } = await startHarness();
+    // The chart turns to 15 minutes, as a chart_set_timeframe of another call would turn it, after
+    // the checks of replay_start and right before it starts replay.
+    const api = win.TradingViewApi;
+    const original = api?.replayApi?.bind(api);
+    let asked = 0;
+    if (api !== undefined && original !== undefined) {
+      api.replayApi = () => {
+        asked += 1;
+        if (asked === 2) {
+          inspectFakeWindow(win).state.resolution = '15';
+        }
+        return original();
+      };
+    }
+
+    const result = await callTool(client, 'replay_start', { date: 'first' });
+
+    expect(errorOf(result)).toMatchObject({
+      code: 'PLAN_LIMIT',
+      details: { feature: 'BAR_REPLAY_INTRADAY', resolution: '15' },
+    });
+    expect(selects(win)).toEqual([]);
     expect(dialogs(win)).toEqual([]);
   });
 

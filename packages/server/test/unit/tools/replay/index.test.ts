@@ -64,6 +64,8 @@ const RUNNING: ReplayReading = {
   currency: null,
 };
 const OFF: ReplayReading = { ...RUNNING, started: false, modeOn: false, date: null };
+// What the plan says of intraday replay.
+const NO_INTRADAY = { value: { BAR_REPLAY_INTRADAY: false } };
 // What one step answers.
 const stepped = (date: number) => ({ outcome: 'stepped', date, reason: null });
 
@@ -413,6 +415,7 @@ describe('what replay_start makes of the start', () => {
   function startWith(start: Scripted, after: ReplayReading[]) {
     const run = scriptedRun([
       [readReplayState, [{ value: OFF }, ...after.map((value) => ({ value }))]],
+      [readPlanFeaturesEnabled, [NO_INTRADAY]],
       [startReplayViaApi, [start]],
     ]);
     return { run, call: replayStart.handler({ date: 'first' }, run.ctx) };
@@ -462,15 +465,18 @@ describe('what replay_start makes of the start', () => {
     expect(run.ctx.session.replayStartedBySession).toBe(true);
   });
 
-  test('passes the start, the time in milliseconds and the page wait to the page', async () => {
+  test('passes the start, the time in milliseconds, what the plan says of intraday replay and the page wait to the page', async () => {
     const run = scriptedRun([
       [readReplayState, [{ value: OFF }, { value: RUNNING }]],
+      [readPlanFeaturesEnabled, [NO_INTRADAY]],
       [startReplayViaApi, [{ value: { ended: 'resolved', reason: null, timingModeKept: true } }]],
     ]);
 
     await replayStart.handler({ date: '2024-04-11' }, run.ctx);
 
-    expect(run.argsOf(startReplayViaApi)).toEqual([['date', 1712793600000, 14_000]]);
+    // The page checks the timeframe again right before the select, with the answer of the plan.
+    expect(run.argsOf(readPlanFeaturesEnabled)).toEqual([[['BAR_REPLAY_INTRADAY']]]);
+    expect(run.argsOf(startReplayViaApi)).toEqual([['date', 1712793600000, false, 14_000]]);
   });
 
   test('refuses a replay that TradingView does not tell is off', async () => {

@@ -100,9 +100,11 @@ export type AutoplayOutcome = {
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type LeaveOutcome = { left: boolean; stopped: boolean; cleared: boolean | null };
 
-// Replay on the active chart, as a ReplayReading. It changes nothing and sends nothing. A page
-// without the replay API is CAPABILITY_UNAVAILABLE, and an API TradingView does not give
-// NOT_AVAILABLE.
+// Replay on the active chart, as a ReplayReading. It changes nothing of replay or the chart. When the
+// app has not made its replay API yet, replayApi() has it made, as the app does on its first use of
+// replay: it builds the replay controller of the app, which may load the replay module of the app
+// on demand. A page without the replay API is CAPABILITY_UNAVAILABLE, and an API TradingView does not
+// give NOT_AVAILABLE.
 export async function readReplayState(win: TvWindow): Promise<ReplayReading | PageErrorSentinel> {
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
   if (typeof api?.replayApi !== 'function') {
@@ -246,16 +248,22 @@ export async function readReplayState(win: TvWindow): Promise<ReplayReading | Pa
 // Starts replay with the select of the app for `start`: selectDate(ms) a second before the time ms
 // (Unix milliseconds), selectFirstAvailableDate() or selectRandomDate(). Answers how the select ended
 // within waitMs (StartOutcome). The select keeps its timing mode of replay as a setting of the app,
-// so the mode is set back to what it was afterwards, whether the select ended or not. Right before the
-// select, in the same turn, a running replay, or one TradingView does not tell about, is
-// NOT_AVAILABLE, a signed-out account (the app would show its sign-in wall) AUTH_REQUIRED, and a
-// layout that holds a saved replay, or does not tell, NOT_AVAILABLE (the app would open its "continue
-// replay" dialog): the user may change these while the caller checks. A start it does not know and a
-// time that is no number are INVALID_INPUT, and a build without the select CAPABILITY_UNAVAILABLE.
+// so the mode is set back to what it was afterwards, whether the select ended or not; a mode that
+// cannot be read, or set back, refuses before the select (NOT_AVAILABLE), so that the setting never
+// stays changed. Right before the select, in the same turn, since the user may change these while
+// the caller checks: a running replay, or one TradingView does not tell about, is NOT_AVAILABLE, a
+// signed-out account (the app would show its sign-in wall) AUTH_REQUIRED, a chart that is not on a
+// daily, weekly or monthly timeframe PLAN_LIMIT or NOT_AVAILABLE unless intradayAllowed, what the plan
+// says of intraday replay, is true (the app would open its paywall), and a layout that holds a saved
+// replay, or does not tell, NOT_AVAILABLE (the app would open its "continue replay" dialog). Each of
+// these refusals is word for word the one the tools give before they call this. A start it does not
+// know and a time that is no number are INVALID_INPUT, and a build without the select
+// CAPABILITY_UNAVAILABLE.
 export async function startReplayViaApi(
   win: TvWindow,
   start: string,
   ms: number | null,
+  intradayAllowed: boolean | null,
   waitMs: number,
 ): Promise<StartOutcome | PageErrorSentinel> {
   const api: Partial<TradingViewApiLike> | undefined = win.TradingViewApi;
@@ -335,6 +343,45 @@ export async function startReplayViaApi(
         message: 'Bar replay needs a signed-in TradingView account',
         hint: 'Sign in to TradingView, then try again.',
       },
+    };
+  }
+  // The timeframe, which another call may have changed since the plan was checked.
+  const shown = attempt(() => api.activeChart?.().resolution());
+  const resolution = typeof shown === 'string' && shown !== '' ? shown : null;
+  if ((resolution === null || !/^\d*[DWM]$/.test(resolution)) && intradayAllowed !== true) {
+    const timeframeHint =
+      'Switch the chart to a daily, weekly or monthly timeframe with chart_set_timeframe';
+    if (intradayAllowed === null) {
+      return {
+        __tvmcpError: {
+          code: 'NOT_AVAILABLE',
+          message:
+            'Whether the plan includes bar replay on intraday timeframes cannot be read on this ' +
+            `TradingView build, and the chart is on ${resolution ?? 'a timeframe it does not report'}`,
+          hint: `${timeframeHint}, or start replay in TradingView itself.`,
+          details: { feature: 'BAR_REPLAY_INTRADAY', resolution },
+        },
+      };
+    }
+    return {
+      __tvmcpError:
+        resolution === null
+          ? {
+              code: 'NOT_AVAILABLE',
+              message:
+                'The chart does not report its timeframe, and the plan replays daily, weekly and ' +
+                'monthly charts only',
+              hint: 'Check chart_get_state, or start replay in TradingView itself.',
+              details: { feature: 'BAR_REPLAY_INTRADAY' },
+            }
+          : {
+              code: 'PLAN_LIMIT',
+              message:
+                'The plan does not include bar replay on intraday timeframes ' +
+                `(BAR_REPLAY_INTRADAY), and the chart is on ${resolution}`,
+              hint: `${timeframeHint} to replay it, or upgrade the plan in TradingView.`,
+              details: { feature: 'BAR_REPLAY_INTRADAY', resolution },
+            },
     };
   }
   let saved: boolean | null = null;
@@ -430,7 +477,8 @@ export async function startReplayViaApi(
     });
   };
 
-  // The property of the timing mode, read as a method of it.
+  // The property of the timing mode, read as a method of it, which the select changes and keeps as a
+  // setting of the app: one that cannot be set back is not left changed.
   const mode = attempt(() => replay.replayTimingMode?.()) as
     { value?: unknown; setValue?: unknown } | null | undefined;
   const modeNow = (): unknown =>
@@ -438,6 +486,19 @@ export async function startReplayViaApi(
       typeof mode?.value === 'function' ? (mode as { value(): unknown }).value() : undefined,
     );
   const previous = modeNow();
+  if (previous === undefined || typeof mode?.setValue !== 'function') {
+    return {
+      __tvmcpError: {
+        code: 'NOT_AVAILABLE',
+        message:
+          'The setting of TradingView for how its replay button starts a replay cannot be read ' +
+          'and set back on this build, and starting replay would change it, so replay was not ' +
+          'started',
+        hint: 'Start replay in TradingView itself.',
+      },
+    };
+  }
+  const property = mode as { setValue(value: unknown): void };
   const starter = replay as ReplayApiLike;
   const outcome = await settle(() =>
     start === 'date'
@@ -448,10 +509,10 @@ export async function startReplayViaApi(
   );
   let kept: boolean;
   try {
-    if (previous !== undefined && modeNow() !== previous && typeof mode?.setValue === 'function') {
-      (mode as { setValue(value: unknown): void }).setValue(previous);
+    if (modeNow() !== previous) {
+      property.setValue(previous);
     }
-    kept = previous !== undefined && modeNow() === previous;
+    kept = modeNow() === previous;
   } catch {
     kept = false;
   }

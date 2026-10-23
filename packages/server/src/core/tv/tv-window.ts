@@ -128,8 +128,10 @@ export interface TradingViewApiLike {
   startFullscreen?(): void;
   exitFullscreen?(): void;
   // The replay API (notes, section 4.5, and notes of Plan 3, section 4), the same object on every
-  // call once the app made it; it rejects while the chart API is not up. Typed loosely: page code
-  // takes what it resolves with for a Partial<ReplayApiLike> and checks each member.
+  // call once the app made it. Until then a call has the app make it: the app waits for the models
+  // of its charts and builds its replay controller, which may load the replay module of the app on
+  // demand. It rejects while the chart API is not up. Typed loosely: page code takes what it
+  // resolves with for a Partial<ReplayApiLike> and checks each member.
   replayApi?(): Promise<unknown>;
   // The Pine Editor API (notes of Plan 2, section Q1), the same object on every call.
   pineEditorApi?(): PineEditorApiLike;
