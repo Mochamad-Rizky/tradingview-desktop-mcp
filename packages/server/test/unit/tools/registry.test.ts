@@ -911,7 +911,7 @@ test('batch_run belongs to the core profile and stays out of the readonly one', 
 // Cursor warns above 40), so it holds the essentials of each domain and not nearly every tool. A
 // tool joins it, or leaves it, by changing this list: nothing else keeps the profile from growing
 // back one tool at a time.
-test('the core profile is exactly the 39 pinned tools', () => {
+test('the core profile is exactly the 40 pinned tools', () => {
   const core = [
     // App
     'app_launch',
@@ -950,9 +950,10 @@ test('the core profile is exactly the 39 pinned tools', () => {
     // Drawings
     'drawing_create',
     'drawing_list',
-    // Alerts
+    // Alerts: what core creates, it can delete.
     'alert_create',
     'alert_list',
+    'alert_delete',
     // Watchlist
     'watchlist_get',
     'watchlist_add',
@@ -966,7 +967,7 @@ test('the core profile is exactly the 39 pinned tools', () => {
     'batch_run',
   ];
 
-  expect(core).toHaveLength(39);
+  expect(core).toHaveLength(40);
   expect(names(selectTools(allTools, { profile: 'core', patterns: [] })).sort()).toEqual(
     [...core].sort(),
   );

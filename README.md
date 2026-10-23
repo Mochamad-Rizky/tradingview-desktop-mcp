@@ -261,7 +261,7 @@ the conversation. Screenshots go to the client as images, and the server writes 
 ### Tool profiles
 
 By default the server offers all its 83 tools (`--profile full`). Some clients accept only a limited
-number of tools (Cursor warns above 40). For them, `--profile core` offers a reduced set of 39
+number of tools (Cursor warns above 40). For them, `--profile core` offers a reduced set of 40
 essential tools, and `--profile readonly` offers only the 38 tools that read. `--tools` takes name
 patterns such as `chart_*,data_*` and narrows the profile further: a tool must be in the profile
 and match a pattern, so `--profile core --tools 'pine_*'` still leaves out `pine_open` and

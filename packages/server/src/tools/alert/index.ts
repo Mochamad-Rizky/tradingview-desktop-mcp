@@ -416,6 +416,9 @@ export const alertDelete = defineTool({
       ),
   },
   annotations: DESTRUCTIVE,
+  // Core creates alerts, which persist in the account, count against the plan and fire, so it can
+  // delete them too.
+  core: true,
   async handler({ alertIds, confirm }, ctx) {
     const ids = [...new Set(alertIds)];
     const page = await ctx.connection.chartPage();

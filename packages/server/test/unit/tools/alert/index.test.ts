@@ -65,11 +65,13 @@ test('alert_delete destroys, and alert_create adds an alert without destroying a
 });
 
 // The core profile itself is pinned in test/unit/tools/registry.test.ts.
-test('the core profile keeps alert_create and alert_list of the alert tools, not alert_delete', () => {
+// Core creates alerts, which persist in the account, count against SERVER_SIDE_ALERTS and fire, so
+// it can delete them too.
+test('the core profile keeps every alert tool, alert_delete included', () => {
   expect(
     selectTools(alertTools, { profile: 'core', patterns: [] }).map(({ name }) => name),
-  ).toEqual(['alert_create', 'alert_list']);
-  expect(alertDelete.core).toBeUndefined();
+  ).toEqual(['alert_create', 'alert_list', 'alert_delete']);
+  expect(alertDelete.core).toBe(true);
 });
 
 test('alert_create takes a symbol, a condition, a price, a message and an expiration', () => {
