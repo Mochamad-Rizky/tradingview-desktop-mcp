@@ -4,6 +4,7 @@ import type { FakeDomWindow, FakeElement } from '../../helpers/fake-tv/dom.js';
 import {
   CHROME_SELECTORS,
   createFakeWindowChrome,
+  STRIP_HEIGHT,
   tabPartSelector,
   type FakeWindowChromeOptions,
 } from '../../helpers/fake-tv/window-chrome.js';
@@ -83,7 +84,13 @@ test('shows the tabs in the order of the strip, the active one marked, with the 
   expect(found(chrome, SELECTORS.windowChrome.newTab).getBoundingClientRect().x).toBeGreaterThan(
     lastTab.x + lastTab.width,
   );
-  expect(pageOf(chrome).innerHeight).toBe(34);
+  // The page spans the whole window, and the strip only its top, as seen on the app.
+  expect(pageOf(chrome).innerHeight).toBe(800);
+  expect(found(chrome, SELECTORS.windowChrome.strip).getBoundingClientRect()).toMatchObject({
+    x: 0,
+    y: 0,
+    height: STRIP_HEIGHT,
+  });
 });
 
 test('renders the close button with the rule of the app', () => {
