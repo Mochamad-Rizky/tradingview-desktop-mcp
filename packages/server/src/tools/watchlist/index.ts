@@ -369,6 +369,7 @@ export const watchlistGet = defineTool({
     'A listId the account does not have fails with INVALID_INPUT.',
   inputSchema: { listId: LIST_ID },
   annotations: READ_ONLY,
+  core: true,
   handler: ({ listId }, ctx) => readWatchlistData(ctx, listId),
 });
 
@@ -394,6 +395,7 @@ export const watchlistAdd = defineTool({
     listId: LIST_ID,
   },
   annotations: ADDS,
+  core: true,
   async handler({ symbol, listId }, ctx) {
     const plan = await planAddition(ctx, trimmedSymbols([symbol]), listId);
     // An addition of nothing but an unknown symbol changes nothing.

@@ -126,10 +126,13 @@ test('the replay tools that act destroy nothing; replay_stop and replay_autoplay
   }
 });
 
-test('the replay tools are left out of the core profile until the core set is chosen', () => {
-  for (const tool of replayTools) {
-    expect(tool.core, tool.name).toBeUndefined();
-  }
+// The core profile itself is pinned in test/unit/tools/registry.test.ts.
+test('the core profile keeps replay_start, replay_step and replay_stop of the replay tools', () => {
+  expect(
+    selectTools(replayTools, { profile: 'core', patterns: [] }).map(({ name }) => name),
+  ).toEqual(['replay_start', 'replay_step', 'replay_stop']);
+  expect(replayAutoplay.core).toBeUndefined();
+  expect(replayStatus.core).toBeUndefined();
 });
 
 test('the descriptions name the start points, the refusals, the speeds, the setting kept and that the server never trades', () => {

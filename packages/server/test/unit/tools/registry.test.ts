@@ -750,10 +750,11 @@ test('batch_run belongs to the core profile and stays out of the readonly one', 
   );
 });
 
-// The core profile is the reduced set for clients that cap the number of tools (design spec 5.4),
-// so it holds the essentials of each domain and not nearly every tool. A tool joins it, or leaves
-// it, by changing this list: nothing else keeps the profile from growing back one tool at a time.
-test('the core profile keeps exactly the essential tools', () => {
+// The core profile is the reduced set for clients that cap the number of tools (design spec 5.4;
+// Cursor warns above 40), so it holds the essentials of each domain and not nearly every tool. A
+// tool joins it, or leaves it, by changing this list: nothing else keeps the profile from growing
+// back one tool at a time.
+test('the core profile is exactly the 39 pinned tools', () => {
   const core = [
     // App
     'app_launch',
@@ -789,10 +790,26 @@ test('the core profile keeps exactly the essential tools', () => {
     'pine_smart_compile',
     // Strategy Tester
     'strategy_get_results',
+    // Drawings
+    'drawing_create',
+    'drawing_list',
+    // Alerts
+    'alert_create',
+    'alert_list',
+    // Watchlist
+    'watchlist_get',
+    'watchlist_add',
+    // Replay
+    'replay_start',
+    'replay_step',
+    'replay_stop',
+    // Screenshot
+    'screenshot_capture',
     // Batch
     'batch_run',
   ];
 
+  expect(core).toHaveLength(39);
   expect(names(selectTools(allTools, { profile: 'core', patterns: [] })).sort()).toEqual(
     [...core].sort(),
   );

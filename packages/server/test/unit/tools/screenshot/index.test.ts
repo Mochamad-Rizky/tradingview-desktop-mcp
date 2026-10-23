@@ -40,11 +40,12 @@ test('screenshot_capture only reads, so the readonly profile offers it', () => {
   ).toContain('screenshot_capture');
 });
 
-test('screenshot_capture is left out of the core profile until the core set is chosen', () => {
-  expect(screenshotCapture.core).toBeUndefined();
+// The core profile itself is pinned in test/unit/tools/registry.test.ts.
+test('screenshot_capture belongs to the core profile', () => {
+  expect(screenshotCapture.core).toBe(true);
   expect(
     selectTools(allTools, { profile: 'core', patterns: [] }).map(({ name }) => name),
-  ).not.toContain('screenshot_capture');
+  ).toContain('screenshot_capture');
 });
 
 test('screenshot_capture takes the chart as a png by default, at most 1920 pixels wide', () => {

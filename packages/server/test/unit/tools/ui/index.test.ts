@@ -123,7 +123,7 @@ test('ui_hover and ui_find_element only read, so the readonly profile offers the
   );
 });
 
-test('the ui tools are left out of the core profile until the core set is chosen', () => {
+test('the ui tools are left out of the core profile', () => {
   const core = names(selectTools(allTools, { profile: 'core', patterns: [] }));
 
   for (const tool of uiTools) {

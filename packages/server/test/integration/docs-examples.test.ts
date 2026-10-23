@@ -6,7 +6,10 @@ import {
   type ScenarioRun,
 } from '../../scripts/docs/examples.js';
 import { SCENARIOS } from '../../scripts/docs/scenarios.js';
+import type { Profile } from '../../src/config/schema.js';
 import { createMcpServer } from '../../src/server.js';
+import { allTools } from '../../src/tools/index.js';
+import { selectTools } from '../../src/tools/registry.js';
 import { connectInMemoryClient } from '../helpers/mcp-client.js';
 import { quietLogger, refusingLauncher, testConfig } from '../helpers/tool-context.js';
 
@@ -84,6 +87,10 @@ describe('docs/examples.md', () => {
     // The compile time is fixed to the time of the last bar of the fake chart.
     expect(page).toContain('"compiledAt": 1729987200');
     expect(page).toContain('"compiledAtIso": "2024-10-27T00:00:00Z"');
+    // So is the moment an alert set without an expiration is set at: it expires the default span
+    // of TradingView after it, 30 days on the free plan of the fake app.
+    expect(page).toContain('"expiration": 1732579200');
+    expect(page).toContain('"expirationIso": "2024-11-26T00:00:00Z"');
   });
 
   test('the page does not depend on the clock', async () => {
@@ -100,8 +107,7 @@ describe('docs/examples.md', () => {
   }, 120_000);
 
   test('the scenarios cover the tool families, in the order of the page', () => {
-    expect(SCENARIOS.length).toBeGreaterThanOrEqual(8);
-    expect(SCENARIOS.slice(0, 8).map(({ steps }) => steps.map(({ tool }) => tool))).toEqual([
+    expect(SCENARIOS.map(({ steps }) => steps.map(({ tool }) => tool))).toEqual([
       ['chart_get_state'],
       ['chart_set_symbol', 'chart_set_timeframe'],
       ['data_get_ohlcv'],
@@ -110,7 +116,108 @@ describe('docs/examples.md', () => {
       ['pine_new', 'pine_compile'],
       ['pine_smart_compile'],
       ['strategy_get_results', 'strategy_get_trades'],
+      ['drawing_create', 'drawing_list'],
+      ['alert_create'],
+      ['alert_create', 'alert_list'],
+      ['watchlist_add_bulk'],
+      ['replay_start', 'replay_step', 'replay_status', 'replay_stop'],
+      ['screenshot_capture'],
     ]);
+  });
+
+  // The run of the scenario whose steps are `tools`.
+  function runOf(...tools: string[]): ScenarioRun {
+    const run = runs.find(
+      ({ scenario }) =>
+        scenario.steps.every(({ tool }, index) => tool === tools[index]) &&
+        scenario.steps.length === tools.length,
+    );
+    if (run === undefined) {
+      throw new Error(`No scenario has the steps ${tools.join(', ')}`);
+    }
+    return run;
+  }
+
+  test('the scenario of the support line shows the new line in the list, as drawn by this session', () => {
+    const { results } = runOf('drawing_create', 'drawing_list');
+
+    expect(results[0]).toMatchObject({ ok: true, data: { shape: 'horizontal_line' } });
+    const id = results[0]?.ok === true ? (results[0].data as { id: string }).id : '';
+    expect(results[1]).toMatchObject({
+      ok: true,
+      data: {
+        drawings: expect.arrayContaining([
+          expect.objectContaining({ id, text: 'Support', createdByServer: true }),
+        ]) as unknown,
+      },
+    });
+  });
+
+  test('the alert is created on a plan with room, and refused with PLAN_LIMIT on a full one, whose alerts are listed', () => {
+    const created = runOf('alert_create');
+    const refused = runOf('alert_create', 'alert_list');
+
+    // One request for both: only the plan differs.
+    expect(refused.scenario.prompt).toBe(created.scenario.prompt);
+    expect(created.results[0]).toMatchObject({ ok: true, data: { condition: 'crossing' } });
+    expect(refused.results[0]).toMatchObject({
+      ok: false,
+      error: { code: 'PLAN_LIMIT', details: { feature: 'SERVER_SIDE_ALERTS', limit: 3 } },
+    });
+    expect(refused.results[1]).toMatchObject({
+      ok: true,
+      data: {
+        alerts: [
+          { status: 'active', createdByServer: false },
+          { status: 'active', createdByServer: false },
+          { status: 'active', createdByServer: false },
+        ],
+      },
+    });
+  });
+
+  test('the scenario of the watchlist shows what came of each symbol', () => {
+    const [result] = runOf('watchlist_add_bulk').results;
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        added: ['NYSE:IBM', 'FX:EURUSD'],
+        skipped: [
+          { symbol: 'NASDAQ:MSFT', reason: 'already_listed' },
+          { symbol: 'NASDAQ:MSTF', reason: 'unknown' },
+        ],
+      },
+    });
+  });
+
+  test('the replay practice session leaves replay at the end and trades nothing', () => {
+    const { results } = runOf('replay_start', 'replay_step', 'replay_status', 'replay_stop');
+
+    expect(results.map((result) => result.ok)).toEqual([true, true, true, true]);
+    // The paper trading of replay holds nothing: no tool trades.
+    expect(results[2]).toMatchObject({
+      data: { active: true, position: null, realizedPL: null },
+    });
+    expect(results[3]).toMatchObject({ data: { active: false } });
+  });
+
+  test('the scenario of the screenshot shows a note in place of the image', () => {
+    const { results } = runOf('screenshot_capture');
+    const section = page.split(/^## /m).find((text) => text.includes('`screenshot_capture`'));
+
+    // The result holds the image, as MCP image content in front of the JSON block.
+    expect(results[0]).toMatchObject({
+      ok: true,
+      images: ['image/png'],
+      data: { target: 'chart', format: 'png' },
+    });
+    // The page names it in a note above the JSON block, and holds none of its data: a png in
+    // base64 starts with iVBORw0KGgo.
+    expect(section).toMatch(
+      /\*\*The server returns\*\*\n\n_The image itself, of type image\/png, [^\n]*_\n\n```json\n/,
+    );
+    expect(page).not.toContain('iVBORw0KGgo');
   });
 
   test('the scenario of the full chart ends in the PLAN_LIMIT error and shows it', () => {
@@ -202,20 +309,20 @@ describe('the README', () => {
 
   const tryThese = (): string => sectionOf('### Try these prompts');
 
-  test('the README lists six prompts, each one a scenario of the page', () => {
+  test('the README lists eleven prompts, each one a scenario of the page', () => {
     // A line break inside a paragraph is a space, whatever the width the README is wrapped to.
     const prompts = [...tryThese().matchAll(/\*\*"([^"]+)"\*\*/g)].map((match) =>
       (match[1] ?? '').replaceAll(/\s+/g, ' '),
     );
 
-    expect(prompts).toHaveLength(6);
+    expect(prompts).toHaveLength(11);
     for (const prompt of prompts) {
       expect(
         SCENARIOS.map((scenario) => scenario.prompt),
         `"${prompt}" is no scenario prompt`,
       ).toContain(prompt);
     }
-    expect(new Set(prompts).size).toBe(6);
+    expect(new Set(prompts).size).toBe(11);
   });
 
   // The excerpts of results in the README, each as its lines without their indent and trailing
@@ -233,7 +340,7 @@ describe('the README', () => {
     const shownLines = new Set(page.split('\n').map((line) => line.trim().replace(/,$/, '')));
     const excerpts = excerptsOf();
 
-    expect(excerpts).toHaveLength(6);
+    expect(excerpts).toHaveLength(11);
     for (const lines of excerpts) {
       const shown = lines.filter((line) => line !== GAP);
       expect(shown.length).toBeGreaterThanOrEqual(2);
@@ -286,6 +393,23 @@ describe('the README', () => {
     expect(profiles).toMatch(/--profile core --tools 'pine_\*'/);
   });
 
+  test('the README says that no tool trades, and which objects of the user need confirm', () => {
+    const safety = sectionOf('### Safety').replaceAll(/\s+/g, ' ');
+
+    expect(safety).toMatch(/No tool places orders/);
+    expect(safety).toMatch(/drawing, alert, watchlist symbol or tab that this session did not/);
+  });
+
+  test('the README states how many tools each profile offers, as the registry counts them', () => {
+    const profiles = sectionOf('### Tool profiles').replaceAll(/\s+/g, ' ');
+    const count = (profile: Profile): string =>
+      String(selectTools(allTools, { profile, patterns: [] }).length);
+
+    expect(profiles).toContain(`all its ${count('full')} tools (\`--profile full\`)`);
+    expect(profiles).toContain(`a reduced set of ${count('core')} essential tools`);
+    expect(profiles).toContain(`only the ${count('readonly')} tools that read`);
+  });
+
   test('each link of the README into the page leads to a section of it', () => {
     const anchors = new Set(
       [...page.matchAll(/^## (.*)$/gm)].map((match) => anchorOf(match[1] ?? '')),
@@ -294,7 +418,7 @@ describe('the README', () => {
       (match) => match[1] ?? '',
     );
 
-    expect(links.length).toBeGreaterThanOrEqual(6);
+    expect(links.length).toBeGreaterThanOrEqual(11);
     for (const link of links) {
       expect(anchors.has(link), `The page has no section ${link}`).toBe(true);
     }
@@ -313,6 +437,7 @@ describe('the README', () => {
         'analyze_current_chart',
         'debug_pine_script',
         'multi_timeframe_review',
+        'replay_practice_session',
         'write_and_backtest_strategy',
       ]);
       for (const { name } of prompts) {

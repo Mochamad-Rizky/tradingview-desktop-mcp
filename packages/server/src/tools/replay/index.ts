@@ -174,6 +174,7 @@ export const replayStart = defineTool({
       ),
   },
   annotations: ACTS,
+  core: true,
   async handler({ date }, ctx): Promise<ToolOutput<StartedReplay>> {
     const choice = startOf(date);
     const page = await ctx.connection.chartPage();
@@ -269,6 +270,7 @@ export const replayStep = defineTool({
       .describe(`How many bars to step, 1 to ${String(MAX_BARS)} (default 1).`),
   },
   annotations: ACTS,
+  core: true,
   handler: (input, ctx) => stepBars(input, ctx),
 });
 
@@ -451,6 +453,7 @@ export const replayStop = defineTool({
     'saved before. With nothing to leave it changes nothing.',
   inputSchema: {},
   annotations: SETS,
+  core: true,
   async handler(_input, ctx) {
     const page = await ctx.connection.chartPage();
     const waitMs = pageWaitMs(ctx.config.callTimeoutMs);

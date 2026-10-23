@@ -46,6 +46,11 @@ const TWO_AVERAGES = [
 // //@version is read as an old version, in which these names are valid, so it would need no fix.
 const OLD_NAMES = ['//@version=6', 'study("RSI line")', 'plot(rsi(close, 14))', ''].join('\n');
 
+// One request for an alert, which the two alert scenarios make on a plan with room and on a full
+// one.
+const ALERT_PROMPT = 'Alert me when Apple crosses 110.';
+const ALERT_ARGUMENTS = { condition: 'crossing', price: 110 };
+
 export const SCENARIOS: Scenario[] = [
   {
     title: 'Read the chart',
@@ -155,5 +160,112 @@ export const SCENARIOS: Scenario[] = [
       'of 10,000, over 3 closed trades. 2 of them won (66.67%), the profit factor is 4.1 and the ' +
       'largest drawdown is 60. Long trades made 205 and the short trade lost 50. A fourth trade ' +
       'is still open, with an open profit and loss of -20. The trades are listed oldest first.',
+  },
+  {
+    title: 'Draw a support line',
+    prompt: 'Draw a support line at 102.80 on my chart.',
+    steps: [
+      {
+        tool: 'drawing_create',
+        arguments: {
+          shape: 'horizontal_line',
+          points: [{ time: '2024-10-27', price: 102.8 }],
+          text: 'Support',
+        },
+      },
+      { tool: 'drawing_list', arguments: {} },
+    ],
+    // The chart holds one drawing of the user, so that the list shows it next to the new line.
+    fixture: (base) => ({ ...base, shapes: base.shapes.slice(0, 1) }),
+    summary:
+      'A horizontal line at 102.8, labeled Support, is on the chart now, with the id DRW001. The ' +
+      'chart holds 2 drawings: a trend line that was there before and the new line, which ' +
+      'drawing_list marks as created by this session (createdByServer is true). drawing_remove ' +
+      'can remove the line without confirm: true, while removing the trend line, which is yours, ' +
+      'would need it.',
+  },
+  {
+    title: 'Create a price alert',
+    prompt: ALERT_PROMPT,
+    steps: [{ tool: 'alert_create', arguments: ALERT_ARGUMENTS }],
+    summary:
+      'The alert is set, with the id 9001. It watches NASDAQ:AAPL, the symbol of the chart, and ' +
+      'fires once when the price crosses 110 in either direction, then stops. Unless it fires ' +
+      'first, it expires on 2024-11-26, the default expiration of TradingView. The plan had room ' +
+      'for it: the alert limit of the plan is checked before anything is sent. Because this ' +
+      'session created the alert, alert_delete can delete it without confirm: true.',
+  },
+  {
+    title: 'Create an alert when the plan is full',
+    prompt: ALERT_PROMPT,
+    steps: [
+      { tool: 'alert_create', arguments: ALERT_ARGUMENTS, expectError: 'PLAN_LIMIT' },
+      { tool: 'alert_list', arguments: {} },
+    ],
+    // As many active price alerts as the plan of the fixture allows, which is 3.
+    fixture: (base) => ({
+      ...base,
+      alerts: [
+        { id: 1, price: 100 },
+        { id: 2, condition: 'cross_up', price: 105 },
+        { id: 3, symbol: 'NASDAQ:MSFT', condition: 'cross_down', price: 205 },
+      ],
+    }),
+    summary:
+      'No alert was created: the plan allows 3 active price alerts and 3 are in use (the error ' +
+      'is PLAN_LIMIT, for SERVER_SIDE_ALERTS), which was checked before anything was sent. The ' +
+      'alerts that fill the plan are NASDAQ:AAPL crossing 100, NASDAQ:AAPL crossing up 105 and ' +
+      'NASDAQ:MSFT crossing down 205, all active until 2030-01-01. To make room, one of them has ' +
+      'to go: alert_delete can delete it, but it needs confirm: true for an alert that this ' +
+      'session did not create, so the assistant asks you which one first. Stopping one in ' +
+      'TradingView makes room too.',
+  },
+  {
+    title: 'Add symbols to a watchlist',
+    prompt: 'Add these symbols to my watchlist: NYSE:IBM, FX:EURUSD, NASDAQ:MSFT and NASDAQ:MSTF.',
+    steps: [
+      {
+        tool: 'watchlist_add_bulk',
+        arguments: { symbols: ['NYSE:IBM', 'FX:EURUSD', 'NASDAQ:MSFT', 'NASDAQ:MSTF'] },
+      },
+    ],
+    summary:
+      'Two of the four symbols were added to your active watchlist (id 101): NYSE:IBM and ' +
+      'FX:EURUSD. NASDAQ:MSFT was skipped because the list holds it already, and NASDAQ:MSTF ' +
+      'because the symbol search of TradingView does not know it; it may be a typo for MSFT. ' +
+      'Every symbol was checked with the symbol search before anything was added, and ' +
+      'watchlist_remove can take the two new ones out again without confirm: true, since this ' +
+      'session added them.',
+  },
+  {
+    title: 'Practice with bar replay',
+    prompt:
+      'Let me practice on a bar replay of my chart from 2024-06-03: step five bars forward, tell ' +
+      'me where we are, then end the replay.',
+    steps: [
+      { tool: 'replay_start', arguments: { date: '2024-06-03' } },
+      { tool: 'replay_step', arguments: { bars: 5 } },
+      { tool: 'replay_status', arguments: {} },
+      { tool: 'replay_stop', arguments: {} },
+    ],
+    summary:
+      'Replay started on the daily chart (resolution 1D) just before 2024-06-03, at the bar of ' +
+      '2024-06-02, so the bar of 2024-06-03 came with the first step. Five steps later the ' +
+      'replay point is at 2024-06-07 (stepped is 5), and finished is false: there are bars left ' +
+      'to replay. replay_status shows replay active, with autoplay off at 1x. Its position and ' +
+      'realizedPL are null because no tool trades: practice trades are kept in the ' +
+      'conversation, as the replay_practice_session prompt has the assistant do. replay_stop ' +
+      'left replay (active is false), and the chart shows its live bars again.',
+  },
+  {
+    title: 'Take a screenshot',
+    prompt: 'Take a screenshot of my chart.',
+    steps: [{ tool: 'screenshot_capture', arguments: {} }],
+    summary:
+      'Here is the chart as a picture: the chart container of the active chart, with its legend, ' +
+      'panes and scales but without the toolbars, a png of 1180 by 640 pixels (812 bytes). The ' +
+      'assistant can look at it and describe what it shows; the server handed it over and kept ' +
+      'no copy. With target page, the picture would show the whole chart tab, toolbars and ' +
+      'panels included.',
   },
 ];

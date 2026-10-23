@@ -16,11 +16,13 @@ plan limits, or call TradingView's servers.
 > indicator tools (list, search, add, remove, inputs, visibility, values), Pine Script tools (the
 > editor and saved scripts, compile, smart compile with rule-based fixes, offline analysis, the
 > console, and the lines, labels, boxes and tables that scripts draw), Strategy Tester tools
-> (results, trades, equity) and `batch_run`, which runs several tools in one call. It also offers
-> resources (the app health, the chart state and bars, the Pine source and the last compile result,
-> the strategy report), each along with the tool it shares its data with, and four prompts for
-> common jobs. Drawings, alerts, replay and a web dashboard are planned. It has been tried on macOS;
-> Windows and Linux are best effort.
+> (results, trades, equity), drawing, alert and watchlist tools, layout, multi-chart and tab tools,
+> bar replay, screenshots, low-level interface tools (click, hover, type, keys, scroll, find,
+> panels, fullscreen, and JavaScript in the chart page when you allow it) and `batch_run`, which
+> runs several tools in one call. It also offers resources (the app health, the chart state and
+> bars, the Pine source and the last compile result, the strategy report, the active watchlist),
+> each along with the tool it shares its data with, and five prompts for common jobs. A web
+> dashboard is planned. It has been tried on macOS; Windows and Linux are best effort.
 
 ## Quick start from source
 
@@ -92,12 +94,13 @@ claude mcp add tradingview -- node /absolute/path/to/tradingview-mcp/packages/se
 ### Try these prompts
 
 Each prompt below is one of the examples in [docs/examples.md](docs/examples.md), which shows the
-tool calls the assistant makes and the results, with lists longer than three items cut and the
-duration of each call (`durationMs`) left out. The excerpts are lines of those results, and `…`
-marks where lines of other parts of a result are left out. The values are synthetic: they come from
-a fake TradingView app with a made-up NASDAQ:AAPL chart, so nothing is market data and nothing comes
-from an account; the results have the shape the server gives them, though the Strategy Tester
-report behind the backtest example has not been read from the real app yet.
+tool calls the assistant makes and the results, with lists longer than three items cut, the
+duration of each call (`durationMs`) left out and a screenshot named in a note instead of shown.
+The excerpts are lines of those results, and `…` marks where lines of other parts of a result are
+left out. The values are synthetic: they come from a fake TradingView app with a made-up
+NASDAQ:AAPL chart, so nothing is market data and nothing comes from an account; the results have
+the shape the server gives them, though the Strategy Tester report behind the backtest example has
+not been read from the real app yet.
 
 **"What am I looking at on my chart? Tell me the symbol, the timeframe and which indicators are on
 it."** The assistant reads the chart with `chart_get_state`
@@ -161,35 +164,103 @@ and compiles again, without changing the editor
 "profitFactor": 4.1,
 ```
 
-The server also offers four prompts of its own, which a client that supports MCP prompts lists for
-you to pick: `analyze_current_chart`, `multi_timeframe_review`, `write_and_backtest_strategy` and
-`debug_pine_script`. Each one tells the assistant which tools to call, in which order, and what to
-report back.
+**"Draw a support line at 102.80 on my chart."** It draws a horizontal line with `drawing_create`,
+and `drawing_list` shows it next to your own drawings, marked as drawn by this session
+([details](docs/examples.md#9-draw-a-support-line)):
+
+```json
+"id": "DRW001",
+"shape": "horizontal_line",
+"text": "Support",
+"createdByServer": true
+```
+
+**"Alert me when Apple crosses 110."** `alert_create` sets a price alert in your TradingView account
+([details](docs/examples.md#10-create-a-price-alert)). When the plan already holds as many alerts
+as it allows, it creates nothing and reports the limit, and `alert_list` shows the alerts that fill
+it ([details](docs/examples.md#11-create-an-alert-when-the-plan-is-full)):
+
+```json
+"symbol": "NASDAQ:AAPL",
+"condition": "crossing",
+"price": 110,
+"expirationIso": "2024-11-26T00:00:00Z"
+```
+
+**"Add these symbols to my watchlist: NYSE:IBM, FX:EURUSD, NASDAQ:MSFT and NASDAQ:MSTF."**
+`watchlist_add_bulk` checks each symbol with the symbol search of TradingView, adds the new ones and
+says why it skipped the others ([details](docs/examples.md#12-add-symbols-to-a-watchlist)):
+
+```json
+"added": ["NYSE:IBM", "FX:EURUSD"],
+…
+{ "symbol": "NASDAQ:MSFT", "reason": "already_listed" },
+{ "symbol": "NASDAQ:MSTF", "reason": "unknown" }
+```
+
+**"Let me practice on a bar replay of my chart from 2024-06-03: step five bars forward, tell me
+where we are, then end the replay."** It starts bar replay with `replay_start`, steps with
+`replay_step`, reads where replay is with `replay_status` and leaves it with `replay_stop`. Nothing
+is traded: no tool places orders ([details](docs/examples.md#13-practice-with-bar-replay)):
+
+```json
+"dateIso": "2024-06-07T00:00:00Z",
+"stepped": 5,
+…
+"position": null,
+"realizedPL": null
+```
+
+**"Take a screenshot of my chart."** `screenshot_capture` hands the picture to the assistant as an
+image, along with its size, and writes nothing to disk
+([details](docs/examples.md#14-take-a-screenshot)):
+
+```json
+"data": { "target": "chart", "format": "png", "width": 1180, "height": 640, "bytes": 812 },
+"meta": { "via": "cdp", "warnings": [] }
+```
+
+The server also offers five prompts of its own, which a client that supports MCP prompts lists for
+you to pick: `analyze_current_chart`, `multi_timeframe_review`, `write_and_backtest_strategy`,
+`debug_pine_script` and `replay_practice_session`. Each one tells the assistant which tools to
+call, in which order, and what to report back. `replay_practice_session` runs a practice session on
+bar replay: the assistant steps through the past bar by bar, asks you at each step whether you
+would go long, go short or stay flat, keeps a journal of these hypothetical trades at prices it
+reads from the chart, works out their profit or loss, and always stops replay at the end.
 
 ### Safety
 
-The tools that change your chart or your scripts are careful with what is already yours. Replacing
-unsaved text in the Pine Editor (other than an unsaved edit this session of the server made there
-itself), saving a new version of a script that this session did not create, and removing an
-indicator that was already on your chart all need `confirm: true`, which the assistant should pass
-only after you agree. A plan limit, such as the number of
-indicators on a chart or of saved scripts, is checked before anything is added and reported as a
-`PLAN_LIMIT` error with the limit; when the limit cannot be read on your TradingView build, the
-tool does nothing and says so. The server does not work around a limit and does not let TradingView
-open its upgrade dialog. It deletes and renames no script.
+The tools that change your chart, your scripts or your account are careful with what is already
+yours. Replacing unsaved text in the Pine Editor (other than an unsaved edit this session of the
+server made there itself), saving a new version of a script that this session did not create, and
+removing an indicator that was already on your chart all need `confirm: true`, which the assistant
+should pass only after you agree. So does removing a drawing, alert, watchlist symbol or tab that
+this session did not create, add or open, removing every drawing of a chart, switching away from a
+layout with unsaved changes, and changing to a multi-chart layout with fewer charts than the tab
+shows, whose next save would drop the others. A plan limit, such as the number of indicators on a
+chart, of saved scripts, of alerts or of the charts of a layout, is checked before anything is
+added and reported as a `PLAN_LIMIT` error with the limit; when the limit cannot be read on your
+TradingView build, the tool does nothing and says so. The server does not work around a limit and
+does not let TradingView open its upgrade dialog or any other dialog. It deletes and renames no
+script.
+
+No tool places orders: bar replay is for practice, and the assistant keeps any practice trades in
+the conversation. Screenshots go to the client as images, and the server writes none to disk.
+`ui_evaluate`, which runs JavaScript in the chart page, is off unless you start the server with
+`--allow-eval` (`TV_MCP_ALLOW_EVAL=true`).
 
 ### Tool profiles
 
-By default the server offers all its tools (`--profile full`). Some clients accept only a limited
-number of tools. For them, `--profile core` offers a reduced set of the essential tools, and
-`--profile readonly` offers only the tools that read. `--tools` takes name patterns such as
-`chart_*,data_*` and narrows the profile further: a tool must be in the profile and match a
-pattern, so `--profile core --tools 'pine_*'` still leaves out `pine_open` and `pine_save`, which
-are not core tools; with the default profile, `--tools` alone picks the tools. Some descriptions and
-hints name tools that `core` leaves out, such as `pine_open` and `pine_save`, which the assistant
-cannot call under `core`. The resources follow the tools: each one is offered only with the tool
-it shares its data with, such as `tradingview://pine/source` with `pine_get_source`, so
-`--tools 'chart_*'` offers the chart state and nothing of the Pine Editor.
+By default the server offers all its 83 tools (`--profile full`). Some clients accept only a limited
+number of tools (Cursor warns above 40). For them, `--profile core` offers a reduced set of 39
+essential tools, and `--profile readonly` offers only the 38 tools that read. `--tools` takes name
+patterns such as `chart_*,data_*` and narrows the profile further: a tool must be in the profile
+and match a pattern, so `--profile core --tools 'pine_*'` still leaves out `pine_open` and
+`pine_save`, which are not core tools; with the default profile, `--tools` alone picks the tools.
+Some descriptions and hints name tools that `core` leaves out, such as `pine_open` and `pine_save`,
+which the assistant cannot call under `core`. The resources follow the tools: each one is offered
+only with the tool it shares its data with, such as `tradingview://pine/source` with
+`pine_get_source`, so `--tools 'chart_*'` offers the chart state and nothing of the Pine Editor.
 
 ## Contributing
 

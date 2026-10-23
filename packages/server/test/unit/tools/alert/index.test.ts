@@ -64,13 +64,12 @@ test('alert_delete destroys, and alert_create adds an alert without destroying a
   });
 });
 
-test('the alert tools are left out of the core profile until the core set is chosen', () => {
-  for (const tool of alertTools) {
-    expect(tool.core, tool.name).toBeUndefined();
-  }
-  expect(selectTools(allTools, { profile: 'core', patterns: [] }).map(({ name }) => name)).toEqual(
-    expect.not.arrayContaining(['alert_create', 'alert_list', 'alert_delete']) as string[],
-  );
+// The core profile itself is pinned in test/unit/tools/registry.test.ts.
+test('the core profile keeps alert_create and alert_list of the alert tools, not alert_delete', () => {
+  expect(
+    selectTools(alertTools, { profile: 'core', patterns: [] }).map(({ name }) => name),
+  ).toEqual(['alert_create', 'alert_list']);
+  expect(alertDelete.core).toBeUndefined();
 });
 
 test('alert_create takes a symbol, a condition, a price, a message and an expiration', () => {

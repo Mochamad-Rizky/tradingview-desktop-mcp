@@ -121,6 +121,7 @@ describe('renderExamples', () => {
     ok: true,
     via: 'api',
     warnings: [],
+    images: [],
     data: { symbol: 'NASDAQ:AAPL', resolution: '1D' },
   };
   const first: ScenarioRun = {
@@ -143,7 +144,13 @@ describe('renderExamples', () => {
       summary: 'The chart is full.\n\nNothing was added.',
     },
     results: [
-      { ok: true, via: 'internal', warnings: ['careful'], data: { results: [{ id: 'STD;MACD' }] } },
+      {
+        ok: true,
+        via: 'internal',
+        warnings: ['careful'],
+        images: [],
+        data: { results: [{ id: 'STD;MACD' }] },
+      },
       { ok: false, error: { code: 'PLAN_LIMIT', message: 'The chart is full', details: {} } },
     ],
   };
@@ -208,7 +215,7 @@ describe('renderExamples', () => {
   test('renderExamples leaves via out of meta for a result that has none', () => {
     const run: ScenarioRun = {
       ...first,
-      results: [{ ok: true, via: null, warnings: ['w'], data: {} }],
+      results: [{ ok: true, via: null, warnings: ['w'], images: [], data: {} }],
     };
 
     expect(jsonAt(renderExamples([run]), 1)).toEqual({
@@ -227,11 +234,53 @@ describe('renderExamples', () => {
     expect(page.match(/\*\*The server returns\*\*/g)).toHaveLength(1);
   });
 
-  test('renderExamples says that the server stamps the time of a compilation', () => {
+  test('renderExamples says which times that the server takes from the clock it fixes', () => {
     const page = renderExamples([first]);
 
-    expect(page).toMatch(/time of a compilation is fixed as well, because the server stamps it/);
+    expect(page).toMatch(/Two times that the server takes from the clock are fixed as well/);
+    expect(page).toMatch(
+      /the time of a compilation, and the expiration of an alert set without one/,
+    );
     expect(page).not.toMatch(/fake app takes it from the clock/);
+  });
+
+  test('renderExamples names the images of a result in a note above its JSON block, and shows none of their data', () => {
+    const run: ScenarioRun = {
+      ...first,
+      results: [{ ok: true, via: 'cdp', warnings: [], images: ['image/png'], data: { width: 8 } }],
+    };
+    const two: ScenarioRun = {
+      ...first,
+      results: [
+        {
+          ok: true,
+          via: 'cdp',
+          warnings: [],
+          images: ['image/png', 'image/jpeg'],
+          data: { width: 8 },
+        },
+      ],
+    };
+
+    const page = renderExamples([run]);
+
+    expect(page).toContain(
+      '**The server returns**\n\n_The image itself, of type image/png, comes first, as MCP image ' +
+        'content, and this page leaves it out: the fake app answers a screenshot with a plain ' +
+        'grey picture of the size the result gives._\n\n```json\n',
+    );
+    expect(jsonAt(page, 1)).toEqual({
+      ok: true,
+      data: { width: 8 },
+      meta: { via: 'cdp', warnings: [] },
+    });
+    expect(renderExamples([two])).toContain(
+      '_The 2 images themselves, of types image/png, image/jpeg, come first, as MCP image ' +
+        'content, and this page leaves them out:',
+    );
+    // A result without an image has no note, and the page says why a note can stand in for one.
+    expect(renderExamples([first])).not.toMatch(/^_The image/m);
+    expect(renderExamples([first])).toMatch(/named in a note instead of shown/);
   });
 
   test('renderExamples says that the strategy report has not been seen on the real app', () => {
@@ -250,7 +299,9 @@ describe('renderExamples', () => {
   test('renderExamples cuts long lists in results to three items and counts the rest', () => {
     const run: ScenarioRun = {
       ...first,
-      results: [{ ok: true, via: 'api', warnings: [], data: { list: [1, 2, 3, 4, 5, 6, 7] } }],
+      results: [
+        { ok: true, via: 'api', warnings: [], images: [], data: { list: [1, 2, 3, 4, 5, 6, 7] } },
+      ],
     };
 
     expect(jsonAt(renderExamples([run]), 1)).toEqual({
@@ -276,7 +327,13 @@ describe('renderExamples', () => {
         steps: [{ tool: 'pine_x', arguments: { source: '//@version=6\nplot(close)\n' } }],
       },
       results: [
-        { ok: true, via: 'internal', warnings: [], data: { diff: ' a\n-b\n+c\n', note: 'one' } },
+        {
+          ok: true,
+          via: 'internal',
+          warnings: [],
+          images: [],
+          data: { diff: ' a\n-b\n+c\n', note: 'one' },
+        },
       ],
     };
 
@@ -290,7 +347,7 @@ describe('renderExamples', () => {
   test('renderExamples fences text that holds backticks with more backticks', () => {
     const run: ScenarioRun = {
       ...first,
-      results: [{ ok: true, via: 'api', warnings: [], data: { text: 'a\n```\nb' } }],
+      results: [{ ok: true, via: 'api', warnings: [], images: [], data: { text: 'a\n```\nb' } }],
     };
 
     const page = renderExamples([run]);

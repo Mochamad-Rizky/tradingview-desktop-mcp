@@ -86,7 +86,7 @@ function stepsNamed(text: string, steps: string[]): string[] {
   return toolsNamed(text).filter((name) => steps.includes(name));
 }
 
-test('lists the four prompts with their arguments', async () => {
+test('lists the five prompts with their arguments', async () => {
   const { client } = await startServer();
 
   const { prompts } = await client.listPrompts();
@@ -101,6 +101,7 @@ test('lists the four prompts with their arguments', async () => {
     ['multi_timeframe_review', ['timeframes?']],
     ['write_and_backtest_strategy', ['idea', 'symbol?', 'timeframe?']],
     ['debug_pine_script', []],
+    ['replay_practice_session', ['date?', 'symbol?', 'timeframe?']],
   ]);
   for (const prompt of prompts) {
     expect(prompt.title?.trim(), prompt.name).toBeTruthy();
@@ -114,7 +115,7 @@ test('lists the four prompts with their arguments', async () => {
 // Unlike the resources, which follow their tools, the prompts do not depend on which tools the
 // profile registers.
 test.each(['core', 'full', 'readonly'] as const)(
-  'offers the four prompts with the %s profile',
+  'offers the five prompts with the %s profile',
   async (profile) => {
     const { client } = await startServer({ profile });
 
@@ -125,6 +126,7 @@ test.each(['core', 'full', 'readonly'] as const)(
       'multi_timeframe_review',
       'write_and_backtest_strategy',
       'debug_pine_script',
+      'replay_practice_session',
     ]);
   },
 );
@@ -503,6 +505,134 @@ describe('debug_pine_script', () => {
   });
 });
 
+describe('replay_practice_session', () => {
+  // Started and checked, stepped, and left.
+  const STEPS = ['replay_start', 'replay_status', 'replay_step', 'replay_stop'];
+
+  test('replay_practice_session names replay_start, replay_step, replay_status and replay_stop and tells the assistant to stop replay at the end', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session');
+
+    expect(stepsNamed(text, STEPS)).toEqual(STEPS);
+    // The stop is the last call, after every other tool the message names, and it is made also
+    // when a step went wrong.
+    const stop = text.lastIndexOf('replay_stop');
+    for (const tool of toolsNamed(text).filter((name) => name !== 'replay_stop')) {
+      expect(text.lastIndexOf(tool), tool).toBeLessThan(stop);
+    }
+    expect(text).toMatch(/ALWAYS call replay_stop at the end, also after an error/);
+    // The journal is summed up once replay is left.
+    expect(text.indexOf('Then summarize the journal')).toBeGreaterThan(stop);
+  });
+
+  test('sets the chart to the symbol and the timeframe it is given before replay starts', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session', {
+      symbol: 'NASDAQ:MSFT',
+      timeframe: '1W',
+    });
+
+    expect(toolsNamed(text).slice(0, 3)).toEqual([
+      'chart_set_symbol',
+      'chart_set_timeframe',
+      'replay_start',
+    ]);
+    expect(text).toMatch(/chart_set_symbol with NASDAQ:MSFT/);
+    expect(text).toMatch(/chart_set_timeframe with 1W/);
+  });
+
+  test('practices on the daily chart when it is given no timeframe, since intraday replay is plan-gated', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session');
+
+    expect(toolsNamed(text)).not.toContain('chart_set_symbol');
+    expect(text).toMatch(/chart_set_timeframe with 1D/);
+    expect(text).toMatch(/BAR_REPLAY_INTRADAY/);
+    // On an intraday timeframe without intraday replay in the plan, replay_start refuses, and the
+    // message says what to do then.
+    const start = text.slice(text.indexOf('replay_start'));
+    expect(start).toMatch(/fails with PLAN_LIMIT for BAR_REPLAY_INTRADAY/);
+    expect(start).toMatch(/practice on the daily chart/);
+  });
+
+  test('starts at the date it is given, or at a random bar', async () => {
+    const { client } = await startServer();
+
+    const dated = await messageOf(client, 'replay_practice_session', { date: '2024-03-01' });
+    const random = await messageOf(client, 'replay_practice_session');
+
+    expect(dated).toMatch(/replay_start with date 2024-03-01/);
+    expect(random).toMatch(/replay_start without a date[^.]*random bar/);
+    expect(random).not.toMatch(/replay_start with date/);
+    // The steps are the same either way.
+    expect(toolsNamed(dated)).toEqual(toolsNamed(random));
+  });
+
+  test('has the user decide at the steps, and keeps a journal of hypothetical trades with prices read from the chart', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session');
+
+    expect(text).toMatch(/long, short or flat/);
+    expect(text).toMatch(/every few bars/);
+    expect(text).toMatch(/written journal/);
+    expect(text).toMatch(/hypothetical/);
+    // A price is the close of the bar at the replay point, read from the bars of the chart up to
+    // that point, never one the model did not read.
+    expect(text).toMatch(/data_get_ohlcv with to set to the replay date/);
+    expect(text).toMatch(/never a price you did not read/i);
+    // The profit and loss is worked out in the conversation.
+    expect(text).toMatch(/profit or loss[^.]*in the conversation/);
+  });
+
+  test('never places an order, and does not look for another way to trade', async () => {
+    const { client } = await startServer();
+
+    const text = await messageOf(client, 'replay_practice_session');
+
+    expect(text).toMatch(/Never place an order: there is no trading tool/);
+    expect(text).toMatch(/Do not try another way to trade/);
+    // No tool the message names trades or orders.
+    expect(toolsNamed(text).filter((name) => /trade|order|buy|sell|position/.test(name))).toEqual(
+      [],
+    );
+  });
+
+  test('takes blank arguments for none', async () => {
+    const { client } = await startServer();
+
+    const blank = await messageOf(client, 'replay_practice_session', {
+      date: ' ',
+      symbol: '',
+      timeframe: '  ',
+    });
+
+    expect(blank).toBe(await messageOf(client, 'replay_practice_session'));
+  });
+
+  test('refuses a date or a timeframe it cannot read', async () => {
+    const { client } = await startServer();
+
+    for (const args of [
+      { date: 'yesterday' },
+      { date: '20240301' },
+      { timeframe: 'foo' },
+      { timeframe: '1D,4h' },
+    ]) {
+      await expect(
+        client.getPrompt({ name: 'replay_practice_session', arguments: args }),
+        JSON.stringify(args),
+      ).rejects.toMatchObject({
+        code: -32602,
+        data: { code: 'INVALID_INPUT', hint: expect.any(String) as string },
+      });
+    }
+  });
+});
+
 // The check that every prompt names only tools that exist is only as good as the pattern that finds
 // the names in a message.
 test('the pattern for tool names finds a name whether or not a tool has it', () => {
@@ -521,6 +651,7 @@ describe('every prompt', () => {
     multi_timeframe_review: { timeframes: '1W,1D,4h,15m' },
     write_and_backtest_strategy: { idea: 'Buy dips', symbol: 'NASDAQ:AAPL', timeframe: '1D' },
     debug_pine_script: {},
+    replay_practice_session: { date: '2024-06-03', symbol: 'NASDAQ:AAPL', timeframe: '1D' },
   };
   // Only what is needed.
   const LEAST: Record<string, Record<string, string>> = {
@@ -528,6 +659,7 @@ describe('every prompt', () => {
     analyze_current_chart: {},
     multi_timeframe_review: {},
     write_and_backtest_strategy: { idea: 'Buy dips' },
+    replay_practice_session: {},
   };
 
   test('names only tools that the registry has', async () => {

@@ -4,22 +4,35 @@ import { z } from 'zod';
 import { TvMcpError } from '../core/errors.js';
 import { toMcpError } from '../core/mcp-error.js';
 import { normalizeTimeframe } from '../tools/chart/mappers.js';
+import { startOf } from '../tools/replay/mappers.js';
 
-// The prompts of design spec 7 that exist so far. A prompt is one user message that tells the model
-// which tools to call, in which order, and what to report back; reading one asks TradingView
-// nothing. The tools are named as the registry names them, which a test checks. A message never
-// asks for more than the tools are meant to do: it has the model pass confirm: true only once the
-// user agreed, and ask the user before it discards or removes anything that was theirs. Only an
-// edit the model made in the Pine Editor and did not save passes without confirm: true; a refusal
-// can come over the model's own text too, once TradingView kept it across a close.
+// The prompts of design spec 7. A prompt is one user message that tells the model which tools to
+// call, in which order, and what to report back; reading one asks TradingView nothing. The tools
+// are named as the registry names them, which a test checks. A message never asks for more than the
+// tools are meant to do: it has the model pass confirm: true only once the user agreed, and ask the
+// user before it discards or removes anything that was theirs. Only an edit the model made in the
+// Pine Editor and did not save passes without confirm: true; a refusal can come over the model's
+// own text too, once TradingView kept it across a close.
 
 // What multi_timeframe_review reviews when it is given no timeframes, and how many it takes at
 // most: each one costs three tool calls.
 const DEFAULT_TIMEFRAMES = '1D,4h,1h';
 const MAX_TIMEFRAMES = 8;
 
+// The timeframe replay_practice_session practices on when it is given none: TradingView replays a
+// daily, weekly or monthly chart on every plan, and an intraday one only on a plan with
+// BAR_REPLAY_INTRADAY, where replay_start answers PLAN_LIMIT otherwise.
+const DEFAULT_REPLAY_TIMEFRAME = '1D';
+
 // The longest text each argument takes. They bound what a message holds, nothing more.
-const MAX_LENGTH = { focus: 500, idea: 2000, symbol: 200, timeframe: 16, timeframes: 200 };
+const MAX_LENGTH = {
+  date: 64,
+  focus: 500,
+  idea: 2000,
+  symbol: 200,
+  timeframe: 16,
+  timeframes: 200,
+};
 
 // The last line of every message. The profile and the tool filter decide which tools a server
 // offers (the core profile leaves some of the tools named here out), and a model that is told so
@@ -56,6 +69,16 @@ function given(value: string | undefined): string | undefined {
 function resolutionOf(timeframe: string): string {
   try {
     return normalizeTimeframe(timeframe);
+  } catch (error) {
+    throw toMcpError(error);
+  }
+}
+
+// Refuses a start of replay that replay_start cannot read, with the forms it takes: a time, first
+// or random. The message keeps the text as written.
+function requireReplayStart(date: string): void {
+  try {
+    startOf(date);
   } catch (error) {
     throw toMcpError(error);
   }
@@ -243,6 +266,66 @@ function debugPineScript(): GetPromptResult {
   ]);
 }
 
+// A practice session on bar replay. Nothing is traded: no tool places an order (design spec 5.3,
+// rule 1), and on TradingView Desktop the paper trading of replay goes through the trading service
+// of the app, which the server never touches, so the trades are hypothetical ones the model keeps
+// in a journal, at prices it read from the chart. The message has the model stop replay at the end
+// whatever happened, so that no session leaves the chart in replay.
+function replayPracticeSession(
+  date: string | undefined,
+  symbol: string | undefined,
+  timeframe: string | undefined,
+): GetPromptResult {
+  const setup = [
+    ...(symbol === undefined ? [] : [`chart_set_symbol with ${symbol}`]),
+    `chart_set_timeframe with ${timeframe ?? DEFAULT_REPLAY_TIMEFRAME}`,
+  ];
+  return userMessage([
+    'Run a bar replay practice session with me in TradingView: replay the chart from a point in ' +
+      'the past, bar by bar, let me decide at each step what I would trade, and keep score. It is ' +
+      'practice only: nothing is traded.',
+    '',
+    ...numbered([
+      `Set up the chart: ${setup.join(', then ')}.` +
+        (timeframe === undefined
+          ? ' The daily timeframe is the default because TradingView replays intraday timeframes ' +
+            'only on plans with BAR_REPLAY_INTRADAY.'
+          : ''),
+      (date === undefined
+        ? 'replay_start without a date, which starts replay at a random bar, so that I cannot ' +
+          'know what comes next.'
+        : `replay_start with date ${date}. Replay starts just before it, so its bar comes with ` +
+          'the first step.') +
+        ' If it fails with PLAN_LIMIT for BAR_REPLAY_INTRADAY, the plan does not replay intraday ' +
+        'timeframes: tell me, and offer to practice on the daily chart instead (chart_set_timeframe ' +
+        'with 1D, then replay_start again). If it fails in another way, tell me its error with its ' +
+        'hint, and ask me before you follow the hint.',
+      'replay_status: check that replay is active, and note the replay date and the timeframe.',
+      'Then go bar by bar. Read the bar at the replay point with data_get_ohlcv with to set to the ' +
+        'replay date and a count of 5: the last bar it returns is the bar at the replay point, and ' +
+        'the ones before it give the context. Show me that bar (its date, open, high, low and ' +
+        'close) and ask me for a decision: long, short or flat (flat closes an open trade). If I ' +
+        'prefer, ask me only every few bars. Then replay_step, with bars: 1 or as many bars as I ' +
+        'want to skip, and take the replay date it returns for the next read.',
+      'Keep a written journal in the conversation: every hypothetical entry and exit with its ' +
+        'date, its side (long or short) and its price, which is the close of the bar at the ' +
+        'replay point as data_get_ohlcv reports it; never a price you did not read. Work out the ' +
+        'hypothetical profit or loss of each closed trade, as a price difference and in percent, ' +
+        'and the running total yourself, in the conversation.',
+      'End the session when I say so, when replay_step returns finished: true, or when a step ' +
+        'fails. ALWAYS call replay_stop at the end, also after an error, so that the chart shows ' +
+        'its live bars again.',
+    ]),
+    '',
+    'Then summarize the journal: each trade with its side, its entry and exit dates and prices ' +
+      'and its hypothetical profit or loss, the total, how many trades won, and what the ' +
+      'decisions that worked had in common.',
+    'Never place an order: there is no trading tool, and practice needs none. Do not try another ' +
+      'way to trade either, such as the trading panel or the Buy and Sell buttons of TradingView.',
+    MISSING_TOOLS,
+  ]);
+}
+
 // Registers the prompts. They need nothing of the connection or of the tools of the server: a
 // message names tools, and the model calls them.
 export function registerPrompts(server: McpServer): void {
@@ -340,5 +423,53 @@ export function registerPrompts(server: McpServer): void {
         'with the fix for it.',
     },
     () => debugPineScript(),
+  );
+  server.registerPrompt(
+    'replay_practice_session',
+    {
+      title: 'Practice trading with bar replay',
+      description:
+        'Replays the chart bar by bar from a point in the past, asks for a decision at each ' +
+        'step, keeps a journal of hypothetical trades at prices read from the chart and works ' +
+        'out their profit or loss. It never places an order, and it always stops replay at the ' +
+        'end.',
+      argsSchema: {
+        date: z
+          .string()
+          .max(MAX_LENGTH.date)
+          .optional()
+          .describe(
+            'Where replay starts, as replay_start takes it: a date such as 2024-06-03, first or ' +
+              'random. Default: a random bar.',
+          ),
+        symbol: z
+          .string()
+          .max(MAX_LENGTH.symbol)
+          .optional()
+          .describe(
+            'The symbol to practice on, such as NASDAQ:AAPL. Default: the one the chart shows.',
+          ),
+        timeframe: z
+          .string()
+          .max(MAX_LENGTH.timeframe)
+          .optional()
+          .describe(
+            `The timeframe to practice on, such as 1D or 1W. Default: ${DEFAULT_REPLAY_TIMEFRAME}. ` +
+              'TradingView replays intraday timeframes only on plans with BAR_REPLAY_INTRADAY.',
+          ),
+      },
+    },
+    ({ date, symbol, timeframe }) => {
+      const start = given(date);
+      if (start !== undefined) {
+        // Only to refuse one that cannot be read; the message keeps it as written.
+        requireReplayStart(start);
+      }
+      const frame = given(timeframe);
+      if (frame !== undefined) {
+        resolutionOf(frame);
+      }
+      return replayPracticeSession(start, given(symbol), frame);
+    },
   );
 }

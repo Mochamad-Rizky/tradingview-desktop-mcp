@@ -125,6 +125,7 @@ export const screenshotCapture = defineTool({
     chartIndex: chartIndexInput(),
   },
   annotations: READ_ONLY,
+  core: true,
   async handler({ target, format, maxWidth, chartIndex }, ctx) {
     const warnings: string[] = [];
     if (target !== 'chart' && chartIndex !== undefined) {

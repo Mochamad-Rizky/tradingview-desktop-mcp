@@ -69,7 +69,7 @@ test('layout_new and layout_switch can discard unsaved changes, and neither is i
   }
 });
 
-test('the layout tools are left out of the core profile until the core set is chosen', () => {
+test('the layout tools are left out of the core profile', () => {
   for (const tool of layoutTools) {
     expect(tool.core, tool.name).toBeUndefined();
   }

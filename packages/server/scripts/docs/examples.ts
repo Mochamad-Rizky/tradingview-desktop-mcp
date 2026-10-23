@@ -1,6 +1,7 @@
 import { realpathSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { createMcpServer } from '../../src/server.js';
 import type { JsonValue } from '../../src/utils/json.js';
@@ -20,9 +21,11 @@ import { SCENARIOS, type Scenario, type ScenarioStep } from './scenarios.js';
 // server returns, so the page shows the real field names, errors and hints, with synthetic values.
 //
 // The page has to come out the same on every run, machine and time zone, because a test compares it
-// with the committed file. Nothing here reads the clock, the time zone or the locale: the fake app
-// answers from its fixture, the one value of a result that comes from the clock (the time of a
-// compilation, which the server stamps) is pinned below, and the duration of a call is left out.
+// with the committed file. Nothing on it depends on the clock, the time zone or the locale: the fake
+// app answers from its fixture, the values of a result that come from the clock (the time of a
+// compilation, which the server stamps, and the expiration of an alert set without one, which the
+// server sets from the moment of the call) are pinned below, and the duration of a call is left out.
+// The images a result holds are left out too, and named in a note.
 
 export const EXAMPLES_PATH = fileURLToPath(
   new URL('../../../../docs/examples.md', import.meta.url),
@@ -35,9 +38,13 @@ const WIDTH = 100;
 // As in the integration tests of the tools.
 const CALL_TIMEOUT_MS = 5000;
 
+const DAY = 86_400;
+
 // What the assistant gets back from a tool, without the duration, which differs on every run.
+// images are the media types of the images in front of the JSON block (a screenshot), whose data the
+// page leaves out.
 export type StepResult =
-  | { ok: true; via: string | null; warnings: string[]; data: JsonValue }
+  | { ok: true; via: string | null; warnings: string[]; images: string[]; data: JsonValue }
   | { ok: false; error: JsonValue };
 
 export interface ScenarioRun {
@@ -88,14 +95,58 @@ function pinCompileTime(value: JsonValue, time: number): JsonValue {
   );
 }
 
+// The expiration of an alert that alert_create set without being given one comes from the clock as
+// well: the server sets it the default span of TradingView after the moment of the call. It is
+// replaced by the expiration the alert would have had, had it been set at `time`. The span is a
+// whole number of days (TradingView gives it in days, weeks or months), so it is the days from
+// `calledAt`, read just before the call, to the expiration, rounded: the part of a second the call
+// took drops out.
+function pinDefaultExpiration(data: JsonValue, calledAt: number, time: number): JsonValue {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return data;
+  }
+  const { expiration } = data;
+  if (typeof expiration !== 'number') {
+    return data;
+  }
+  const pinned = time + Math.round((expiration - calledAt) / DAY) * DAY;
+  return { ...data, expiration: pinned, expirationIso: toIso(pinned) };
+}
+
+// The data of a result with the values that come from the clock pinned to `time`.
+function pinClockTimes(
+  step: ScenarioStep,
+  data: JsonValue,
+  calledAt: number,
+  time: number,
+): JsonValue {
+  const pinned = pinCompileTime(data, time);
+  return step.tool === 'alert_create' && step.arguments.expiration === undefined
+    ? pinDefaultExpiration(pinned, calledAt, time)
+    : pinned;
+}
+
+// The media types of the images in front of the JSON block of a result.
+function imagesOf(result: CallToolResult): string[] {
+  return result.content.flatMap((block) => (block.type === 'image' ? [block.mimeType] : []));
+}
+
+// What one call gave: its envelope and the images in front of it, and when it was made, in Unix
+// seconds as the server reads the clock.
+interface StepCall {
+  envelope: Envelope;
+  images: string[];
+  calledAt: number;
+}
+
 // The result of a step if it ended as the scenario says it must: a success, or the error code that
 // the step expects. Anything else is a scenario that no longer describes the tools, which stops the
 // generator instead of reaching the page.
 function toStepResult(
   label: string,
   step: ScenarioStep,
-  envelope: Envelope,
-  compileTime: number,
+  { envelope, images, calledAt }: StepCall,
+  pinnedTime: number,
 ): StepResult {
   if (envelope.ok) {
     if (step.expectError !== undefined) {
@@ -108,7 +159,8 @@ function toStepResult(
       ok: true,
       via: envelope.meta.via ?? null,
       warnings: envelope.meta.warnings ?? [],
-      data: pinCompileTime(envelope.data, compileTime),
+      images,
+      data: pinClockTimes(step, envelope.data, calledAt, pinnedTime),
     };
   }
   const code = errorCodeOf(envelope.error);
@@ -125,17 +177,25 @@ function toStepResult(
 async function runSteps(
   client: Client,
   scenario: Scenario,
-  compileTime: number,
+  pinnedTime: number,
 ): Promise<StepResult[]> {
   const results: StepResult[] = [];
   for (const [index, step] of scenario.steps.entries()) {
     const label = `Scenario "${scenario.title}", step ${String(index + 1)} (${step.tool})`;
+    const calledAt = Math.floor(Date.now() / 1000);
     const called = await callTool(client, step.tool, step.arguments);
     const envelope = envelopeSchema.safeParse(called.structuredContent);
     if (!envelope.success) {
       throw new Error(`${label} returned no result envelope: ${z.prettifyError(envelope.error)}`);
     }
-    results.push(toStepResult(label, step, envelope.data, compileTime));
+    results.push(
+      toStepResult(
+        label,
+        step,
+        { envelope: envelope.data, images: imagesOf(called), calledAt },
+        pinnedTime,
+      ),
+    );
   }
   return results;
 }
@@ -148,8 +208,9 @@ async function runSteps(
 async function runScenario(scenario: Scenario): Promise<ScenarioRun> {
   const base = loadTvFixture();
   const { bars } = base;
-  // The time of the last bar of the chart, which is also the time of its last quote.
-  const compileTime = bars.startTime + (bars.count - 1) * bars.stepSeconds;
+  // The time of the last bar of the chart, which is also the time of its last quote: the moment the
+  // values that come from the clock are pinned to.
+  const pinnedTime = bars.startTime + (bars.count - 1) * bars.stepSeconds;
   const win = createFakeTvWindow(scenario.fixture?.(base) ?? base);
 
   const cleanups: (() => Promise<void>)[] = [];
@@ -170,7 +231,7 @@ async function runScenario(scenario: Scenario): Promise<ScenarioRun> {
     const client = await connectInMemoryClient(server);
     cleanups.push(() => client.close());
 
-    return { scenario, results: await runSteps(client, scenario, compileTime) };
+    return { scenario, results: await runSteps(client, scenario, pinnedTime) };
   } finally {
     for (const cleanup of cleanups.reverse()) {
       await cleanup();
@@ -312,6 +373,26 @@ function shownResult(result: StepResult): { envelope: JsonValue; content: JsonVa
   };
 }
 
+// What stands on the page for the images of a result, which come in front of its JSON block as MCP
+// image content. Their data is left out: the page would show a block of base64, and the fake app
+// answers a screenshot with a plain grey picture anyway.
+function imageNote(types: readonly string[]): string[] {
+  const [type, ...more] = types;
+  if (type === undefined) {
+    return [];
+  }
+  const images =
+    more.length === 0
+      ? `The image itself, of type ${type}, comes first, as MCP image content, and this page ` +
+        'leaves it out'
+      : `The ${String(types.length)} images themselves, of types ${types.join(', ')}, come ` +
+        'first, as MCP image content, and this page leaves them out';
+  return [
+    `_${images}: the fake app answers a screenshot with a plain grey picture of the size the ` +
+      'result gives._',
+  ];
+}
+
 function renderStep(step: ScenarioStep, result: StepResult, first: boolean): string[] {
   const shown = shownResult(result);
   return [
@@ -319,6 +400,7 @@ function renderStep(step: ScenarioStep, result: StepResult, first: boolean): str
     fenced('json', formatJson(step.arguments)),
     ...unfold(step.arguments),
     `**The server returns${result.ok ? '' : ' an error'}**`,
+    ...(result.ok ? imageNote(result.images) : []),
     fenced('json', formatJson(shown.envelope)),
     ...unfold(shown.content),
   ];
@@ -357,8 +439,9 @@ const INTRODUCTION = [
   '> **All values on this page are synthetic.** The results come from running the real server ' +
     'against the fake TradingView app of the test suite, which serves a made-up NASDAQ:AAPL chart: ' +
     'prices from a seeded random walk, one bar for every calendar day (weekends included), an ' +
-    'invented layout, invented scripts and an invented strategy report. Indicator values follow ' +
-    'the closing prices instead of being calculated by the indicators. Nothing here is market ' +
+    'invented layout, invented drawings, alerts, watchlists and scripts, an invented strategy ' +
+    'report, and a plain grey picture for a screenshot. Indicator values follow the closing ' +
+    'prices instead of being calculated by the indicators. Nothing here is market ' +
     'data, and nothing comes from a real account. The shape of every result, with its field ' +
     'names, error codes and hints, is what the server returns, with one caveat: what the ' +
     'Strategy Tester holds for a strategy has not been read from the real app yet, so the shape ' +
@@ -368,8 +451,10 @@ const INTRODUCTION = [
     '`meta.durationMs` is left out, because it differs on every run, which leaves the `meta` of ' +
     'an error empty, and a list longer than three items is cut to its first three followed by a ' +
     'marker such as `"… 1 more"`. Text with line breaks, such as a script or a diff, is laid out ' +
-    'again as lines below its block. The time of a compilation is fixed as well, because the ' +
-    'server stamps it from the clock.',
+    'again as lines below its block, and an image that comes in front of the envelope, such as a ' +
+    'screenshot, is named in a note instead of shown. Two times that the server takes from the ' +
+    'clock are fixed as well, as if the call had been made at the time of the last bar of the ' +
+    'chart: the time of a compilation, and the expiration of an alert set without one.',
   'This page is generated by `pnpm docs:examples` from the scenarios in ' +
     '`packages/server/scripts/docs/scenarios.ts`, and a test fails when it is out of date. Do not ' +
     'edit it by hand.',

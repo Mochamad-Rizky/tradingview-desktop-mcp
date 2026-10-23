@@ -177,15 +177,13 @@ describe('the resources follow the tools', () => {
     expect(resources.map(({ uri }) => uri)).toEqual(Object.values(URIS));
   });
 
-  test('offers the resources of the core tools under the core profile', async () => {
+  test('offers every resource under the core profile, which keeps their tools', async () => {
     const client = await startOffline({ profile: 'core' });
 
     const { resources } = await client.listResources();
 
-    // watchlist_get is not a core tool, so the core profile offers no watchlist resource.
-    expect(resources.map(({ uri }) => uri)).toEqual(
-      Object.values(URIS).filter((uri) => uri !== URIS.watchlist),
-    );
+    // watchlist_get, the tool of the watchlist resource, is a core tool like the others.
+    expect(resources.map(({ uri }) => uri)).toEqual(Object.values(URIS));
   });
 
   test('offers no resource when no tool of one is selected', async () => {

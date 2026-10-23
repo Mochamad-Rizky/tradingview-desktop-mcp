@@ -77,7 +77,7 @@ test('tab_close is destructive, and a second call by index closes another tab', 
   });
 });
 
-test('the tab tools are left out of the core profile until the core set is chosen', () => {
+test('the tab tools are left out of the core profile', () => {
   for (const tool of tabTools) {
     expect(tool.core, tool.name).toBeUndefined();
   }

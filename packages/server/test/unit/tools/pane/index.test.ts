@@ -78,7 +78,7 @@ test('pane_set_symbol takes its symbol with the schema of chart_set_symbol, so t
   expect(toolNamed('pane_set_symbol').inputSchema.symbol).toBe(chartSetSymbol.inputSchema.symbol);
 });
 
-test('the pane tools are left out of the core profile until the core set is chosen', () => {
+test('the pane tools are left out of the core profile', () => {
   for (const tool of paneTools) {
     expect(tool.core, tool.name).toBeUndefined();
   }

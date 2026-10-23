@@ -68,13 +68,14 @@ test('drawing_remove and drawing_clear_all destroy, and drawing_create changes t
   });
 });
 
-test('the drawing tools are left out of the core profile until the core set is chosen', () => {
-  for (const tool of drawingTools) {
+// The core profile itself is pinned in test/unit/tools/registry.test.ts.
+test('the core profile keeps drawing_create and drawing_list of the drawing tools', () => {
+  const core = selectTools(drawingTools, { profile: 'core', patterns: [] });
+
+  expect(core.map(({ name }) => name)).toEqual(['drawing_create', 'drawing_list']);
+  for (const tool of drawingTools.filter((candidate) => !core.includes(candidate))) {
     expect(tool.core, tool.name).toBeUndefined();
   }
-  expect(selectTools(allTools, { profile: 'core', patterns: [] }).map(({ name }) => name)).toEqual(
-    expect.not.arrayContaining(['drawing_create', 'drawing_list']) as string[],
-  );
 });
 
 test('drawing_create takes a curated shape, points of a time and a price, a text, a style and a chart', () => {

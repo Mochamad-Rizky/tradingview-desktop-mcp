@@ -75,13 +75,14 @@ test('watchlist_remove destroys, and the adds change a list without destroying a
   }
 });
 
-test('the watchlist tools are left out of the core profile until the core set is chosen', () => {
-  for (const tool of watchlistTools) {
+// The core profile itself is pinned in test/unit/tools/registry.test.ts.
+test('the core profile keeps watchlist_get and watchlist_add of the watchlist tools', () => {
+  const core = selectTools(watchlistTools, { profile: 'core', patterns: [] });
+
+  expect(core.map(({ name }) => name)).toEqual(['watchlist_get', 'watchlist_add']);
+  for (const tool of watchlistTools.filter((candidate) => !core.includes(candidate))) {
     expect(tool.core, tool.name).toBeUndefined();
   }
-  expect(selectTools(allTools, { profile: 'core', patterns: [] }).map(({ name }) => name)).toEqual(
-    expect.not.arrayContaining(watchlistTools.map(({ name }) => name)) as string[],
-  );
 });
 
 test('the add tools say that the WATCHLIST_SYMBOLS config is not what TradingView enforces while its tiered limits are off', () => {

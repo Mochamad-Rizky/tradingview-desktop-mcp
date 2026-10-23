@@ -279,6 +279,7 @@ export const alertCreate = defineTool({
     idempotentHint: false,
     openWorldHint: false,
   },
+  core: true,
   async handler({ symbol, condition, price, message, expiration }, ctx) {
     // All of it before the app is asked anything.
     const wanted = symbol?.trim();
@@ -368,6 +369,7 @@ export const alertList = defineTool({
       .describe('Which alerts: active, stopped, triggered, or all (the default).'),
   },
   annotations: READ_ONLY,
+  core: true,
   async handler({ status }, ctx) {
     const page = await ctx.connection.chartPage();
     const listing = await listAlerts(page, pageWaitMs(ctx.config.callTimeoutMs));

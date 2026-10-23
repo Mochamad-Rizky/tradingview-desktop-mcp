@@ -131,6 +131,7 @@ export const drawingCreate = defineTool({
     idempotentHint: false,
     openWorldHint: false,
   },
+  core: true,
   async handler({ shape, points, text, style, chartIndex }, ctx) {
     // All of it before the app is asked anything.
     requirePointCount(shape, points.length);
@@ -195,6 +196,7 @@ export const drawingList = defineTool({
       ),
   },
   annotations: READ_ONLY,
+  core: true,
   async handler({ chartIndex, limit, offset }, ctx) {
     const page = await ctx.connection.chartPage();
     const target = await resolveChartTarget(page, chartIndex);
