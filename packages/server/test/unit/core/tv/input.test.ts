@@ -2653,6 +2653,36 @@ describe('describeElement with a text', () => {
     ).toMatchObject({ found: true });
   });
 
+  test('names an element that nothing else names by its title, as browsers do, and no other by it', async () => {
+    const buttons = () => [
+      // Named by its title alone: no aria-label, no value, no text.
+      fakeElement({
+        tag: 'button',
+        attributes: { title: 'Indicators' },
+        rect: box(600, 10, 30, 30),
+        children: [fakeElement({ tag: 'svg', rect: box(605, 15, 20, 20) })],
+      }),
+      // Its text names it, so its title does not.
+      fakeElement({
+        tag: 'button',
+        attributes: { title: 'Compare symbols' },
+        text: 'Compare',
+        rect: box(700, 10, 60, 30),
+      }),
+    ];
+
+    expect(
+      await bothWays(describeElement, [...named('indicators')], screen(buttons)),
+    ).toMatchObject({ found: true, rect: box(600, 10, 30, 30) });
+    expect(await bothWays(describeElement, [...named('compare symbols')], screen(buttons))).toEqual(
+      notFound,
+    );
+    expect(await bothWays(describeElement, [...named('compare')], screen(buttons))).toMatchObject({
+      found: true,
+      rect: box(700, 10, 60, 30),
+    });
+  });
+
   test('names a field by its aria-label alone, never by what it holds', async () => {
     const fields = () => [
       fakeElement({ tag: 'textarea', text: 'a note of the user', rect: box(10, 600, 200, 60) }),
@@ -3410,6 +3440,36 @@ describe('findElements', () => {
     });
   });
 
+  test('findElements names an element by its title when nothing else names it', async () => {
+    const make = screen(() => [
+      fakeElement({
+        tag: 'button',
+        attributes: { title: 'Take a snapshot' },
+        rect: box(800, 10, 30, 30),
+        children: [fakeElement({ tag: 'svg', rect: box(805, 15, 20, 20) })],
+      }),
+    ]);
+
+    const result = await bothWays(findElements, [...find(null, 'take a snapshot')], make);
+
+    expect(result).toEqual({
+      elements: [
+        {
+          selector: null,
+          tag: 'button',
+          role: null,
+          name: 'Take a snapshot',
+          text: '',
+          rect: box(800, 10, 30, 30),
+          visible: true,
+          unsafe: false,
+          holdsUnsafe: false,
+        },
+      ],
+      more: false,
+    });
+  });
+
   test('findElements says whether an element is or sits inside a trading control, and whether it holds one', async () => {
     const make = screen(() => [paneWithTradingButtons()]);
 
@@ -4108,6 +4168,39 @@ describe('trading actions in split labels, input buttons and the text shown', ()
     expect(error.toPayload()).toMatchObject({
       code: 'UNSAFE_ACTION_BLOCKED',
       details: { text: 'confirm', name: 'Buy 100' },
+    });
+    expect(input()).toEqual([]);
+  });
+
+  test('a trading action named only by a title is refused, and a title beside a name is not read', async () => {
+    const make = screen(() => [
+      fakeElement({
+        tag: 'button',
+        matches: ['#title-only'],
+        attributes: { title: 'Buy market' },
+        rect: box(100, 600, 30, 24),
+        children: [fakeElement({ tag: 'svg', rect: box(105, 602, 20, 20) })],
+      }),
+      fakeElement({
+        tag: 'button',
+        matches: ['#named'],
+        attributes: { title: 'Sell everything' },
+        text: 'Chart',
+        rect: box(250, 600, 60, 24),
+      }),
+    ]);
+
+    expect(
+      await bothWays(describeElement, [...clickArgs({ selector: '#title-only' })], make),
+    ).toMatchObject({ tradingAction: 'Buy market' });
+    expect(
+      await bothWays(describeElement, [...clickArgs({ selector: '#named' })], make),
+    ).not.toHaveProperty('tradingAction');
+    const { page, input } = pageOver(make());
+    const error = await failureOf(clickTarget(page, { text: 'buy market' }));
+    expect(error.toPayload()).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { text: 'buy market', name: 'Buy market' },
     });
     expect(input()).toEqual([]);
   });
@@ -4933,6 +5026,20 @@ describe('describeFocusedElement reads names the way describeElement does', () =
         alone(fakeElement({ tag: 'input', attributes: { type: 'reset', value: 'Close all' } })),
       ),
       { tradingAction: 'Close all' },
+    ],
+    [
+      'the title of a focused control that nothing else names',
+      focusing(() =>
+        alone(fakeElement({ tag: 'button', attributes: { title: 'Close position' } })),
+      ),
+      { tradingAction: 'Close position' },
+    ],
+    [
+      'no title of a focused control that its text names',
+      focusing(() =>
+        alone(fakeElement({ tag: 'button', attributes: { title: 'Sell all' }, text: 'Chart' })),
+      ),
+      {},
     ],
     [
       'a label split into spans, with a space between them',

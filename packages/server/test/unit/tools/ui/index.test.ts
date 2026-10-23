@@ -303,8 +303,11 @@ describe('the descriptions', () => {
     ]) {
       expect(description, words).toContain(words);
     }
-    // Every source of a name counts on its own, the text shown under an aria-label included.
-    expect(description).toMatch(/value of an input button or the text shown \(each on its own/);
+    // Every source of a name counts on its own, the text shown under an aria-label included, and
+    // the title of an element that nothing else names.
+    expect(description).toMatch(
+      /value of an input button, the text shown or the title of an element nothing else names \(each on its own/,
+    );
     // A div that only the pointer cursor shows as clickable counts as the control too.
     expect(description).toMatch(/the element around it that the pointer cursor shows as clickable/);
     expect(description).toMatch(/parts apart and run together/);

@@ -80,7 +80,7 @@ export interface ClickOptions {
 export const NAME_RULE =
   'its aria-label, or else the value of an input button, or else the text it shows, with a space ' +
   'between the texts of different elements and white space collapsed (a label made of Sell and 100 ' +
-  'in two spans is "Sell 100"), compared whole and ignoring case';
+  'in two spans is "Sell 100"), or else its title, compared whole and ignoring case';
 
 // Every call is a lookup of the page followed by events that rest on it, and two calls that
 // overlap can send an event on a lookup the other call has made stale: Tab moves the focus to a
@@ -111,7 +111,8 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 // selector (a string is one), the first visible element with a name, or a point. Of an element:
 // - found: whether there is one. One looked for by its name is found only when it is visible. Its
 //   name is its aria-label, or else, for an input of type submit, button or reset, its value, or
-//   else the text it shows, compared whole and ignoring case. The text it shows is that of its text
+//   else the text it shows, or else its title, as browsers name an element that nothing else names,
+//   compared whole and ignoring case. The text it shows is that of its text
 //   nodes, with a space between the pieces of different elements, as they stand apart on the
 //   screen, and every run of white space one space: a label made of "Sell" and "100" in two spans
 //   is named "Sell 100". The text inside a field (an input, a textarea or a select) or an editable
@@ -148,8 +149,9 @@ function exclusively<T>(page: InputPage, action: () => Promise<T>): Promise<T> {
 // - rect: its box in viewport pixels, as the page reports it.
 // - tradingAction: for a click, a trading action, which `tradingNames` matches ignoring case, that
 //   the click would reach, quoted with the words around it. Each of the aria-label, the value of an
-//   input button and the text shown is matched on its own, so that the text a user reads counts even
-//   under an aria-label that says something else, and the text shown is read both with a space
+//   input button, the text shown and, for an element that nothing else names, the title is matched
+//   on its own, so that the text a user reads counts even under an aria-label that says something
+//   else, and the text shown is read both with a space
 //   between the pieces of different elements and with the pieces run together, so that neither a
 //   label split into elements nor a word split by an element inside it gets past. That goes for the
 //   element, for the element at the point, for the control that one belongs to (its closest
@@ -276,14 +278,18 @@ export function describeElement(
       ? collapsed(element.getAttribute('value'))
       : '';
   // The name of an element: its aria-label, or else the label of an input button, or else the text
-  // it shows.
+  // it shows, or else its title, as browsers name an element that nothing else names.
   const nameOf = (element: Element): string => {
     const label = collapsed(element.getAttribute('aria-label'));
     if (label !== '') {
       return label;
     }
     const value = buttonValue(element);
-    return value !== '' ? value : readable(element);
+    if (value !== '') {
+      return value;
+    }
+    const text = readable(element);
+    return text !== '' ? text : collapsed(element.getAttribute('title'));
   };
   // The control an element belongs to: itself or its closest ancestor that a click activates.
   const controlOf = (element: Element): Element | null => {
@@ -352,12 +358,12 @@ export function describeElement(
     }
     for (const named of reached) {
       const { spaced, joined } = texts(named);
-      for (const name of [
-        collapsed(named.getAttribute('aria-label')),
-        buttonValue(named),
-        spaced,
-        joined,
-      ]) {
+      const label = collapsed(named.getAttribute('aria-label'));
+      const value = buttonValue(named);
+      // The title of an element that nothing else names is its name, as browsers read it.
+      const title =
+        label === '' && value === '' && spaced === '' ? collapsed(named.getAttribute('title')) : '';
+      for (const name of [label, value, spaced, joined, title]) {
         const quoted = around(name);
         if (quoted !== undefined) {
           return quoted;
@@ -623,14 +629,18 @@ export function findElements(
       ? collapsed(element.getAttribute('value'))
       : '';
   // The name of an element: its aria-label, or else the label of an input button, or else the text
-  // it shows.
+  // it shows, or else its title, as browsers name an element that nothing else names.
   const nameOf = (element: Element): string => {
     const label = collapsed(element.getAttribute('aria-label'));
     if (label !== '') {
       return label;
     }
     const value = buttonValue(element);
-    return value !== '' ? value : readable(element);
+    if (value !== '') {
+      return value;
+    }
+    const text = readable(element);
+    return text !== '' ? text : collapsed(element.getAttribute('title'));
   };
   const shown = (element: Element, box = element.getBoundingClientRect()): boolean => {
     if (!(element.isConnected && box.width > 0 && box.height > 0)) {
@@ -908,12 +918,18 @@ export function describeFocusedElement(
   };
   // The trading action one of the names of `element` holds, quoted with up to twenty characters on
   // each side: its aria-label, the label of an input button and, when `shown` counts, the text it
-  // shows, read both ways.
+  // shows, read both ways; and its title when nothing else names it, as browsers read it, the text
+  // it shows counting for that whether `shown` does or not.
   const tradingName = (element: Element, shown: boolean): string | undefined => {
-    const names = [collapsed(element.getAttribute('aria-label')), buttonValue(element)];
+    const label = collapsed(element.getAttribute('aria-label'));
+    const value = buttonValue(element);
+    const { spaced, joined } = texts(element);
+    const names = [label, value];
     if (shown) {
-      const { spaced, joined } = texts(element);
       names.push(spaced, joined);
+    }
+    if (label === '' && value === '' && spaced === '') {
+      names.push(collapsed(element.getAttribute('title')));
     }
     for (const named of names) {
       const match = trading.exec(named);

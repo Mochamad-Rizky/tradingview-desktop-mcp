@@ -178,8 +178,9 @@ export const uiClick = defineTool({
     ' A click is also refused on an element that holds a trading control, whether it is the ' +
     'target, lies at the point, or covers the center of the target, and on anything named after ' +
     'a trading action, because an order ticket has no selector to tell it by: an aria-label, the ' +
-    'value of an input button or the text shown (each on its own, so the text shown counts under ' +
-    `an aria-label that says something else) that holds ${TRADING_NAMES}, as words, of the ` +
+    'value of an input button, the text shown or the title of an element nothing else names (each ' +
+    'on its own, so the text shown counts under an aria-label that says something else) that ' +
+    `holds ${TRADING_NAMES}, as words, of the ` +
     'target, of what lies at the point, or of the button that holds it or the element around it ' +
     'that the pointer cursor shows as clickable (up to six levels up). The text shown is read ' +
     'with its parts apart and run together, so a word split into elements still counts. A point ' +
@@ -317,7 +318,8 @@ export const uiFindElement = defineTool({
     'control or anything inside one, which the other tools refuse) and holdsUnsafe (true for an ' +
     'element that holds one, which ui_click refuses, at a point on it too, while ui_hover and ' +
     'ui_scroll do not). ui_click also refuses an element named after a trading action (an ' +
-    `aria-label, input button value or text shown that holds ${TRADING_NAMES}, as words). What ` +
+    'aria-label, input button value, text shown or title of an element nothing else names that ' +
+    `holds ${TRADING_NAMES}, as words). What ` +
     'is typed into a field (an input, a text area, a select) or an editable region is never read: ' +
     'such an element comes without text, and its text is no part of the name or the text of the ' +
     'elements around it. In document order, at ' +

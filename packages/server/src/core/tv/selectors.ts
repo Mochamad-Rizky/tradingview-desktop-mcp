@@ -185,7 +185,8 @@ export const UNSAFE_SELECTORS: readonly string[] = Object.freeze([
 
 // The names of trading actions, as a pattern that is matched, ignoring case, against the names of
 // an element: its aria-label, the value of an input button, and the text it shows, with a space
-// between the pieces of different elements and without what is typed into a field, each on its own.
+// between the pieces of different elements and without what is typed into a field, each on its own,
+// and the title of an element that nothing else names.
 // The words buy and sell anywhere in a name; placing, submitting, sending, cancelling or modifying
 // an order; closing, exiting, reversing or flattening a position; close all, flatten and reverse.
 // Words, not parts of words: "Buyback chart" and "Sellers" pass, and "How to buy" is refused, which

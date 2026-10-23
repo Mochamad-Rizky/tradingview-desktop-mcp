@@ -321,6 +321,39 @@ describe('ui_click', () => {
     expect(typesOf(app)).toEqual(['mouseMoved']);
   });
 
+  test('ui_find_element finds a button named only by its title, and ui_click refuses one whose title names a trading action', async () => {
+    // Buttons with an icon and a title only, as many of the app are.
+    const snapshot = fakeElement({
+      tag: 'button',
+      id: 'snapshot',
+      matches: ['#snapshot'],
+      attributes: { title: 'Take a snapshot' },
+      rect: box(800, 10, 30, 30),
+      children: [fakeElement({ tag: 'svg', rect: box(805, 15, 20, 20) })],
+    });
+    const quickBuy = fakeElement({
+      tag: 'button',
+      id: 'quick-buy',
+      matches: ['#quick-buy'],
+      attributes: { title: 'Buy market' },
+      rect: box(500, 600, 30, 24),
+      children: [fakeElement({ tag: 'svg', rect: box(505, 602, 20, 20) })],
+    });
+    const { client, app } = await startHarness({ win: chartPage([snapshot, quickBuy]) });
+
+    const found = await callTool(client, 'ui_find_element', { text: 'take a snapshot' });
+    const refused = await callTool(client, 'ui_click', { selector: '#quick-buy' });
+
+    expect(dataOf(found)).toMatchObject({
+      elements: [{ selector: '#snapshot', name: 'Take a snapshot', text: '' }],
+    });
+    expect(errorOf(refused)).toMatchObject({
+      code: 'UNSAFE_ACTION_BLOCKED',
+      details: { name: 'Buy market' },
+    });
+    expect(typesOf(app)).toEqual([]);
+  });
+
   test('ui_click refuses trading actions in a split label, under another aria-label and in an input button', async () => {
     const win = chartPage([
       // "Sell" and "100" in two spans side by side, with no space in the text between them.

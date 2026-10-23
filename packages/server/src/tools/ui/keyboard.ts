@@ -62,7 +62,8 @@ export const uiPressKey = defineTool({
     'while the focus is on or inside a trading control (the buy and sell buttons and the trade ' +
     `button), and while a trading action (${TRADING_NAMES}, as words) is named by the ` +
     'aria-label or the input button value of the focused element, or by the aria-label, the input ' +
-    'button value or the text shown of the control it belongs to: its closest button, link (a), ' +
+    'button value or the text shown of the control it belongs to, or by the title of either when ' +
+    'nothing else names it: its closest button, link (a), ' +
     'label or summary element, or element with the role button, link, menuitem, ' +
     'menuitemcheckbox, menuitemradio, option, tab, switch, checkbox or radio, which can be the ' +
     'focused element itself, or the element around it, up to six levels up, that the pointer ' +

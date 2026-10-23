@@ -692,7 +692,8 @@ these clicks change which page it remembers even though the panel looks as befor
 
 Of the 169 visible buttons of the chart page, 112 carry an `aria-label`, 26 are named only by a `title` (no
 `aria-label`, no text), none uses `aria-labelledby` and 3 have no name at all. The name rule of the input helpers
-reads a title-only button as unnamed, so it is found by selector, not by text.
+takes the title of an element that nothing else names, as browsers do, so a title-only button is found by its title,
+and a trading action in it is refused like one in any other name.
 `startFullscreen()` calls `requestFullscreen()` of the chart's resizer bridge, which is the app's own fullscreen
 inside the page and not the browser's Fullscreen API (static analysis, [§12](#12-open-questions) Q13):
 `document.fullscreenElement` stays `null`, and `_chartWidgetCollection.fullscreen()`, a watched boolean, reports the
