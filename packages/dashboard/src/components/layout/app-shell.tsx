@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { Link, useLocation, useRoute } from 'wouter';
 import { Button } from '@/components/ui/button';
+import { ConnectionBadge } from './connection-badge';
 import { ThemeToggle } from './theme-toggle';
 
 const PAGES = [
@@ -54,14 +55,16 @@ export function AppShell({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <header className="border-b">
-        <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-6 px-4">
-          <span className="font-heading font-semibold">TradingView MCP</span>
+        {/* On a narrow screen the badge and the theme toggle wrap to a line of their own. */}
+        <div className="mx-auto flex min-h-14 w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2">
+          <span className="font-heading font-semibold whitespace-nowrap">TradingView MCP</span>
           <nav aria-label="Main" className="flex items-center gap-1">
             {PAGES.map((page) => (
               <NavLink key={page.href} {...page} />
             ))}
           </nav>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
+            <ConnectionBadge />
             <ThemeToggle />
           </div>
         </div>

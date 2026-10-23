@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { storeToken } from './api/token';
@@ -64,6 +64,12 @@ test('the app shell renders the nav and switches pages by path', async () => {
   const { unmount } = render(<App />);
 
   expect(within(screen.getByRole('banner')).getByText('TradingView MCP')).toBeInTheDocument();
+  // The header says how far TradingView is up, on every page.
+  await waitFor(() => {
+    expect(within(screen.getByRole('banner')).getByRole('status')).toHaveTextContent(
+      'TradingView ready',
+    );
+  });
   const links = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link');
   expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
     ['Status', '/'],
@@ -155,6 +161,9 @@ test('a skip link is the first thing to focus, and moves the focus to the page',
   expect(screen.getByRole('main')).toHaveFocus();
   // The address stays as it was.
   expect(window.location.hash).toBe('');
+  // The next Tab goes into the page, past the header.
+  await user.tab();
+  expect(screen.getByRole('main')).toContainElement(document.activeElement as HTMLElement);
 });
 
 test('each page names itself in the document title', async () => {
