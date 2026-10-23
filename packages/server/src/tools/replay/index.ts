@@ -24,6 +24,7 @@ import {
   replayTimeOf,
   requireWithinHistory,
   savedSessionError,
+  sessionReplayRunningError,
   signedOutError,
   speedDelayOf,
   speedLabelOf,
@@ -145,6 +146,34 @@ function forgetEndedRun(
   }
 }
 
+// Refuses a change of the tab in front or of the layout (tab_switch, tab_new, tab_close,
+// layout_switch, layout_new) while the run of replay this session started runs on the chart in
+// front: the replay tools would reach another chart afterwards, replay_stop would find nothing to
+// leave there, and the run would go on unseen, for TradingView to save in the layout. Asked before
+// anything is clicked or loaded. A reading that shows the run over forgets it, as every replay tool
+// does; a chart that cannot be read, or that does not tell whether replay runs, refuses nothing,
+// since replay_stop could not leave the run there either.
+export async function refuseWhileSessionReplayRuns(ctx: ToolContext): Promise<void> {
+  const own = ctx.session.replayRunStartedBySession;
+  if (own === null) {
+    return;
+  }
+  let reading: ReplayReading;
+  try {
+    const page = await ctx.connection.chartPage();
+    reading = await page.bridge.evaluate(readReplayState, []);
+  } catch (error) {
+    if (isTvMcpError(error)) {
+      return;
+    }
+    throw error;
+  }
+  forgetEndedRun(ctx, reading);
+  if (reading.started === true && reading.selectedPoint === own) {
+    throw sessionReplayRunningError();
+  }
+}
+
 export const replayStart = defineTool({
   name: 'replay_start',
   domain: 'replay',
@@ -166,7 +195,9 @@ export const replayStart = defineTool({
     'AUTH_REQUIRED while no account is signed in. TradingView keeps how its replay button starts ' +
     'a replay as a setting, which the call sets back. During replay TradingView itself switches ' +
     'its trading panel to its internal replay broker, and back to the default broker afterwards; ' +
-    'the server never trades, and no tool places orders. End with replay_stop.',
+    'the server never trades, and no tool places orders. While the replay runs, the tab and ' +
+    'layout tools leave the tab in front and the layout as they are (NOT_AVAILABLE). End with ' +
+    'replay_stop.',
   inputSchema: {
     date: timeInput()
       .optional()

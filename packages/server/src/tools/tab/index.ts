@@ -14,6 +14,7 @@ import { pollUntil } from '../../utils/poll.js';
 import { sleep } from '../../utils/timeout.js';
 import { READ_ONLY } from '../annotations.js';
 import { pageWaitMs, POLL_INTERVAL_MS } from '../chart/strategies.js';
+import { refuseWhileSessionReplayRuns } from '../replay/index.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import { readTabs, readUnsavedLayout, TAB_STRIP, type StripTab } from './page.js';
 
@@ -516,7 +517,9 @@ export const tabNew = defineTool({
     'window is covered or minimized, which tab is in front cannot be told, and the chart tools use ' +
     'the only chart tab, if there is just one.) Returns id and index ' +
     'of the new tab, and a warning when its page did not open in time. TIMEOUT when no new tab ' +
-    'shows in time: check tab_list before trying again, as the tab may still open.',
+    'shows in time: check tab_list before trying again, as the tab may still open. While a ' +
+    'replay this session started runs, the call fails with NOT_AVAILABLE before any click: stop ' +
+    'the replay with replay_stop first.',
   inputSchema: {},
   // A new tab every time; nothing of the user is changed.
   annotations: {
@@ -531,6 +534,7 @@ export const tabNew = defineTool({
     const pagesBefore = new Set(
       findNewTabPages(await ctx.connection.targets()).map(({ id }) => id),
     );
+    await refuseWhileSessionReplayRuns(ctx);
     const frontBefore = await frontPage(ctx);
     const waitMs = tabWaitMs(ctx);
     await clickElement(chrome, SELECTORS.windowChrome.newTab);
@@ -602,7 +606,9 @@ export const tabSwitch = defineTool({
     'tab can duplicate it. The click lands on the title of the tab and nowhere else: when ' +
     'something else lies there, such as its close button, nothing is clicked (NOT_AVAILABLE). ' +
     'INVALID_INPUT for neither or both of tabId and index, and for a tab the window does not have. ' +
-    'TIMEOUT when the tab does not come to the front in time.',
+    'TIMEOUT when the tab does not come to the front in time. While a replay this session ' +
+    'started runs, the call fails with NOT_AVAILABLE before any click: stop the replay with ' +
+    'replay_stop first.',
   inputSchema: { tabId: tabIdInput(), index: indexInput() },
   // Bringing the tab in front to the front again changes nothing.
   annotations: {
@@ -621,6 +627,7 @@ export const tabSwitch = defineTool({
     if (tab.active) {
       return { data: { id: tab.id, index: tab.index, changed: false }, via: 'dom' };
     }
+    await refuseWhileSessionReplayRuns(ctx);
     const arrival = await bringToFront(ctx, chrome, tab, await frontPage(ctx));
     if (arrival === 'late') {
       throw new TvMcpError(
@@ -666,7 +673,8 @@ export const tabClose = defineTool({
     'cannot be told then, and when the server cannot tell it otherwise, or the tab shows no close ' +
     'button (a pinned tab). INVALID_INPUT for ' +
     'neither or both of tabId and index, and for a tab the window does not have. TIMEOUT when the ' +
-    'tab does not close in time.',
+    'tab does not close in time. While a replay this session started runs, the call fails with ' +
+    'NOT_AVAILABLE before any click: stop the replay with replay_stop first.',
   inputSchema: {
     tabId: tabIdInput(),
     index: indexInput(),
@@ -712,6 +720,7 @@ export const tabClose = defineTool({
     if (tab.active && !tab.closable) {
       throw noCloseButton(tab.id);
     }
+    await refuseWhileSessionReplayRuns(ctx);
     // The page in front can be told only while the window is in view (assertClosesWithoutDialog),
     // so a covered or minimized window is refused before anything is clicked.
     await assertWindowInView(ctx, tab.id);

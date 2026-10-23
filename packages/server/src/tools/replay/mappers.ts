@@ -224,6 +224,21 @@ export function alreadyActiveError(): TvMcpError {
   });
 }
 
+// The refusal of a change of the tab in front or of the layout while the run of replay this session
+// started runs on the chart in front.
+export function sessionReplayRunningError(): TvMcpError {
+  return new TvMcpError(
+    'NOT_AVAILABLE',
+    'A replay this session started is running on the chart, so the tab in front and the layout ' +
+      'stay as they are',
+    {
+      hint:
+        'Call replay_stop first, then try again: once the tab or the layout changes, the replay ' +
+        'tools reach another chart, and the replay would go on out of their reach.',
+    },
+  );
+}
+
 export function unknownStateError(): TvMcpError {
   return new TvMcpError(
     'NOT_AVAILABLE',

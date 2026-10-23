@@ -945,6 +945,54 @@ describe('replay_stop', () => {
   });
 });
 
+describe('the layout tools while a replay this session started runs', () => {
+  // A plan that lets the account save ten layouts; the fixture has three saved.
+  const roomy: TvStateFixture = {
+    ...fixture,
+    planLimits: { ...fixture.planLimits, CHART_STORAGE: 10 },
+  };
+
+  test('layout_switch and layout_new refuse NOT_AVAILABLE, naming replay_stop, before they load or create anything', async () => {
+    const { client, win } = await startHarness(roomy);
+    await callTool(client, 'replay_start', { date: '2024-04-11' });
+
+    const switched = await callTool(client, 'layout_switch', {
+      layoutId: 'FIXTURE2',
+      confirm: true,
+    });
+    const created = await callTool(client, 'layout_new', { name: 'Example Layout', confirm: true });
+
+    for (const result of [switched, created]) {
+      expect(errorOf(result)).toMatchObject({
+        code: 'NOT_AVAILABLE',
+        hint: expect.stringContaining('replay_stop') as string,
+      });
+    }
+    expect(calls(win, 'TradingViewApi.loadLayoutFromServerByLayoutId')).toEqual([]);
+    expect(calls(win, 'createNewChart')).toEqual([]);
+    expect(replayOf(win)).toMatchObject({ started: true });
+    // Once the replay is stopped, they act.
+    await callTool(client, 'replay_stop');
+    const after = await callTool(client, 'layout_switch', { layoutId: 'FIXTURE2', confirm: true });
+    expect(dataOf(after)).toMatchObject({ id: 'FIXTURE2', changed: true });
+  });
+
+  test('a replay the user started, or a run of this session that is over, holds no layout tool back', async () => {
+    const { client, win, ctx } = await startHarness(roomy);
+    await callTool(client, 'replay_start', { date: '2024-04-11' });
+    // The user closes the replay of the session and starts one of their own.
+    await userTakesOver(win);
+
+    const switched = await callTool(client, 'layout_switch', {
+      layoutId: 'FIXTURE2',
+      confirm: true,
+    });
+
+    expect(dataOf(switched)).toMatchObject({ id: 'FIXTURE2', changed: true });
+    expect(ctx.session.replayRunStartedBySession).toBeNull();
+  });
+});
+
 test('the replay tools never trade, never go to realtime and never touch the trading service', async () => {
   const { client, win } = await startHarness();
 

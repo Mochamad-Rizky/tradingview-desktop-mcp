@@ -10,6 +10,7 @@ import {
   pageWaitMs,
   POLL_INTERVAL_MS,
 } from '../chart/strategies.js';
+import { refuseWhileSessionReplayRuns } from '../replay/index.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import {
   CHART_STORAGE_HINT,
@@ -204,7 +205,9 @@ export const layoutNew = defineTool({
     'created. A layout that was created but not opened in time comes back with opened: false and ' +
     'a warning: open it with layout_switch rather than creating it again. When TradingView ' +
     'refuses the layout after these checks, the call fails with NOT_AVAILABLE, and TradingView ' +
-    'may show a message saying why. No tool deletes a layout.',
+    'may show a message saying why. No tool deletes a layout. While a replay this session ' +
+    'started runs, the call fails with NOT_AVAILABLE before anything is created: stop the replay ' +
+    'with replay_stop first.',
   inputSchema: {
     name: z
       .string()
@@ -248,6 +251,7 @@ export async function newLayout(
     if (!state.signedIn) {
       throw signedOutError();
     }
+    await refuseWhileSessionReplayRuns(ctx);
     if (state.unsaved !== false && confirm !== true) {
       throw unsavedChangesError('new', state.unsaved);
     }
@@ -336,7 +340,9 @@ export const layoutSwitch = defineTool({
     'prompt where these checks cannot see: for a saved multi-chart layout on a plan with fewer ' +
     'charts (the list of saved layouts does not say how many charts a layout has), for a layout ' +
     'its server refuses as beyond the limit, and for a layout the list TradingView keeps for ' +
-    'itself marks over the limit while layout_list does not (that list can be out of date).',
+    'itself marks over the limit while layout_list does not (that list can be out of date). ' +
+    'While a replay this session started runs, the call fails with NOT_AVAILABLE before anything ' +
+    'is loaded: stop the replay with replay_stop first.',
   inputSchema: {
     layoutId: z
       .string()
@@ -363,6 +369,7 @@ export const layoutSwitch = defineTool({
       if (layoutId === state.id) {
         return { data: { id: state.id, name: state.name, changed: false }, via: 'api' };
       }
+      await refuseWhileSessionReplayRuns(ctx);
       // The in-place loader loads nothing, without a word, for an id TradingView does not list.
       const saved = await page.bridge.evaluate(readSavedLayouts, [waitMs]);
       const target = saved.layouts.find(({ url }) => url === layoutId);

@@ -1246,6 +1246,42 @@ describe('calls that run while a tab tool changes the tab in front', () => {
   });
 });
 
+describe('the tab tools while a replay this session started runs', () => {
+  test('tab_switch, tab_new and tab_close refuse NOT_AVAILABLE, naming replay_stop, before any click', async () => {
+    const { client, world } = await startHarness({ tabs: [chartA, chartB], active: A });
+    await callTool(client, 'replay_start', { date: 'first' });
+
+    const refused = [
+      await callTool(client, 'tab_switch', { tabId: B }),
+      await callTool(client, 'tab_new'),
+      await callTool(client, 'tab_close', { tabId: B, confirm: true }),
+      await callTool(client, 'tab_close', { tabId: A, confirm: true }),
+    ];
+
+    for (const result of refused) {
+      expect(errorOf(result)).toMatchObject({
+        code: 'NOT_AVAILABLE',
+        hint: expect.stringContaining('replay_stop') as string,
+      });
+    }
+    expect(world.chrome.clicks).toEqual([]);
+    expect(tabIds(world)).toEqual([A, B]);
+    // Bringing the tab in front to the front changes nothing, so it goes on as before.
+    expect(dataOf(await callTool(client, 'tab_switch', { tabId: A }))).toEqual({
+      id: A,
+      index: 0,
+      changed: false,
+    });
+    // Once the replay is stopped, they act.
+    await callTool(client, 'replay_stop');
+    expect(dataOf(await callTool(client, 'tab_switch', { tabId: B }))).toEqual({
+      id: B,
+      index: 1,
+      changed: true,
+    });
+  });
+});
+
 describe('a tab whose id holds characters a selector must quote', () => {
   test('tab_switch and tab_close reach it by a selector that quotes its id', async () => {
     const odd = 'tab "one" \\ two\u0007';
