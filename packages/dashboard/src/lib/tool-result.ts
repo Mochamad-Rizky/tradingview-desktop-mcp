@@ -33,3 +33,26 @@ export function resultEnvelope(result: DashboardCallResult): ResultEnvelope | nu
   }
   return null;
 }
+
+// How a call went, as the envelope's meta states it: the tier the result came from (absent for a
+// failed call), how long the call took, and its warnings.
+export interface ResultMeta {
+  via?: string;
+  durationMs?: number;
+  warnings: string[];
+}
+
+export function resultMeta(result: DashboardCallResult): ResultMeta {
+  const meta = result.structuredContent?.meta;
+  if (!isJsonObject(meta)) {
+    return { warnings: [] };
+  }
+  const { via, durationMs, warnings } = meta;
+  return {
+    ...(typeof via === 'string' ? { via } : {}),
+    ...(typeof durationMs === 'number' ? { durationMs } : {}),
+    warnings: Array.isArray(warnings)
+      ? warnings.filter((warning) => typeof warning === 'string')
+      : [],
+  };
+}

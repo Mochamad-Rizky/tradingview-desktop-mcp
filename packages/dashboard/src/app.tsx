@@ -22,7 +22,7 @@ export function App() {
             <Switch>
               <Route path="/" component={StatusPage} />
               <Route path="/log" component={LogPage} />
-              <Route path="/tools" component={ToolsPage} />
+              <Route path="/tools/:name?" component={ToolsPage} />
               <Route component={NotFoundPage} />
             </Switch>
           </AppShell>

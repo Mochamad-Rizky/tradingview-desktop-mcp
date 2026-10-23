@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from 'react';
-import { Link, useLocation, useRoute } from 'wouter';
+import { Link, useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { ConnectionBadge } from './connection-badge';
 import { ThemeToggle } from './theme-toggle';
@@ -10,11 +10,23 @@ const PAGES = [
   { href: '/tools', label: 'Tools' },
 ] as const;
 
+// The page a path belongs to, its first segment: /tools for /tools/chart_set_symbol.
+function pageOf(path: string): string {
+  return `/${path.split('/')[1] ?? ''}`;
+}
+
+// The link of a page, marked while the page or a part of it (a tool of the tools page) is shown.
 function NavLink({ href, label }: { href: string; label: string }) {
-  const [active] = useRoute(href);
+  const [location] = useLocation();
+  let current: 'page' | 'true' | undefined;
+  if (location === href) {
+    current = 'page';
+  } else if (pageOf(location) === href) {
+    current = 'true';
+  }
   return (
-    <Button asChild variant={active ? 'secondary' : 'ghost'}>
-      <Link href={href} aria-current={active ? 'page' : undefined}>
+    <Button asChild variant={current === undefined ? 'ghost' : 'secondary'}>
+      <Link href={href} aria-current={current}>
         {label}
       </Link>
     </Button>
@@ -24,16 +36,20 @@ function NavLink({ href, label }: { href: string; label: string }) {
 // After a move to another page the focus goes to its heading, so that a screen reader says where
 // it landed and Tab goes on from there. Not on the first load, which starts at the top of the
 // document; the location the page was first shown at tells the two apart, also when StrictMode
-// runs the effect twice.
+// runs the effect twice. A move within a page, from one tool to another, is the page's own
+// business; a move back to the page itself (/tools) counts as a move to the page.
 function useFocusOnNavigation(main: RefObject<HTMLElement | null>): void {
   const [location] = useLocation();
   const shown = useRef(location);
   useEffect(() => {
-    if (shown.current === location) {
+    const previous = shown.current;
+    if (previous === location) {
       return;
     }
     shown.current = location;
-    main.current?.querySelector<HTMLElement>('h1')?.focus();
+    if (pageOf(previous) !== pageOf(location) || pageOf(location) === location) {
+      main.current?.querySelector<HTMLElement>('h1')?.focus();
+    }
   }, [location, main]);
 }
 

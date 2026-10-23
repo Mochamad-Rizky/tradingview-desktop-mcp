@@ -197,6 +197,15 @@ export const tools: DashboardTool[] = [
   },
 ];
 
+// The fixture tool of that name.
+export function toolNamed(name: string): DashboardTool {
+  const tool = tools.find((each) => each.name === name);
+  if (tool === undefined) {
+    throw new Error(`No fixture tool is named ${name}`);
+  }
+  return tool;
+}
+
 // A tool result as the registry builds it: the envelope goes into the text block and into
 // structuredContent alike.
 export function okResult(
