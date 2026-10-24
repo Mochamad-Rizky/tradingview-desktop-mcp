@@ -118,6 +118,29 @@ test('a success that is not JSON is an unexpected answer', async () => {
   expect(readToken()).toBe(TEST_TOKEN);
 });
 
+// A body that breaks off is a connection that failed, not an answer of another kind.
+test('a success whose body breaks off fails as it is, not as an unexpected answer', async () => {
+  storeToken(TEST_TOKEN);
+  server.use(
+    http.get(
+      '/api/info',
+      () =>
+        new HttpResponse(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"name":'));
+              controller.error(new TypeError('The connection dropped'));
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        ),
+    ),
+  );
+  const error = await apiGet('/api/info').catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(TypeError);
+  expect(error).not.toBeInstanceOf(UnexpectedAnswerError);
+});
+
 test('a 401 clears the token, throws, and tells the subscribers once each', async () => {
   storeToken('wrong-token');
   const first = vi.fn();
