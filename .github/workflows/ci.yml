@@ -42,11 +42,17 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
 
+      # A run of a tag is the gate of a release, and its tarball is what npm publishes, so it
+      # restores no store from the cache: every dependency comes from the registry, checked against
+      # the lockfile. Pushes of branches and pull requests keep the cache. The automatic cache of
+      # setup-node, which turns on only for a project whose package manager is npm, is off on a tag
+      # as well.
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+          cache: ${{ !startsWith(github.ref, 'refs/tags/') && 'pnpm' || '' }}
+          package-manager-cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
