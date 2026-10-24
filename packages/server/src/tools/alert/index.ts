@@ -379,13 +379,12 @@ export async function createAlert(
     }
     ctx.session.createdAlertIds.add(created.id);
     // Within the turn, so that the next check of the limit counts the alert as active.
-    const activation = await awaitActivation(
-      page,
-      created.id,
-      waitMs,
-      Math.min(ACTIVATION_WAIT_MS, remainingMs()),
+    const activation = await awaitActivation(page, created.id, {
+      pageWait: waitMs,
+      limitMs: Math.min(ACTIVATION_WAIT_MS, remainingMs()),
+      budgetLeft: remainingMs,
       now,
-    );
+    });
     return { id: created.id, activation };
   });
   return {
@@ -402,46 +401,61 @@ export async function createAlert(
   };
 }
 
+// How alert_create waits for a new alert to settle: each listing waits at most pageWait, the wait
+// takes limitMs at most, and budgetLeft says what is left of the time of the call, timed by now.
+interface ActivationWait {
+  pageWait: number;
+  limitMs: number;
+  budgetLeft: () => number;
+  now: () => number;
+}
+
 // Waits, within limitMs, until TradingView lists the alert it just created (id) as active, or as
 // stopped. Its alerts server answers the creation first and activates the alert a moment later
 // (about 1.5 s seen), listing it as not active, with no stop reason, until then; alert_list would
 // report it as stopped. An alert whose condition is met at once, such as greater_than at a price
 // the symbol is above already, can fire and stop before it was ever listed as active: a stop reason
-// settles the wait as well, and alert_list reports what became of it. Each listing waits at most
-// pageWait, and no longer than the wait has left, but at least MIN_LISTING_WAIT_MS. An error of the
-// app does not fail the call, since the alert exists and a failed call would invite creating it
-// again: a listing that fails or is refused counts as not settled yet.
+// settles the wait as well, and alert_list reports what became of it. Each listing waits what the
+// wait has left, at least MIN_LISTING_WAIT_MS and at most pageWait. The time of the call is never
+// outrun: when less than MIN_LISTING_WAIT_MS of it is left, the wait ends without another listing.
+// An error of the app does not fail the call, since the alert exists and a failed call would invite
+// creating it again: a listing that fails or is refused counts as not settled yet.
 async function awaitActivation(
   page: PageHandle,
   id: string,
-  pageWait: number,
-  limitMs: number,
-  now: () => number,
+  { pageWait, limitMs, budgetLeft, now }: ActivationWait,
 ): Promise<{ settled: boolean; waitedMs: number }> {
   const wanted = Number(id);
   const startedAt = now();
-  const listingWait = (): number =>
-    Math.max(Math.min(pageWait, limitMs - (now() - startedAt)), MIN_LISTING_WAIT_MS);
   const result = await pollUntil(
-    async () => {
+    async (): Promise<'settled' | 'pending' | 'out_of_time'> => {
+      if (budgetLeft() < MIN_LISTING_WAIT_MS) {
+        return 'out_of_time';
+      }
+      const listingWait = Math.min(
+        pageWait,
+        Math.max(limitMs - (now() - startedAt), MIN_LISTING_WAIT_MS),
+      );
       try {
-        const listing = await page.bridge.evaluateWithLib(readAlerts, [listingWait()]);
+        const listing = await page.bridge.evaluateWithLib(readAlerts, [listingWait]);
         const row =
           'refused' in listing
             ? undefined
             : listing.alerts.find(({ id: rowId }) => rowId === wanted);
-        return row !== undefined && (row.active === true || row.lastStopReason !== null);
+        return row !== undefined && (row.active === true || row.lastStopReason !== null)
+          ? 'settled'
+          : 'pending';
       } catch (error) {
         if (isTvMcpError(error)) {
-          return false;
+          return 'pending';
         }
         throw error;
       }
     },
-    (settled) => settled,
+    (state) => state !== 'pending',
     { intervalMs: ACTIVATION_POLL_MS, timeoutMs: limitMs, now },
   );
-  return { settled: result.satisfied, waitedMs: result.waitedMs };
+  return { settled: result.last === 'settled', waitedMs: result.waitedMs };
 }
 
 export const alertList = defineTool({

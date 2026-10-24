@@ -211,11 +211,11 @@ test('alert_delete lets through a failure that is no error of the server, after 
 
 // What a scripted page function answers: value, or the items of sequence one call after another (the
 // last one again once they run out), where an Error is a rejection; each call takes `takesMs` of the
-// clock of the run.
+// clock of the run, or what takesMs makes of the arguments of the call.
 interface Scripted {
   value?: unknown;
   sequence?: unknown[];
-  takesMs?: number;
+  takesMs?: number | ((args: unknown[]) => number);
 }
 
 describe('alert_create within the time a client waits for one call', () => {
@@ -231,7 +231,8 @@ describe('alert_create within the time a client waits for one call', () => {
       if (scripted === undefined) {
         return Promise.reject(new Error('Unexpected page function'));
       }
-      clock.now += scripted.takesMs ?? 0;
+      const { takesMs = 0 } = scripted;
+      clock.now += typeof takesMs === 'number' ? takesMs : takesMs(args);
       const { sequence } = scripted;
       const value =
         sequence === undefined ? scripted.value : sequence[Math.min(nth, sequence.length - 1)];
@@ -404,6 +405,55 @@ describe('alert_create within the time a client waits for one call', () => {
     expect(output.warnings ?? []).toEqual([]);
     // The check of the limit and one listing, which settles the wait.
     expect(run.argsOf(readAlerts)).toHaveLength(2);
+    expect(run.ctx.session.createdAlertIds).toEqual(new Set(['9001']));
+  });
+
+  test('ends within its time, skipping a listing when less than the least wait of one is left', async () => {
+    // Every listing takes the whole of its wait, and TradingView never lists the alert as active.
+    // After the creation 1800 ms of the 4800 are left: the first listing of the wait takes 1600 ms
+    // of them, and the 200 ms left are less than the 1 s a listing waits at the least.
+    const run = scriptedRun(
+      script([
+        [
+          readAlerts,
+          {
+            sequence: [listing(), listing(createdRow(false))],
+            takesMs: ([waitMs]) => waitMs as number,
+          },
+        ],
+        [createAlertViaApi, { value: { id: '9001' }, takesMs: 1400 }],
+      ]),
+      CALL_TIMEOUT_MS,
+    );
+
+    const output = await createAlert(INPUT, run.ctx, BUDGET_MS, () => run.clock.now);
+
+    expect(output.data).toMatchObject({ id: '9001' });
+    expect(output.warnings).toEqual([
+      expect.stringContaining('did not list it as active within') as string,
+    ]);
+    expect(run.argsOf(readAlerts)).toEqual([[1600], [1600]]);
+    expect(run.clock.now).toBeLessThanOrEqual(BUDGET_MS);
+  });
+
+  test('lists nothing after the creation when less than the least wait of a listing is left', async () => {
+    // After the creation 300 ms of the 4800 are left, less than the 1 s a listing waits at the least.
+    const run = scriptedRun(
+      script([
+        [readAlerts, { sequence: [listing()], takesMs: ([waitMs]) => waitMs as number }],
+        [createAlertViaApi, { value: { id: '9001' }, takesMs: 2900 }],
+      ]),
+      CALL_TIMEOUT_MS,
+    );
+
+    const output = await createAlert(INPUT, run.ctx, BUDGET_MS, () => run.clock.now);
+
+    expect(output.data).toMatchObject({ id: '9001' });
+    expect(output.warnings).toEqual([
+      expect.stringContaining('did not list it as active within') as string,
+    ]);
+    expect(run.argsOf(readAlerts)).toEqual([[1600]]);
+    expect(run.clock.now).toBeLessThanOrEqual(BUDGET_MS);
     expect(run.ctx.session.createdAlertIds).toEqual(new Set(['9001']));
   });
 
