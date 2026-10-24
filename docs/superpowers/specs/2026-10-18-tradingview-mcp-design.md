@@ -311,14 +311,14 @@ port), `doctor` (health report), `config <client>` (print a client configuration
 
 ## 11. CI/CD
 
-GitHub Actions on every push and pull request: install (`--frozen-lockfile`) → lint → typecheck → unit →
-integration → coverage gate → build → Node 20 runtime smoke test of the built CLI, over stdio and over HTTP (the dashboard
-page without the token, `/api/info` only with it). A separate `dashboard-e2e` job builds the
+GitHub Actions on every push of a branch and every pull request, in the order of `ci.yml`: the `verify` job installs
+(`--frozen-lockfile`) → lint → typecheck → build → pack → tarball check against an allowlist of files → unit →
+integration → coverage gate; then the `runtime-node20` job installs that tarball on Node.js 20.19 and runs the Node 20
+runtime smoke test of the installed tarball: its bin with `--version`, then over stdio and over HTTP (the dashboard page
+without the token, `/api/info` only with it). A separate `dashboard-e2e` job builds the
 dashboard and the server, and runs the Playwright tests in Chromium twice: against the mock server (the `mocked` project),
 and against the built CLI with the fake TradingView (the `real` project, without `TV_E2E`). Every test fails when its page
 breaks the Content-Security-Policy. The run against the real TradingView (`TV_E2E=1`) stays local only.
-The `verify` job also packs the package and checks the tarball against an allowlist of files, and the `runtime-node20`
-job installs that tarball on Node.js 20.19 and runs the installed bin and the smoke test against it.
 The release workflow runs on tags of the form `v*.*.*`: it checks the tag, the version and the CHANGELOG, runs the same
 gate, publishes the tarball the gate checked to npm and creates the GitHub release.
 Badges: CI status (GitHub Actions) and coverage (Codecov, which requires enabling the repository on codecov.io).
