@@ -60,6 +60,13 @@ export const backgroundHealth: DashboardHealth = {
   app: { ready: false, connected: true, buildTime: null },
 };
 
+// TradingView answers on its debug port, but no tab shows a chart: it is on its New tab page, say.
+export const noChartHealth: DashboardHealth = {
+  cdp: { reachable: true, endpoint: 'http://127.0.0.1:9222', browser: 'Chrome/130.0.6723.191' },
+  chart: { found: false, tabs: 0 },
+  app: { ready: false },
+};
+
 const SCHEMA = 'https://json-schema.org/draft/2020-12/schema';
 
 const chartIndex: JsonValue = {

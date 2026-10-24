@@ -43,6 +43,17 @@ function HealthNotice({ health }: { health: DashboardHealth }) {
       </Alert>
     );
   }
+  // TradingView answers, but shows something else than a chart, such as its New tab page.
+  if (!chart.found) {
+    return (
+      <Alert>
+        <TriangleAlertIcon aria-hidden />
+        <AlertDescription>
+          TradingView is reachable, but no chart is open. Open a chart tab in TradingView.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   return null;
 }
 

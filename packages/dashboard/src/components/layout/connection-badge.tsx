@@ -10,20 +10,26 @@ import { Badge } from '@/components/ui/badge';
 import { useHealth } from '@/hooks/use-health';
 import { cn } from '@/lib/utils';
 
-export type ConnectionState = 'ready' | 'background' | 'unreachable' | 'connecting';
+export type ConnectionState = 'ready' | 'background' | 'unreachable' | 'no-chart' | 'connecting';
 
-// How far TradingView is up, from a health report; undefined when there is no answer to go by.
+// How far TradingView is up, from a health report; undefined when there is no answer to go by. A
+// chart that is not in front needs the user, even when the app says it is ready, as the card says.
 export function connectionState(health: DashboardHealth | undefined): ConnectionState {
   if (health === undefined) {
     return 'connecting';
   }
-  if (health.app.ready) {
-    return 'ready';
-  }
   if (health.chart.inBackground === true) {
     return 'background';
   }
-  return health.cdp.reachable ? 'connecting' : 'unreachable';
+  if (health.app.ready) {
+    return 'ready';
+  }
+  if (!health.cdp.reachable) {
+    return 'unreachable';
+  }
+  // TradingView answers but shows no chart, on its New tab page say: only the user can open one.
+  // With a chart found, the app is still starting.
+  return health.chart.found ? 'connecting' : 'no-chart';
 }
 
 const LOOKS: Record<ConnectionState, { label: string; icon: LucideIcon; className: string }> = {
@@ -41,6 +47,11 @@ const LOOKS: Record<ConnectionState, { label: string; icon: LucideIcon; classNam
     label: 'TradingView not reachable',
     icon: CircleXIcon,
     className: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
+  },
+  'no-chart': {
+    label: 'No chart open',
+    icon: TriangleAlertIcon,
+    className: 'bg-amber-500/15 text-amber-800 dark:text-amber-300',
   },
   connecting: {
     label: 'Connecting',

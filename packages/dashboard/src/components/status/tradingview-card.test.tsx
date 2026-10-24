@@ -4,7 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { queryKeys } from '@/api/query-client';
 import { storeToken } from '@/api/token';
-import { backgroundHealth, health, TEST_TOKEN, unreachableHealth } from '@/test/fixtures';
+import {
+  backgroundHealth,
+  health,
+  noChartHealth,
+  TEST_TOKEN,
+  unreachableHealth,
+} from '@/test/fixtures';
 import { fact, renderInApp } from '@/test/render';
 import { server } from '@/test/server';
 import { TradingViewCard } from './tradingview-card';
@@ -60,6 +66,24 @@ test('a chart behind another tab says it is not in front', async () => {
   expect(fact(card(), 'In background')).toBe('Yes');
   expect(fact(card(), 'App')).toBe('Not ready');
   expect(fact(card(), 'Build time')).toBe('Unknown');
+});
+
+test('TradingView without a chart open says so, and how to open one', async () => {
+  answerHealth(noChartHealth);
+  renderInApp(<TradingViewCard />);
+  expect(await within(card()).findByRole('alert')).toHaveTextContent(
+    'TradingView is reachable, but no chart is open. Open a chart tab in TradingView.',
+  );
+  expect(fact(card(), 'Debug port')).toBe('Reachable on http://127.0.0.1:9222');
+  expect(fact(card(), 'Chart')).toBe('Not found');
+  expect(fact(card(), 'App')).toBe('Not ready');
+});
+
+test('a chart behind another tab is said even when the app says it is ready', async () => {
+  answerHealth({ ...health, chart: { ...health.chart, inBackground: true } });
+  renderInApp(<TradingViewCard />);
+  expect(await within(card()).findByText('A chart is open but not in front.')).toBeInTheDocument();
+  expect(fact(card(), 'App')).toBe('Ready');
 });
 
 test('another browser on the debug port is named instead of the launch hint', async () => {

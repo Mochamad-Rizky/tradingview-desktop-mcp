@@ -3,7 +3,13 @@ import { act, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { queryKeys } from '@/api/query-client';
 import { storeToken } from '@/api/token';
-import { backgroundHealth, health, TEST_TOKEN, unreachableHealth } from '@/test/fixtures';
+import {
+  backgroundHealth,
+  health,
+  noChartHealth,
+  TEST_TOKEN,
+  unreachableHealth,
+} from '@/test/fixtures';
 import { renderInApp } from '@/test/render';
 import { server } from '@/test/server';
 import { ConnectionBadge } from './connection-badge';
@@ -15,6 +21,13 @@ const startingHealth: DashboardHealth = {
   app: { ready: false, connected: false, buildTime: null },
 };
 
+// The app says it is ready, and yet the chart it found is not in front: the card says so, and the
+// badge with it.
+const readyInBackgroundHealth: DashboardHealth = {
+  ...health,
+  chart: { ...health.chart, inBackground: true },
+};
+
 beforeEach(() => {
   storeToken(TEST_TOKEN);
 });
@@ -24,6 +37,8 @@ test('the connection badge names each state in text', async () => {
     [health, 'TradingView ready', 'ready'],
     [backgroundHealth, 'Chart in background', 'background'],
     [unreachableHealth, 'TradingView not reachable', 'unreachable'],
+    [noChartHealth, 'No chart open', 'no-chart'],
+    [readyInBackgroundHealth, 'Chart in background', 'background'],
     [startingHealth, 'Connecting', 'connecting'],
   ];
   for (const [report, label, state] of states) {
