@@ -129,10 +129,12 @@ Do not skip them with `--no-verify`. When a hook fails, fix what it reports.
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request. The
 `verify` job installs with the frozen lockfile, then lints, type-checks, builds, runs the unit and
-integration tests and checks the coverage. The `dashboard-e2e` job builds the dashboard and runs its
-Playwright tests in Chromium against a mock server. Next to it, the `runtime-node20` job takes the
-build from `verify`, installs only the production dependencies on Node.js 20.19 and runs
-`scripts/smoke-node20.mjs`, so that the bundle is proven on the oldest runtime it supports.
+integration tests and checks the coverage. The `dashboard-e2e` job builds everything and runs the
+dashboard's Playwright tests in Chromium twice: against a mock server, and against the built CLI with
+the fake TradingView of the tests. The run against your own TradingView (`TV_E2E=1`) stays local
+only. Next to it, the `runtime-node20` job takes the build from `verify`, installs only the
+production dependencies on Node.js 20.19 and runs `scripts/smoke-node20.mjs`, so that the bundle is
+proven on the oldest runtime it supports.
 
 Maintainers: the coverage report goes to Codecov, which needs the repository enabled on
 [codecov.io](https://codecov.io). Add the upload token as the `CODECOV_TOKEN` repository secret. The

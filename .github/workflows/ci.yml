@@ -139,13 +139,14 @@ jobs:
           node --version
           node scripts/smoke-node20.mjs
 
-  # The dashboard in Chromium, against the mock server of its end-to-end tests: the built page with
-  # synthetic answers, so neither the server's build nor TradingView is needed.
+  # The dashboard in Chromium, twice: against the mock server of its end-to-end tests (the built page
+  # with synthetic answers), and against the built server as it ships, which talks to the fake
+  # TradingView of the server's tests. Never against a real TradingView.
   dashboard-e2e:
     name: Dashboard E2E (Chromium)
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
@@ -164,18 +165,33 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The mock server serves the built page.
-      - name: Build the dashboard
-        run: pnpm --filter tradingview-desktop-mcp-dashboard build
+      # The mock server serves the built page, and the real project starts the built CLI, which
+      # carries its own copy of the page. The build comes from these sources, never from a cache.
+      - name: Build
+        id: build
+        run: pnpm build
 
       # Chromium alone, with the system libraries it needs.
       - name: Install Chromium
+        id: chromium
         run: pnpm --filter tradingview-desktop-mcp-dashboard exec playwright install --with-deps chromium
 
-      - name: End-to-end tests
+      # Each project writes its report to a folder of its own, so that the second run keeps the first
+      # one's.
+      - name: End-to-end tests (mocked)
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/mocked
         run: pnpm --filter tradingview-desktop-mcp-dashboard test:e2e
 
-      # With the trace and the screenshot of each failed test.
+      # Also after a failed mocked run, so that one failure does not hide the other. TV_E2E stays
+      # unset: the server talks to the fake TradingView, which the project starts itself.
+      - name: End-to-end tests (real server, fake TradingView)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.chromium.outcome == 'success' }}
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/real
+        run: pnpm --filter tradingview-desktop-mcp-dashboard test:e2e:real
+
+      # With the trace and the screenshot of each failed test, for both projects.
       - name: Upload the Playwright report
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7

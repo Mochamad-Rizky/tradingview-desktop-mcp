@@ -281,13 +281,13 @@ port), `doctor` (health report), `config <client>` (print a client configuration
 
 ## 10. Testing strategy
 
-| Level          | Runner             | Scope                                                                                                                                                                                                                                                       | Runs in CI   |
-| -------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| Unit           | Vitest             | Pure logic, schemas, mappers, page functions against fake `TvWindow` objects, launcher with injected OS dependencies                                                                                                                                        | yes          |
-| Integration    | Vitest             | Real server with SDK clients over in-memory, stdio, and Streamable HTTP transports, against a **fake CDP server**. Its `Runtime.evaluate` runs the real serialized page functions inside a `vm` context backed by a fixture-driven fake TradingView window. | yes          |
-| MCP E2E        | Vitest, `TV_E2E=1` | Real TradingView Desktop                                                                                                                                                                                                                                    | local only   |
-| Dashboard unit | Vitest + RTL + MSW | Components, hooks, API client                                                                                                                                                                                                                               | yes          |
-| Dashboard E2E  | Playwright         | Against a mocked server in CI; against the real server locally                                                                                                                                                                                              | yes (mocked) |
+| Level          | Runner             | Scope                                                                                                                                                                                                                                                       | Runs in CI             |
+| -------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Unit           | Vitest             | Pure logic, schemas, mappers, page functions against fake `TvWindow` objects, launcher with injected OS dependencies                                                                                                                                        | yes                    |
+| Integration    | Vitest             | Real server with SDK clients over in-memory, stdio, and Streamable HTTP transports, against a **fake CDP server**. Its `Runtime.evaluate` runs the real serialized page functions inside a `vm` context backed by a fixture-driven fake TradingView window. | yes                    |
+| MCP E2E        | Vitest, `TV_E2E=1` | Real TradingView Desktop                                                                                                                                                                                                                                    | local only             |
+| Dashboard unit | Vitest + RTL + MSW | Components, hooks, API client                                                                                                                                                                                                                               | yes                    |
+| Dashboard E2E  | Playwright         | Against a mocked server, and against the built server with the fake CDP server, in CI; against the real TradingView locally only                                                                                                                            | yes (mocked, fake app) |
 
 - **Coverage:** ≥80% lines, branches, functions, and statements over `packages/server/src` from unit and
   integration tests combined, enforced in CI.
@@ -303,7 +303,9 @@ port), `doctor` (health report), `config <client>` (print a client configuration
 
 GitHub Actions on every push and pull request: install (`--frozen-lockfile`) → lint → typecheck → unit →
 integration → coverage gate → build → Node 20 runtime smoke test of the built CLI. A separate `dashboard-e2e` job builds the
-dashboard and runs its Playwright tests in Chromium against the mock server (the `mocked` project).
+dashboard and the server, and runs the Playwright tests in Chromium twice: against the mock server (the `mocked` project),
+and against the built CLI with the fake TradingView (the `real` project, without `TV_E2E`). Every test fails when its page
+breaks the Content-Security-Policy. The run against the real TradingView (`TV_E2E=1`) stays local only.
 Badges: CI status (GitHub Actions) and coverage (Codecov, which requires enabling the repository on codecov.io).
 
 ## 12. Roadmap
