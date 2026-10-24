@@ -70,6 +70,12 @@ interface TestFixtures {
   api: DashboardApiClient;
 }
 
+// The function of the page's window through which it reports a violation of its
+// Content-Security-Policy to the test.
+const CSP_REPORTER = '__reportCspViolation';
+
+type CspReporter = (directive: string) => Promise<void>;
+
 function readServerFile(file: string): DashboardServer {
   let text: string;
   try {
@@ -191,6 +197,28 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   // The real server listens on a port it found free, known only once it is up.
   baseURL: async ({ server }, use) => {
     await use(server.url);
+  },
+  // Every page is held to the Content-Security-Policy the server sends: a violation, such as a
+  // script, style or connection the policy blocks, fails the test once it is over. The page reports
+  // the directive alone, which says nothing of what the page shows, so this holds against the user's
+  // TradingView too.
+  page: async ({ page }, use) => {
+    const violations: string[] = [];
+    await page.exposeFunction(CSP_REPORTER, (directive: string) => {
+      violations.push(directive);
+    });
+    await page.addInitScript((reporter) => {
+      window.addEventListener('securitypolicyviolation', (event) => {
+        const report = (window as unknown as Record<string, CspReporter | undefined>)[reporter];
+        void report?.(event.effectiveDirective);
+      });
+    }, CSP_REPORTER);
+    await use(page);
+    // A round trip, so that a report the page sent last has come in.
+    if (!page.isClosed()) {
+      await page.evaluate(() => undefined).catch(() => undefined);
+    }
+    expect(violations, 'The page broke its Content-Security-Policy').toEqual([]);
   },
   // Every test starts from the mock's fixtures. Tests run one at a time (workers: 1), because they
   // share the mock's bus.
