@@ -136,8 +136,9 @@ differs, Windows. The same files check the rest of the documents:
 
 - the README counts of tools and profiles come from the registry, and the prompts and excerpts of the
   README come from `docs/examples.md`;
-- the troubleshooting guide documents every error code, and the tutorials and the guide name only
-  flags and environment variables the CLI knows;
+- the troubleshooting guide documents every error code, and the tutorials, the guide, the README and
+  SECURITY.md name only flags and environment variables the CLI knows, besides the switches of
+  TradingView that the launcher passes or never passes;
 - every relative link of the README, the tutorials and the guide leads to a file, and every anchor to
   a heading (`docs-readme.test.ts` and `docs-clients.test.ts`, with the shared checker in
   `test/helpers/markdown-links.ts`). Keep the headings `Tool profiles` and `Dashboard` of the

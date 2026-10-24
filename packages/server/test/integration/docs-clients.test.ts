@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   clientDocPath,
   fillBlock,
@@ -10,6 +11,7 @@ import {
 } from '../../scripts/docs/clients.js';
 import { CLIENT_IDS, renderClientConfig } from '../../src/cli/clients.js';
 import { renderHelp } from '../../src/cli/output.js';
+import { buildLaunchArgs } from '../../src/core/launcher/launch.js';
 import { ERROR_CODES } from '../../src/core/errors.js';
 import { brokenLinks, linksOf } from '../helpers/markdown-links.js';
 
@@ -20,6 +22,8 @@ import { brokenLinks, linksOf } from '../helpers/markdown-links.js';
 
 const DOCS_DIR = new URL('../../../../docs/', import.meta.url);
 const CLIENTS_DIR = new URL('clients/', DOCS_DIR);
+const README_PATH = fileURLToPath(new URL('../../../../README.md', import.meta.url));
+const SECURITY_PATH = fileURLToPath(new URL('../../../../SECURITY.md', import.meta.url));
 
 // The files as the repository stores them, whatever line endings a checkout gave them.
 function readText(path: string | URL): string {
@@ -198,12 +202,22 @@ describe('the tutorials and the troubleshooting guide', () => {
 
   test('docs name only flags and environment variables the CLI knows', () => {
     const help = renderHelp();
-    const knownFlags = new Set(help.match(/--[a-z][a-z-]*/g));
+    // Besides the flags of the CLI, the switches of TradingView itself: the debug port flag the
+    // launcher starts it with, and the two the docs warn never to add, which the launcher never
+    // passes (core/launcher/launch.ts).
+    const appSwitches = [
+      ...buildLaunchArgs(9222).map((arg) => arg.replace(/=.*/, '')),
+      '--remote-debugging-address',
+      '--options',
+    ];
+    const knownFlags = new Set([...(help.match(/--[a-z][a-z-]*/g) ?? []), ...appSwitches]);
     // TV_NOT_INSTALLED and TV_NOT_RUNNING are error codes, which start like the variables do.
     const knownVariables = new Set([...(help.match(/\bTV_[A-Z0-9_]+/g) ?? []), ...ERROR_CODES]);
     expect(knownFlags.size).toBeGreaterThan(10);
 
-    for (const file of files) {
+    // The README and SECURITY.md describe running the server too. CONTRIBUTING.md is left out: the
+    // flags it names are those of pnpm, git and the tests.
+    for (const file of [...files, README_PATH, SECURITY_PATH]) {
       // The generated blocks are compared with the output of config, so they are left out here.
       const prose = readText(file).replaceAll(BLOCK, '');
       for (const flag of prose.match(/(?<![\w-])--[a-z][a-z-]*/g) ?? []) {
