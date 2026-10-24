@@ -110,13 +110,23 @@ export function alertTime(value: string | number | null): number | null {
   return Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS ? Math.floor(ms / 1000) : null;
 }
 
+// What an alert watches, by the type of the first series of its condition: the bars of the chart
+// for a price alert, an indicator for an indicator alert. Any other type keeps the name of the app.
+const ALERT_KINDS = new Map<string, string>([
+  ['barset', 'price'],
+  ['study', 'indicator'],
+]);
+
 // An alert as the tools report it.
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
 export type AlertRecord = {
   id: string;
   symbol: string | null;
+  kind: string | null;
   condition: string | null;
   price: number | null;
+  indicator: string | null;
+  value: number | null;
   message: string | null;
   status: AlertStatus;
   expiration: number | null;
@@ -124,18 +134,25 @@ export type AlertRecord = {
   createdByServer: boolean;
 };
 
-// An alert in the terms of the tools: its id as text, its plain symbol, its condition by the name
-// of the tools (another condition type of the app keeps the name of the app), and whether this
-// session created it (`created` holds those ids).
+// An alert in the terms of the tools: its id as text, its plain symbol, what it watches (kind), its
+// condition by the name of the tools (another condition type of the app keeps the name of the app),
+// the price a price alert compares with, the indicator the condition names, the value an indicator
+// alert compares with, and whether this session created it (`created` holds those ids). Only an
+// alert that watches the bars of the chart is a price alert: the value an indicator is compared
+// with is no price.
 export function toAlertRecord(row: AlertRow, created: ReadonlySet<string>): AlertRecord {
   const id = String(row.id);
   const expiration = alertTime(row.expires);
+  const kind = row.series === null ? null : (ALERT_KINDS.get(row.series) ?? row.series);
   return {
     id,
     symbol: row.symbol === null ? null : plainSymbol(row.symbol),
+    kind,
     condition:
       row.condition === null ? null : (CONDITION_NAMES.get(row.condition) ?? row.condition),
-    price: row.price,
+    price: row.series === 'barset' ? row.value : null,
+    indicator: row.study,
+    value: row.series === 'study' ? row.value : null,
     message: row.message,
     status: alertStatus(row),
     expiration,

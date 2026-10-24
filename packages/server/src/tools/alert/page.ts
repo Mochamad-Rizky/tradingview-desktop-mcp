@@ -29,9 +29,11 @@ import type { JsonObject } from '../../utils/json.js';
 
 // An alert as the tools read it from its record: alert_id, the symbol it watches (EXCHANGE:TICKER
 // or an encoded ={...} form), its kinds, whether it is active, why it stopped (last_stop_reason),
-// its complexity (primitive for a price alert), the type of its first condition, the price of that
-// condition (its second series, when that is a value), its message and when it expires: the time of
-// a fixed-date expiration_policy, or else the legacy expiration, as the record gives it (an ISO time
+// its complexity (primitive for a price alert), and of its first condition: the type, the type of
+// its first series (barset for the bars of the chart, study for an indicator: what the alert
+// watches), the indicator a study series of either side names (its study), and the value of its
+// second series, when that is a value; then its message and when it expires: the time of a
+// fixed-date expiration_policy, or else the legacy expiration, as the record gives it (an ISO time
 // on the app), null for never. A field the record does not have, or has with another type, is null.
 // A type alias, not an interface: it comes back from the page as JSON, which a type must satisfy
 // JsonValue for.
@@ -44,7 +46,9 @@ export type AlertRow = {
   lastStopReason: string | null;
   complexity: string | null;
   condition: string | null;
-  price: number | null;
+  series: string | null;
+  study: string | null;
+  value: number | null;
   message: string | null;
   expires: string | number | null;
 };
@@ -191,9 +195,11 @@ export function readAlerts(
         const first = (Array.isArray(conditions) ? conditions[0] : undefined) as
           { type?: unknown; series?: unknown } | null | undefined;
         const series = first?.series;
-        const second = (Array.isArray(series) ? series[1] : undefined) as
-          { type?: unknown; value?: unknown } | null | undefined;
+        const [watched, second] = (Array.isArray(series) ? series.slice(0, 2) : []) as (
+          { type?: unknown; study?: unknown; value?: unknown } | null | undefined
+        )[];
         const value = second?.value;
+        const study = [watched, second].find((side) => side?.type === 'study')?.study;
         let expires: string | number | null;
         if (typeof policy === 'object' && policy !== null) {
           const { policy: kind, time } = policy as { policy?: unknown; time?: unknown };
@@ -211,7 +217,9 @@ export function readAlerts(
           lastStopReason: text(record.last_stop_reason),
           complexity: text(record.complexity),
           condition: text(first?.type),
-          price:
+          series: text(watched?.type),
+          study: text(study),
+          value:
             second?.type === 'value' && typeof value === 'number' && Number.isFinite(value)
               ? value
               : null,

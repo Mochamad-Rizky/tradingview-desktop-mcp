@@ -34,7 +34,9 @@ function row(change: Partial<AlertRow> = {}): AlertRow {
     lastStopReason: null,
     complexity: 'primitive',
     condition: 'cross',
-    price: 150,
+    series: 'barset',
+    study: null,
+    value: 150,
     message: 'Synthetic',
     expires: '2026-11-21T12:00:00.000Z',
     ...change,
@@ -117,8 +119,11 @@ describe('records', () => {
     expect(toAlertRecord(row(), created)).toEqual({
       id: '7',
       symbol: 'NASDAQ:AAPL',
+      kind: 'price',
       condition: 'crossing',
       price: 150,
+      indicator: null,
+      value: null,
       message: 'Synthetic',
       status: 'active',
       expiration: NOW + 30 * DAY,
@@ -131,7 +136,7 @@ describe('records', () => {
           id: 8,
           symbol: null,
           condition: 'channel_in',
-          price: null,
+          value: null,
           message: null,
           active: false,
           lastStopReason: 'auto',
@@ -142,8 +147,11 @@ describe('records', () => {
     ).toEqual({
       id: '8',
       symbol: null,
+      kind: 'price',
       condition: 'channel_in',
       price: null,
+      indicator: null,
+      value: null,
       message: null,
       status: 'triggered',
       expiration: null,
@@ -161,6 +169,55 @@ describe('records', () => {
     expect(toAlertRecord(row({ condition: null }), created).condition).toBeNull();
     // A name every object inherits is no condition of the tools.
     expect(toAlertRecord(row({ condition: 'constructor' }), created).condition).toBe('constructor');
+  });
+
+  test('toAlertRecord reports a price alert only when the condition watches the bars of the chart', () => {
+    const created = new Set<string>();
+    const fields = (change: Partial<AlertRow>) => {
+      const { kind, condition, price, indicator, value } = toAlertRecord(row(change), created);
+      return { kind, condition, price, indicator, value };
+    };
+
+    // The price compared with a value, or with an indicator.
+    expect(fields({})).toEqual({
+      kind: 'price',
+      condition: 'crossing',
+      price: 150,
+      indicator: null,
+      value: null,
+    });
+    expect(fields({ study: 'MA@tv-basicstudies', value: null })).toEqual({
+      kind: 'price',
+      condition: 'crossing',
+      price: null,
+      indicator: 'MA@tv-basicstudies',
+      value: null,
+    });
+    // An indicator compared with a value: the value is no price.
+    expect(
+      fields({ series: 'study', study: 'RSI@tv-basicstudies', condition: 'greater', value: 70 }),
+    ).toEqual({
+      kind: 'indicator',
+      condition: 'greater_than',
+      price: null,
+      indicator: 'RSI@tv-basicstudies',
+      value: 70,
+    });
+    // Another first series keeps the name TradingView gives it, and none is null.
+    expect(fields({ series: 'synthetic_series', value: 5 })).toEqual({
+      kind: 'synthetic_series',
+      condition: 'crossing',
+      price: null,
+      indicator: null,
+      value: null,
+    });
+    expect(fields({ series: null, value: 5 })).toEqual({
+      kind: null,
+      condition: 'crossing',
+      price: null,
+      indicator: null,
+      value: null,
+    });
   });
 
   test('alertCounts counts every alert and the active price alerts, and an unreadable one as both', () => {

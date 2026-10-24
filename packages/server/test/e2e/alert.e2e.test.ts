@@ -29,8 +29,11 @@ const DAY_SECONDS = 86_400;
 interface ListedAlert {
   id: string;
   symbol: string | null;
+  kind: string | null;
   condition: string | null;
   price: number | null;
+  indicator: string | null;
+  value: number | null;
   message: string | null;
   status: 'active' | 'triggered' | 'stopped';
   expiration: number | null;
@@ -190,6 +193,15 @@ describe.skipIf(!e2eEnabled())('the alert tools against TradingView Desktop', ()
       stopped: all.filter(({ status }) => status === 'stopped').length,
       withPrice: all.filter(({ price }) => price !== null).length,
       withExpiration: all.filter(({ expiration }) => expiration !== null).length,
+      // What the alerts watch (price, indicator or the name TradingView gives), and how many name
+      // their indicator; the names themselves are not printed.
+      kinds: Object.fromEntries(
+        [...new Set(all.map(({ kind }) => String(kind)))].map((kind) => [
+          kind,
+          all.filter((alert) => String(alert.kind) === kind).length,
+        ]),
+      ),
+      withIndicator: all.filter(({ indicator }) => indicator !== null).length,
     });
   });
 
@@ -289,8 +301,11 @@ describe.skipIf(!e2eEnabled())('the alert tools against TradingView Desktop', ()
     const listed = (await listAlerts()).find(({ id }) => id === created.id);
     expect(listed, 'alert_list lists the new alert').toBeDefined();
     expect(listed?.status).toBe('active');
+    expect(listed?.kind).toBe('price');
     expect(listed?.condition).toBe('crossing_up');
     expect(listed?.price === price, 'the price reads back').toBe(true);
+    expect(listed?.indicator).toBeNull();
+    expect(listed?.value).toBeNull();
     expect(listed?.message === TEST_MESSAGE, 'the message reads back').toBe(true);
     expect(listed?.symbol === created.symbol, 'the symbol reads back').toBe(true);
     expect(listed?.createdByServer).toBe(true);

@@ -227,6 +227,20 @@ describe('readAlerts', () => {
           { id: 3, price: null, complexity: 'complex', kinds: ['regular', 'multicondition'] },
           { id: 4, legacyExpiration: true, expiration: '2030-02-01T00:00:00.000Z' },
           { id: 5, legacyExpiration: true, expiration: null },
+          {
+            id: 6,
+            raw: {
+              conditions: [
+                {
+                  type: 'cross_up',
+                  series: [
+                    { type: 'study', study: 'RSI@tv-basicstudies', plot_id: 'plot_0' },
+                    { type: 'value', value: 70 },
+                  ],
+                },
+              ],
+            },
+          },
         ],
       }),
     );
@@ -241,7 +255,9 @@ describe('readAlerts', () => {
           lastStopReason: null,
           complexity: 'primitive',
           condition: 'cross',
-          price: 150.5,
+          series: 'barset',
+          study: null,
+          value: 150.5,
           message: 'Breakout',
           expires: '2030-01-01T00:00:00.000Z',
         },
@@ -253,18 +269,31 @@ describe('readAlerts', () => {
           lastStopReason: 'auto',
           complexity: 'primitive',
           condition: 'greater',
-          price: 100,
+          series: 'barset',
+          study: null,
+          value: 100,
           message: 'Synthetic alert 2',
           expires: null,
         },
+        // The price compared with an indicator, which the second series names.
         expect.objectContaining({
           id: 3,
           kinds: ['regular', 'multicondition'],
           complexity: 'complex',
-          price: null,
+          series: 'barset',
+          study: 'RSI@tv-basicstudies',
+          value: null,
         }),
         expect.objectContaining({ id: 4, expires: '2030-02-01T00:00:00.000Z' }),
         expect.objectContaining({ id: 5, expires: null }),
+        // An indicator compared with a value.
+        expect.objectContaining({
+          id: 6,
+          condition: 'cross_up',
+          series: 'study',
+          study: 'RSI@tv-basicstudies',
+          value: 70,
+        }),
       ],
       unreadable: 0,
     });
@@ -295,6 +324,9 @@ describe('readAlerts', () => {
         kinds: 'regular',
         expiration_policy: { policy: 'fixed_date', time: 1_900_000_000 },
       },
+      // Series without a type or a study name that is text.
+      { alert_id: 13, conditions: [{ series: [{ type: 7 }, { type: 'study', study: 3 }] }] },
+      { alert_id: 14, conditions: [{ series: [null, { type: 'study', study: 'MA@x' }] }] },
     ];
     const { result } = await libResultOf(
       readAlerts,
@@ -312,13 +344,24 @@ describe('readAlerts', () => {
           lastStopReason: null,
           complexity: null,
           condition: null,
-          price: null,
+          series: 'barset',
+          study: null,
+          value: null,
           message: null,
           expires: null,
         },
-        expect.objectContaining({ id: 10, condition: null, price: null, expires: null }),
+        expect.objectContaining({
+          id: 10,
+          condition: null,
+          series: null,
+          study: null,
+          value: null,
+          expires: null,
+        }),
         expect.objectContaining({ id: 11, condition: null, expires: 1_900_000_000_000 }),
         expect.objectContaining({ id: 12, kinds: [], expires: 1_900_000_000 }),
+        expect.objectContaining({ id: 13, series: null, study: null, value: null }),
+        expect.objectContaining({ id: 14, series: null, study: 'MA@x', value: null }),
       ],
       unreadable: 4,
     });

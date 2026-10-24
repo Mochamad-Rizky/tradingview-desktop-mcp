@@ -393,12 +393,17 @@ export const alertList = defineTool({
   title: 'List alerts',
   description:
     'Lists the alerts of the TradingView account, and changes nothing. Returns alerts, each ' +
-    'with id, symbol (EXCHANGE:TICKER), condition (crossing, crossing_up, crossing_down, ' +
-    'greater_than or less_than for a price alert; the name TradingView uses for any other ' +
-    'condition), price (null for an alert that does not compare with a price), message, status ' +
-    '(active; triggered: it fired and stopped itself; or stopped), expiration (Unix seconds, ' +
-    'with expirationIso; null when it never expires) and createdByServer (whether this session ' +
-    'created it, so that deleting it needs no confirm).',
+    'with id, symbol (EXCHANGE:TICKER), kind (what the alert watches: price for the bars of ' +
+    'the symbol, indicator for an indicator; another kind keeps the name TradingView gives it, ' +
+    'and null when it cannot be read), condition (crossing, crossing_up, crossing_down, ' +
+    'greater_than or less_than for a price or indicator alert; the name TradingView uses for ' +
+    'any other condition), price (the price a price alert compares with; null for an alert ' +
+    'that does not compare with a price), indicator (the indicator the condition names, as ' +
+    'TradingView gives it, such as RSI@tv-basicstudies; null when it names none or does not ' +
+    'say), value (the value an indicator alert compares the indicator with; null otherwise), ' +
+    'message, status (active; triggered: it fired and stopped itself; or stopped), expiration ' +
+    '(Unix seconds, with expirationIso; null when it never expires) and createdByServer ' +
+    '(whether this session created it, so that deleting it needs no confirm).',
   inputSchema: {
     status: z
       .enum([...ALERT_STATUSES, 'all'])

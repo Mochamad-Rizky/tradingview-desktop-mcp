@@ -95,8 +95,11 @@ interface Envelope {
 interface ListedAlert {
   id: string;
   symbol: string | null;
+  kind: string | null;
   condition: string | null;
   price: number | null;
+  indicator: string | null;
+  value: number | null;
   message: string | null;
   status: string;
   expiration: number | null;
@@ -886,8 +889,11 @@ describe('alert_list', () => {
       {
         id: '1',
         symbol: 'NASDAQ:AAPL',
+        kind: 'price',
         condition: 'crossing',
         price: 150.5,
+        indicator: null,
+        value: null,
         message: 'Breakout',
         status: 'active',
         expiration: NOW + 30 * DAY,
@@ -897,8 +903,11 @@ describe('alert_list', () => {
       {
         id: '2',
         symbol: 'NYSE:IBM',
+        kind: 'price',
         condition: 'crossing_up',
         price: 100,
+        indicator: null,
+        value: null,
         message: 'Synthetic alert 2',
         status: 'triggered',
         expiration: Date.UTC(2030, 0, 1) / 1000,
@@ -920,11 +929,80 @@ describe('alert_list', () => {
         expiration: Date.UTC(2026, 11, 1) / 1000,
         expirationIso: '2026-12-01T00:00:00Z',
       }),
+      // The price compared with an indicator: a price alert all the same.
       expect.objectContaining({
         id: '6',
+        kind: 'price',
         condition: 'channel_in',
         price: null,
+        indicator: 'RSI@tv-basicstudies',
+        value: null,
         expiration: null,
+      }),
+    ]);
+  });
+
+  test('alert_list reports an indicator alert as such', async () => {
+    // The condition compares an indicator, not the bars of the chart, with a value.
+    const indicatorCondition = (type: string, value: number) => ({
+      type,
+      frequency: 'on_first_fire',
+      series: [
+        { type: 'study', study: 'RSI@tv-basicstudies', plot_id: 'plot_0' },
+        { type: 'value', value },
+      ],
+      resolution: '1D',
+    });
+    const { client } = await startHarness(
+      withAlerts([
+        { id: 1, price: 150 },
+        { id: 2, raw: { type: 'indicator', conditions: [indicatorCondition('cross_up', 70)] } },
+        // A study series that does not say which indicator it is.
+        {
+          id: 3,
+          raw: {
+            type: 'indicator',
+            conditions: [
+              { type: 'less', series: [{ type: 'study' }, { type: 'value', value: 30 }] },
+            ],
+          },
+        },
+      ]),
+    );
+
+    const result = await callTool(client, 'alert_list');
+
+    expect(alertsOf(result)).toEqual([
+      expect.objectContaining({
+        id: '1',
+        kind: 'price',
+        condition: 'crossing',
+        price: 150,
+        indicator: null,
+        value: null,
+      }),
+      {
+        id: '2',
+        symbol: 'NASDAQ:AAPL',
+        kind: 'indicator',
+        condition: 'crossing_up',
+        // Not a price: the level the indicator is compared with.
+        price: null,
+        indicator: 'RSI@tv-basicstudies',
+        value: 70,
+        message: 'Synthetic alert 2',
+        status: 'active',
+        expiration: Date.UTC(2030, 0, 1) / 1000,
+        expirationIso: '2030-01-01T00:00:00Z',
+        createdByServer: false,
+      },
+      expect.objectContaining({
+        id: '3',
+        kind: 'indicator',
+        condition: 'less_than',
+        price: null,
+        indicator: null,
+        value: 30,
       }),
     ]);
   });
