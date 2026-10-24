@@ -28,7 +28,7 @@ macOS and Linux:
 ```sh
 export TV_MCP_AUTH_TOKEN="<the token>"
 export TV_MCP_ALLOWED_HOSTS=abc.ngrok.app
-npx -y tradingview-desktop-mcp --transport http --profile readonly --no-dashboard
+npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile readonly
 ```
 
 Windows, in Command Prompt (cmd):
@@ -36,7 +36,7 @@ Windows, in Command Prompt (cmd):
 ```bat
 set "TV_MCP_AUTH_TOKEN=<the token>"
 set "TV_MCP_ALLOWED_HOSTS=abc.ngrok.app"
-npx -y tradingview-desktop-mcp --transport http --profile readonly --no-dashboard
+npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile readonly
 ```
 
 Windows, in PowerShell:
@@ -44,7 +44,7 @@ Windows, in PowerShell:
 ```powershell
 $env:TV_MCP_AUTH_TOKEN = "<the token>"
 $env:TV_MCP_ALLOWED_HOSTS = "abc.ngrok.app"
-npx -y tradingview-desktop-mcp --transport http --profile readonly --no-dashboard
+npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile readonly
 ```
 
 The server listens on `127.0.0.1:8787`, on this computer only. It prints its addresses on stderr and never prints the token. The HTTP transport also serves the [dashboard](../../README.md#dashboard) at the same address. The start command above leaves it off with `--no-dashboard`, so that its files are not reachable through the tunnel, as [SECURITY.md](../../SECURITY.md#tunnels-and-remote-clients) advises.
@@ -61,7 +61,7 @@ https://YOUR-TUNNEL-HOST/mcp/<TV_MCP_AUTH_TOKEN>
 
 - Paste this URL, with your token in place of `<TV_MCP_AUTH_TOKEN>`, as the connection of a custom MCP server in ChatGPT (chatgpt.com/plugins, +, Add custom MCP server), with no authentication.
 - The URL holds the token, so anyone who has it can use TradingView through the server: keep it private.
-- Start the server with TV_MCP_AUTH_TOKEN set to a random secret, such as the output of "openssl rand -hex 32", and TV_MCP_ALLOWED_HOSTS=YOUR-TUNNEL-HOST: npx -y tradingview-desktop-mcp --transport http --profile readonly
+- Start the server with TV_MCP_AUTH_TOKEN set to a random secret, such as the output of "openssl rand -hex 32", and TV_MCP_ALLOWED_HOSTS=YOUR-TUNNEL-HOST: npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile readonly
 - Then point an HTTPS tunnel whose public host is YOUR-TUNNEL-HOST at the server, http://127.0.0.1:8787 unless you set --host or --port.
 
 <!-- /config -->

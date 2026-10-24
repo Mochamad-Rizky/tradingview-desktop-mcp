@@ -490,10 +490,10 @@ test('an explicit --profile is added to the args', () => {
   // A remote client gets the readonly profile when none is given, and the one given otherwise.
   for (const client of ['chatgpt', 'openai-api'] as const) {
     expect(notesOf(client).join('\n')).toContain(
-      'npx -y tradingview-desktop-mcp --transport http --profile readonly',
+      'npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile readonly',
     );
     expect(notesOf(client, { profile: 'full' }).join('\n')).toContain(
-      'npx -y tradingview-desktop-mcp --transport http --profile full',
+      'npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile full',
     );
     // The profile is a setting of the server, not of the snippet.
     expect(snippetOf(client, { profile: 'full' })).toBe(snippetOf(client));
@@ -529,7 +529,7 @@ test('the remote clients start this installation with node when --local is given
   });
 
   expect(notes.join('\n')).toContain(
-    'node "C:\\Program Files\\tv\\cli.js" --transport http --profile readonly',
+    'node "C:\\Program Files\\tv\\cli.js" --transport http --no-dashboard --profile readonly',
   );
 });
 

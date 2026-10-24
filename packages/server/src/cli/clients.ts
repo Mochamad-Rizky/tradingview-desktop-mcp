@@ -273,11 +273,13 @@ function codexCli(options: ClientConfigOptions): ClientConfig {
   };
 }
 
-// What a remote client needs on this machine: the server over HTTP, and a tunnel to it.
+// What a remote client needs on this machine: the server over HTTP, and a tunnel to it. The
+// dashboard stays off, so that its files are not served through the tunnel.
 function serverNotes(options: ClientConfigOptions, host: string): string[] {
   const start = launch({ ...options, profile: options.profile ?? REMOTE_PROFILE }, [
     '--transport',
     'http',
+    '--no-dashboard',
   ]);
   const address = `http://${DEFAULTS.httpHost}:${String(DEFAULTS.httpPort)}`;
   return [
