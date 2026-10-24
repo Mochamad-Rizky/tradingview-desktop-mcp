@@ -75,3 +75,29 @@ test('the connection badge says Connecting before the first answer and after a f
   });
   expect(screen.getByRole('status')).toHaveAttribute('data-state', 'connecting');
 });
+
+test('the connection badge says the server is not reachable when the dashboard cannot reach it', async () => {
+  const { client } = renderInApp(<ConnectionBadge />);
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('TradingView ready');
+  });
+
+  // The dashboard's own server is gone: nothing can be said of TradingView.
+  server.use(http.get('/api/health', () => HttpResponse.error()));
+  await act(async () => {
+    await client.refetchQueries({ queryKey: queryKeys.health });
+  });
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('Server not reachable');
+  });
+  expect(screen.getByRole('status')).toHaveAttribute('data-state', 'server-unreachable');
+
+  // It answers again.
+  server.use(http.get('/api/health', () => HttpResponse.json(health)));
+  await act(async () => {
+    await client.refetchQueries({ queryKey: queryKeys.health });
+  });
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('TradingView ready');
+  });
+});

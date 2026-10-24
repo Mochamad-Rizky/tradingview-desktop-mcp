@@ -1,4 +1,4 @@
-import { ApiError } from '@/api/client';
+import { ApiError, UnexpectedAnswerError } from '@/api/client';
 
 // How the dashboard writes numbers, times and durations: in English, in the browser's time zone.
 
@@ -45,8 +45,10 @@ export function formatFullTime(iso: string): string {
   return formatWith(FULL_TIME, iso);
 }
 
-// Why a request failed, to follow a colon: the server's own message, or that it could not be
-// reached at all.
+// Why a request failed, to follow a colon: the server's own message, that something else answered
+// in its place, or that it could not be reached at all.
 export function failureText(error: unknown): string {
-  return error instanceof ApiError ? error.message : 'The server could not be reached';
+  return error instanceof ApiError || error instanceof UnexpectedAnswerError
+    ? error.message
+    : 'The server could not be reached';
 }

@@ -192,3 +192,16 @@ test('a first health check that fails says why', async () => {
   );
   expect(within(card()).queryByText('Debug port')).not.toBeInTheDocument();
 });
+
+test('a health check answered with something else than JSON says the answer was unexpected', async () => {
+  server.use(
+    http.get(
+      '/api/health',
+      () => new HttpResponse('<!doctype html><title>Synthetic proxy</title>'),
+    ),
+  );
+  renderInApp(<TradingViewCard />);
+  expect(await within(card()).findByRole('alert')).toHaveTextContent(
+    'The health check failed: The server sent an unexpected answer.',
+  );
+});

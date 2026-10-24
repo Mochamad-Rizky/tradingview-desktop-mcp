@@ -1,4 +1,4 @@
-import { ApiError } from '@/api/client';
+import { ApiError, UnexpectedAnswerError } from '@/api/client';
 import {
   failureText,
   formatCount,
@@ -35,4 +35,6 @@ test('a failure is told by the message of the server, or as a server out of reac
     'The server is shutting down',
   );
   expect(failureText(new TypeError('Failed to fetch'))).toBe('The server could not be reached');
+  // Something answered, though not with what the server sends.
+  expect(failureText(new UnexpectedAnswerError())).toBe('The server sent an unexpected answer');
 });

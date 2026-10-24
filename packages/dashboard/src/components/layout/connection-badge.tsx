@@ -6,11 +6,13 @@ import {
   TriangleAlertIcon,
   type LucideIcon,
 } from 'lucide-react';
+import { ApiError } from '@/api/client';
 import { Badge } from '@/components/ui/badge';
 import { useHealth } from '@/hooks/use-health';
 import { cn } from '@/lib/utils';
 
-export type ConnectionState = 'ready' | 'background' | 'unreachable' | 'no-chart' | 'connecting';
+export type ConnectionState =
+  'ready' | 'background' | 'unreachable' | 'no-chart' | 'server-unreachable' | 'connecting';
 
 // How far TradingView is up, from a health report; undefined when there is no answer to go by. A
 // chart that is not in front needs the user, even when the app says it is ready, as the card says.
@@ -53,6 +55,11 @@ const LOOKS: Record<ConnectionState, { label: string; icon: LucideIcon; classNam
     icon: TriangleAlertIcon,
     className: 'bg-amber-500/15 text-amber-800 dark:text-amber-300',
   },
+  'server-unreachable': {
+    label: 'Server not reachable',
+    icon: CircleXIcon,
+    className: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
+  },
   connecting: {
     label: 'Connecting',
     icon: LoaderCircleIcon,
@@ -64,9 +71,13 @@ const LOOKS: Record<ConnectionState, { label: string; icon: LucideIcon; classNam
 // the state; the colour and the icon only repeat it. A live region, so that a screen reader says
 // when it changes.
 export function ConnectionBadge() {
-  const { data, isError } = useHealth();
-  // After a failed check, the last answer says nothing about TradingView now.
-  const state = connectionState(isError ? undefined : data);
+  const { data, error, isError } = useHealth();
+  // After a failed check, the last answer says nothing about TradingView now. A failure without an
+  // answer of the server (an ApiError) means that the dashboard cannot reach its own server.
+  const state =
+    isError && !(error instanceof ApiError)
+      ? 'server-unreachable'
+      : connectionState(isError ? undefined : data);
   const { label, icon: Icon, className } = LOOKS[state];
   return (
     <Badge role="status" data-state={state} className={className}>

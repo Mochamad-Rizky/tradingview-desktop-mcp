@@ -1,7 +1,7 @@
 import type { DashboardInfo } from '@contract';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useState, type ReactNode, type SubmitEvent } from 'react';
-import { ApiError, apiGet, onUnauthorized } from '@/api/client';
+import { ApiError, apiGet, onUnauthorized, UnexpectedAnswerError } from '@/api/client';
 import { queryKeys } from '@/api/query-client';
 import { readToken, storeToken } from '@/api/token';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -25,6 +25,9 @@ function messageFor(error: unknown): string {
     return error.status === 401
       ? NOT_ACCEPTED
       : `The server refused the request (${String(error.status)}): ${error.message}`;
+  }
+  if (error instanceof UnexpectedAnswerError) {
+    return `${error.message}. Check that this address is the server's own.`;
   }
   return UNREACHABLE;
 }

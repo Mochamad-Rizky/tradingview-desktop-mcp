@@ -193,6 +193,18 @@ test('an empty token, a token no header can carry and a server that cannot be re
     'The server could not be reached. Check that it is still running.',
   );
 
+  // Something answered in the server's place, such as a proxy with a page of its own.
+  server.use(
+    http.get('/api/info', () => new HttpResponse('<!doctype html><title>Synthetic proxy</title>')),
+  );
+  await user.clear(tokenInput());
+  await user.type(tokenInput(), `${TEST_TOKEN}{Enter}`);
+  await waitFor(() => {
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "The server sent an unexpected answer. Check that this address is the server's own.",
+    );
+  });
+
   server.use(
     http.get('/api/info', () =>
       HttpResponse.json({ error: 'This Origin is not allowed' }, { status: 403 }),

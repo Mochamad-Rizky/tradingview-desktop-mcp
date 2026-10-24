@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw';
 import { info, TEST_TOKEN, tools } from '@/test/fixtures';
 import { server } from '@/test/server';
-import { ApiError, apiGet, apiPost, onUnauthorized } from './client';
+import { ApiError, apiGet, apiPost, onUnauthorized, UnexpectedAnswerError } from './client';
 import { readToken, storeToken } from './token';
 
 test('apiGet sends the stored token as a Bearer header and returns the JSON', async () => {
@@ -94,6 +94,28 @@ test('an error answer without a JSON body is named by its status', async () => {
     status: 500,
     message: 'The server answered 500',
   });
+});
+
+// A page in place of the JSON, such as a proxy's: something answered, so the server is not out of
+// reach, but the answer is not the server's.
+test('a success that is not JSON is an unexpected answer', async () => {
+  storeToken(TEST_TOKEN);
+  server.use(
+    http.get(
+      '/api/info',
+      () =>
+        new HttpResponse('<!doctype html><title>Synthetic proxy</title>', {
+          headers: { 'Content-Type': 'text/html' },
+        }),
+    ),
+  );
+  const error = await apiGet('/api/info').catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(UnexpectedAnswerError);
+  expect(error).toMatchObject({
+    name: 'UnexpectedAnswerError',
+    message: 'The server sent an unexpected answer',
+  });
+  expect(readToken()).toBe(TEST_TOKEN);
 });
 
 test('a 401 clears the token, throws, and tells the subscribers once each', async () => {

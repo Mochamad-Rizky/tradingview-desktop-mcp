@@ -14,6 +14,15 @@ export class ApiError extends Error {
   }
 }
 
+// A success whose body is not the JSON of the contract, such as the page of a proxy that answered
+// in the server's place: something answered, but not the server.
+export class UnexpectedAnswerError extends Error {
+  constructor() {
+    super('The server sent an unexpected answer');
+    this.name = 'UnexpectedAnswerError';
+  }
+}
+
 const unauthorizedListeners = new Set<() => void>();
 
 // `fn` hears of every 401 to the stored token, after the token was cleared: the token gate then
@@ -97,8 +106,16 @@ async function request<T>(
   if (!response.ok) {
     throw await errorFrom(response, token);
   }
-  // The server answers with the JSON of the contract for each route.
-  return (await response.json()) as T;
+  // The server answers with the JSON of the contract for each route. A connection that breaks
+  // while the body comes, or a request that is aborted, fails as it is.
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new UnexpectedAnswerError();
+    }
+    throw error;
+  }
 }
 
 export function apiGet<T>(path: string, options: RequestOptions = {}): Promise<T> {
