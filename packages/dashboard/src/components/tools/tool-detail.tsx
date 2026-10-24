@@ -128,7 +128,8 @@ export function ToolDetail({ tool, headingRef }: ToolDetailProps) {
           setConfirming(null);
         }}
         onConfirm={(args) => {
-          confirmed.current = start(args);
+          // A second click before the dialog closes starts nothing, and must not undo the first.
+          confirmed.current ||= start(args);
           setConfirming(null);
         }}
         onCloseAutoFocus={() => {

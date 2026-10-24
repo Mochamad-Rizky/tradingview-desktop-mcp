@@ -281,7 +281,8 @@ test("a double click on the dialog's Run sends one request", async () => {
   });
   expect(held.requests).toBe(1);
 
-  // Two clicks that land before the dialog has closed.
+  // Two clicks that land before the dialog has closed: the second starts nothing, and the focus
+  // still follows the run.
   await user.click(runButton());
   const run = within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Run' });
   act(() => {
@@ -290,6 +291,9 @@ test("a double click on the dialog's Run sends one request", async () => {
   });
   await waitFor(() => {
     expect(held.requests).toBe(2);
+  });
+  await waitFor(() => {
+    expect(result()).toHaveFocus();
   });
   held.answer();
   await waitFor(() => {
