@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { formatFullTime } from '@/lib/format';
 import { at, endedCall, runningCall } from '@/test/fixtures';
@@ -155,6 +155,47 @@ test('copying says so when the browser refuses', async () => {
   expect(within(dialog).getByRole('status')).toHaveTextContent(
     'Could not copy: the browser refused.',
   );
+});
+
+// A browser offers no clipboard to a page that is not a secure context, such as one opened on a
+// LAN address over http.
+test('copying says so when the browser offers no clipboard', async () => {
+  const user = userEvent.setup();
+  vi.spyOn(navigator, 'clipboard', 'get').mockReturnValue(undefined as unknown as Clipboard);
+  render(<CallDetail call={endedCall(1, { args: {} })} open onOpenChange={vi.fn()} />);
+  const dialog = sheet('chart_get_state');
+  await user.click(within(dialog).getByRole('button', { name: 'Copy arguments' }));
+  expect(await within(dialog).findByRole('status')).toHaveTextContent(
+    'Could not copy: the clipboard is not available here.',
+  );
+});
+
+// A live region is read when its text changes: the same words again would go unsaid.
+test('a second copy clears the message first, so that it is said again', async () => {
+  const user = userEvent.setup();
+  render(<CallDetail call={endedCall(1, { args: {} })} open onOpenChange={vi.fn()} />);
+  const dialog = sheet('chart_get_state');
+  const status = within(dialog).getByRole('status');
+  await user.click(within(dialog).getByRole('button', { name: 'Copy tool name' }));
+  await waitFor(() => {
+    expect(status).toHaveTextContent('Tool name copied.');
+  });
+
+  let finish: () => void = () => undefined;
+  vi.spyOn(navigator.clipboard, 'writeText').mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await user.click(within(dialog).getByRole('button', { name: 'Copy tool name' }));
+  expect(status).toHaveTextContent('');
+  act(() => {
+    finish();
+  });
+  await waitFor(() => {
+    expect(status).toHaveTextContent('Tool name copied.');
+  });
 });
 
 test('the sheet asks its owner to close it, with its button or Escape', async () => {

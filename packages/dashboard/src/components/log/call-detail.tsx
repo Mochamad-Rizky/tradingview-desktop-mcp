@@ -82,17 +82,22 @@ function jsonView(value: JsonValue): ReactNode[] {
 function useCopy(): [string, (text: string, done: string) => void] {
   const [message, setMessage] = useState('');
   const copy = (text: string, done: string) => {
-    // The clipboard is missing where the page is not a secure context: that fails here too.
-    Promise.resolve()
-      .then(() => navigator.clipboard.writeText(text))
-      .then(
-        () => {
-          setMessage(done);
-        },
-        () => {
-          setMessage('Could not copy: the browser refused.');
-        },
-      );
+    // Cleared first: a live region is read when its text changes, so the same words after a second
+    // copy are said again only after a change.
+    setMessage('');
+    // A page that is not a secure context, such as one opened over http on a LAN address, has no
+    // clipboard at all.
+    const clipboard = navigator.clipboard as Clipboard | undefined;
+    void Promise.resolve()
+      .then(() =>
+        clipboard === undefined
+          ? 'Could not copy: the clipboard is not available here.'
+          : clipboard.writeText(text).then(
+              () => done,
+              () => 'Could not copy: the browser refused.',
+            ),
+      )
+      .then(setMessage);
   };
   return [message, copy];
 }
