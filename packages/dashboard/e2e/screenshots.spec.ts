@@ -41,17 +41,14 @@ test.describe('the README screenshots', { tag: '@screenshots' }, () => {
     await capture(page, 'dashboard-log.png');
   });
 
+  // From the top of the page: the header, the list, and the tool with its title, its facts and its
+  // fields.
   test('the tools page', async ({ page, server }) => {
     await signIn(page, server, '/tools/chart_get_state');
     const article = page.getByRole('article', { name: 'Read the chart state' });
-    await article.getByRole('button', { name: 'Run', exact: true }).click();
-    const result = page.getByRole('region', { name: 'Result' });
-    await expect(result.getByRole('status')).toHaveText('OK');
-    // The run and its result, beside the list, which stays in place: the page scrolls to the run,
-    // with a little room above its heading.
-    await page.getByRole('heading', { name: 'Run by hand' }).evaluate((heading) => {
-      heading.scrollIntoView({ block: 'start' });
-      window.scrollBy(0, -24);
+    await expect(article.getByRole('heading', { level: 2 })).toBeVisible();
+    await page.evaluate(() => {
+      window.scrollTo(0, 0);
     });
     await capture(page, 'dashboard-tools.png');
   });
