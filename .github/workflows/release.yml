@@ -142,8 +142,8 @@ jobs:
           fi
           echo "$name@$VERSION is not on npm yet."
 
-  # The same gate as every push and pull request: the whole of ci.yml, called as it is. Its verify
-  # job uploads the checked tarball as the artifact `package`.
+  # The same gate as every push of a branch and every pull request: the whole of ci.yml, called as
+  # it is. Its verify job uploads the checked tarball as the artifact `package`.
   gate:
     name: Gate
     needs: check

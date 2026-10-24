@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # Pushes of branches only: a pushed tag starts the release workflow, which runs this gate itself.
   push:
+    branches: ['**']
   pull_request:
   # The release workflow runs this same gate before it publishes. A called workflow sees only the
   # secrets it is handed, and the release hands over the Codecov token alone.
