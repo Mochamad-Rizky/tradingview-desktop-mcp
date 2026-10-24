@@ -247,7 +247,24 @@ out or fails at random. Keep the lid open and run the suites under `caffeinate -
 
 ### Last verified against TradingView
 
-Last verified against TradingView: not yet verified for 0.1.0.
+Last verified against TradingView: TradingView Desktop 3.4.1 (Electron 41.7.1) on macOS 26.5.2, on
+2026-10-24, for 0.1.0, on a Basic plan with both indicator slots in use.
+
+`TV_E2E=1 TV_E2E_ALLOW_TABS=1 TV_MCP_ALLOW_EVAL=true pnpm test:e2e` passed 59 tests in 13 files and
+skipped 5, with no failure: `adds and removes RSI` (2 of 2 `INDICATORS_ON_CHART` in use), the layout
+creation (`TV_E2E_ALLOW_LAYOUTS` not set), the editor closed on unsaved text
+(`TV_E2E_ALLOW_EDITOR_TEXT` not set) and the two tests that add a script from the editor
+(`TV_E2E_ALLOW_DRAFTS` not set); the tab suite ran, with the window in view. The first runs found
+two things the app does that the server did not expect, both fixed before the last run: a new alert
+lists as not active for about 1.5 s after its creation, and the chart keeps the bars of a replay for
+a moment after replay is left. The `real` project of the dashboard with `TV_E2E=1` passed its 2
+tests. The packed tarball, installed with `npm install` into an empty directory, answered
+`TradingView is ready.` to `doctor`, printed the `npx -y tradingview-desktop-mcp` snippet for
+`config claude-desktop`, and served `/api/health` with the app ready over HTTP with
+`--profile readonly` and a token made for the check (401 without it), then stopped and freed its
+port. Before and after the runs, the drawings, alerts and watchlist entries, the saved layouts and
+the one shown, the tabs, replay (off, none saved), the panels, the studies, the Pine Editor, and the
+symbol, timeframe, chart type and exact view of the chart were the same.
 
 ### Safety rules
 
