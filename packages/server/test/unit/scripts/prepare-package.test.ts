@@ -133,13 +133,78 @@ test('rewriteReadmeLinks leaves code spans and fenced code blocks alone', () => 
   expect(rewriteReadmeLinks(fences)).toBe(fences);
 });
 
+test('rewriteReadmeLinks rewrites only valid reference definitions', () => {
+  const readme = [
+    '[Note]: this is important',
+    '[Tip]: docs/tips.md and more',
+    '[unclosed title]: docs/u.md "A title',
+    '[text after the title]: docs/x.md "A title" and more',
+    '    [indented]: docs/code.md',
+    '[plain]: docs/plain.md',
+    '[double]: docs/double.md "A title"',
+    "[single]: ./docs/single.md 'A title'",
+    '[parenthesised]: docs/paren.md (A title)',
+    '[angle]: <docs/a b.md> "A title"',
+    '[spaces]:   docs/spaces.md   ',
+  ].join('\n');
+
+  expect(rewriteReadmeLinks(readme)).toBe(
+    [
+      '[Note]: this is important',
+      '[Tip]: docs/tips.md and more',
+      '[unclosed title]: docs/u.md "A title',
+      '[text after the title]: docs/x.md "A title" and more',
+      '    [indented]: docs/code.md',
+      `[plain]: ${BLOB}docs/plain.md`,
+      `[double]: ${BLOB}docs/double.md "A title"`,
+      `[single]: ${BLOB}docs/single.md 'A title'`,
+      `[parenthesised]: ${BLOB}docs/paren.md (A title)`,
+      `[angle]: <${BLOB}docs/a b.md> "A title"`,
+      `[spaces]:   ${BLOB}docs/spaces.md   `,
+    ].join('\n'),
+  );
+});
+
+test('rewriteReadmeLinks rewrites every URL of srcset in img and source tags', () => {
+  const readme = [
+    '<picture>',
+    '  <source media="(prefers-color-scheme: dark)" srcset="docs/dark.png 1x, ./docs/dark@2x.png 2x">',
+    '  <img src="docs/light.png" srcset="docs/light.png 480w,docs/big.png 960w, https://example.com/x.png 1440w" alt="Logo">',
+    '</picture>',
+    '<img srcset="data:image/png;base64,AAAA,BBBB 1x, docs/b.png 2x">',
+    '<SOURCE SRCSET=\'docs/c.webp\'> <source src="docs/demo.mp4" type="video/mp4">',
+    '<div srcset="docs/not-an-image.png"></div> <a srcset="docs/a.png" href="docs/a.md">a</a>',
+  ].join('\n');
+
+  expect(rewriteReadmeLinks(readme)).toBe(
+    [
+      '<picture>',
+      `  <source media="(prefers-color-scheme: dark)" srcset="${RAW}docs/dark.png 1x, ${RAW}docs/dark@2x.png 2x">`,
+      `  <img src="${RAW}docs/light.png" srcset="${RAW}docs/light.png 480w,${RAW}docs/big.png 960w, https://example.com/x.png 1440w" alt="Logo">`,
+      '</picture>',
+      `<img srcset="data:image/png;base64,AAAA,BBBB 1x, ${RAW}docs/b.png 2x">`,
+      `<SOURCE SRCSET='${RAW}docs/c.webp'> <source src="${RAW}docs/demo.mp4" type="video/mp4">`,
+      `<div srcset="docs/not-an-image.png"></div> <a srcset="docs/a.png" href="${BLOB}docs/a.md">a</a>`,
+    ].join('\n'),
+  );
+});
+
 test('rewriteReadmeLinks leaves no relative link in the README of the repository', () => {
   const rewritten = rewriteReadmeLinks(readFileSync(ROOT_README, 'utf8'));
-  // Outside code, every link, image and HTML attribute that names a target names an absolute one.
+  // Outside code, every link, image, reference definition and HTML attribute that names a target
+  // names an absolute one.
   const prose = rewritten.replace(/^ *(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ *\1[^\n]*$/gm, '');
   expect(prose).not.toMatch(/\]\(\s*<?(?!https?:|mailto:|#)[^)\s]/);
-  expect(prose).not.toMatch(/^ {0,3}\[[^\]]+\]:\s*<?(?!https?:|mailto:|#)\S/m);
-  expect(prose).not.toMatch(/\b(?:src|href)\s*=\s*["']?(?!https?:|mailto:|#)[^"'\s>]/i);
+  expect(prose).not.toMatch(
+    /^ {0,3}\[[^\]]+\]:[ \t]*<?(?!https?:|mailto:|#)[^\s>]+>?(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*$/m,
+  );
+  expect(prose).not.toMatch(/\b(?:src|srcset|href)\s*=\s*["']?(?!https?:|mailto:|#)[^"'\s>]/i);
+  // Every candidate of a srcset, not only the first.
+  for (const [, srcset = ''] of prose.matchAll(/\bsrcset\s*=\s*["']([^"']*)["']/gi)) {
+    for (const candidate of srcset.split(/,\s+/)) {
+      expect(candidate).toMatch(/^\s*(?:https?:|data:)/);
+    }
+  }
   expect(rewritten).toContain(`](${RAW}docs/images/dashboard-status.png)`);
 });
 
