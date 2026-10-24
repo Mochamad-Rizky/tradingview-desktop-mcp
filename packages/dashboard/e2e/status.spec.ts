@@ -1,4 +1,14 @@
-import { callRows, connectionBadge, expect, fact, signIn, test } from './support.ts';
+import {
+  attributeOf,
+  callRows,
+  connectionBadge,
+  expect,
+  expectQuietly,
+  fact,
+  signIn,
+  test,
+  textOf,
+} from './support.ts';
 
 // The status page: how the server runs, whether TradingView is up, and the plan limits on demand.
 
@@ -19,24 +29,31 @@ test(
   },
 );
 
-// Runs against the user's TradingView as well (@app), so it checks words the dashboard writes, and
-// never the chart's.
+// Runs against the user's TradingView as well (@app): it checks words the dashboard writes, never
+// the chart's, and only quietly.
 test(
   'the status page shows TradingView reachable and ready',
   { tag: ['@real', '@app'] },
   async ({ page, server }) => {
     await signIn(page, server);
 
-    await expect(connectionBadge(page), 'the header says TradingView is ready').toHaveAttribute(
-      'data-state',
-      'ready',
+    await expectQuietly(
+      async () => (await attributeOf(connectionBadge(page), 'data-state')) === 'ready',
+      'the header says TradingView is ready',
     );
     const card = page.getByRole('region', { name: 'TradingView' });
-    await expect(fact(card, 'Debug port'), 'the debug port answers').toContainText(
-      /^Reachable on /,
+    await expectQuietly(
+      async () => (await textOf(fact(card, 'Debug port')))?.startsWith('Reachable on ') === true,
+      'the debug port answers',
     );
-    await expect(fact(card, 'Chart'), 'a chart is open').toHaveText('Found');
-    await expect(fact(card, 'App'), 'the app is ready').toHaveText('Ready');
+    await expectQuietly(
+      async () => (await textOf(fact(card, 'Chart'))) === 'Found',
+      'a chart is open',
+    );
+    await expectQuietly(
+      async () => (await textOf(fact(card, 'App'))) === 'Ready',
+      'the app is ready',
+    );
   },
 );
 

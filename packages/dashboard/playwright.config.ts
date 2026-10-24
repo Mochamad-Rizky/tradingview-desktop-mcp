@@ -1,6 +1,8 @@
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/test';
 import { MOCK_URL } from './e2e/fixtures.mjs';
+import { runDirectory } from './e2e/real-app-output.ts';
 import type { Target } from './e2e/support.ts';
 
 // The end-to-end tests of the dashboard, in Chromium, as one of three projects per run:
@@ -53,8 +55,15 @@ const project = isProjectName(fromEnvironment)
 process.env[PROJECT_VARIABLE] = project;
 
 // The user's own TradingView, with their account and charts on the page: nothing of the page may be
-// kept or shown. Traces, screenshots and videos are off, the HTML report is not written, and
-// Playwright is kept from writing a snapshot of the page next to a failure.
+// kept or shown.
+// - Traces, screenshots and videos are off, and the HTML report is not written.
+// - PLAYWRIGHT_NO_COPY_PROMPT keeps Playwright from taking a snapshot of the page when a test fails.
+//   It does not stop a failing locator matcher (toHaveText, toBeVisible…) from adding a snapshot of
+//   its own to error-context.md, so the @app tests check the page without locator matchers
+//   (expectQuietly in e2e/support.ts).
+// - Whatever Playwright writes all the same, such as the message of a failure, goes to a directory
+//   of this run under the system's temporary directory, which the global teardown removes, and a
+//   reporter once more after the last file Playwright writes (e2e/real-app-output.ts).
 const realApp = project === 'real' && process.env.TV_E2E === '1';
 if (realApp) {
   process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
@@ -109,10 +118,17 @@ const PER_PROJECT: Record<ProjectName, Config> = {
       reuseExistingServer: false,
       timeout: 60_000,
       // The script stops the server and the fake app, and removes the file, on SIGTERM.
-      gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
     },
     retries: 0,
     expect: { timeout: 15_000 },
+    ...(realApp
+      ? {
+          outputDir: join(runDirectory(), 'test-results'),
+          globalSetup: './e2e/real-app-output.ts',
+          globalTeardown: './e2e/real-app-teardown.ts',
+        }
+      : {}),
     projects: [
       {
         name: 'real',
@@ -155,7 +171,9 @@ export default defineConfig<object, WorkerOptions>({
   fullyParallel: false,
   workers: 1,
   forbidOnly: process.env.CI !== undefined,
-  reporter: realApp ? 'list' : [['list'], ['html', { open: 'never' }]],
+  reporter: realApp
+    ? [['list'], ['./e2e/real-app-reporter.ts']]
+    : [['list'], ['html', { open: 'never' }]],
   use: {
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

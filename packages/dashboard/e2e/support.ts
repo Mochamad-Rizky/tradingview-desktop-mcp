@@ -26,7 +26,7 @@ import { MOCK_TOKEN, MOCK_URL } from './fixtures.mjs';
 //   TV_E2E=1. Its address and token are in a file that the script writes once it is up.
 //
 // Tests tagged @real run against the real server too; those tagged @app also run against the
-// user's TradingView, where they may only read: they show what the page says without printing it.
+// user's TradingView, where they may only read, and check the page with expectQuietly alone.
 
 export type Target = 'mocked' | 'real';
 
@@ -213,12 +213,39 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
 export { expect };
 
-// Opens `path` and connects with the token through the token screen, as a user does.
+// Waits until `check` holds, and fails with `message` alone. A failing locator matcher (toHaveText,
+// toBeVisible…) adds a snapshot of the page to the results of the test, and on the user's
+// TradingView the page shows their chart: the tests tagged @app check the page with this, and with
+// textOf and attributeOf, which read it without waiting and print nothing of it.
+export async function expectQuietly(check: () => Promise<boolean>, message: string): Promise<void> {
+  await expect.poll(check, { message }).toBe(true);
+}
+
+// The text of the one element `locator` matches, trimmed, or null when it matches none or several.
+export async function textOf(locator: Locator): Promise<string | null> {
+  const texts = await locator.allTextContents();
+  return texts.length === 1 ? (texts[0]?.trim() ?? null) : null;
+}
+
+// An attribute of the one element `locator` matches, or null.
+export async function attributeOf(locator: Locator, name: string): Promise<string | null> {
+  return locator.evaluateAll(
+    (elements, attribute) =>
+      (elements.length === 1 ? elements[0]?.getAttribute(attribute) : null) ?? null,
+    name,
+  );
+}
+
+// Opens `path` and connects with the token through the token screen, as a user does. The @app tests
+// sign in too, so the check is a quiet one.
 export async function signIn(page: Page, server: DashboardServer, path = '/'): Promise<void> {
   await page.goto(path);
   await page.getByLabel('Access token').fill(server.token);
   await page.getByRole('button', { name: 'Connect' }).click();
-  await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
+  await expectQuietly(
+    () => page.getByRole('navigation', { name: 'Main' }).isVisible(),
+    'the dashboard opens once connected',
+  );
 }
 
 function escapeRegExp(text: string): string {

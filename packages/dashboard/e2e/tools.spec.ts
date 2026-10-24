@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { callRow, expect, fact, signIn, test } from './support.ts';
+import { callRow, expect, expectQuietly, fact, signIn, test, textOf } from './support.ts';
 
 // The tools page: the tools of the running profile, to search, read and run by hand.
 
@@ -43,19 +43,27 @@ test(
 
 // Runs against the user's TradingView as well (@app): chart_get_state reads the chart and changes
 // nothing. The result holds the chart's data, so the test looks only at the word the dashboard
-// writes for the outcome.
+// writes for the outcome, and only quietly.
 test(
   'a read-only tool runs at once and shows its result',
   { tag: ['@real', '@app'] },
   async ({ page, server, target, mock }) => {
     await signIn(page, server, '/tools/chart_get_state');
     const article = toolArticle(page, 'Read the chart state');
-    await expect(article.getByRole('heading', { level: 2 }), 'the tool is shown').toBeVisible();
+    const run = article.getByRole('button', { name: 'Run', exact: true });
+    await expectQuietly(async () => (await run.count()) === 1, 'the tool is shown, ready to run');
 
-    await article.getByRole('button', { name: 'Run', exact: true }).click();
+    await run.click();
 
-    await expect(page.getByRole('alertdialog'), 'a read-only tool asks nothing').toHaveCount(0);
-    await expect(resultRegion(page).getByRole('status'), 'the call succeeded').toHaveText('OK');
+    await expectQuietly(
+      async () => (await textOf(resultRegion(page).getByRole('status'))) === 'OK',
+      'the call succeeded',
+    );
+    // A tool that asks first would have shown its dialog instead of running.
+    await expectQuietly(
+      async () => (await page.getByRole('alertdialog').count()) === 0,
+      'a read-only tool asks nothing',
+    );
     if (target === 'mocked') {
       await expect(resultRegion(page)).toContainText('"symbol": "NASDAQ:AAPL"');
       expect(await mock.calls()).toEqual([{ name: 'chart_get_state', arguments: {} }]);
