@@ -47,7 +47,9 @@ import type { SyntheticBar } from './synthetic-bars.js';
 //   finished, without skipConfirm it opens the "Leave replay" dialog (dialog.leaveReplay) and changes
 //   nothing. Otherwise it leaves: it saves the replay session state, turns the replay mode off,
 //   stops replay and calls onLeave. stopReplay() leaves the same way as
-//   leaveReplay({ skipConfirm: true }).
+//   leaveReplay({ skipConfirm: true }). After leaving a replay point, the main series holds the bars
+//   of the replay, up to the bar of the point (state.replay.barsUpTo), for liveBarsMs, then the live
+//   bars again (0.4 to 0.7 s on the app, and longer at times; 0 by default, when they come at once).
 // - Every stop of replay, by leaving it or at the end of the data, stops autoplay and clears the
 //   replay point, so that currentDate answers null, and the selected point, as _stopReplay of the
 //   manager of the app does; the replay mode stays on until replay is left.
@@ -77,6 +79,8 @@ export interface FakeReplayOptions {
   stepMs?: number;
   // How long after a start the main series holds no bars. Default 0 ms.
   barsMs?: number;
+  // How long after leaving a replay point the main series holds the bars of the replay. Default 0 ms.
+  liveBarsMs?: number;
   // Leaves the internal replay controller out of the replay API.
   withoutController?: boolean;
   // Leaves replaySessionState and updateReplaySessionState out of the chart widget collection.
@@ -119,6 +123,9 @@ export interface FakeReplayState {
   stepHangs: boolean;
   // Whether the main series of the chart holds no bars for now, as right after a start.
   barsHidden: boolean;
+  // The index of the last bar the main series holds while it keeps the bars of a replay left,
+  // null while it holds the live bars.
+  barsUpTo: number | null;
 }
 
 export interface FakeReplayDeps {
@@ -225,6 +232,7 @@ export function initialReplayState(): FakeReplayState {
     stepError: null,
     stepHangs: false,
     barsHidden: false,
+    barsUpTo: null,
   };
 }
 
@@ -244,6 +252,7 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
   const dateMs = options.dateMs ?? 10;
   const stepMs = options.stepMs ?? 5;
   const barsMs = options.barsMs ?? 0;
+  const liveBarsMs = options.liveBarsMs ?? 0;
   const lastIndex = (): number => deps.bars().length - 1;
   const timeAt = (index: number | null): number | null =>
     index === null ? null : (deps.bars()[index]?.[0] ?? null);
@@ -297,6 +306,12 @@ export function createFakeReplay(deps: FakeReplayDeps): FakeReplay {
   const leave = (onLeave: unknown): void => {
     saveSessionState();
     state.modeOn = false;
+    if (liveBarsMs > 0 && state.index !== null) {
+      state.barsUpTo = state.index;
+      setTimeout(() => {
+        state.barsUpTo = null;
+      }, liveBarsMs);
+    }
     stop();
     if (typeof onLeave === 'function') {
       (onLeave as () => void)();

@@ -99,11 +99,17 @@ export type AutoplayOutcome = {
 };
 
 // What leaving replay did: whether there was a replay or a replay mode to leave (left), whether
-// replay is stopped now, and whether what TradingView saved for the replay it left is cleared: null
+// replay is stopped now, whether what TradingView saved for the replay it left is cleared (null
 // when the replay left was not the run the caller started, or there was none, false when it could
-// not be cleared.
+// not be cleared), and whether the chart shows its live bars again, bars after the replay point
+// (null when no replay point was left, or the chart does not tell its bars).
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
-export type LeaveOutcome = { left: boolean; stopped: boolean; cleared: boolean | null };
+export type LeaveOutcome = {
+  left: boolean;
+  stopped: boolean;
+  cleared: boolean | null;
+  liveBars: boolean | null;
+};
 
 // Replay on the active chart, as a ReplayReading. It changes nothing of replay or the chart. When the
 // app has not made its replay API yet, replayApi() has it made, as the app does on its first use of
@@ -838,7 +844,10 @@ export async function setAutoplayViaApi(
 // reached the end of the data, say): stops autoplay first while it plays, then calls
 // leaveReplay({ skipConfirm: true }), which never asks in the "Leave replay" dialog, and waits, within
 // waitMs, until replay is stopped and the mode off. Leaving saves the replay in the layout, unless it
-// had reached its end. ownRun is the start point of the run of replay the caller started (its
+// had reached its end. The main series keeps the bars of the replay, up to its point, for a moment
+// after replay stopped (0.4 to 0.7 s seen, and longer at times), so when a replay point was left it
+// then waits, within what is left of waitMs and 5 s at most, until the series holds a bar after that
+// point: the live bars. ownRun is the start point of the run of replay the caller started (its
 // getReplaySelectedDate), or null: when the replay running before the leave is that run, by the start
 // point read right before the leave, what TradingView saved for it is cleared once replay is stopped,
 // with updateReplaySessionState(null), as the "Start new" button of the "continue replay" dialog does.
@@ -929,6 +938,26 @@ export async function leaveReplayViaApi(
       },
     };
   }
+  // The time of the last bar the main series of the active chart holds: null without bars, and
+  // undefined when the chart does not tell.
+  const lastBarTime = (): number | null | undefined => {
+    try {
+      const bars = api.activeChart?.()._chartWidget?.model().mainSeries().bars();
+      if (bars === undefined) {
+        return undefined;
+      }
+      const index = bars.lastIndex();
+      const row: unknown = typeof index === 'number' ? bars.valueAt(index) : null;
+      return Array.isArray(row) && typeof row[0] === 'number' ? row[0] : null;
+    } catch {
+      return undefined;
+    }
+  };
+  // The replay point while replay runs, read before the leave clears it: the series holds the bars
+  // up to it until the live bars come back.
+  const shownDate = before ? watched(() => replay.currentDate?.()) : null;
+  const replayPoint =
+    typeof shownDate === 'number' && Number.isFinite(shownDate) ? shownDate : null;
   // Whether the replay about to be left is the run the caller started, by its start point, read
   // before the leave clears it.
   const point = watched(() => replay.getReplaySelectedDate?.());
@@ -988,5 +1017,14 @@ export async function leaveReplayViaApi(
       cleared = false;
     }
   }
-  return { left: leaving, stopped, cleared };
+  let liveBars: boolean | null = null;
+  if (leaving && stopped && replayPoint !== null && lastBarTime() !== undefined) {
+    const live = (): boolean => {
+      const last = lastBarTime();
+      return typeof last === 'number' && last > replayPoint;
+    };
+    await waitFor(live, Math.min(left(), 5000));
+    liveBars = live();
+  }
+  return { left: leaving, stopped, cleared, liveBars };
 }

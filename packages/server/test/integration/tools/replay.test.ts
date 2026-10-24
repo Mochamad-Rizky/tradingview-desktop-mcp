@@ -794,6 +794,37 @@ describe('replay_stop', () => {
     expect(dialogs(failed.win)).toEqual([]);
   });
 
+  test('replay_stop answers once the chart shows its live bars again, so data_get_ohlcv reads them', async () => {
+    // TradingView keeps the bars of the replay for a moment after it is left.
+    const { client } = await startHarness(fixture, { replay: { liveBarsMs: 300 } });
+    const lastBar = async (): Promise<unknown> =>
+      (dataOf(await callTool(client, 'data_get_ohlcv', { count: 1 })).bars as { time: number }[])[0]
+        ?.time;
+    const live = await lastBar();
+    await callTool(client, 'replay_start', { date: '2024-04-11' });
+
+    const stop = await callTool(client, 'replay_stop');
+
+    expect(warningsOf(stop)).toEqual([]);
+    expect(await lastBar()).toBe(live);
+  });
+
+  test('replay_stop says so when the chart still shows the bars of the replay at the end of its wait', async () => {
+    const { client } = await startHarness(
+      fixture,
+      { replay: { liveBarsMs: 3000 } },
+      { callTimeoutMs: 1500 },
+    );
+    await callTool(client, 'replay_start', { date: '2024-04-11' });
+
+    const stop = await callTool(client, 'replay_stop');
+
+    expect(dataOf(stop)).toEqual({ active: false });
+    expect(warningsOf(stop)).toEqual([
+      expect.stringContaining('still showed the bars of the replay') as string,
+    ]);
+  });
+
   test('replay_stop clears the replay session TradingView saved for a replay of this session', async () => {
     const { client, win, ctx } = await startHarness();
     await callTool(client, 'replay_start', { date: '2024-04-11' });

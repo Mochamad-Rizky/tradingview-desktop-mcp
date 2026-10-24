@@ -302,6 +302,31 @@ describe('stepping and autoplay', () => {
     expect(stateOf(plain).barsHidden).toBe(false);
   });
 
+  test('the main series holds the bars of the replay, up to its point, for liveBarsMs after it is left, then the live bars', async () => {
+    const win = windowWith(fixture, { replay: { liveBarsMs: 40 } });
+    const replay = await replayOf(win);
+    const series = win.TradingViewApi?.activeChart()._chartWidget.model().mainSeries();
+    running(win, 100);
+
+    replay.leaveReplay({ skipConfirm: true });
+
+    expect(stateOf(win)).toMatchObject({ started: false, modeOn: false, barsUpTo: 100 });
+    expect(series?.bars().size()).toBe(101);
+    expect(series?.bars().valueAt(100)?.[0]).toBe(times[100]);
+    await delay(60);
+    expect(stateOf(win).barsUpTo).toBeNull();
+    expect(series?.bars().size()).toBe(times.length);
+    // Without the option, or without a replay point to leave, the live bars come at once.
+    const plain = windowWith();
+    running(plain, 100);
+    (await replayOf(plain)).leaveReplay({ skipConfirm: true });
+    expect(stateOf(plain).barsUpTo).toBeNull();
+    const ended = windowWith(fixture, { replay: { liveBarsMs: 40 } });
+    stateOf(ended).modeOn = true;
+    (await replayOf(ended)).leaveReplay({ skipConfirm: true });
+    expect(stateOf(ended).barsUpTo).toBeNull();
+  });
+
   test('doStep on the last bar stops replay and rejects with "Replay is finished"', async () => {
     const win = windowWith();
     const replay = await replayOf(win);

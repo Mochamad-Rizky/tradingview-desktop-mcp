@@ -456,8 +456,12 @@ Seen on the app (end-to-end suite, on a daily chart, with replays of its own onl
   autoplay delay changes when the tools start replay without a speed. Leaving marks the layout changed, so the next
   `layout_new` or `layout_switch` asks for `confirm`.
 - Leaving replay brings the chart back to its last bars at the default right offset: a view the user had scrolled
-  elsewhere is not restored. The live bars come back within a few milliseconds of the leave, and the view keeps
-  moving for up to about a second after that.
+  elsewhere is not restored. Seen in the release verification (TradingView Desktop 3.4.1): the main series keeps the
+  bars of the replay, up to the replay point, after `isReplayStarted()` turned false and the mode off, so a read of
+  the bars right after the leave answers those of the replay. The live bars came back 0.4 to 0.7 s later when read
+  every 100 ms, and twice in full runs of the suites they had not come back 1.5 s later. After a replay that reached
+  its end, the last bar came back 1.3 s after the leave. `replay_stop` therefore waits, after a running replay, until
+  the series holds a bar after the replay point. The view can keep moving for up to about a second after the leave.
 - Autoplay at the user's own speed moved the replay within 1.3 s; `position()`, `realizedPL()` and `currency()` stay
   `null`.
 

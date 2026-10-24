@@ -1173,7 +1173,7 @@ describe('leaveReplayViaApi', () => {
       chart(running(40, { autoplay: true })),
     );
 
-    expect(result).toEqual({ left: true, stopped: true, cleared: true });
+    expect(result).toEqual({ left: true, stopped: true, cleared: true, liveBars: true });
     // TradingView saves the replay as it leaves it, and the page function clears it then.
     expect(callNames(win)).toEqual([
       'replayApi.toggleAutoplay',
@@ -1215,7 +1215,7 @@ describe('leaveReplayViaApi', () => {
       [other, otherWin],
       [unknown, unknownWin],
     ] as const) {
-      expect(result).toEqual({ left: true, stopped: true, cleared: null });
+      expect(result).toEqual({ left: true, stopped: true, cleared: null, liveBars: true });
       expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([
         [expect.objectContaining({ replayTime: time(40) })],
       ]);
@@ -1233,9 +1233,9 @@ describe('leaveReplayViaApi', () => {
       }),
     );
 
-    expect(off).toEqual({ left: false, stopped: true, cleared: null });
+    expect(off).toEqual({ left: false, stopped: true, cleared: null, liveBars: null });
     expect(callNames(win)).toEqual([]);
-    expect(saved).toEqual({ left: false, stopped: true, cleared: null });
+    expect(saved).toEqual({ left: false, stopped: true, cleared: null, liveBars: null });
     expect(callNames(savedWin)).toEqual([]);
     expect(replayOf(savedWin).sessionState).toMatchObject({ replayTime: time(5) });
   });
@@ -1249,7 +1249,7 @@ describe('leaveReplayViaApi', () => {
       }),
     );
 
-    expect(result).toEqual({ left: true, stopped: true, cleared: null });
+    expect(result).toEqual({ left: true, stopped: true, cleared: null, liveBars: null });
     expect(replayOf(win).modeOn).toBe(false);
     expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([]);
   });
@@ -1272,7 +1272,7 @@ describe('leaveReplayViaApi', () => {
       }),
     );
 
-    expect(result).toEqual({ left: true, stopped: true, cleared: null });
+    expect(result).toEqual({ left: true, stopped: true, cleared: null, liveBars: null });
     expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([]);
     expect(replayOf(win).sessionState).toEqual(saved);
   });
@@ -1286,7 +1286,7 @@ describe('leaveReplayViaApi', () => {
       }, running(40)),
     );
 
-    expect(result).toEqual({ left: true, stopped: false, cleared: false });
+    expect(result).toEqual({ left: true, stopped: false, cleared: false, liveBars: null });
     expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([]);
   });
 
@@ -1310,8 +1310,8 @@ describe('leaveReplayViaApi', () => {
       }),
     );
 
-    expect(result).toEqual({ left: true, stopped: true, cleared: false });
-    expect(throwing).toEqual({ left: true, stopped: true, cleared: false });
+    expect(result).toEqual({ left: true, stopped: true, cleared: false, liveBars: true });
+    expect(throwing).toEqual({ left: true, stopped: true, cleared: false, liveBars: true });
   });
 
   test('clears nothing when TradingView saved nothing for the replay the caller started', async () => {
@@ -1327,11 +1327,76 @@ describe('leaveReplayViaApi', () => {
       }),
     );
 
-    expect(result).toEqual({ left: true, stopped: true, cleared: true });
+    expect(result).toEqual({ left: true, stopped: true, cleared: true, liveBars: true });
     // Only TradingView saved, as it left replay.
     expect(calls(win, 'chartWidgetCollection.updateReplaySessionState')).toEqual([
       [expect.objectContaining({ replayTime: time(40) })],
     ]);
+  });
+
+  test('waits until the chart shows its live bars again after the replay point it left', async () => {
+    const { result, win } = await resultOf(
+      leaveReplayViaApi,
+      [null, WAIT_MS],
+      chart(running(40), fixture, { replay: { liveBarsMs: 150 } }),
+    );
+
+    expect(result).toEqual({ left: true, stopped: true, cleared: null, liveBars: true });
+    expect(replayOf(win).barsUpTo).toBeNull();
+  });
+
+  test('answers liveBars: false when the chart shows no bar after the replay point by the end of the wait', async () => {
+    // The bars of the replay, up to its point.
+    const { result: replayBars } = await resultOf(
+      leaveReplayViaApi,
+      [null, SHORT_WAIT_MS],
+      chart(running(40), fixture, { replay: { liveBarsMs: 1000 } }),
+    );
+    // No bar at all.
+    const { result: noBars } = await resultOf(
+      leaveReplayViaApi,
+      [null, SHORT_WAIT_MS],
+      chart(running(40, { barsHidden: true })),
+    );
+
+    expect(replayBars).toEqual({ left: true, stopped: true, cleared: null, liveBars: false });
+    expect(noBars).toEqual({ left: true, stopped: true, cleared: null, liveBars: false });
+  });
+
+  test('answers liveBars: null, without waiting, when the chart does not tell its bars or the replay its point', async () => {
+    const { result: noChart } = await resultOf(
+      leaveReplayViaApi,
+      [null, WAIT_MS],
+      chart((win) => {
+        running(40)(win);
+        const api = win.TradingViewApi;
+        if (api !== undefined) {
+          api.activeChart = () => {
+            throw new Error('No chart');
+          };
+        }
+      }),
+    );
+    const { result: noWidget } = await resultOf(
+      leaveReplayViaApi,
+      [null, WAIT_MS],
+      chart((win) => {
+        running(40)(win);
+        const api = win.TradingViewApi;
+        if (api !== undefined) {
+          api.activeChart = () => ({}) as ReturnType<typeof api.activeChart>;
+        }
+      }),
+    );
+    const { result: noPoint } = await resultOf(
+      leaveReplayViaApi,
+      [null, WAIT_MS],
+      chart(running(40, { shownIndex: null }), fixture, { replay: { liveBarsMs: 1000 } }),
+    );
+
+    expect(noChart).toEqual({ left: true, stopped: true, cleared: null, liveBars: null });
+    expect(noWidget).toEqual({ left: true, stopped: true, cleared: null, liveBars: null });
+    expect(noPoint).toEqual({ left: true, stopped: true, cleared: null, liveBars: null });
   });
 
   test('reads a replay mode TradingView does not tell as off', async () => {
@@ -1346,7 +1411,7 @@ describe('leaveReplayViaApi', () => {
       }),
     );
 
-    expect(result).toEqual({ left: false, stopped: true, cleared: null });
+    expect(result).toEqual({ left: false, stopped: true, cleared: null, liveBars: null });
     expect(callNames(win)).toEqual([]);
   });
 

@@ -137,7 +137,9 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
   let plan: ChartChangePlan | undefined;
   let skipReason: string | undefined;
   let settings: { timingMode: string | null; autoplayDelay: number | null } | undefined;
-  // How long the chart took to show its bars again after each replay_stop, null when it did not.
+  // How long after each replay_stop the chart showed its live bars again, the last bar of before the
+  // replay or a later one, null when it did not: TradingView keeps the bars of the replay for a
+  // moment after leaving it, and replay_stop waits for the live bars, so this is about 0.
   const barsBackAfterStopMs: (number | null)[] = [];
   // How long after the bars were back the visible range last changed, after each replay_stop.
   const viewSettledAfterStopMs: number[] = [];
@@ -281,6 +283,16 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
         throw new HarnessError(left.join('; '));
       }
     });
+    // The time of the last bar the chart shows, compared in memory and never printed; undefined
+    // when it shows none.
+    const lastBarTime = async (): Promise<number | undefined> => {
+      const result = await callTool(client, 'data_get_ohlcv', { count: 1 });
+      const bars = (
+        result.structuredContent as { data?: { bars?: { time: number }[] } } | undefined
+      )?.data?.bars;
+      return result.isError === true ? undefined : bars?.at(-1)?.time;
+    };
+    const liveLast = await lastBarTime();
     let failure: unknown;
     let failed = false;
     ownReplayMayRun = true;
@@ -299,17 +311,16 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
       if (stop.warnings.length > 0) {
         problems.push(`replay_stop warned: ${stop.warnings.join(' ')}`);
       }
-      // The chart loads its bars again once replay is left.
+      // The chart shows its live bars again once replay is left: the last bar of before the replay,
+      // or a later one, and not a bar of the replay, which the series keeps for a moment.
       const back = await pollUntil(
-        () => callTool(client, 'data_get_ohlcv', { count: 1 }),
-        (result) => result.isError !== true,
+        lastBarTime,
+        (time) => time !== undefined && (liveLast === undefined || time >= liveLast),
         { intervalMs: 250, timeoutMs: 20_000 },
       );
       barsBackAfterStopMs.push(back.satisfied ? back.waitedMs : null);
       if (!back.satisfied) {
-        problems.push(
-          `the chart had no bars 20 s after replay_stop (${String(codeOf(back.last))})`,
-        );
+        problems.push('the chart did not show its live bars again 20 s after replay_stop');
       }
       // How long TradingView keeps moving the view after replay is left: until the visible range
       // has stayed the same for 1.5 s.

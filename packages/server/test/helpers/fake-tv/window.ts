@@ -179,7 +179,8 @@ import { createFakeWebpack } from './webpack.js';
 // controller answers the availability of chart 0 by the id of its chart model (model().id()). An
 // intraday chart replays only on a plan with BAR_REPLAY_INTRADAY, which the plan modules serve as
 // well. state.replay holds replay, its settings and the saved session; the replay option sets how
-// long a start and a step take, or leaves a member out.
+// long a start and a step take and how long the bars of a replay stay after it is left, or leaves a
+// member out.
 //
 // One caveat about vm contexts: this object lives in the host realm. Errors it throws are not
 // instances of the Error of a context that evaluates page code, so page code must not rely on
@@ -260,8 +261,8 @@ export interface FakeTvOverrides {
   // How long a change of the layout and the data of a chart it adds take, and the codes of the
   // table of layouts, or the table, left out (charts.ts).
   charts?: FakeChartsOptions;
-  // How long a start of replay, its point and a step take, and the replay members left out
-  // (replay.ts).
+  // How long a start of replay, its point and a step take, how long the bars of a replay stay after
+  // it is left, and the replay members left out (replay.ts).
   replay?: FakeReplayOptions;
 }
 
@@ -726,9 +727,15 @@ export function createFakeTvWindow(
 
   // The bars a page sees: none while the series is flagged for an unknown symbol.
   // The bars the chart has, and those its main series holds, which are none for a moment after a
-  // start of replay (replay.ts).
+  // start of replay, and those of the replay for a moment after it is left (replay.ts).
   const known = (): readonly SyntheticBar[] => (state.symbolInvalid ? [] : history.bars());
-  const loaded = (): readonly SyntheticBar[] => (state.replay.barsHidden ? [] : known());
+  const loaded = (): readonly SyntheticBar[] => {
+    if (state.replay.barsHidden) {
+      return [];
+    }
+    const upTo = state.replay.barsUpTo;
+    return upTo === null ? known() : known().slice(0, upTo + 1);
+  };
   // The time points a page sees, which go with the bars.
   const points = (): readonly number[] => (loaded().length === 0 ? [] : publicTimes());
   // Their times in the time base of the rows.

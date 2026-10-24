@@ -396,6 +396,12 @@ export function stoppedEarlyWarning(stepped: number, bars: number, why: string):
   return `Stepped ${String(stepped)} of ${String(bars)} bars, then stopped: ${why}`;
 }
 
+// What replay_stop says when the chart still held the bars of the replay when it answered.
+export const NOT_LIVE_YET_WARNING =
+  'TradingView still showed the bars of the replay when replay_stop returned: data_get_ohlcv and ' +
+  'chart_get_state may read them until it shows the live bars again. Check data_get_ohlcv again ' +
+  'in a moment.';
+
 export const NOT_CLEARED_WARNING =
   'The replay TradingView saved in the layout when it was left could not be cleared: TradingView ' +
   'may offer to continue it the next time replay starts.';

@@ -18,6 +18,7 @@ import {
   endOfHistoryError,
   isDailyOrLonger,
   NOT_CLEARED_WARNING,
+  NOT_LIVE_YET_WARNING,
   notStartedError,
   outOfTimeWarning,
   replayEndedError,
@@ -493,8 +494,12 @@ export const replayStop = defineTool({
   title: 'Stop bar replay',
   description:
     'Leaves bar replay, and returns { active: false }: it stops autoplay first, then leaves replay ' +
-    'without the "Leave replay" dialog of TradingView, and the chart shows its live bars again; ' +
-    'the replay toolbar TradingView keeps open after replay reached its end is closed too. ' +
+    'without the "Leave replay" dialog of TradingView, and the chart shows its live bars again. ' +
+    'TradingView keeps the bars of the replay for a moment after it is left, so after a running ' +
+    'replay the call waits until the chart shows bars after the replay point, 5 s at most, and ' +
+    'says so in a warning when they did not come in time; after a replay that reached its end, ' +
+    'the last bar can take a second more to show. The replay toolbar TradingView keeps open ' +
+    'after replay reached its end is closed too. ' +
     'TradingView saves a replay left before its end in the layout, to offer to continue it in a ' +
     'dialog the next time replay starts: when the replay left is the one replay_start of this ' +
     'session started, known by the point it started at, the call clears that (TradingView counts ' +
@@ -518,7 +523,10 @@ export const replayStop = defineTool({
     return {
       data: { active: false },
       via: 'api',
-      warnings: result.cleared === false ? [NOT_CLEARED_WARNING] : [],
+      warnings: [
+        ...(result.cleared === false ? [NOT_CLEARED_WARNING] : []),
+        ...(result.liveBars === false ? [NOT_LIVE_YET_WARNING] : []),
+      ],
     };
   },
 });

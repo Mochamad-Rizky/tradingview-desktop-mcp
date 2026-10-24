@@ -661,7 +661,7 @@ describe('what replay_stop does with the replay this session started', () => {
 
   test('passes the start point of that replay to the page, and forgets it once replay stopped', async () => {
     const { run, call } = stopWith(1712620800, {
-      value: { left: true, stopped: true, cleared: true },
+      value: { left: true, stopped: true, cleared: true, liveBars: true },
     });
 
     expect(await call).toEqual({ data: { active: false }, via: 'api', warnings: [] });
@@ -671,7 +671,7 @@ describe('what replay_stop does with the replay this session started', () => {
 
   test('says so when that replay was left but what TradingView saved for it could not be cleared', async () => {
     const { run, call } = stopWith(1712620800, {
-      value: { left: true, stopped: true, cleared: false },
+      value: { left: true, stopped: true, cleared: false, liveBars: true },
     });
 
     expect((await call).warnings).toEqual([expect.stringMatching(/could not be cleared/)]);
@@ -679,17 +679,32 @@ describe('what replay_stop does with the replay this session started', () => {
   });
 
   test('warns of nothing when the replay left was another one, or there was none', async () => {
-    const other = stopWith(1712620800, { value: { left: true, stopped: true, cleared: null } });
-    const none = stopWith(null, { value: { left: false, stopped: true, cleared: null } });
+    const other = stopWith(1712620800, {
+      value: { left: true, stopped: true, cleared: null, liveBars: true },
+    });
+    const none = stopWith(null, {
+      value: { left: false, stopped: true, cleared: null, liveBars: null },
+    });
 
     expect((await other.call).warnings).toEqual([]);
     expect((await none.call).warnings).toEqual([]);
     expect(other.run.ctx.session.replayRunStartedBySession).toBeNull();
   });
 
+  test('says so when the chart still showed the bars of the replay when it answered', async () => {
+    const { call } = stopWith(1712620800, {
+      value: { left: true, stopped: true, cleared: false, liveBars: false },
+    });
+
+    expect((await call).warnings).toEqual([
+      expect.stringMatching(/could not be cleared/),
+      expect.stringMatching(/still showed the bars of the replay when replay_stop returned/),
+    ]);
+  });
+
   test('keeps that replay while it did not stop', async () => {
     const { run, call } = stopWith(1712620800, {
-      value: { left: true, stopped: false, cleared: false },
+      value: { left: true, stopped: false, cleared: false, liveBars: null },
     });
 
     expect((await failureOf(call)).code).toBe('TIMEOUT');
