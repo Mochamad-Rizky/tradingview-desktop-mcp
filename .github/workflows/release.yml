@@ -210,10 +210,12 @@ jobs:
           echo "TARBALL=$tarball" >> "$GITHUB_ENV"
           echo "Publishing $packed from $(basename "$tarball")."
 
-      # publishConfig in the tarball makes the package public with provenance. Through a trusted
-      # publisher npm needs no token. Otherwise NODE_AUTH_TOKEN carries the NPM_TOKEN secret, and it
-      # is set only when the secret has a value, so that an empty token never stands in for the
-      # OIDC exchange.
+      # publishConfig in the tarball makes the package public with provenance. npm tries the OIDC
+      # exchange of a trusted publisher first, and uses a token only when that fails. The .npmrc
+      # that registry-url wrote reads the token from NODE_AUTH_TOKEN, which setup-node v7 exports
+      # only when the workflow sets it (older majors exported a placeholder:
+      # https://github.com/actions/setup-node/releases/tag/v7.0.0). This step sets it to the
+      # NPM_TOKEN secret, and only when the secret has a value.
       - name: Publish
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
