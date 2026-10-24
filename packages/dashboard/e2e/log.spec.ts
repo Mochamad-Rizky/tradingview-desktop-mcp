@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { callId } from './fixtures.mjs';
 import { callRow, callRows, expect, signIn, test } from './support.ts';
 
@@ -48,37 +48,39 @@ test('a call shows in the log as it starts, and changes when it ends', async ({
   await expect(details).toContainText('"listId": "wl1"');
 });
 
-// How many of `rows` the log shows once the stream's replay is on the page: the stream says it is
-// live a moment before the events it replays have been drawn.
-async function settledCount(page: Page, rows: Locator): Promise<number> {
-  let last = -1;
-  for (let read = 0; read < 20; read += 1) {
-    const count = await rows.count();
-    if (count === last) {
-      return count;
-    }
-    last = count;
-    await page.waitForTimeout(250);
-  }
-  throw new Error('The log kept changing while nothing was called');
+// The calls the log shows that started at `since` (Unix milliseconds) or later, newest first, as
+// [tool, origin, status]. Each row holds the start of its call to the millisecond, so these are the
+// calls made after that moment, whatever the log held before it.
+function callsSince(page: Page, since: number): Promise<string[][]> {
+  return callRows(page).evaluateAll(
+    (rows, from) =>
+      rows
+        .filter((row) => {
+          const time = row.querySelector('time')?.getAttribute('datetime');
+          return time !== null && time !== undefined && Date.parse(time) >= from;
+        })
+        .map((row) =>
+          [...row.querySelectorAll('td')].slice(1, 4).map((cell) => cell.textContent.trim()),
+        ),
+    since,
+  );
 }
 
-// On the real server, whose log holds the calls of the tests before, so it counts.
+// The real server's log holds the calls of the tests before, so the test looks only at the calls
+// that started after it began. The server stamps a call when it starts it, on the same clock.
 test(
   'a call that another client makes shows in the log live',
   { tag: '@real' },
   async ({ page, server, api }) => {
     await openLog(page, server);
-    const rows = callRow(page, 'app_health').filter({ hasText: 'dashboard' });
-    const before = await settledCount(page, rows);
+    const since = Date.now();
 
     const result = await api.callTool('app_health');
     expect(result.isError).not.toBe(true);
 
-    await expect(rows).toHaveCount(before + 1);
+    // One row, however the start, the end and the stream's replay arrive.
+    await expect.poll(() => callsSince(page, since)).toEqual([['app_health', 'dashboard', 'OK']]);
     await expect(callRows(page).first()).toContainText('app_health');
-    await expect(callRows(page).first()).toContainText('dashboard');
-    await expect(callRows(page).first()).toContainText('OK');
   },
 );
 
