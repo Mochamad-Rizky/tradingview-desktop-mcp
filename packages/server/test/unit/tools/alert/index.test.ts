@@ -249,12 +249,12 @@ describe('alert_create within the time a client waits for one call', () => {
   }
 
   // A row of the alert the run creates, as TradingView lists it.
-  const createdRow = (active: boolean) => ({
+  const createdRow = (active: boolean, lastStopReason: string | null = null) => ({
     id: 9001,
     symbol: 'NASDAQ:AAPL',
     kinds: ['regular'],
     active,
-    lastStopReason: null,
+    lastStopReason,
     complexity: 'primitive',
     condition: 'cross',
     series: 'barset',
@@ -381,6 +381,30 @@ describe('alert_create within the time a client waits for one call', () => {
       .map(([waitMs]) => waitMs as number);
     expect(waits[0]).toBe(5000);
     expect(Math.min(...waits)).toBe(1000);
+  });
+
+  test('stops waiting, with no warning, when TradingView lists the new alert as stopped before it saw it active', async () => {
+    // A greater_than alert at a price the symbol is above already fires at once: TradingView lists
+    // it as not active, stopped by itself, without ever listing it as active.
+    const run = scriptedRun(
+      script([
+        [readAlerts, { sequence: [listing(), listing(createdRow(false, 'auto'))], takesMs: 100 }],
+      ]),
+      120_000,
+    );
+
+    const output = await createAlert(
+      { condition: 'greater_than', price: 150 },
+      run.ctx,
+      45_000,
+      () => run.clock.now,
+    );
+
+    expect(output.data).toMatchObject({ id: '9001', condition: 'greater_than' });
+    expect(output.warnings ?? []).toEqual([]);
+    // The check of the limit and one listing, which settles the wait.
+    expect(run.argsOf(readAlerts)).toHaveLength(2);
+    expect(run.ctx.session.createdAlertIds).toEqual(new Set(['9001']));
   });
 
   test('a bug in a listing of the wait is not taken for an inactive alert', async () => {

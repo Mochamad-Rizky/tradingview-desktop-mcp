@@ -280,6 +280,25 @@ describe('alert_create', () => {
     expectNothingElseTouched(win);
   });
 
+  test('alert_create answers without a warning when the new alert fires before TradingView lists it as active', async () => {
+    const { client, win } = await startHarness();
+    // A greater_than alert at a price the symbol is above already fires at once.
+    inspectFakeWindow(win).state.alerts.firesAtCreation = true;
+
+    const result = await callTool(client, 'alert_create', {
+      condition: 'greater_than',
+      price: 1,
+    });
+
+    expect(envelopeOf(result).ok).toBe(true);
+    expect(warningsOf(result)).toEqual([]);
+    // The check of the limit, and the one listing that finds the alert stopped by itself.
+    expect(calls(win, 'alertsRestApi.listAlerts')).toHaveLength(2);
+    const listed = alertsOf(await callTool(client, 'alert_list'));
+    expect(listed.map(({ id, status }) => [id, status])).toEqual([['9001', 'triggered']]);
+    expectNothingElseTouched(win);
+  });
+
   test('alert_create returns PLAN_LIMIT SERVER_SIDE_ALERTS when the active alerts fill the plan and sends nothing', async () => {
     const { client, win, session } = await startHarness(withAlerts(activeAlerts(3)));
 

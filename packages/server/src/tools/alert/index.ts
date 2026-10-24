@@ -237,9 +237,9 @@ export const alertCreate = defineTool({
     'A call keeps within 45 s, so that no client gives up on it and creates the alert again: ' +
     'when too little of that is left before the alert is sent, it fails with TIMEOUT and nothing ' +
     'is created. TradingView activates a new alert a moment after it creates it, so the call ' +
-    'answers once TradingView lists the alert as active, waiting 5 s at most; past that it ' +
-    'answers with a warning, the alert created all the same. alert_delete deletes what this ' +
-    'tool created without confirm.',
+    'answers once TradingView lists the alert as active, or as stopped when it fired at once ' +
+    '(alert_list tells), waiting 5 s at most; past that it answers with a warning, the alert ' +
+    'created all the same. alert_delete deletes what this tool created without confirm.',
   inputSchema: {
     symbol: z
       .string()
@@ -398,24 +398,26 @@ export async function createAlert(
       expirationIso: toIso(expiresOn),
     },
     via: 'internal',
-    warnings: outcome.activation.active ? [] : [notActiveYetWarning(outcome.activation.waitedMs)],
+    warnings: outcome.activation.settled ? [] : [notActiveYetWarning(outcome.activation.waitedMs)],
   };
 }
 
-// Waits, within limitMs, until TradingView lists the alert it just created (id) as active. Its
-// alerts server answers the creation first and activates the alert a moment later (about 1.5 s
-// seen), listing it as not active, with no stop reason, until then; alert_list would report it as
-// stopped. Each listing waits at most pageWait, and no longer than the wait has left, but at least
-// MIN_LISTING_WAIT_MS. An error of the app does not fail the call, since the alert exists and a
-// failed call would invite creating it again: a listing that fails or is refused counts as not
-// active yet.
+// Waits, within limitMs, until TradingView lists the alert it just created (id) as active, or as
+// stopped. Its alerts server answers the creation first and activates the alert a moment later
+// (about 1.5 s seen), listing it as not active, with no stop reason, until then; alert_list would
+// report it as stopped. An alert whose condition is met at once, such as greater_than at a price
+// the symbol is above already, can fire and stop before it was ever listed as active: a stop reason
+// settles the wait as well, and alert_list reports what became of it. Each listing waits at most
+// pageWait, and no longer than the wait has left, but at least MIN_LISTING_WAIT_MS. An error of the
+// app does not fail the call, since the alert exists and a failed call would invite creating it
+// again: a listing that fails or is refused counts as not settled yet.
 async function awaitActivation(
   page: PageHandle,
   id: string,
   pageWait: number,
   limitMs: number,
   now: () => number,
-): Promise<{ active: boolean; waitedMs: number }> {
+): Promise<{ settled: boolean; waitedMs: number }> {
   const wanted = Number(id);
   const startedAt = now();
   const listingWait = (): number =>
@@ -424,20 +426,22 @@ async function awaitActivation(
     async () => {
       try {
         const listing = await page.bridge.evaluateWithLib(readAlerts, [listingWait()]);
-        return 'refused' in listing
-          ? null
-          : (listing.alerts.find((row) => row.id === wanted)?.active ?? null);
+        const row =
+          'refused' in listing
+            ? undefined
+            : listing.alerts.find(({ id: rowId }) => rowId === wanted);
+        return row !== undefined && (row.active === true || row.lastStopReason !== null);
       } catch (error) {
         if (isTvMcpError(error)) {
-          return null;
+          return false;
         }
         throw error;
       }
     },
-    (active) => active === true,
+    (settled) => settled,
     { intervalMs: ACTIVATION_POLL_MS, timeoutMs: limitMs, now },
   );
-  return { active: result.satisfied, waitedMs: result.waitedMs };
+  return { settled: result.satisfied, waitedMs: result.waitedMs };
 }
 
 export const alertList = defineTool({

@@ -21,7 +21,10 @@ import type { FixtureAlert } from './fixture.js';
 //   The alerts server of the app activates a new alert a moment after it answers its creation
 //   (about 1.5 s seen) and lists it with active false and no stop reason until then: the next
 //   state.alerts.activationListings answers of listAlerts after a creation (0 by default) list the
-//   new alert that way, and later ones as it was sent.
+//   new alert that way, and later ones as it was sent. While state.alerts.firesAtCreation is set, a
+//   new alert fires at once, as one whose condition the price meets already, and is stored as
+//   fired and stopped by itself (active false, last_stop_reason auto) without ever listing as
+//   active.
 //   deleteAlerts deletes the ids the account has and passes over the others, and deletes nothing
 //   while state.alerts.deleteIgnored is set. The other methods of the client only record
 //   themselves.
@@ -69,6 +72,8 @@ export interface FakeAlertsState {
   deleteIgnored: boolean;
   // How many answers of listAlerts after a creation list the new alert as not active yet.
   activationListings: number;
+  // Whether a new alert fires at once and is stored as stopped by itself.
+  firesAtCreation: boolean;
 }
 
 export interface FakeAlertsDeps {
@@ -278,6 +283,7 @@ export function createFakeAlerts(
   state.errors = {};
   state.deleteIgnored = false;
   state.activationListings = 0;
+  state.firesAtCreation = false;
   // The created alerts the server has not activated yet, by id, with how many more answers of
   // listAlerts list them as not active.
   const inactiveFor = new Map<number, number>();
@@ -367,6 +373,13 @@ export function createFakeAlerts(
           complexity: 'primitive',
           ...fields,
         };
+        if (state.firesAtCreation && created.active === true) {
+          Object.assign(created, {
+            active: false,
+            last_stop_reason: 'auto',
+            last_fire_time: created.create_time ?? null,
+          });
+        }
         state.list.push(created);
         if (state.activationListings > 0 && created.active === true) {
           inactiveFor.set(created.alert_id as number, state.activationListings);

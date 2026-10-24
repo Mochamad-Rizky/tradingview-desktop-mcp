@@ -291,6 +291,23 @@ describe('the alerts REST client', () => {
     ]);
   });
 
+  test('a new alert fires at once and is stored as stopped by itself while the test says so', async () => {
+    const win = windowWith({ ...fixture, alerts: [] });
+    const api = apiOf(win);
+    inspectFakeWindow(win).state.alerts.firesAtCreation = true;
+    // It fires before it is activated, so it never lists as not active with no stop reason.
+    inspectFakeWindow(win).state.alerts.activationListings = 2;
+
+    const created = await api.createAlert(payload());
+
+    expect(created).toMatchObject({ active: false, last_stop_reason: 'auto' });
+    expect(created.last_fire_time).toBe(created.create_time);
+    for (let listing = 0; listing < 3; listing += 1) {
+      const [row] = await api.listAlerts();
+      expect(row).toMatchObject({ active: false, last_stop_reason: 'auto' });
+    }
+  });
+
   test('createAlert refuses a payload the server would not take', async () => {
     const win = windowWith();
     const api = apiOf(win);

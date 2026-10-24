@@ -600,7 +600,13 @@ export function createFakeTvWindow(
     // Filled with the drawings of the fixture once the bars are there (drawings.ts).
     drawings: { list: [], removed: [], experiment: null },
     // Filled with the alerts of the fixture (alerts.ts).
-    alerts: { list: [], errors: {}, deleteIgnored: false, activationListings: 0 },
+    alerts: {
+      list: [],
+      errors: {},
+      deleteIgnored: false,
+      activationListings: 0,
+      firesAtCreation: false,
+    },
     // Filled with the watchlists of the fixture (watchlists.ts).
     watchlists: {
       server: [],
