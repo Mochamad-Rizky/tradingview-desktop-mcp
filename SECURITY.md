@@ -103,18 +103,25 @@ puts a server that can control your TradingView on the internet.
   - A host without a port also matches `:443` and `:80`, and lets in pages from `https://<host>`
     only. A `host:port` matches that port only, and lets in pages from both `https://` and
     `http://` on it. Ports 80 and 443 count as no port.
-  - An entry with a path, a query, a user name or password, or a wildcard is refused, and so is an
-    `http://` URL without another port. Each name is matched exactly, so list every host you use.
+  - An entry with a path, a query, a fragment, a user name or password, a wildcard, a
+    percent-encoded character or port 0 is refused, and so is an `http://` URL without another
+    port. The host must be a DNS name, an IPv4 address or an IPv6 address in brackets; one
+    trailing dot is dropped. Each name is matched exactly, so list every host you use.
   - The token is still required on every MCP and API request: the extra hosts only add names that
     the `Host` and `Origin` checks accept. Keep the server on `127.0.0.1` and point the tunnel at
     it. The setting covers the dashboard too, whether it runs with the HTTP transport or next to
     stdio.
   - When extra hosts are set and the profile is not `readonly`, the server logs a warning at
     startup.
-- Prefer the `Authorization: Bearer <token>` header. A `/mcp/<token>` URL, which connector
-  interfaces without headers need, lands in the tunnel provider's request logs and dashboards as
-  well as in your own, so treat those logs as holding the token, and change the token if anyone
-  else can read them.
+- Prefer the `Authorization: Bearer <token>` header, which keeps the token out of URLs. A
+  `/mcp/<token>` URL, which connector interfaces without headers need, lands in the tunnel
+  provider's request logs and traffic inspector, and in the local logs of the tunnel agent on your
+  machine; the server redacts it in its own logs. Treat those logs as holding the token, and change
+  the token if anyone else can read them.
+- A tunnel that terminates TLS, as the usual ones do, sees every request in clear text, the
+  `Authorization` header included, and a traffic inspector that records headers shows it. The
+  header keeps the token out of URLs and request logs, but not away from the tunnel provider, so
+  use a provider you trust with it.
 - Stop the tunnel when you do not use it, and remove its host from `TV_MCP_ALLOWED_HOSTS`.
 
 ### JavaScript in the app
