@@ -139,7 +139,9 @@ describe.skipIf(!e2eEnabled())('the replay tools against TradingView Desktop', (
   let settings: { timingMode: string | null; autoplayDelay: number | null } | undefined;
   // How long after each replay_stop the chart showed its live bars again, the last bar of before the
   // replay or a later one, null when it did not: TradingView keeps the bars of the replay for a
-  // moment after leaving it, and replay_stop waits for the live bars, so this is about 0.
+  // moment after leaving it. replay_stop waits for the live bars after a running replay, so this is
+  // about 0 then; after a replay that reached its end, whose last bar can take a second more to
+  // show, it is about 1 s.
   const barsBackAfterStopMs: (number | null)[] = [];
   // How long after the bars were back the visible range last changed, after each replay_stop.
   const viewSettledAfterStopMs: number[] = [];
