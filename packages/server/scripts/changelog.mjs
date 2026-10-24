@@ -28,6 +28,33 @@ function escapeRegExp(text) {
 
 // A link reference definition, such as the version links at the end of the file.
 const DEFINITION = /^ {0,3}\[[^\]]+\]:\s*\S/;
+// The opening line of a fenced code block, and the fence it needs to close.
+const FENCE = /^ *(`{3,}|~{3,})/;
+
+// For each line, whether it belongs to a fenced code block (``` or ~~~), fences included, where a
+// line that looks like a heading is none.
+function codeLines(lines) {
+  let fence = null;
+  return lines.map((line) => {
+    const match = FENCE.exec(line);
+    if (fence === null) {
+      if (match !== null && !(match[1][0] === '`' && line.slice(match[0].length).includes('`'))) {
+        fence = match[1];
+        return true;
+      }
+      return false;
+    }
+    if (
+      match !== null &&
+      match[1][0] === fence[0] &&
+      match[1].length >= fence.length &&
+      line.slice(match[0].length).trim() === ''
+    ) {
+      fence = null;
+    }
+    return true;
+  });
+}
 
 /**
  * The section of `version`: `date` is its day (YYYY-MM-DD), or null while it is not dated, as in
@@ -36,8 +63,9 @@ const DEFINITION = /^ {0,3}\[[^\]]+\]:\s*\S/;
  */
 export function changelogSection(markdown, version) {
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+  const code = codeLines(lines);
   const heading = new RegExp(`^## \\[${escapeRegExp(version)}\\](.*)$`);
-  const start = lines.findIndex((line) => heading.test(line));
+  const start = lines.findIndex((line, index) => !code[index] && heading.test(line));
   if (start === -1) {
     return null;
   }
@@ -45,7 +73,9 @@ export function changelogSection(markdown, version) {
   const dated = /^ - (\S+)\s*$/.exec(rest);
   const date = dated !== null && isDay(dated[1]) ? dated[1] : null;
 
-  let end = lines.findIndex((line, index) => index > start && /^#{1,2} /.test(line));
+  let end = lines.findIndex(
+    (line, index) => index > start && !code[index] && /^#{1,2} /.test(line),
+  );
   if (end === -1) {
     end = lines.length;
   }

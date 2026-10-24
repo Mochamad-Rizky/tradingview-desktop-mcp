@@ -80,6 +80,56 @@ test('changelogSection returns the date and the notes of a version, or null with
   );
 });
 
+test('changelogSection ignores headings inside fenced code blocks', () => {
+  const markdown = [
+    '# Changelog',
+    '',
+    '## [0.2.0] - 2026-11-10',
+    '',
+    'The new heading looks like this:',
+    '',
+    '```md',
+    '## [0.1.0] - 2026-01-01',
+    '```',
+    '',
+    '~~~~',
+    '## Not a heading',
+    '```',
+    '## Still not a heading',
+    '~~~~',
+    '',
+    '- After the code.',
+    '',
+    '## [0.1.0] - 2026-10-30',
+    '',
+    '- The real one.',
+    '',
+  ].join('\n');
+
+  expect(changelogSection(markdown, '0.2.0')).toEqual({
+    date: '2026-11-10',
+    body: [
+      'The new heading looks like this:',
+      '',
+      '```md',
+      '## [0.1.0] - 2026-01-01',
+      '```',
+      '',
+      '~~~~',
+      '## Not a heading',
+      '```',
+      '## Still not a heading',
+      '~~~~',
+      '',
+      '- After the code.',
+    ].join('\n'),
+  });
+  expect(changelogSection(markdown, '0.1.0')).toEqual({
+    date: '2026-10-30',
+    body: '- The real one.',
+  });
+});
+
 test('the CHANGELOG of the repository has a section for the version of the package', () => {
   const section = changelogSection(readFileSync(ROOT_CHANGELOG, 'utf8'), pkg.version);
   expect(section).not.toBeNull();
