@@ -4,8 +4,7 @@ import { isTvMcpError } from '../../core/errors.js';
 import { inPlanLimitedTurn } from '../../core/tv/plan-limits.js';
 import { CHANGES_IDEMPOTENT, DESTRUCTIVE_IDEMPOTENT, READ_ONLY } from '../annotations.js';
 import { pageWaitMs } from '../chart/strategies.js';
-import { mapSearchResult } from '../data/mappers.js';
-import { searchSymbolsViaApi } from '../data/page.js';
+import { findListing, symbolSearchOn } from '../data/symbol-lookup.js';
 import { defineTool, type AnyToolDefinition, type ToolContext } from '../types.js';
 import {
   blankSymbolsError,
@@ -20,7 +19,6 @@ import {
   removalPlan,
   requireRoom,
   resolveAdditions,
-  shortName,
   signedOutError,
   STALE_STORE_WARNING,
   symbolsToSearch,
@@ -148,31 +146,19 @@ async function eachLimited<T>(
 }
 
 // The symbol each of `symbols` stands for as the symbol search of TradingView names it, the way
-// data_get_symbol_info finds a symbol: EXCHANGE:TICKER is the result of that name, and a ticker alone
-// the first result of that ticker. Null for one the search does not find. By the symbol given, upper
-// case. A ticker is searched for once, however many symbols name it.
+// data_get_symbol_info finds a symbol (findListing): EXCHANGE:TICKER is the result of that name,
+// searched for among the listings of its exchange, and a ticker alone the first result of that
+// ticker. Null for one the search does not find. By the symbol given, upper case. A search is sent
+// once, however many symbols need it.
 async function findListings(
   page: PageHandle,
   symbols: readonly string[],
 ): Promise<Map<string, string | null>> {
-  const byTicker = new Map<string, string[]>();
-  for (const symbol of symbols) {
-    const upper = symbol.toUpperCase();
-    const ticker = shortName(upper);
-    byTicker.set(ticker, [...(byTicker.get(ticker) ?? []), upper]);
-  }
+  const search = symbolSearchOn(page);
   const found = new Map<string, string | null>();
-  await eachLimited([...byTicker], SEARCHES_AT_ONCE, async ([ticker, named]) => {
-    const { items } = await page.bridge.evaluate(searchSymbolsViaApi, [ticker, null, null]);
-    const results = items.map(mapSearchResult);
-    for (const upper of named) {
-      const match = results.find((result) =>
-        upper.includes(':')
-          ? result.symbol.toUpperCase() === upper
-          : result.ticker.toUpperCase() === upper,
-      );
-      found.set(upper, match?.symbol ?? null);
-    }
+  const wanted = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))];
+  await eachLimited(wanted, SEARCHES_AT_ONCE, async (upper) => {
+    found.set(upper, (await findListing(search, upper))?.result.symbol ?? null);
   });
   return found;
 }

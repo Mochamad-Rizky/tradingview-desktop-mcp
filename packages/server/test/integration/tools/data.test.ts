@@ -4,6 +4,7 @@ import { createMcpServer } from '../../../src/server.js';
 import { startFakeCdpServer } from '../../helpers/fake-cdp/server.js';
 import { loadTargetsFixture } from '../../helpers/fake-cdp/targets.js';
 import { loadTvFixture, type TvStateFixture } from '../../helpers/fake-tv/fixture.js';
+import { crowdedListings, SEARCH_PAGE_SIZE } from '../../helpers/fake-tv/search.js';
 import { syntheticBars } from '../../helpers/fake-tv/synthetic-bars.js';
 import {
   createFakeTvWindow,
@@ -488,7 +489,27 @@ describe('data_get_symbol_info', () => {
     });
     expect(warningsOf(result)).toEqual([expect.stringMatching(/symbol search/)]);
     expect(inspectFakeWindow(win).callsTo('TradingViewApi.searchSymbols')).toEqual([
-      [{ text: 'IBM', serverHighlight: false }],
+      [{ text: 'IBM', serverHighlight: false, exchange: 'NYSE' }],
+    ]);
+  });
+
+  test('data_get_symbol_info finds EXCHANGE:TICKER beyond the first search page', async () => {
+    // More exchanges list the ticker than one page of the symbol search holds.
+    const win = createFakeTvWindow({
+      ...fixture,
+      search: { remaining: 0, symbols: crowdedListings('CROWD', SEARCH_PAGE_SIZE + 10) },
+    });
+    const { client } = await startHarness({ win });
+
+    const beyond = await callTool(client, 'data_get_symbol_info', { symbol: 'EX55:CROWD' });
+    const first = await callTool(client, 'data_get_symbol_info', { symbol: 'crowd' });
+
+    expect(dataOf(beyond)).toMatchObject({ source: 'search', symbol: 'EX55:CROWD' });
+    // A ticker alone still stands for its first listing, searched without an exchange.
+    expect(dataOf(first)).toMatchObject({ source: 'search', symbol: 'EX01:CROWD' });
+    expect(inspectFakeWindow(win).callsTo('TradingViewApi.searchSymbols')).toEqual([
+      [{ text: 'CROWD', serverHighlight: false, exchange: 'EX55' }],
+      [{ text: 'crowd', serverHighlight: false }],
     ]);
   });
 

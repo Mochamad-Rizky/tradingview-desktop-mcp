@@ -7,6 +7,7 @@ import {
   parseTvStateFixture,
   type TvStateFixture,
 } from '../../helpers/fake-tv/fixture.js';
+import { crowdedListings, SEARCH_PAGE_SIZE } from '../../helpers/fake-tv/search.js';
 import { syntheticBars } from '../../helpers/fake-tv/synthetic-bars.js';
 import type { FakeWebpackRequire } from '../../helpers/fake-tv/webpack.js';
 import {
@@ -1110,6 +1111,24 @@ describe('history, quote caches and symbol search', () => {
 
     expect(bats.symbols.map((item) => item.exchange)).toEqual(['Cboe BZX']);
     expect(crypto.symbols.map((item) => item.symbol)).toEqual(['BTCUSDT']);
+  });
+
+  test('searchSymbols answers one page and counts the matches beyond it as remaining', async () => {
+    const api = apiOf(
+      createFakeTvWindow({
+        ...fixture,
+        search: { remaining: 0, symbols: crowdedListings('CROWD', SEARCH_PAGE_SIZE + 10) },
+      }),
+    );
+
+    const page = await api.searchSymbols({ text: 'CROWD' });
+    const exchange = await api.searchSymbols({ text: 'CROWD', exchange: 'EX55' });
+
+    expect(page.symbols).toHaveLength(SEARCH_PAGE_SIZE);
+    expect(page.symbols.at(-1)?.exchange).toBe('EX50');
+    expect(page.symbols_remaining).toBe(10);
+    expect(exchange.symbols.map((item) => item.exchange)).toEqual(['EX55']);
+    expect(exchange.symbols_remaining).toBe(0);
   });
 
   test('searchSymbols rejects a type the app does not know, as the app does', async () => {

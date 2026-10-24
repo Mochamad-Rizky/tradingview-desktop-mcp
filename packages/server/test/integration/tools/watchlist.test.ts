@@ -11,6 +11,7 @@ import {
   type FixtureWatchlists,
   type TvStateFixture,
 } from '../../helpers/fake-tv/fixture.js';
+import { crowdedListings, SEARCH_PAGE_SIZE } from '../../helpers/fake-tv/search.js';
 import {
   createFakeTvWindow,
   inspectFakeWindow,
@@ -479,12 +480,16 @@ describe('watchlist_add and watchlist_add_bulk', () => {
     // One request, with each new symbol once.
     expect(added(win)).toEqual([[{ id: 101 }, ['NYSE:IBM', 'FX:EURUSD']]]);
     expect(serverSymbols(win)).toEqual([...FIXTURE_ENTRIES, 'NYSE:IBM', 'FX:EURUSD']);
-    // A ticker is searched for once, however many symbols name it.
+    // EXCHANGE:TICKER among the listings of its exchange, then without it when that finds none,
+    // and a ticker alone without an exchange. Searches run side by side, so their order varies.
     expect(
-      calls(win, 'TradingViewApi.searchSymbols').map(
-        ([options]) => (options as { text: string }).text,
-      ),
-    ).toEqual(['IBM', 'ZZZZ', 'EURUSD', 'AAPL']);
+      calls(win, 'TradingViewApi.searchSymbols')
+        .map(([options]) => {
+          const { text, exchange } = options as { text: string; exchange?: string };
+          return exchange === undefined ? text : `${exchange}:${text}`;
+        })
+        .sort(),
+    ).toEqual(['AAPL', 'FX:EURUSD', 'IBM', 'NASDAQ:ZZZZ', 'NYSE:IBM', 'ZZZZ']);
     expect(session.addedWatchlistSymbols).toEqual(
       new Map([['101', new Set(['NYSE:IBM', 'FX:EURUSD'])]]),
     );
@@ -530,6 +535,26 @@ describe('watchlist_add and watchlist_add_bulk', () => {
     expect(serverSymbols(win, 102)).toEqual(['NYSE:IBM', 'FX:EURUSD', 'NASDAQ:MSFT', 'BATS:AAPL']);
     expect(serverSymbols(win)).toEqual(FIXTURE_ENTRIES);
     expect(session.addedWatchlistSymbols.get('102')).toEqual(new Set(['NASDAQ:MSFT', 'BATS:AAPL']));
+  });
+
+  test('watchlist_add finds EXCHANGE:TICKER beyond the first search page', async () => {
+    // More exchanges list the ticker than one page of the symbol search holds.
+    const { client, win } = await startHarness({
+      ...fixture,
+      search: { remaining: 0, symbols: crowdedListings('CROWD', SEARCH_PAGE_SIZE + 10) },
+    });
+
+    const beyond = await callTool(client, 'watchlist_add', { symbol: 'EX55:CROWD' });
+    // A ticker alone still stands for its first listing.
+    const first = await callTool(client, 'watchlist_add', { symbol: 'CROWD' });
+
+    expect(dataOf(beyond)).toEqual({ listId: '101', symbol: 'EX55:CROWD', outcome: 'added' });
+    expect(dataOf(first)).toEqual({ listId: '101', symbol: 'EX01:CROWD', outcome: 'added' });
+    expect(calls(win, 'TradingViewApi.searchSymbols')).toEqual([
+      [{ text: 'CROWD', serverHighlight: false, exchange: 'EX55' }],
+      [{ text: 'CROWD', serverHighlight: false }],
+    ]);
+    expect(serverSymbols(win)).toEqual([...FIXTURE_ENTRIES, 'EX55:CROWD', 'EX01:CROWD']);
   });
 
   test('watchlist_add of a symbol the list holds already, by its full name or by its ticker alone, adds nothing', async () => {

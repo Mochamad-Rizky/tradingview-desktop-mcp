@@ -12,8 +12,7 @@ import { DESTRUCTIVE, READ_ONLY } from '../annotations.js';
 import { TIME_INPUT, timeInput } from '../chart/index.js';
 import { sameSymbol } from '../chart/mappers.js';
 import { CLIENT_SAFE_BUDGET_MS, pageWaitMs } from '../chart/strategies.js';
-import { mapSearchResult } from '../data/mappers.js';
-import { searchSymbolsViaApi } from '../data/page.js';
+import { findListing, symbolSearchOn } from '../data/symbol-lookup.js';
 import { listed } from '../drawing/mappers.js';
 import { defineTool, type AnyToolDefinition, type ToolContext, type ToolOutput } from '../types.js';
 import {
@@ -194,10 +193,7 @@ async function alertSymbol(
       },
     );
   }
-  const ticker = wanted.slice(wanted.lastIndexOf(':') + 1);
-  const { items } = await page.bridge.evaluate(searchSymbolsViaApi, [ticker, null, null]);
-  const upper = wanted.toUpperCase();
-  const match = items.map(mapSearchResult).find((result) => result.symbol.toUpperCase() === upper);
+  const match = (await findListing(symbolSearchOn(page), wanted))?.result;
   if (match === undefined) {
     throw new TvMcpError('INVALID_INPUT', `The symbol search of TradingView found no ${wanted}`, {
       hint:

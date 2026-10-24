@@ -28,6 +28,7 @@ import {
   requestHistory,
   searchSymbolsViaApi,
 } from './page.js';
+import { findListing, symbolSearchOn } from './symbol-lookup.js';
 
 // The tools that read market data (design spec 7, domain Market data): bars, quotes, symbol info,
 // symbol search and the top of the order book. Each of them only reads what the app already holds
@@ -475,19 +476,8 @@ export const dataGetSymbolInfo = defineTool({
       }
       return { data: toSymbolInfo('chart', chart.symbol, chart.info), via: 'internal' };
     }
-    // The ticker is searched for, and the exchange, when given, picks the listing among the
-    // results.
-    const ticker = wanted.slice(wanted.lastIndexOf(':') + 1);
-    const { items } = await searchSymbols(ctx, ticker, null, null);
-    const upper = wanted.toUpperCase();
-    const match = items
-      .map((item) => ({ item, result: mapSearchResult(item) }))
-      .find(({ result }) =>
-        wanted.includes(':')
-          ? result.symbol.toUpperCase() === upper
-          : result.ticker.toUpperCase() === upper,
-      );
-    if (match === undefined) {
+    const match = await findListing(symbolSearchOn(page), wanted);
+    if (match === null) {
       throw new TvMcpError('NOT_AVAILABLE', `The symbol search of TradingView found no ${wanted}`, {
         hint:
           'Check the spelling, or find the symbol with data_search_symbols and give it in the ' +

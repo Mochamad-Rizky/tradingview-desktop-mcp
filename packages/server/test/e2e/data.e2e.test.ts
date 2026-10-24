@@ -1,5 +1,6 @@
 import type { SeriesLike, TvWindow } from '../../src/core/tv/tv-window.js';
-import { readHistory } from '../../src/tools/data/page.js';
+import { mapSearchResult } from '../../src/tools/data/mappers.js';
+import { readHistory, searchSymbolsViaApi } from '../../src/tools/data/page.js';
 import { pollUntil } from '../../src/utils/poll.js';
 import { toIso } from '../../src/utils/time.js';
 import { callTool } from '../helpers/mcp-client.js';
@@ -344,6 +345,27 @@ describe.skipIf(!e2eEnabled())('the market data tools against TradingView Deskto
     observe('symbol search items for AAPL', shapes);
     expect(shapes.items).toBeGreaterThan(0);
     expect(shapes.markup).toBe(false);
+  });
+
+  // The tools search EXCHANGE:TICKER among the listings of its exchange, and again without it when
+  // that finds nothing. Whether the filter knows a listing by its prefix is only observed.
+  test('the exchange filter of the symbol search keeps the listings of that exchange', async () => {
+    const page = await server().ctx.connection.chartPage();
+    const symbolsIn = async (exchange: string): Promise<string[]> =>
+      (await page.bridge.evaluate(searchSymbolsViaApi, ['AAPL', exchange, null])).items.map(
+        (item) => mapSearchResult(item).symbol,
+      );
+
+    const nasdaq = await symbolsIn('NASDAQ');
+    const bats = await symbolsIn('BATS');
+
+    observe('symbol search filtered by exchange', {
+      nasdaqItems: nasdaq.length,
+      nasdaqOthers: nasdaq.filter((symbol) => !symbol.startsWith('NASDAQ:')).length,
+      batsItems: bats.length,
+      batsByPrefix: bats.includes('BATS:AAPL'),
+    });
+    expect(nasdaq.includes('NASDAQ:AAPL'), 'NASDAQ:AAPL is among the NASDAQ listings').toBe(true);
   });
 
   test('the top of the book of the chart symbol', async () => {

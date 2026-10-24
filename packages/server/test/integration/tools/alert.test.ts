@@ -11,6 +11,7 @@ import {
   type FixtureAlert,
   type TvStateFixture,
 } from '../../helpers/fake-tv/fixture.js';
+import { crowdedListings, SEARCH_PAGE_SIZE } from '../../helpers/fake-tv/search.js';
 import {
   createFakeTvWindow,
   inspectFakeWindow,
@@ -542,7 +543,7 @@ describe('alert_create', () => {
       price: 200,
     });
     expect(calls(win, 'TradingViewApi.searchSymbols')).toEqual([
-      [{ text: 'msft', serverHighlight: false }],
+      [{ text: 'msft', serverHighlight: false, exchange: 'NASDAQ' }],
     ]);
     expect(sentPayloads(win)[0]).toMatchObject({
       symbol: 'NASDAQ:MSFT',
@@ -552,6 +553,23 @@ describe('alert_create', () => {
         { type: 'cross_up', series: [{ type: 'barset' }, { type: 'value', value: 200 }] },
       ],
     });
+  });
+
+  test('alert_create finds EXCHANGE:TICKER beyond the first search page', async () => {
+    // More exchanges list the ticker than one page of the symbol search holds.
+    const { client, win } = await startHarness({
+      ...fixture,
+      search: { remaining: 0, symbols: crowdedListings('CROWD', SEARCH_PAGE_SIZE + 10) },
+    });
+
+    const result = await callTool(client, 'alert_create', {
+      symbol: 'EX55:CROWD',
+      condition: 'crossing',
+      price: 10,
+    });
+
+    expect(dataOf(result)).toMatchObject({ symbol: 'EX55:CROWD' });
+    expect(sentPayloads(win)[0]).toMatchObject({ symbol: 'EX55:CROWD' });
   });
 
   test('an unknown symbol is INVALID_INPUT, and nothing is listed or sent', async () => {
