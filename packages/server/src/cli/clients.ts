@@ -144,20 +144,21 @@ function stdioEntry(options: ClientConfigOptions): { command: string; args: stri
 const KEEP_OTHERS = 'keeping any other servers in mcpServers';
 
 // https://modelcontextprotocol.io/docs/develop/connect-local-servers gives the file for macOS and
-// Windows, with npx started directly on both. The Linux file is from the discovery table of
+// Windows, with npx started directly on both. The Linux app is a beta for Ubuntu and Debian
+// (https://code.claude.com/docs/en/desktop-linux); its file is from the discovery table of
 // https://code.visualstudio.com/docs/agents/reference/mcp-configuration
 function claudeDesktop(options: ClientConfigOptions): ClientConfig {
-  const files: Record<'darwin' | 'win32' | 'linux', string> = {
-    darwin: '~/Library/Application Support/Claude/claude_desktop_config.json',
-    win32: '%APPDATA%\\Claude\\claude_desktop_config.json',
-    linux: '~/.config/Claude/claude_desktop_config.json',
-  };
   const { platform } = options;
-  const file = platform === 'darwin' || platform === 'win32' ? files[platform] : files.linux;
+  const where =
+    platform === 'darwin'
+      ? 'Put this in ~/Library/Application Support/Claude/claude_desktop_config.json'
+      : platform === 'win32'
+        ? 'Put this in %APPDATA%\\Claude\\claude_desktop_config.json'
+        : 'Claude Desktop for Linux is a beta for Ubuntu and Debian: put this in ~/.config/Claude/claude_desktop_config.json';
   return {
     snippet: jsonSnippet({ mcpServers: { [SERVER_NAME]: stdioEntry(options) } }),
     notes: [
-      `Put this in ${file}, ${KEEP_OTHERS}. In Claude Desktop, Settings > Developer > Edit Config opens the file.`,
+      `${where}, ${KEEP_OTHERS}. In Claude Desktop, Settings > Developer > Edit Config opens the file.`,
       'Then quit Claude Desktop completely and open it again.',
       ...jsonCmdFallback(options),
     ],

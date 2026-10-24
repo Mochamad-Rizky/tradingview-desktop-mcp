@@ -293,6 +293,17 @@ test.each<[ClientId, string, string, string]>([
   expect(notesOf(client, { platform: 'freebsd' })[0]).toContain(linux);
 });
 
+// Anthropic ships Claude Desktop for Linux as a beta for Ubuntu and Debian
+// (https://code.claude.com/docs/en/desktop-linux), so the Linux notes say so.
+test('the Linux notes of claude-desktop say that its Linux app is a beta', () => {
+  expect(notesOf('claude-desktop', { platform: 'linux' })[0]).toMatch(
+    /^Claude Desktop for Linux is a beta for Ubuntu and Debian: put this in ~\/\.config\/Claude\//,
+  );
+  for (const platform of ['darwin', 'win32'] as const) {
+    expect(notesOf('claude-desktop', { platform })[0]).not.toContain('beta');
+  }
+});
+
 test('the notes say what to do next for each client', () => {
   expect(notesOf('claude-desktop')[1]).toContain('quit Claude Desktop');
   expect(notesOf('claude-code')[0]).toContain('--scope user');
