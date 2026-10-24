@@ -66,7 +66,8 @@ jobs:
         run: pnpm --filter tradingview-desktop-mcp pack --pack-destination "$RUNNER_TEMP/package"
 
       # What a user installs must hold the bundle, its types, the dashboard and the documents, and
-      # none of the sources or tests.
+      # nothing else: only package.json, README.md, LICENSE, CHANGELOG.md and dist/ at the top, and
+      # no source map anywhere.
       - name: Check the contents of the tarball
         run: |
           tarball=$(find "$RUNNER_TEMP/package" -name '*.tgz')
@@ -80,13 +81,20 @@ jobs:
               status=1
             fi
           done
-          for prefix in package/src/ package/test/; do
-            extra=$(awk -v prefix="$prefix" 'index($0, prefix) == 1' <<< "$listing")
-            if [ -n "$extra" ]; then
-              echo "::error::The tarball must not contain $prefix, but holds: $(tr '\n' ' ' <<< "$extra")"
-              status=1
-            fi
-          done
+          while IFS= read -r path; do
+            case "$path" in
+              *.map)
+                echo "::error::The tarball must not contain the source map $path."
+                status=1
+                ;;
+              package/ | package/package.json | package/README.md | package/LICENSE | \
+                package/CHANGELOG.md | package/dist/*) ;;
+              *)
+                echo "::error::The tarball must not contain $path: only package.json, README.md, LICENSE, CHANGELOG.md and dist/ belong in it."
+                status=1
+                ;;
+            esac
+          done <<< "$listing"
           exit "$status"
 
       - name: Unit tests
