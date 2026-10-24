@@ -552,7 +552,31 @@ test('GET /api/events with an id of another boot announces a gap, then replays t
   const client = await stream(port, { lastEventId: `${otherBoot}-2` });
 
   expect(await firstEvents(client, 4)).toEqual(['gap', ...ids(events.bootId, 1, 2, 3)]);
-  expect(client.events()[0]).toEqual({ event: 'gap', data: {} });
+  expect(client.events()[0]).toEqual({ event: 'gap', id: `${events.bootId}-3`, data: {} });
+});
+
+// The id the client had means nothing to this bus, so the gap gives it one: the newest seq of this
+// bus, or 0 before its first event. A client whose replay is empty resumes from that id, and hears
+// of no gap again.
+test('GET /api/events gives a gap the id of the newest event of this bus, or of none', async () => {
+  const { port, events } = await serve();
+  const otherBoot = events.bootId === '0badcafe' ? 'deadbeef' : '0badcafe';
+
+  const restarted = await stream(port, { lastEventId: `${otherBoot}-7` });
+  expect(await firstEvents(restarted, 1)).toEqual(['gap']);
+  expect(restarted.events()[0]).toEqual({ event: 'gap', id: `${events.bootId}-0`, data: {} });
+
+  emitCalls(events, 2);
+  const withoutReplay = await stream(port, {
+    path: '/api/events?limit=0',
+    lastEventId: `${otherBoot}-7`,
+  });
+  const resumed = await stream(port, { lastEventId: `${events.bootId}-0` });
+  emitCalls(events, 1);
+
+  expect(await firstEvents(withoutReplay, 2)).toEqual(['gap', ...ids(events.bootId, 3)]);
+  expect(withoutReplay.events()[0]).toEqual({ event: 'gap', id: `${events.bootId}-2`, data: {} });
+  expect(await firstEvents(resumed, 3)).toEqual(ids(events.bootId, 1, 2, 3));
 });
 
 test.each([

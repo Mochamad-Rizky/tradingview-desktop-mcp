@@ -43,6 +43,11 @@ export class ToolEventBus {
   // The seq of the last event emitted; 0 before the first.
   #lastSeq = 0;
 
+  // The seq of the newest event this bus has given, kept or not; 0 before the first.
+  get lastSeq(): number {
+    return this.#lastSeq;
+  }
+
   // The seq is the bus's to give: one that the emitter passes along is replaced.
   emit(e: Omit<ToolCallEvent, 'seq'>): ToolCallEvent {
     this.#lastSeq += 1;

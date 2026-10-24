@@ -118,6 +118,17 @@ test('the bus numbers events from 1 and after() returns the newer ones oldest fi
   expect(bus.after(5)).toEqual({ events: [], gap: false });
 });
 
+test('lastSeq is the seq of the newest event, and 0 before the first, beyond what the buffer keeps', () => {
+  const bus = new ToolEventBus();
+  expect(bus.lastSeq).toBe(0);
+
+  emitMany(bus, 3);
+  expect(bus.lastSeq).toBe(3);
+  emitMany(bus, 600);
+  expect(bus.lastSeq).toBe(603);
+  expect(bus.recent().at(-1)?.seq).toBe(603);
+});
+
 test('the bus numbers every event itself, whatever seq the emitter passes', () => {
   const bus = new ToolEventBus();
   // A full event passed on, with the seq of another bus: the seq is this bus's to give.

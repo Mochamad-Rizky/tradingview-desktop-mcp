@@ -304,8 +304,12 @@ export function createDashboardApi(deps: DashboardApiDeps): DashboardApi {
     // From the replay to the subscription nothing waits, so no event can fall between them. A
     // stream that closes on the way (its client left, or fell behind) stops the replay, and its
     // close listener takes the subscription back at once.
+    //
+    // The gap carries an id of this bus, the newest seq it gave (0 before the first): the id the
+    // client sent means nothing here, and with no replay after the gap, such as after a restart, it
+    // would resume from that id again and hear of the same gap.
     if (replay.gap) {
-      stream.send('gap', {});
+      stream.send('gap', {}, streamId(events.bootId, events.lastSeq));
     }
     for (const event of replay.events) {
       if (!stream.send('tool', event, streamId(events.bootId, event.seq))) {

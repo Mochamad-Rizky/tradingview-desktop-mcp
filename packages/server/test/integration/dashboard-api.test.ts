@@ -457,7 +457,7 @@ test('GET /api/events with Last-Event-ID replays only newer events and announces
   await expect.poll(() => behind.events().length).toBe(501);
 
   expect(received(behind)).toEqual(['gap', ...ids(events.bootId, ...range(3, 502))]);
-  expect(behind.events()[0]).toEqual({ event: 'gap', data: {} });
+  expect(behind.events()[0]).toEqual({ event: 'gap', id: `${events.bootId}-502`, data: {} });
 });
 
 test('GET /api/events with a Last-Event-ID of an earlier server process announces a gap and replays the recent events', async () => {
