@@ -6,10 +6,11 @@ import { anchorOf } from '../../scripts/docs/anchor.js';
 // link into a Markdown file, this one included, must name one of its headings. Fenced code is left
 // out, because the links in it are examples.
 
+// A fenced code block of a Markdown document.
+export const FENCED_CODE = /^```[\s\S]*?^```/gm;
+
 function proseOfFile(path: string): string {
-  return readFileSync(path, 'utf8')
-    .replaceAll('\r\n', '\n')
-    .replaceAll(/^```[\s\S]*?^```/gm, '');
+  return readFileSync(path, 'utf8').replaceAll('\r\n', '\n').replaceAll(FENCED_CODE, '');
 }
 
 export function headingAnchors(path: string): string[] {

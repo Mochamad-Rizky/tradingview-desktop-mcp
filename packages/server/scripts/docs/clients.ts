@@ -1,7 +1,8 @@
-import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CLIENT_IDS, renderClientConfig, type ClientId } from '../../src/cli/clients.js';
 import { runScript } from '../re/session.js';
+import { isEntryPoint } from './entry-point.js';
 
 // Fills the configuration blocks of the client tutorials (`pnpm docs:clients`). Each block holds the
 // snippet and the notes that `config <client>` prints, so a tutorial cannot say anything else. Only
@@ -105,21 +106,7 @@ function main(): void {
   }
 }
 
-// Whether this module is the script that node was started with and not a module that a test
-// imports. Both paths are resolved, so a link in the path does not keep the script from running.
-function isEntryPoint(): boolean {
-  const entry = process.argv[1];
-  if (entry === undefined) {
-    return false;
-  }
-  try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isEntryPoint()) {
+if (isEntryPoint(import.meta.url)) {
   runScript(() => {
     main();
     return Promise.resolve();

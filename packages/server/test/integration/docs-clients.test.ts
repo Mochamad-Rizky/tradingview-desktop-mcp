@@ -13,7 +13,7 @@ import { CLIENT_IDS, renderClientConfig } from '../../src/cli/clients.js';
 import { renderHelp } from '../../src/cli/output.js';
 import { buildLaunchArgs } from '../../src/core/launcher/launch.js';
 import { ERROR_CODES } from '../../src/core/errors.js';
-import { brokenLinks, linksOf } from '../helpers/markdown-links.js';
+import { brokenLinks, FENCED_CODE, linksOf } from '../helpers/markdown-links.js';
 
 // The tutorials in docs/clients/ hold the configuration snippet of each client between markers, which
 // `pnpm docs:clients` fills from the code that `config <client>` runs. These tests fail when a
@@ -46,7 +46,7 @@ function blocksOf(text: string): { client: string; platform: string; inner: stri
 
 // The page with its generated blocks and its fenced code taken out, for tests about the prose.
 function proseOf(text: string): string {
-  return text.replaceAll(BLOCK, '').replaceAll(/^```[\s\S]*?^```/gm, '');
+  return text.replaceAll(BLOCK, '').replaceAll(FENCED_CODE, '');
 }
 
 function differs(client: (typeof CLIENT_IDS)[number]): boolean {
@@ -107,7 +107,7 @@ describe('docs/clients', () => {
   test.each(CLIENT_IDS)('a generated note holds no bare <placeholder>: %s', (client) => {
     for (const platform of ['darwin', 'win32'] as const) {
       const notes = renderConfigBlock(client, platform)
-        .replaceAll(/^```[\s\S]*?^```/gm, '')
+        .replaceAll(FENCED_CODE, '')
         .replaceAll(/`[^`]*`/g, '');
       expect(notes).not.toMatch(/<[A-Za-z_][\w-]*>/);
     }

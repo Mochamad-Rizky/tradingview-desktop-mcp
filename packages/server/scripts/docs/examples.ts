@@ -1,4 +1,4 @@
-import { realpathSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -13,6 +13,7 @@ import { createFakeTvWindow } from '../../test/helpers/fake-tv/window.js';
 import { callTool, connectInMemoryClient } from '../../test/helpers/mcp-client.js';
 import { quietLogger, refusingLauncher, testConfig } from '../../test/helpers/tool-context.js';
 import { connectToApp, runScript } from '../re/session.js';
+import { isEntryPoint } from './entry-point.js';
 import { SCENARIOS, type Scenario, type ScenarioStep } from './scenarios.js';
 
 // Generates docs/examples.md (`pnpm docs:examples`): every scenario of scenarios.ts runs against the
@@ -491,21 +492,6 @@ async function main(): Promise<void> {
   process.stdout.write(`Wrote ${EXAMPLES_PATH} (${String(runs.length)} scenarios)\n`);
 }
 
-// Whether this module is the script that node was started with (`pnpm docs:examples`) and not a
-// module that a test imports. Both paths are resolved, so a link in the path does not keep the
-// script from running.
-function isEntryPoint(): boolean {
-  const entry = process.argv[1];
-  if (entry === undefined) {
-    return false;
-  }
-  try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isEntryPoint()) {
+if (isEntryPoint(import.meta.url)) {
   runScript(main);
 }

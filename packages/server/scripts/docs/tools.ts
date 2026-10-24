@@ -1,10 +1,11 @@
-import { realpathSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { allTools } from '../../src/tools/index.js';
 import { toolInputJsonSchema, toolProfiles } from '../../src/tools/schema-export.js';
 import type { AnyToolDefinition, Domain } from '../../src/tools/types.js';
 import type { JsonObject, JsonValue } from '../../src/utils/json.js';
 import { anchorOf } from './anchor.js';
+import { isEntryPoint } from './entry-point.js';
 
 // Generates docs/tools.md (`pnpm docs:tools`): every tool with its title, hints, profiles,
 // description and inputs, written from the tool definitions, so the page cannot say anything the
@@ -220,20 +221,6 @@ function main(): void {
   process.stdout.write(`Wrote ${TOOLS_PATH} (${String(allTools.length)} tools)\n`);
 }
 
-// Whether this module is the script that node was started with (`pnpm docs:tools`) and not a
-// module that a test imports.
-function isEntryPoint(): boolean {
-  const entry = process.argv[1];
-  if (entry === undefined) {
-    return false;
-  }
-  try {
-    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isEntryPoint()) {
+if (isEntryPoint(import.meta.url)) {
   main();
 }
