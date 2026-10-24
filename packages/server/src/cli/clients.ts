@@ -302,7 +302,10 @@ function chatgpt(options: ClientConfigOptions): ClientConfig {
 
 // https://developers.openai.com/api/reference/resources/responses/methods/create: the mcp tool
 // takes server_label, server_url, headers ("Optional HTTP headers to send to the MCP server. Use
-// for authentication") and require_approval.
+// for authentication") and require_approval. Its authorization field, which the guide at
+// https://developers.openai.com/api/docs/guides/tools-connectors-mcp prefers, is documented only as
+// an OAuth access token from a flow the application runs, not as the value of an Authorization
+// header sent to any server, so the token goes in headers, which say exactly what is sent.
 function openaiApi(options: ClientConfigOptions): ClientConfig {
   const host = options.url ?? HOST_PLACEHOLDER;
   return {
