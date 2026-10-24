@@ -226,6 +226,10 @@ $env:TV_MCP_AUTH_TOKEN = "<the token>"
 
 Any random secret works. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` prints one on every system, and `openssl rand -hex 32` on macOS and Linux.
 
+### A symbol the chart shows is not found
+
+This is a known limitation. A chart can show a symbol through the exchange of its data feed, for example `BATS:AAPL` for `NASDAQ:AAPL`, and the symbol search of TradingView, which the data, watchlist and alert tools use for a symbol that is not on the chart, may not find that name. `data_get_symbol_info` then answers `NOT_AVAILABLE`, `watchlist_add` and `alert_create` answer `INVALID_INPUT`, and `watchlist_add_bulk` skips the symbol as unknown. Give the name of the listing instead: `data_get_symbol_info` reports it as `proName` while the symbol is on the chart (`NASDAQ:AAPL` here), and `data_search_symbols` reports each symbol as `EXCHANGE:TICKER`.
+
 ### Logs
 
 The server writes its log to stderr. With the stdio transport, stdout carries only MCP messages, so the client shows stderr in its own MCP log. To see more, add `--log-level debug` to the arguments the client passes, after the package name, or, in a terminal, set `TV_MCP_LOG_LEVEL=debug`. The levels run from `trace` to `fatal`, and `silent` turns the log off. In a terminal:

@@ -37,10 +37,11 @@ export function symbolSearchOn(page: PageHandle): SymbolSearch {
 // The listing `wanted` stands for, as the symbol search names it, or null when the search does not
 // find it. EXCHANGE:TICKER is the result of that name, searched for among the listings of its
 // exchange, so that a listing beyond the first page of a ticker that many exchanges list is found;
-// and searched for again without the exchange when that finds none, since the filter of the app
-// may know a listing by its exchange where the name has its prefix (BATS:AAPL is listed on Cboe
-// BZX). A ticker alone is its first result, searched for without an exchange. The ticker is sent
-// as given, and the exchange in capitals, as TradingView writes exchanges.
+// and searched for again without the exchange when that finds none, in case the filter of the app
+// knows a listing by another exchange than the prefix of its name. A name the chart shows through
+// the exchange of its data feed, such as BATS:AAPL for NASDAQ:AAPL, was found neither way on the
+// app. A ticker alone is its first result, searched for without an exchange. The ticker is sent as
+// given, and the exchange in capitals, as TradingView writes exchanges.
 export async function findListing(
   search: SymbolSearch,
   wanted: string,
