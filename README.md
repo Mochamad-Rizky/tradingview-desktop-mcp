@@ -1,7 +1,9 @@
 # tradingview-desktop-mcp
 
+[![npm](https://img.shields.io/npm/v/tradingview-desktop-mcp)](https://www.npmjs.com/package/tradingview-desktop-mcp)
 [![CI](https://github.com/Mochamad-Rizky/tradingview-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Mochamad-Rizky/tradingview-mcp/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Mochamad-Rizky/tradingview-mcp/graph/badge.svg)](https://codecov.io/gh/Mochamad-Rizky/tradingview-mcp)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 An [MCP](https://modelcontextprotocol.io) server that lets AI assistants read and control the
 TradingView Desktop app on your own machine. It drives the app you are already logged in to over the
@@ -9,55 +11,105 @@ Chrome DevTools Protocol, through the debug port the app opens when it starts wi
 `--remote-debugging-port`. It only automates the local app: it does not log in for you, get around
 plan limits, or call TradingView's servers.
 
-> **Work in progress.** This is an early foundation, not a release. Nothing is published to npm yet,
-> and tool names and options may still change. The server offers app tools (launch, health,
-> discovery, interface state, plan limits, reconnect), chart tools (state, symbol, timeframe, chart
-> type, visible range, scrolling), market data tools (bars, quotes, symbol info and search),
-> indicator tools (list, search, add, remove, inputs, visibility, values), Pine Script tools (the
-> editor and saved scripts, compile, smart compile with rule-based fixes, offline analysis, the
-> console, and the lines, labels, boxes and tables that scripts draw), Strategy Tester tools
-> (results, trades, equity), drawing, alert and watchlist tools, layout, multi-chart and tab tools,
-> bar replay, screenshots, low-level interface tools (click, hover, type, keys, scroll, find,
-> panels, fullscreen, and JavaScript in the chart page when you allow it) and `batch_run`, which
-> runs several tools in one call. It also offers resources (the app health, the chart state and
-> bars, the Pine source and the last compile result, the strategy report, the active watchlist),
-> each along with the tool it shares its data with, and five prompts for common jobs. A web
-> dashboard shows the calls live and runs tools by hand (see [Dashboard](#dashboard)). It has been
-> tried on macOS; Windows and Linux are best effort.
+> **Status: pre-1.0.** Tool names and options may still change before 1.0. The package is published
+> to npm once the maintainer releases 0.1.0; until then the badge above shows no version, and you
+> can run the server [from source](#quick-start-from-source). It has been tried on macOS; Windows
+> and Linux are best effort.
 
-## Quick start from source
+The server offers app tools (launch, health, discovery, interface state, plan limits, reconnect),
+chart tools (state, symbol, timeframe, chart type, visible range, scrolling), market data tools
+(bars, quotes, symbol info and search), indicator tools (list, search, add, remove, inputs,
+visibility, values), Pine Script tools (the editor and saved scripts, compile, smart compile with
+rule-based fixes, offline analysis, the console, and the lines, labels, boxes and tables that
+scripts draw), Strategy Tester tools (results, trades, equity), drawing, alert and watchlist tools,
+layout, multi-chart and tab tools, bar replay, screenshots, low-level interface tools (click, hover,
+type, keys, scroll, find, panels, fullscreen, and JavaScript in the chart page when you allow it)
+and `batch_run`, which runs several tools in one call. It also offers resources (the app health,
+the chart state and bars, the Pine source and the last compile result, the strategy report, the
+active watchlist), each along with the tool it shares its data with, and five prompts for common
+jobs. A web dashboard shows the calls live and runs tools by hand (see [Dashboard](#dashboard)).
+
+Contents: [Install](#install), [Connect your AI app](#connect-your-ai-app),
+[Remote clients and tunnels](#remote-clients-and-tunnels), [Quick start from source](#quick-start-from-source),
+[Use it](#use-it), [Troubleshooting](#troubleshooting), [Dashboard](#dashboard),
+[Contributing](#contributing).
+
+## Install
 
 You need:
 
 - TradingView Desktop, installed and logged in.
-- Node.js 24 to build the server (`nvm use` reads `.nvmrc`) and [pnpm](https://pnpm.io), whose
-  version `package.json` pins.
-- Node.js 20.19 or newer to run the built server, which Node.js 24 covers.
+- Node.js 20.19 or newer, which provides `npx`.
 
-Build the server:
+Nothing else is installed: the clients below start the server with `npx -y tradingview-desktop-mcp`,
+which fetches the package on first use. Start TradingView with its debug port. The `launch` command
+finds the app and starts it that way:
+
+```sh
+npx -y tradingview-desktop-mcp launch
+```
+
+TradingView allows only one instance. If it is already running without the debug port, `launch`
+stops and says so; `launch --restart` quits it politely and starts it again with the port, and
+TradingView may ask you to save changes first. Check that the server can reach the app:
+
+```sh
+npx -y tradingview-desktop-mcp doctor
+```
+
+`doctor` fails its chart check while the chart is in the background, so bring the TradingView window
+to the front. `npx -y tradingview-desktop-mcp --help` lists the options, and
+[.env.example](.env.example) the environment variables.
+
+## Connect your AI app
+
+`config <client>` prints the configuration snippet of a client and says where it goes. Each tutorial
+below holds the same snippet, the steps for that app and what to do when it does not work.
+
+| Client                                           | Print the snippet                                      |
+| ------------------------------------------------ | ------------------------------------------------------ |
+| [Claude Desktop](docs/clients/claude-desktop.md) | `npx -y tradingview-desktop-mcp config claude-desktop` |
+| [Claude Code](docs/clients/claude-code.md)       | `npx -y tradingview-desktop-mcp config claude-code`    |
+| [Cursor](docs/clients/cursor.md)                 | `npx -y tradingview-desktop-mcp config cursor`         |
+| [VS Code](docs/clients/vscode.md)                | `npx -y tradingview-desktop-mcp config vscode`         |
+| [Windsurf](docs/clients/windsurf.md)             | `npx -y tradingview-desktop-mcp config windsurf`       |
+| [Gemini CLI](docs/clients/gemini-cli.md)         | `npx -y tradingview-desktop-mcp config gemini-cli`     |
+| [Codex CLI](docs/clients/codex-cli.md)           | `npx -y tradingview-desktop-mcp config codex-cli`      |
+| [ChatGPT](docs/clients/chatgpt.md)               | `npx -y tradingview-desktop-mcp config chatgpt`        |
+| [OpenAI API](docs/clients/openai-api.md)         | `npx -y tradingview-desktop-mcp config openai-api`     |
+
+The default transport is stdio, where stdout carries only MCP messages and logs go to stderr. The
+first seven clients start the server themselves. On Windows, a client that cannot start `npx`
+directly needs the `cmd /c npx` form, which `config` prints when it runs on Windows (or with
+`--platform win32`). `--profile` passes a [tool profile](#tool-profiles) on to the server.
+
+### Remote clients and tunnels
+
+ChatGPT and the OpenAI API cannot start a program on your computer. They reach the server at a
+public HTTPS address, so you run it over HTTP and put a tunnel in front of it. That puts a server
+that can control your logged-in TradingView on the internet: use `--profile readonly`, a strong
+token (`TV_MCP_AUTH_TOKEN`), and the public host of the tunnel in `--allowed-hosts`
+(`TV_MCP_ALLOWED_HOSTS`). The tutorials for [ChatGPT](docs/clients/chatgpt.md) and the
+[OpenAI API](docs/clients/openai-api.md) walk through it, and
+[SECURITY.md](SECURITY.md#tunnels-and-remote-clients) lists what a read-only token can still reach.
+
+## Quick start from source
+
+To run a checkout instead of the published package, you need Node.js 24 to build the server
+(`nvm use` reads `.nvmrc`) and [pnpm](https://pnpm.io), whose version `package.json` pins. The built
+server runs on Node.js 20.19 or newer.
 
 ```sh
 git clone https://github.com/Mochamad-Rizky/tradingview-mcp.git
 cd tradingview-mcp
 pnpm install && pnpm build
-```
-
-Start TradingView with its debug port. The `launch` command finds the app and starts it that way:
-
-```sh
 node packages/server/dist/cli.js launch
-```
-
-You can also start the app yourself with `--remote-debugging-port=9222`. TradingView allows only one
-instance, so quit it first if it is already running without the port. Check that the server can
-reach it:
-
-```sh
 node packages/server/dist/cli.js doctor
 ```
 
-Point an MCP client at the server. The default transport is stdio, where stdout carries only MCP
-messages and logs go to stderr. For a client with a JSON configuration:
+`node packages/server/dist/cli.js config <client> --local` prints the snippet of a client for this
+checkout, with `node` and the absolute path of `cli.js` in place of `npx`. For a client with a JSON
+configuration, the entry looks like this:
 
 ```json
 {
@@ -70,27 +122,15 @@ messages and logs go to stderr. For a client with a JSON configuration:
 }
 ```
 
-`node packages/server/dist/cli.js --help` lists the options, and [.env.example](.env.example) the
-environment variables. There is also an HTTP transport (`--transport http`); read
-[SECURITY.md](SECURITY.md) before you use it.
+There is also an HTTP transport (`--transport http`); read [SECURITY.md](SECURITY.md) before you use
+it.
 
 ## Use it
 
-Build the server and start TradingView with its debug port as described above, then connect an MCP
-client and ask for what you want in plain words. The assistant picks the tools and calls them, so
-you do not need to know their names.
-
-### Claude Desktop
-
-Add the `tradingview` entry of the JSON configuration above to `mcpServers` in the configuration
-file of Claude Desktop (Settings, Developer, Edit Config), with the absolute path of your checkout,
-and restart the app.
-
-### Claude Code
-
-```sh
-claude mcp add tradingview -- node /absolute/path/to/tradingview-mcp/packages/server/dist/cli.js
-```
+Connect an MCP client as described above, with TradingView running with its debug port, and ask for
+what you want in plain words. The assistant picks the tools and calls them, so you do not need to
+know their names. The [tool reference](docs/tools.md) lists every tool with its inputs and the
+profiles it belongs to.
 
 ### Try these prompts
 
@@ -246,10 +286,10 @@ added and reported as a `PLAN_LIMIT` error with the limit; when the limit cannot
 TradingView build, the tool does nothing and says so. The server does not work around a limit. The
 tools check first what would make TradingView open its upgrade dialog, or another dialog of its
 own, and refuse instead, but a few prompts remain that these checks cannot foresee:
-`layout_switch` and `layout_new` can meet an upgrade prompt for a saved multi-chart layout on a plan
-with fewer charts, for a layout the server of TradingView refuses as beyond the limit, and for one
-that the list TradingView keeps for itself marks over the limit while `layout_list` does not; and
-`tab_close` can meet the "Close tab?" dialog for a page that takes longer than TradingView waits to
+`layout_switch` can meet an upgrade prompt for a saved multi-chart layout on a plan with fewer
+charts, for a layout the server of TradingView refuses as beyond the limit, and for one that the
+list TradingView keeps for itself marks over the limit while `layout_list` does not; `layout_new`
+can meet a message of TradingView when it refuses the new layout after the checks; and `tab_close` can meet the "Close tab?" dialog for a page that takes longer than TradingView waits to
 say whether its layout has unsaved changes, or that reports a recording in progress. The low-level
 `ui_*` tools click and type what you ask for, so they can open dialogs of TradingView by design. It
 deletes and renames no script.
@@ -274,10 +314,17 @@ only with the tool it shares its data with, such as `tradingview://pine/source` 
 
 The [tool reference](docs/tools.md) lists every tool with its inputs and the profiles it belongs to.
 
+## Troubleshooting
+
+[docs/troubleshooting.md](docs/troubleshooting.md) explains each error code and what to do when
+TradingView is not found, the debug port is busy, a client does not show the tools or a tunnel
+refuses a request. `npx -y tradingview-desktop-mcp doctor` is the first thing to run.
+
 ## Dashboard
 
 The server comes with a web dashboard for watching what your assistant does and for trying a tool
-by hand. It needs no extra install: `pnpm build` builds it into the server.
+by hand. It needs no extra install: the published package carries it, and `pnpm build` builds it into the
+server of a checkout.
 
 ![The status page: TradingView reachable with a chart found and the app ready, the facts of the server, and the plan limits](docs/images/dashboard-status.png)
 
@@ -287,8 +334,10 @@ by hand. It needs no extra install: `pnpm build` builds it into the server.
   is on by default in this mode; `--no-dashboard` (`TV_MCP_DASHBOARD=false`) turns it off.
 
   ```sh
-  TV_MCP_AUTH_TOKEN="$(openssl rand -hex 32)" node packages/server/dist/cli.js --transport http
+  TV_MCP_AUTH_TOKEN="$(openssl rand -hex 32)" npx -y tradingview-desktop-mcp --transport http
   ```
+
+  From a checkout, run `node packages/server/dist/cli.js --transport http` instead.
 
 - **Next to stdio:** an MCP client that starts the server over stdio can have a dashboard too. Add
   `--dashboard` (`TV_MCP_DASHBOARD=true`) and `TV_MCP_AUTH_TOKEN` to its configuration. The dashboard
@@ -346,8 +395,8 @@ The files of the page itself, at `/`, need no token and hold no data.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the local setup, the test levels and the commit
-conventions, and [docs/testing.md](docs/testing.md) for the testing guide. To report a
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the local setup, the test levels, the commit
+conventions and how a release is made, and [docs/testing.md](docs/testing.md) for the testing guide. To report a
 vulnerability, follow [SECURITY.md](SECURITY.md).
 
 ## Disclaimer

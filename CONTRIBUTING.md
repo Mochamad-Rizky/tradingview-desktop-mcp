@@ -19,21 +19,21 @@ pnpm build     # the integration tests start the built CLI, so build before you 
 
 Run them from the repository root.
 
-| Script                               | What it does                                                                        |
-| ------------------------------------ | ----------------------------------------------------------------------------------- |
-| `pnpm lint`                          | ESLint, with type-aware rules for the TypeScript                                    |
-| `pnpm format`                        | Prettier, rewriting the files                                                       |
-| `pnpm typecheck`                     | `tsc --noEmit`                                                                      |
-| `pnpm build`                         | Bundles `packages/server/dist/index.js` and `cli.js` with tsup                      |
-| `pnpm test`                          | Unit and integration tests                                                          |
-| `pnpm test:unit`, `test:integration` | One of the two levels                                                               |
-| `pnpm test:e2e`                      | End-to-end tests against the real app, local only (see below)                       |
-| `pnpm test:e2e:dashboard`            | The dashboard's Playwright tests (mocked); needs the dashboard's build and Chromium |
-| `pnpm test:coverage`                 | Unit and integration tests with coverage, failing under 80% on any metric           |
-| `pnpm dev:dashboard`                 | The dashboard on Vite's dev server with hot reload (see below)                      |
-| `pnpm re:probe`, `pnpm re:record`    | Read-only probes and the fixture recorder for the real app                          |
-| `pnpm docs:examples`                 | Regenerates `docs/examples.md` from the fake app; a test checks it                  |
-| `node scripts/smoke-node20.mjs`      | Starts the built CLI over stdio and over HTTP; run after `pnpm build`               |
+| Script                                             | What it does                                                                                            |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `pnpm lint`                                        | ESLint, with type-aware rules for the TypeScript                                                        |
+| `pnpm format`                                      | Prettier, rewriting the files                                                                           |
+| `pnpm typecheck`                                   | `tsc --noEmit`                                                                                          |
+| `pnpm build`                                       | Builds the dashboard, then the server: tsup bundles `dist/`, and the page is copied to `dist/dashboard` |
+| `pnpm test`                                        | Unit and integration tests                                                                              |
+| `pnpm test:unit`, `test:integration`               | One of the two levels                                                                                   |
+| `pnpm test:e2e`                                    | End-to-end tests against the real app, local only (see below)                                           |
+| `pnpm test:e2e:dashboard`                          | The dashboard's Playwright tests (mocked); needs the dashboard's build and Chromium                     |
+| `pnpm test:coverage`                               | Unit and integration tests with coverage, failing under 80% on any metric                               |
+| `pnpm dev:dashboard`                               | The dashboard on Vite's dev server with hot reload (see below)                                          |
+| `pnpm re:probe`, `pnpm re:record`                  | Read-only probes and the fixture recorder for the real app                                              |
+| `pnpm docs:tools`, `docs:examples`, `docs:clients` | Regenerate the generated documents (see "Generated docs"); a test checks each                           |
+| `node scripts/smoke-node20.mjs`                    | Starts the built CLI over stdio and over HTTP; run after `pnpm build`                                   |
 
 Before you push, run the whole gate:
 
@@ -134,13 +134,75 @@ Do not skip them with `--no-verify`. When a hook fails, fix what it reports.
 integration tests and checks the coverage. The `dashboard-e2e` job builds everything and runs the
 dashboard's Playwright tests in Chromium twice: against a mock server, and against the built CLI with
 the fake TradingView of the tests. The run against your own TradingView (`TV_E2E=1`) stays local
-only. Next to it, the `runtime-node20` job takes the build from `verify`, installs only the
-production dependencies on Node.js 20.19 and runs `scripts/smoke-node20.mjs`, so that the bundle is
-proven on the oldest runtime it supports.
+only. After the tests, `verify` packs the package and checks the tarball against an allowlist of files
+(no source maps, nothing outside `package.json`, `README.md`, `LICENSE`, `CHANGELOG.md` and
+`dist/`). Next to it, the `runtime-node20` job installs that tarball into an empty directory on
+Node.js 20.19, runs the installed bin with `--version` and runs `scripts/smoke-node20.mjs` against
+it, so that the package a user installs is proven on the oldest runtime it supports.
 
 Maintainers: the coverage report goes to Codecov, which needs the repository enabled on
 [codecov.io](https://codecov.io). Add the upload token as the `CODECOV_TOKEN` repository secret. The
 upload never fails a run, so a missing token only leaves the coverage badge empty.
+
+## Generated docs
+
+Three documents are generated from the code, and a test fails when one is stale. Run the command
+after you change what it reads, and commit the result:
+
+| Command              | Regenerates                              | Run it after you change                                                        |
+| -------------------- | ---------------------------------------- | ------------------------------------------------------------------------------ |
+| `pnpm docs:tools`    | `docs/tools.md`, the tool reference      | a tool, its description, inputs, annotations or profile                        |
+| `pnpm docs:examples` | `docs/examples.md`, the usage examples   | a tool the scenarios call, or the scenarios in `packages/server/scripts/docs/` |
+| `pnpm docs:clients`  | the config blocks of `docs/clients/*.md` | the output of `config <client>`, or the client list                            |
+
+`pnpm --filter tradingview-desktop-mcp-dashboard docs:screenshots` rewrites the dashboard images of
+the README in `docs/images/` from the mock server. Run it after a visible change to the dashboard;
+no test checks the images. Edit the text of the tutorials by hand: `docs:clients` leaves everything
+outside the markers alone.
+
+## Releasing
+
+The maintainer makes the release; contributors do not tag. The workflow
+[`.github/workflows/release.yml`](.github/workflows/release.yml) runs only when a tag of the form
+`vX.Y.Z` is pushed, and nothing else starts it.
+
+1. Set `version` in `packages/server/package.json`, and date the section of that version in
+   `CHANGELOG.md` (`## [X.Y.Z] - YYYY-MM-DD`). Its text becomes the notes of the GitHub release.
+2. Merge that to `main`.
+3. Tag the commit on `main` and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+The workflow refuses the tag, before it builds anything, when it is not a plain `vX.Y.Z` (no
+prerelease), when it does not name the version of the package, when its commit is not on `main`,
+when `CHANGELOG.md` has no dated section for the version, or when npm has the version already. It
+then runs the whole of `ci.yml`, including the tarball check and the install on Node.js 20.19, and
+publishes the tarball that the gate checked, in the job `publish`, which uses the GitHub environment
+`npm`. The last job creates the GitHub release. If that job alone fails, re-run the failed jobs: a
+new run would stop at the check, because npm has the version.
+
+### npm authentication
+
+The workflow publishes with [trusted publishing](https://docs.npmjs.com/trusted-publishers), which
+needs no token: npm exchanges the OIDC token of the run and adds provenance by itself.
+
+A trusted publisher can only be linked to a package that exists
+([`npm trust`](https://docs.npmjs.com/cli/v11/commands/npm-trust)), so the first publish, 0.1.0,
+cannot use it:
+
+1. Create a granular access token on npmjs.com that may publish `tradingview-desktop-mcp`, and store
+   it as the secret `NPM_TOKEN`. Store it as a secret of the `npm` environment (Settings,
+   Environments), so that only the publish job sees it. The workflow uses it only when it is set.
+2. Push the tag for 0.1.0.
+3. Once the package exists, open its settings on npmjs.com and add a trusted publisher for GitHub
+   Actions: the owner and name of this repository, the workflow filename `release.yml`, and the
+   environment name `npm`. Allow `npm publish`. Then delete the `NPM_TOKEN` secret.
+
+npm expects a new trusted-publisher configuration to make its first successful publish within 2
+days, or it expires. Add it close to the next release, not long before. When trusted publishing
+works, npm recommends the package setting "Require two-factor authentication and disallow tokens".
+
+You may add a required reviewer to the `npm` environment, so that each publish waits for approval.
+If you add deployment branch or tag rules to it, include a rule for `v*.*.*` tags, or the runs of
+the tags are blocked.
 
 ## Security
 

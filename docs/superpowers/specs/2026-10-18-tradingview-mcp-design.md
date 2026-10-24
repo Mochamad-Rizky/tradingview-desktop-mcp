@@ -271,6 +271,7 @@ Prompts: `analyze_current_chart`, `write_and_backtest_strategy`, `debug_pine_scr
 | `TV_MCP_HTTP_HOST` / `TV_MCP_HTTP_PORT` | `--host` / `--port`              | `127.0.0.1` / `8787`                |
 | `TV_MCP_AUTH_TOKEN`                     | —                                | required for HTTP and the dashboard |
 | `TV_MCP_PROFILE` / `TV_MCP_TOOLS`       | `--profile` / `--tools`          | `full` / all                        |
+| `TV_MCP_ALLOWED_HOSTS`                  | `--allowed-hosts`                | none                                |
 | `TV_MCP_ALLOW_EVAL`                     | `--allow-eval`                   | `false`                             |
 | `TV_MCP_DASHBOARD`                      | `--dashboard` / `--no-dashboard` | on in HTTP mode, off in stdio mode  |
 
@@ -278,6 +279,15 @@ The dashboard next to stdio needs `TV_MCP_AUTH_TOKEN`; without it the dashboard 
 
 Precedence: CLI flag over environment variable over default. Subcommands: `launch` (start TradingView with the debug
 port), `doctor` (health report), `config <client>` (print a client configuration snippet).
+
+- `launch --restart` quits a running TradingView politely and starts it again with the debug port; it is valid only
+  with `launch`.
+- `config <client>` takes `--local` (start this installation with `node` instead of `npx`), `--url <host>` (the public
+  host of a tunnel, for `chatgpt` and `openai-api`), `--platform <darwin|win32|linux>` (the system the client runs on,
+  default this one) and `--profile <name>` (passed on to the server). Its snippets hold the placeholder
+  `<TV_MCP_AUTH_TOKEN>`, never the token.
+- `TV_MCP_ALLOWED_HOSTS` / `--allowed-hosts` adds the public host of a tunnel to the names the `Host` and `Origin`
+  checks accept; the token is still required.
 
 ## 10. Testing strategy
 
@@ -307,17 +317,21 @@ page without the token, `/api/info` only with it). A separate `dashboard-e2e` jo
 dashboard and the server, and runs the Playwright tests in Chromium twice: against the mock server (the `mocked` project),
 and against the built CLI with the fake TradingView (the `real` project, without `TV_E2E`). Every test fails when its page
 breaks the Content-Security-Policy. The run against the real TradingView (`TV_E2E=1`) stays local only.
+The `verify` job also packs the package and checks the tarball against an allowlist of files, and the `runtime-node20`
+job installs that tarball on Node.js 20.19 and runs the installed bin and the smoke test against it.
+The release workflow runs on tags of the form `v*.*.*`: it checks the tag, the version and the CHANGELOG, runs the same
+gate, publishes the tarball the gate checked to npm and creates the GitHub release.
 Badges: CI status (GitHub Actions) and coverage (Codecov, which requires enabling the repository on codecov.io).
 
 ## 12. Roadmap
 
-| Plan                | Scope                                                                                                                                                                                                                                                                     | Ends with      |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| 1. Foundation       | Monorepo, tooling, core, transports, registry, `batch_run`, **App** and **Chart** domains, test harness, E2E harness, `scripts/re`, CI                                                                                                                                    | Push to `main` |
-| 2. Data and Pine    | Market data, Indicators, Pine, Pine outputs, Strategy Tester, plan limits module; resources `chart/ohlcv`, `pine/source`, `pine/errors`, `strategy/report`; prompts `analyze_current_chart`, `multi_timeframe_review`, `write_and_backtest_strategy`, `debug_pine_script` | Push           |
-| 3. Interaction      | Drawings, Alerts, Watchlist, Layouts and panes, Tabs, Replay, Screenshot, Low-level UI; resource `watchlist/active`; prompt `replay_practice_session`                                                                                                                     | Push           |
-| 4. Dashboard        | React dashboard, dashboard API, component tests, Playwright                                                                                                                                                                                                               | Push           |
-| 5. Docs and release | README with tutorials for every client, generated tool reference, `docs/testing.md` final, troubleshooting, publish setup, final verification against real TradingView                                                                                                    | Push           |
+| Plan                | Scope                                                                                                                                                                                                                                                                     | Status |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| 1. Foundation       | Monorepo, tooling, core, transports, registry, `batch_run`, **App** and **Chart** domains, test harness, E2E harness, `scripts/re`, CI                                                                                                                                    | Done   |
+| 2. Data and Pine    | Market data, Indicators, Pine, Pine outputs, Strategy Tester, plan limits module; resources `chart/ohlcv`, `pine/source`, `pine/errors`, `strategy/report`; prompts `analyze_current_chart`, `multi_timeframe_review`, `write_and_backtest_strategy`, `debug_pine_script` | Done   |
+| 3. Interaction      | Drawings, Alerts, Watchlist, Layouts and panes, Tabs, Replay, Screenshot, Low-level UI; resource `watchlist/active`; prompt `replay_practice_session`                                                                                                                     | Done   |
+| 4. Dashboard        | React dashboard, dashboard API, component tests, Playwright                                                                                                                                                                                                               | Done   |
+| 5. Docs and release | README with tutorials for every client, generated tool reference, `docs/testing.md` final, troubleshooting, publish setup, final verification against real TradingView                                                                                                    | Done   |
 
 Each plan is written right before it starts, so the open questions from reverse-engineering §12 are answered by
 then. Commits are small and conventional, with one commit or more per domain.

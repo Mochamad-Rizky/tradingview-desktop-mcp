@@ -1,6 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { anchorOf } from '../../scripts/docs/anchor.js';
+import { readdirSync, readFileSync } from 'node:fs';
 import {
   clientDocPath,
   markdownNote,
@@ -12,6 +10,7 @@ import {
 import { CLIENT_IDS, renderClientConfig } from '../../src/cli/clients.js';
 import { renderHelp } from '../../src/cli/output.js';
 import { ERROR_CODES } from '../../src/core/errors.js';
+import { brokenLinks, linksOf } from '../helpers/markdown-links.js';
 
 // The tutorials in docs/clients/ hold the configuration snippet of each client between markers, which
 // `pnpm docs:clients` fills from the code that `config <client>` runs. These tests fail when a
@@ -183,33 +182,10 @@ describe('docs/troubleshooting.md', () => {
 describe('the tutorials and the troubleshooting guide', () => {
   const files = [...CLIENT_IDS.map((id) => clientDocPath(id)), TROUBLESHOOTING_PATH];
 
-  function headingAnchors(path: string): string[] {
-    return [...proseOfFile(path).matchAll(/^#{1,6} (.*)$/gm)].map((match) =>
-      anchorOf(match[1] ?? ''),
-    );
-  }
-
-  function proseOfFile(path: string): string {
-    return readText(path).replaceAll(/^```[\s\S]*?^```/gm, '');
-  }
-
   test('tutorial and troubleshooting links resolve to files in the repo', () => {
     for (const file of files) {
-      const links = [...proseOfFile(file).matchAll(/\]\(([^)\s]+)\)/g)].map(
-        (match) => match[1] ?? '',
-      );
-      expect(links.length).toBeGreaterThan(0);
-      for (const link of links) {
-        if (/^(https?:|mailto:)/.test(link)) {
-          continue;
-        }
-        const [target = '', fragment] = link.split('#');
-        const path = target === '' ? file : resolve(dirname(file), target);
-        expect(existsSync(path), `${file}: ${link}`).toBe(true);
-        if (fragment !== undefined && path.endsWith('.md')) {
-          expect(headingAnchors(path), `${file}: ${link}`).toContain(fragment);
-        }
-      }
+      expect(linksOf(file).length, file).toBeGreaterThan(0);
+      expect(brokenLinks(file), file).toEqual([]);
     }
   });
 

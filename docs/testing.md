@@ -1,8 +1,9 @@
 # Testing
 
 The server is tested at three levels: unit, integration, and end-to-end against the real TradingView
-Desktop. A smoke test of the built CLI on the oldest supported Node.js runs next to them in CI.
-Fixtures for the fake app are recorded from the real one by a script that scrubs them first. The web
+Desktop. Next to them, CI checks the generated documents ([Docs freshness](#docs-freshness)), the
+tarball that would be published and a smoke test of the installed package on the oldest supported
+Node.js ([Package and release](#package-and-release)). Fixtures for the fake app are recorded from the real one by a script that scrubs them first. The web
 dashboard has tests of its own, described in [Dashboard tests](#dashboard-tests).
 
 | Level                       | Command                                                                       | Runs against                                                                             | In CI      |
@@ -14,7 +15,9 @@ dashboard has tests of its own, described in [Dashboard tests](#dashboard-tests)
 | Dashboard E2E               | `pnpm test:e2e:dashboard`                                                     | Playwright in Chromium, against a mock server                                            | yes        |
 | Dashboard E2E (real server) | `pnpm build && pnpm --filter tradingview-desktop-mcp-dashboard test:e2e:real` | Playwright in Chromium, against the built CLI and the fake app                           | yes        |
 | Coverage                    | `pnpm test:coverage`                                                          | Server unit and integration together, and the dashboard unit tests, ≥80% on every metric | yes        |
+| Docs freshness              | `pnpm test:integration`                                                       | The generated documents and the README against the code                                  | yes        |
 | Smoke                       | `pnpm build && node scripts/smoke-node20.mjs`                                 | The built CLI over stdio and over HTTP, with no app                                      | yes        |
+| Tarball and installed smoke | The `verify` and `runtime-node20` jobs of CI                                  | The packed tarball, and the same tarball installed on Node.js 20.19                      | yes        |
 
 Before a commit, run the whole local gate:
 
@@ -112,8 +115,56 @@ It prints `smoke ok`, or the leg and the reason it failed with the start of the 
 and it gives each leg 20 s.
 
 CI runs it in the `runtime-node20` job on Node.js 20.19, the oldest runtime the package declares,
-after installing only the production dependencies of the package. The test suites cannot show that
-the bundle runs there, because Vitest needs Node.js 22 or newer.
+against the installed tarball (see [Package and release](#package-and-release)). The test suites
+cannot show that the bundle runs there, because Vitest needs Node.js 22 or newer. Locally it runs
+against the build, after `pnpm build`; `SMOKE_CLI` names another program to start, such as the bin
+of an installed package.
+
+## Docs freshness
+
+Three documents are generated, and each has a test that fails, naming the command to run, when the
+committed file differs from what the code produces:
+
+| Document                                 | Command              | Test                                                        |
+| ---------------------------------------- | -------------------- | ----------------------------------------------------------- |
+| `docs/tools.md`, the tool reference      | `pnpm docs:tools`    | "docs/tools.md is up to date" in `docs-tools.test.ts`       |
+| `docs/examples.md`, the usage examples   | `pnpm docs:examples` | "docs/examples.md is up to date" in `docs-examples.test.ts` |
+| The config blocks of `docs/clients/*.md` | `pnpm docs:clients`  | "every client tutorial holds the snippet config prints"     |
+
+The client test compares each block with what `config <client>` prints for macOS and, where it
+differs, Windows. The same files check the rest of the documents:
+
+- the README counts of tools and profiles come from the registry, and the prompts and excerpts of the
+  README come from `docs/examples.md`;
+- the troubleshooting guide documents every error code, and the tutorials and the guide name only
+  flags and environment variables the CLI knows;
+- every relative link of the README, the tutorials and the guide leads to a file, and every anchor to
+  a heading (`docs-readme.test.ts` and `docs-clients.test.ts`, with the shared checker in
+  `test/helpers/markdown-links.ts`). Keep the headings `Tool profiles` and `Dashboard` of the
+  README, which the tutorials link to.
+
+## Package and release
+
+The `verify` job of CI packs the package the way `npm publish` does (`prepack` copies the LICENSE and
+the CHANGELOG into it and writes its README from the root one, with absolute links) and checks the
+tarball against an allowlist: `package.json`, `README.md`, `LICENSE`, `CHANGELOG.md` and `dist/` at
+the top, the bundle, its types and the dashboard inside, and no source map anywhere. It uploads that
+tarball as the artifact `package`.
+
+The `runtime-node20` job installs that tarball with npm into an empty directory outside the
+checkout, on Node.js 20.19, so that nothing of the repository can stand in for a missing file. It
+runs the installed bin with `--version` and compares the output with the version of the package,
+then runs `scripts/smoke-node20.mjs` against that bin, over stdio and over HTTP.
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) runs on tags of the form
+`v*.*.*`. Its `check` job refuses a tag that is not a plain `vX.Y.Z`, one that does not name the
+version of the package, a commit that is not on `main`, a version without a dated section in
+`CHANGELOG.md`, and a version already on npm. The `gate` job then runs the whole of `ci.yml`, and the
+`publish` job publishes the very tarball the gate checked and smoke tested. The `github-release` job
+creates the release with the CHANGELOG section as its notes. [CONTRIBUTING.md](../CONTRIBUTING.md)
+describes how a maintainer makes a release. The workflow cannot be run locally; the script that
+reads the CHANGELOG has a unit test, and the tarball check and the installed smoke are the same
+steps that CI runs.
 
 ## End-to-end tests
 
@@ -193,6 +244,10 @@ TradingView update.
 
 A Mac whose lid is closed sleeps, and the app's timers and connections with it: a run then times
 out or fails at random. Keep the lid open and run the suites under `caffeinate -i`.
+
+### Last verified against TradingView
+
+Last verified against TradingView: not yet verified for 0.1.0.
 
 ### Safety rules
 

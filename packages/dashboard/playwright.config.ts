@@ -6,10 +6,10 @@ import { runDirectory } from './e2e/real-app-output.ts';
 import type { Target } from './e2e/support.ts';
 
 // The end-to-end tests of the dashboard, in Chromium, as one of three projects per run:
-// - mocked (the default, and what CI runs): the built dashboard against e2e/mock-server.mjs, which
-//   answers like the server with synthetic data (pnpm test:e2e);
+// - mocked (the default): the built dashboard against e2e/mock-server.mjs, which answers like the
+//   server with synthetic data (pnpm test:e2e); CI runs it, and the real project below;
 // - real: the dashboard as the built server ships it, against the fake TradingView of the server's
-//   tests (pnpm test:e2e:real, after pnpm build); with TV_E2E=1, against the user's TradingView,
+//   tests (pnpm test:e2e:real, after pnpm build; CI runs it too); with TV_E2E=1, against the user's TradingView,
 //   where only the tests tagged @app run, and they only read;
 // - screenshots: the images of the README, from the mock server (pnpm docs:screenshots).
 //
