@@ -12,7 +12,13 @@ import { useHealth } from '@/hooks/use-health';
 import { cn } from '@/lib/utils';
 
 export type ConnectionState =
-  'ready' | 'background' | 'unreachable' | 'no-chart' | 'server-unreachable' | 'connecting';
+  | 'ready'
+  | 'background'
+  | 'unreachable'
+  | 'no-chart'
+  | 'server-unreachable'
+  | 'server-error'
+  | 'connecting';
 
 // How far TradingView is up, from a health report; undefined when there is no answer to go by. A
 // chart that is not in front needs the user, even when the app says it is ready, as the card says.
@@ -60,6 +66,11 @@ const LOOKS: Record<ConnectionState, { label: string; icon: LucideIcon; classNam
     icon: CircleXIcon,
     className: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
   },
+  'server-error': {
+    label: 'Server error',
+    icon: CircleXIcon,
+    className: 'bg-destructive/10 text-destructive dark:bg-destructive/20',
+  },
   connecting: {
     label: 'Connecting',
     icon: LoaderCircleIcon,
@@ -67,17 +78,23 @@ const LOOKS: Record<ConnectionState, { label: string; icon: LucideIcon; classNam
   },
 };
 
+// What a failed health check says: no answer of the server (not an ApiError) means that the
+// dashboard cannot reach its own server; an answer with an error status (403, 404, 5xx) is an error
+// of the server. A 401 goes to the token gate, which asks for the token again, so the badge waits.
+function failureState(error: Error): ConnectionState {
+  if (!(error instanceof ApiError)) {
+    return 'server-unreachable';
+  }
+  return error.status === 401 ? 'connecting' : 'server-error';
+}
+
 // The header's word on TradingView, from the health check the status page shares. The words carry
 // the state; the colour and the icon only repeat it. A live region, so that a screen reader says
 // when it changes.
 export function ConnectionBadge() {
   const { data, error, isError } = useHealth();
-  // After a failed check, the last answer says nothing about TradingView now. A failure without an
-  // answer of the server (an ApiError) means that the dashboard cannot reach its own server.
-  const state =
-    isError && !(error instanceof ApiError)
-      ? 'server-unreachable'
-      : connectionState(isError ? undefined : data);
+  // After a failed check, the last answer says nothing about TradingView now.
+  const state = isError ? failureState(error) : connectionState(data);
   const { label, icon: Icon, className } = LOOKS[state];
   return (
     <Badge role="status" data-state={state} className={className}>

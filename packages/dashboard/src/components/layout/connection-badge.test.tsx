@@ -54,26 +54,58 @@ test('the connection badge names each state in text', async () => {
   }
 });
 
-test('the connection badge says Connecting before the first answer and after a failed check', async () => {
-  const { client } = renderInApp(<ConnectionBadge />);
+test('the connection badge says Connecting before the first answer', async () => {
+  renderInApp(<ConnectionBadge />);
   expect(screen.getByRole('status')).toHaveTextContent('Connecting');
+  expect(screen.getByRole('status')).toHaveAttribute('data-state', 'connecting');
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('TradingView ready');
+  });
+});
+
+test('the badge says Server error on an ApiError', async () => {
+  for (const status of [403, 404, 500, 503]) {
+    const { client, unmount } = renderInApp(<ConnectionBadge />);
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('TradingView ready');
+    });
+
+    // The server answers, with an error: the last answer it gave says nothing about TradingView
+    // now, and the server is not still connecting.
+    server.use(
+      http.get('/api/health', () => HttpResponse.json({ error: 'Synthetic failure' }, { status })),
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: queryKeys.health });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('Server error');
+    });
+    expect(screen.getByRole('status')).toHaveAttribute('data-state', 'server-error');
+    expect(screen.getByRole('status')).not.toHaveTextContent('Connecting');
+    unmount();
+    server.resetHandlers();
+  }
+});
+
+test('a 401 is left to the token screen, not called a server error', async () => {
+  const { client } = renderInApp(<ConnectionBadge />);
   await waitFor(() => {
     expect(screen.getByRole('status')).toHaveTextContent('TradingView ready');
   });
 
-  // The server stops answering: the last answer it gave says nothing about TradingView now.
+  // The token is no longer the server's: the token gate asks for it again.
   server.use(
-    http.get('/api/health', () =>
-      HttpResponse.json({ error: 'The server is shutting down' }, { status: 503 }),
-    ),
+    http.get('/api/health', () => HttpResponse.json({ error: 'Unauthorized' }, { status: 401 })),
   );
   await act(async () => {
     await client.refetchQueries({ queryKey: queryKeys.health });
   });
   await waitFor(() => {
-    expect(screen.getByRole('status')).toHaveTextContent('Connecting');
+    expect(client.getQueryState(queryKeys.health)?.status).toBe('error');
   });
   expect(screen.getByRole('status')).toHaveAttribute('data-state', 'connecting');
+  expect(screen.getByRole('status')).not.toHaveTextContent('Server error');
 });
 
 test('the connection badge says the server is not reachable when the dashboard cannot reach it', async () => {
