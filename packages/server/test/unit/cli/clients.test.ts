@@ -52,12 +52,13 @@ interface Launch {
   type?: unknown;
   command: unknown;
   args: unknown;
+  tools?: unknown;
 }
 
-// The server entry of a JSON snippet: under mcpServers, or under servers for VS Code.
+// The server entry of a JSON snippet, under mcpServers.
 function jsonEntry(snippet: string): Launch {
   const parsed = JSON.parse(snippet) as Record<string, Record<string, Launch> | undefined>;
-  const servers = parsed.mcpServers ?? parsed.servers;
+  const servers = parsed.mcpServers;
   expect(Object.keys(servers ?? {})).toEqual(['tradingview']);
   const entry = servers?.tradingview;
   if (entry === undefined) {
@@ -201,11 +202,12 @@ const SNIPPETS: [ClientId, string][] = [
   [
     'vscode',
     `{
-  "servers": {
+  "mcpServers": {
     "tradingview": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "tradingview-desktop-mcp"]
+      "args": ["-y", "tradingview-desktop-mcp"],
+      "tools": ["*"]
     }
   }
 }
@@ -259,7 +261,12 @@ test.each<[ClientId, string, string, string]>([
     '~/.config/Claude/claude_desktop_config.json',
   ],
   ['cursor', '~/.cursor/mcp.json', '%USERPROFILE%\\.cursor\\mcp.json', '~/.cursor/mcp.json'],
-  ['vscode', '.vscode/mcp.json', '.vscode/mcp.json', '.vscode/mcp.json'],
+  [
+    'vscode',
+    '~/.copilot/mcp-config.json',
+    '%USERPROFILE%\\.copilot\\mcp-config.json',
+    '~/.copilot/mcp-config.json',
+  ],
   [
     'windsurf',
     '~/.config/devin/mcp_config.json',
@@ -291,8 +298,11 @@ test('the notes say what to do next for each client', () => {
   expect(notesOf('claude-code')[0]).toContain('--scope user');
   expect(notesOf('claude-code')[1]).toContain('claude mcp get tradingview');
   expect(notesOf('cursor')[0]).toContain('.cursor/mcp.json');
-  expect(notesOf('vscode')[0]).toContain('MCP: Open User Configuration');
-  expect(notesOf('vscode')[1]).toContain('MCP: List Servers');
+  // The Copilot user file, which COPILOT_HOME moves, and the older VS Code format as a choice.
+  expect(notesOf('vscode')[0]).toContain('$COPILOT_HOME/mcp-config.json');
+  expect(notesOf('vscode')[0]).toContain('.vscode/mcp.json');
+  expect(notesOf('vscode')[0]).toContain('"servers"');
+  expect(notesOf('vscode')[1]).toContain('Chat: Open Customizations');
   // Windsurf is now Devin Desktop, and its older releases read another file.
   expect(notesOf('windsurf')[0]).toContain('Devin Desktop');
   expect(notesOf('windsurf')[0]).toContain('~/.codeium/windsurf/mcp_config.json');
@@ -325,6 +335,8 @@ test('the stdio snippets are valid JSON or TOML with the server named tradingvie
       expect(entry.command).toBe(launch.command);
       expect(entry.args).toEqual(args);
     }
+    // GitHub Copilot CLI shares the file VS Code's snippet goes in, and requires tools there.
+    expect(jsonEntry(snippetOf('vscode', options)).tools).toEqual(['*']);
     expect(tomlEntry(snippetOf('codex-cli', options))).toEqual({ command: launch.command, args });
   }
 });

@@ -197,17 +197,22 @@ function cursor(options: ClientConfigOptions): ClientConfig {
   };
 }
 
-// https://code.visualstudio.com/docs/agents/reference/mcp-configuration: the VS Code format, with a
-// top-level servers object, in .vscode/mcp.json or the user profile's mcp.json. VS Code also hands
-// the servers of this format to Copilot sessions.
+// https://code.visualstudio.com/docs/agent-customization/mcp-servers recommends Copilot Global for
+// a personal server: $COPILOT_HOME/mcp-config.json, or ~/.copilot/mcp-config.json, in the portable
+// format of https://code.visualstudio.com/docs/agents/reference/mcp-configuration (mcpServers). The
+// .vscode/mcp.json destination, with its servers object, remains for compatibility. GitHub Copilot
+// CLI reads the same file and requires tools there
+// (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference), and
+// names stdio as the type VS Code and other clients share
+// (https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers).
 function vscode(options: ClientConfigOptions): ClientConfig {
   return {
     snippet: jsonSnippet({
-      servers: { [SERVER_NAME]: { type: 'stdio', ...stdioEntry(options) } },
+      mcpServers: { [SERVER_NAME]: { type: 'stdio', ...stdioEntry(options), tools: ['*'] } },
     }),
     notes: [
-      'Put this in .vscode/mcp.json in your workspace, or in your user mcp.json (run MCP: Open User Configuration), keeping any other servers.',
-      'Then run MCP: List Servers from the Command Palette and start tradingview.',
+      `Put this in ${homeFile(options.platform, '.copilot', 'mcp-config.json')} ($COPILOT_HOME/mcp-config.json when COPILOT_HOME is set), ${KEEP_OTHERS}. The older choice, .vscode/mcp.json in a workspace, takes the entry under "servers" instead, without "tools".`,
+      'Then check that tradingview is listed in Chat: Open Customizations > MCP Servers, and approve its first tool call when VS Code asks.',
       ...jsonCmdFallback(options),
     ],
   };
