@@ -180,6 +180,19 @@ jobs:
           echo '{ "private": true }' > package.json
           npm install --no-package-lock --ignore-scripts --no-audit --no-fund "$tarball"
 
+      # The bin itself, the way npx starts it: through its shebang, which needs the exec bit.
+      - name: Run the installed bin
+        env:
+          SMOKE_CLI: ${{ runner.temp }}/app/node_modules/.bin/tradingview-desktop-mcp
+        run: |
+          expected=$(node -p "require('./packages/server/package.json').version")
+          printed=$("$SMOKE_CLI" --version)
+          if [ "$printed" != "$expected" ]; then
+            echo "::error::The installed bin printed '$printed' for --version, not $expected."
+            exit 1
+          fi
+          echo "tradingview-desktop-mcp --version: $printed"
+
       - name: Smoke test the installed CLI
         env:
           SMOKE_CLI: ${{ runner.temp }}/app/node_modules/.bin/tradingview-desktop-mcp
