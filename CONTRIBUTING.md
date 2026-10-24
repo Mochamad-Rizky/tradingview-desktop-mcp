@@ -132,14 +132,15 @@ Do not skip them with `--no-verify`. When a hook fails, fix what it reports.
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push of a branch and every pull
 request; a pushed tag starts the release workflow instead, which runs the same gate. The `verify`
 job installs with the frozen lockfile, then lints, type-checks and builds. It packs the package from
-that build and checks the tarball against an allowlist of files (no source maps, nothing outside
-`package.json`, `README.md`, `LICENSE`, `CHANGELOG.md` and `dist/`), then runs the unit and
-integration tests and checks the coverage. After it, the `runtime-node20` job installs that
-tarball into an empty directory on Node.js 20.19, runs the installed bin with `--version` and runs
-`scripts/smoke-node20.mjs` against it, so that the package a user installs is proven on the oldest
-runtime it supports. The `dashboard-e2e` job, also after `verify`, builds everything and runs the dashboard's Playwright
-tests in Chromium twice: against a mock server, and against the built CLI with the fake TradingView
-of the tests. The run against your own TradingView (`TV_E2E=1`) stays local only.
+that build and checks the tarball against an allowlist of files (no source maps, no dotfiles under
+`dist/`, nothing outside `package.json`, `README.md`, `LICENSE`, `CHANGELOG.md` and `dist/`), then
+runs the unit and integration tests and checks the coverage. After it, the `runtime-node20` job
+installs that tarball into an empty directory on Node.js 20.19, runs the installed bin with
+`--version` and runs `scripts/smoke-node20.mjs` against it, so that the package a user installs is
+proven on the oldest runtime it supports. The `dashboard-e2e` job, also after `verify`, builds
+everything and runs the dashboard's Playwright tests in Chromium twice: against a mock server, and
+against the built CLI with the fake TradingView of the tests. The run against your own TradingView
+(`TV_E2E=1`) stays local only.
 
 Maintainers: the coverage report goes to Codecov, which needs the repository enabled on
 [codecov.io](https://codecov.io). Add the upload token as the `CODECOV_TOKEN` repository secret. The

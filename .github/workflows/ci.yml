@@ -74,8 +74,8 @@ jobs:
         run: pnpm --filter tradingview-desktop-mcp pack --pack-destination "$RUNNER_TEMP/package"
 
       # What a user installs must hold the bundle, its types, the dashboard and the documents, and
-      # nothing else: only package.json, README.md, LICENSE, CHANGELOG.md and dist/ at the top, and
-      # no source map anywhere.
+      # nothing else: only package.json, README.md, LICENSE, CHANGELOG.md and dist/ at the top, no
+      # source map anywhere, and no dotfile anywhere under dist/, such as a .DS_Store a build left.
       - name: Check the contents of the tarball
         run: |
           tarball=$(find "$RUNNER_TEMP/package" -name '*.tgz')
@@ -93,6 +93,10 @@ jobs:
             case "$path" in
               *.map)
                 echo "::error::The tarball must not contain the source map $path."
+                status=1
+                ;;
+              package/dist/.* | package/dist/*/.*)
+                echo "::error::The tarball must not contain the dotfile $path."
                 status=1
                 ;;
               package/ | package/package.json | package/README.md | package/LICENSE | \

@@ -149,8 +149,8 @@ differs, Windows. The same files check the rest of the documents:
 The `verify` job of CI packs the package the way `npm publish` does (`prepack` copies the LICENSE and
 the CHANGELOG into it and writes its README from the root one, with absolute links) and checks the
 tarball against an allowlist: `package.json`, `README.md`, `LICENSE`, `CHANGELOG.md` and `dist/` at
-the top, the bundle, its types and the dashboard inside, and no source map anywhere. It uploads that
-tarball as the artifact `package`.
+the top, the bundle, its types and the dashboard inside, no source map anywhere, and no dotfile
+anywhere under `dist/`. It uploads that tarball as the artifact `package`.
 
 The `runtime-node20` job installs that tarball with npm into an empty directory outside the
 checkout, on Node.js 20.19, so that nothing of the repository can stand in for a missing file. It
