@@ -60,6 +60,35 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The tarball npm would publish, packed from the build above. pnpm runs the prepack script,
+      # which adds the README, the LICENSE and the CHANGELOG.
+      - name: Pack the package
+        run: pnpm --filter tradingview-desktop-mcp pack --pack-destination "$RUNNER_TEMP/package"
+
+      # What a user installs must hold the bundle, its types, the dashboard and the documents, and
+      # none of the sources or tests.
+      - name: Check the contents of the tarball
+        run: |
+          tarball=$(find "$RUNNER_TEMP/package" -name '*.tgz')
+          listing=$(tar -tzf "$tarball")
+          echo "$listing"
+          status=0
+          for path in package/dist/cli.js package/dist/index.js package/dist/index.d.ts \
+            package/dist/dashboard/index.html package/README.md package/LICENSE package/CHANGELOG.md; do
+            if ! grep -qxF "$path" <<< "$listing"; then
+              echo "::error::The tarball lacks $path."
+              status=1
+            fi
+          done
+          for prefix in package/src/ package/test/; do
+            extra=$(awk -v prefix="$prefix" 'index($0, prefix) == 1' <<< "$listing")
+            if [ -n "$extra" ]; then
+              echo "::error::The tarball must not contain $prefix, but holds: $(tr '\n' ' ' <<< "$extra")"
+              status=1
+            fi
+          done
+          exit "$status"
+
       - name: Unit tests
         run: pnpm test:unit
 
@@ -80,13 +109,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # What the next job runs, so that it tests the bundle that passed here. It comes before the
-      # Codecov upload, so that a slow or stuck upload cannot hold it back.
-      - name: Upload the build
+      # What the next job installs, so that it tests the package that passed here. It comes before
+      # the Codecov upload, so that a slow or stuck upload cannot hold it back.
+      - name: Upload the package
         uses: actions/upload-artifact@v7
         with:
-          name: dist
-          path: packages/server/dist
+          name: package
+          path: ${{ runner.temp }}/package/*.tgz
           if-no-files-found: error
           retention-days: 7
 
@@ -110,17 +139,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # For the smoke script and the manifest of the package.
+      # For the smoke script alone, which imports nothing from the repository. Nothing is installed
+      # here, so the checkout has no node_modules that the package could lean on.
       - name: Check out the repository
         uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - name: Download the build
+      - name: Download the package
         uses: actions/download-artifact@v8
         with:
-          name: dist
-          path: packages/server/dist
+          name: package
+          path: ${{ runner.temp }}/package
 
       # 20.19.0 is the oldest Node that engines.node of the package accepts.
       - name: Set up Node.js
@@ -129,19 +159,22 @@ jobs:
           node-version: 20.19.0
           package-manager-cache: false
 
-      # Installs what a user of the package gets: its runtime dependencies, resolved from their
-      # version ranges (the lockfile belongs to pnpm), and none of the development tools.
-      # - npm 10, which comes with Node 20, resolves devDependencies even with --omit=dev and
-      #   crashes on Vite 8, so this throwaway checkout drops them from the manifest first.
-      # - --no-package-lock leaves no package-lock.json next to the pnpm lockfile.
+      # Installs the tarball the way a user gets it: into an empty directory outside the checkout,
+      # with its runtime dependencies resolved from their version ranges by npm 10, which comes
+      # with Node 20.
+      # - The package.json of its own keeps npm from installing into a parent directory.
       # - --ignore-scripts keeps install scripts of dependencies from running; none is needed.
-      - name: Install the production dependencies
-        working-directory: packages/server
+      - name: Install the package into an empty directory
         run: |
-          npm pkg delete devDependencies
-          npm install --omit=dev --no-package-lock --ignore-scripts --no-audit --no-fund
+          tarball=$(find "$RUNNER_TEMP/package" -name '*.tgz')
+          mkdir "$RUNNER_TEMP/app"
+          cd "$RUNNER_TEMP/app"
+          echo '{ "private": true }' > package.json
+          npm install --no-package-lock --ignore-scripts --no-audit --no-fund "$tarball"
 
-      - name: Smoke test the built CLI
+      - name: Smoke test the installed CLI
+        env:
+          SMOKE_CLI: ${{ runner.temp }}/app/node_modules/.bin/tradingview-desktop-mcp
         run: |
           node --version
           node scripts/smoke-node20.mjs

@@ -1,22 +1,32 @@
 // Starts the built CLI twice and checks what a client sees. CI runs it on the oldest Node the
 // package supports, where the test suites cannot run: Vitest needs Node 22 or newer, the bundle
-// only needs 20.19.
+// only needs 20.19. There it runs the bin of the packed package, installed into an empty
+// directory, so that a package that only works inside the repository fails.
 // - Over stdio, the way an MCP client starts it: it answers the handshake, lists its tools, keeps
 //   stdout for JSON-RPC and stops when its input closes.
 // - Over HTTP, with a token made for the run and on a free port: it serves the dashboard page
 //   without the token, answers the dashboard API only with it, and stops on SIGTERM.
 //
-// Plain JavaScript without dependencies, so that it runs wherever the bundle does.
+// Plain JavaScript without dependencies, so that it runs wherever the bundle does. It imports
+// nothing from the repository: the CLI it starts is all that is tested.
 // Usage, after `pnpm build`: node scripts/smoke-node20.mjs
+// SMOKE_CLI names another CLI to start instead, such as the bin of an installed package:
+//   SMOKE_CLI=/tmp/app/node_modules/.bin/tradingview-desktop-mcp node scripts/smoke-node20.mjs
 
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
-const CLI = fileURLToPath(new URL('../packages/server/dist/cli.js', import.meta.url));
+// The CLI under test: SMOKE_CLI when set, otherwise the build of this repository.
+const SMOKE_CLI = process.env.SMOKE_CLI ?? '';
+const CLI =
+  SMOKE_CLI === ''
+    ? fileURLToPath(new URL('../packages/server/dist/cli.js', import.meta.url))
+    : resolve(SMOKE_CLI);
 // A fast machine needs about a second for each leg. The margin is for a cold disk on a busy runner.
 const TIMEOUT_MS = 20_000;
 // The server has to stop on its own once its client closes its input, or once it gets SIGTERM.
@@ -427,8 +437,13 @@ async function runLeg(name, server, checks) {
 
 async function main() {
   if (!existsSync(CLI)) {
-    throw new SmokeFailure(`${CLI} is missing: run pnpm build first`);
+    throw new SmokeFailure(
+      SMOKE_CLI === ''
+        ? `${CLI} is missing: run pnpm build first`
+        : `${CLI} (SMOKE_CLI) is missing: install the package first`,
+    );
   }
+  console.log(`smoke: ${CLI} on Node.js ${process.version}`);
   const stdio = startServer();
   await runLeg('stdio', stdio, (step) => smoke(stdio, step));
 
