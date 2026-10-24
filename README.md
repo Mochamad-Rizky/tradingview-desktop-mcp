@@ -11,10 +11,9 @@ Chrome DevTools Protocol, through the debug port the app opens when it starts wi
 `--remote-debugging-port`. It only automates the local app: it does not log in for you, get around
 plan limits, or call TradingView's servers.
 
-> **Status: pre-1.0.** Tool names and options may still change before 1.0. The package is published
-> to npm once the maintainer releases 0.1.0; until then the badge above shows no version, and you
-> can run the server [from source](#quick-start-from-source). It has been tried on macOS; Windows
-> and Linux are best effort.
+> **Status: pre-1.0.** Tool names and options may change before 1.0. Install the package from npm,
+> as below, or run the server [from source](#quick-start-from-source). It has been tried on macOS;
+> Windows and Linux are best effort.
 
 The server offers app tools (launch, health, discovery, interface state, plan limits, reconnect),
 chart tools (state, symbol, timeframe, chart type, visible range, scrolling), market data tools
@@ -57,9 +56,10 @@ TradingView may ask you to save changes first. Check that the server can reach t
 npx -y tradingview-desktop-mcp doctor
 ```
 
-`doctor` fails its chart check while the chart is in the background, so bring the TradingView window
-to the front. `npx -y tradingview-desktop-mcp --help` lists the options, and
-[.env.example](.env.example) the environment variables.
+`doctor` fails its chart check while the chart tab is in the background, behind the New tab page or
+another tab without a chart, so bring the chart tab to the front.
+`npx -y tradingview-desktop-mcp --help` lists the options, and [.env.example](.env.example) the
+environment variables.
 
 ## Connect your AI app
 
