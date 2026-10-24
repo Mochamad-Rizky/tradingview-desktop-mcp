@@ -41,12 +41,18 @@ export function needsWindowsBlock(client: ClientId): boolean {
   return mac.snippet !== win.snippet || mac.notes.join('\n') !== win.notes.join('\n');
 }
 
+// A placeholder such as <TV_MCP_AUTH_TOKEN> would be read as an HTML tag and vanish from the page,
+// so a note shows it as code.
+export function markdownNote(note: string): string {
+  return note.replaceAll(/<[A-Za-z_][\w-]*>/g, (placeholder) => `\`${placeholder}\``);
+}
+
 // What stands between the markers: the fenced snippet, then the notes as a list, each part set off
 // by blank lines so that Markdown reads each marker as a line of its own.
 export function renderConfigBlock(client: ClientId, platform: BlockPlatform): string {
   const { snippet, notes } = render(client, platform);
   const language = FENCE_LANGUAGE[client] ?? 'json';
-  return `\n\n\`\`\`${language}\n${snippet}\`\`\`\n\n${notes.map((note) => `- ${note}`).join('\n')}\n\n`;
+  return `\n\n\`\`\`${language}\n${snippet}\`\`\`\n\n${notes.map((note) => `- ${markdownNote(note)}`).join('\n')}\n\n`;
 }
 
 function markerOf(client: ClientId, platform: BlockPlatform): string {

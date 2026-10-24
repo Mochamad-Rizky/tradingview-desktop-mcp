@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { anchorOf } from '../../scripts/docs/anchor.js';
 import {
   clientDocPath,
+  markdownNote,
   renderConfigBlock,
   syncClientDoc,
   TROUBLESHOOTING_PATH,
@@ -67,7 +68,7 @@ describe('docs/clients', () => {
       const { snippet, notes } = snippetOf(client, platform);
       expect(block.inner).toContain(snippet);
       for (const note of notes) {
-        expect(block.inner).toContain(`- ${note}\n`);
+        expect(block.inner).toContain(`- ${markdownNote(note)}\n`);
       }
       expect(block.inner).toBe(renderConfigBlock(client, platform));
     }
@@ -97,6 +98,42 @@ describe('docs/clients', () => {
     expect(proseOf(synced)).toBe(proseOf(edited));
     expect(syncClientDoc(client, synced)).toBe(synced);
     expect(syncClientDoc(client, text)).toBe(text);
+  });
+
+  test.each(CLIENT_IDS)('a generated note holds no bare <placeholder>: %s', (client) => {
+    for (const platform of ['darwin', 'win32'] as const) {
+      const notes = renderConfigBlock(client, platform)
+        .replaceAll(/^```[\s\S]*?^```/gm, '')
+        .replaceAll(/`[^`]*`/g, '');
+      expect(notes).not.toMatch(/<[A-Za-z_][\w-]*>/);
+    }
+    expect(markdownNote('with <TV_MCP_AUTH_TOKEN> here')).toBe('with `<TV_MCP_AUTH_TOKEN>` here');
+  });
+
+  test('the line about config for your own system follows the last block', () => {
+    for (const client of CLIENT_IDS) {
+      const text = readText(clientDocPath(client));
+      const line = `\`npx -y tradingview-desktop-mcp config ${client}`;
+      const last = text.lastIndexOf('<!-- /config -->');
+      expect(text.indexOf(line), client).toBeGreaterThan(last);
+      // The remote clients print one address for every system, with your own tunnel host.
+      const wording = ['chatgpt', 'openai-api'].includes(client)
+        ? /your own tunnel host/
+        : /for your own system, Linux included/;
+      expect(text.slice(text.indexOf(line)), client).toMatch(wording);
+    }
+  });
+
+  test('docs:clients refuses an unclosed marker and a surplus Windows block', () => {
+    const text = readText(clientDocPath('chatgpt'));
+    expect(() =>
+      syncClientDoc('chatgpt', text.replace('<!-- /config -->', '<!-- /confg -->')),
+    ).toThrow(/not closed/);
+    const surplus = text.replace(
+      '<!-- /config -->',
+      '<!-- /config -->\n\n<!-- config:chatgpt:win32 -->\n<!-- /config -->',
+    );
+    expect(() => syncClientDoc('chatgpt', surplus)).toThrow(/snippet is the same/);
   });
 
   test('docs:clients refuses a page whose blocks do not match the client', () => {

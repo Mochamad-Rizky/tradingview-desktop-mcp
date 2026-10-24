@@ -28,15 +28,15 @@ macOS and Linux:
 ```sh
 export TV_MCP_AUTH_TOKEN="<the token>"
 export TV_MCP_ALLOWED_HOSTS=abc.ngrok.app
-npx -y tradingview-desktop-mcp --transport http --profile readonly
+npx -y tradingview-desktop-mcp --transport http --profile readonly --no-dashboard
 ```
 
 Windows, in Command Prompt (cmd):
 
 ```bat
-set TV_MCP_AUTH_TOKEN=<the token>
-set TV_MCP_ALLOWED_HOSTS=abc.ngrok.app
-npx -y tradingview-desktop-mcp --transport http --profile readonly
+set "TV_MCP_AUTH_TOKEN=<the token>"
+set "TV_MCP_ALLOWED_HOSTS=abc.ngrok.app"
+npx -y tradingview-desktop-mcp --transport http --profile readonly --no-dashboard
 ```
 
 Windows, in PowerShell:
@@ -44,10 +44,10 @@ Windows, in PowerShell:
 ```powershell
 $env:TV_MCP_AUTH_TOKEN = "<the token>"
 $env:TV_MCP_ALLOWED_HOSTS = "abc.ngrok.app"
-npx -y tradingview-desktop-mcp --transport http --profile readonly
+npx -y tradingview-desktop-mcp --transport http --profile readonly --no-dashboard
 ```
 
-The server listens on `127.0.0.1:8787`, on this computer only. It prints its addresses on stderr and never prints the token. The HTTP transport also serves the [dashboard](../../README.md#dashboard) at the same address; add `--no-dashboard` if you do not want its files reachable through the tunnel. They hold no data, and the data still needs the token.
+The server listens on `127.0.0.1:8787`, on this computer only. It prints its addresses on stderr and never prints the token. The HTTP transport also serves the [dashboard](../../README.md#dashboard) at the same address. The start command above leaves it off with `--no-dashboard`, so that its files are not reachable through the tunnel, as [SECURITY.md](../../SECURITY.md#tunnels-and-remote-clients) advises.
 
 **3. Start the tunnel** and point it at `http://127.0.0.1:8787`, as your provider describes. The public host it gives you is the one in `TV_MCP_ALLOWED_HOSTS`. Several hosts are comma-separated.
 
@@ -59,7 +59,7 @@ The server listens on `127.0.0.1:8787`, on this computer only. It prints its add
 https://YOUR-TUNNEL-HOST/mcp/<TV_MCP_AUTH_TOKEN>
 ```
 
-- Paste this URL, with your token in place of <TV_MCP_AUTH_TOKEN>, as the connection of a custom MCP server in ChatGPT (chatgpt.com/plugins, +, Add custom MCP server), with no authentication.
+- Paste this URL, with your token in place of `<TV_MCP_AUTH_TOKEN>`, as the connection of a custom MCP server in ChatGPT (chatgpt.com/plugins, +, Add custom MCP server), with no authentication.
 - The URL holds the token, so anyone who has it can use TradingView through the server: keep it private.
 - Start the server with TV_MCP_AUTH_TOKEN set to a random secret, such as the output of "openssl rand -hex 32", and TV_MCP_ALLOWED_HOSTS=YOUR-TUNNEL-HOST: npx -y tradingview-desktop-mcp --transport http --profile readonly
 - Then point an HTTPS tunnel whose public host is YOUR-TUNNEL-HOST at the server, http://127.0.0.1:8787 unless you set --host or --port.
@@ -101,7 +101,7 @@ It reads the chart with `chart_get_state`. Then try "Show me the last 3 daily ca
 
 ## When you are done
 
-Stop the tunnel, and stop the server with Ctrl+C. Close the terminal or clear the variables, and do not reuse the token: make a new one next time. A tunnel that stays up keeps your session reachable by anyone who has the token.
+Stop the tunnel, and stop the server with Ctrl+C. Remove the tunnel host from `TV_MCP_ALLOWED_HOSTS` (close the terminal or clear the variable), and do not reuse the token: make a new one next time. A tunnel that stays up keeps your session reachable by anyone who has the token.
 
 ## More
 

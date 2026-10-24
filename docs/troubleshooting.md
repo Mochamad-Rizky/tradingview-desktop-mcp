@@ -48,7 +48,7 @@ The app could not be started, or did not become ready in time. The message says 
 
 - **Could not ask TradingView to quit.** Quit TradingView yourself, then run `launch` again. On macOS this is usually the Automation permission.
 - **TradingView did not exit.** A dialog, such as a question about unsaved changes, is probably waiting. Close the app yourself, then run `launch` again.
-- **Did not become ready within 60 s.** Start TradingView yourself with its debug port, then try again. If the app is only slow, raise `TV_LAUNCH_TIMEOUT_MS`.
+- **Did not become ready within 60 s.** Start TradingView yourself with its debug port, then try again. If the app is only slow, raise `TV_LAUNCH_TIMEOUT_MS` (it has no flag, so set it in the environment of the process that runs `launch`).
 - **Could not start the file.** Check that the file exists and that you may run it, or point `TV_APP_PATH` at another TradingView executable.
 
 ### CDP_UNREACHABLE
@@ -66,7 +66,7 @@ TradingView is up, but the server found no chart page to control. Typical reason
 
 ### TIMEOUT
 
-TradingView did not answer in time, or a panel did not open or close. The limit for one call is `TV_CALL_TIMEOUT_MS`, 15 seconds unless you changed it. Look for a dialog in TradingView that waits for you, wait for the chart to finish loading, and try again. If the machine is slow, raise `TV_CALL_TIMEOUT_MS`.
+TradingView did not answer in time, or a panel did not open or close. The limit for one call is `TV_CALL_TIMEOUT_MS`, 15 seconds unless you changed it. Look for a dialog in TradingView that waits for you, wait for the chart to finish loading, and try again. If the machine is slow, raise `TV_CALL_TIMEOUT_MS`. It has no flag, so it must be in the environment of the process that runs the server: for a server that a client starts, use the client's own way of giving a server environment variables, which your client's documentation describes.
 
 ### PAGE_EVALUATION_FAILED
 
@@ -94,7 +94,7 @@ The action can lose work or cannot be undone, so the tool wants `confirm: true`.
 
 ### UNSAFE_ACTION_BLOCKED
 
-The server refused a click or a typed action because it would reach a trading control, such as a broker panel, or because `ui_evaluate` code names the account, credentials or trading. This protection is deliberate and has no switch. Do that action in TradingView yourself.
+The server refused a click, typing or a key press because it would reach a trading control, such as a buy or sell button or the trade button, or the focused element is named like a trading action, or because `ui_evaluate` code names the account, credentials or trading. This protection is deliberate and has no switch. Do that action in TradingView yourself.
 
 ### AUTH_REQUIRED
 
@@ -108,7 +108,7 @@ Something went wrong inside the server that it did not plan for. Run it again wi
 
 ### The port is taken by another browser
 
-If `doctor` says another browser answers on the debug port, a program such as Chrome or Edge holds port 9222, so TradingView could not open it. Quit that browser, or use another port for TradingView. Set `TV_CDP_PORT` before you run `launch` and in the environment of the server, then start the server again.
+If `doctor` says another browser answers on the debug port, a program such as Chrome or Edge holds port 9222, so TradingView could not open it. Quit that browser, or use another port for TradingView. To run `launch` and `doctor` on another port, set `TV_CDP_PORT` in your shell, as below. A server that your AI client starts does not read your shell's variables: add `"--cdp-port", "9223"` to the arguments the client passes, after the package name, then restart the client.
 
 macOS and Linux:
 
@@ -120,7 +120,7 @@ npx -y tradingview-desktop-mcp launch
 Windows, in Command Prompt (cmd):
 
 ```bat
-set TV_CDP_PORT=9223
+set "TV_CDP_PORT=9223"
 npx -y tradingview-desktop-mcp launch
 ```
 
@@ -131,7 +131,7 @@ $env:TV_CDP_PORT = "9223"
 npx -y tradingview-desktop-mcp launch
 ```
 
-`--cdp-port 9223` does the same for one command. The server only ever connects to the debug port on this machine.
+`--cdp-port 9223` does the same for one command (`npx -y tradingview-desktop-mcp launch --cdp-port 9223`). The server only ever connects to the debug port on this machine.
 
 ### The client does not show the tools
 
@@ -159,7 +159,7 @@ npx -y tradingview-desktop-mcp launch
 Windows, in Command Prompt (cmd):
 
 ```bat
-set TV_APP_PATH=C:\path\to\TradingView.exe
+set "TV_APP_PATH=C:\path\to\TradingView.exe"
 npx -y tradingview-desktop-mcp launch
 ```
 
@@ -185,7 +185,7 @@ export TV_MCP_ALLOWED_HOSTS=abc.ngrok.app
 Windows, in Command Prompt (cmd):
 
 ```bat
-set TV_MCP_ALLOWED_HOSTS=abc.ngrok.app
+set "TV_MCP_ALLOWED_HOSTS=abc.ngrok.app"
 ```
 
 Windows, in PowerShell:
@@ -209,7 +209,7 @@ export TV_MCP_AUTH_TOKEN="<the token>"
 Windows, in Command Prompt (cmd):
 
 ```bat
-set TV_MCP_AUTH_TOKEN=<the token>
+set "TV_MCP_AUTH_TOKEN=<the token>"
 ```
 
 Windows, in PowerShell:
@@ -222,7 +222,7 @@ Any random secret works. `node -e "console.log(require('crypto').randomBytes(32)
 
 ### Logs
 
-The server writes its log to stderr. With the stdio transport, stdout carries only MCP messages, so the client shows stderr in its own MCP log. To see more, add `--log-level debug` to the arguments the client passes, after the package name, or set `TV_MCP_LOG_LEVEL=debug`. The levels run from `trace` to `fatal`, and `silent` turns the log off. In a terminal:
+The server writes its log to stderr. With the stdio transport, stdout carries only MCP messages, so the client shows stderr in its own MCP log. To see more, add `--log-level debug` to the arguments the client passes, after the package name, or, in a terminal, set `TV_MCP_LOG_LEVEL=debug`. The levels run from `trace` to `fatal`, and `silent` turns the log off. In a terminal:
 
 ```sh
 npx -y tradingview-desktop-mcp doctor --log-level debug
