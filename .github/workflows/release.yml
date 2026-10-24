@@ -4,19 +4,34 @@ name: Release
 # v0.1.0 is pushed. Nothing else starts it. To release, set the version in packages/server/
 # package.json, date its section of CHANGELOG.md, merge that to main and push the tag on main.
 #
+# The run: `check` refuses a tag that is not a plain vX.Y.Z on main naming a version with a dated
+# CHANGELOG section and not on npm yet; `gate` runs ci.yml, whose verify job packs the tarball and
+# checks it, and whose runtime-node20 job installs it and smoke tests it; `publish` publishes that
+# very tarball; `github-release` creates the release with the CHANGELOG section as its notes.
+#
+# Publishing the gate's tarball:
+# - A called workflow shares the caller's github context ("the github context is always associated
+#   with the caller workflow"), so the artifact it uploads belongs to this run, and
+#   actions/download-artifact downloads from the current run unless told otherwise:
+#   https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations
+# - `npm publish` takes a gzipped tarball as its package spec
+#   (https://docs.npmjs.com/cli/v11/commands/npm-publish). The npm CLI then reads the manifest and
+#   publishConfig from the tarball, runs no lifecycle scripts, and goes through the same OIDC
+#   exchange and provenance as for a folder; the provenance subject is the digest of the tarball.
+#
 # npm authentication, checked against the npm docs:
 # - https://docs.npmjs.com/trusted-publishers: trusted publishing (OIDC) needs npm 11.5.1 or newer,
 #   Node.js 22.14.0 or newer, a GitHub-hosted runner, `id-token: write`, and a trusted publisher on
-#   npmjs.com that names this repository and this file, release.yml. The npm CLI tries OIDC first
-#   and falls back to a token when the exchange fails. With trusted publishing, npm adds provenance
-#   by itself.
+#   npmjs.com that names this repository, this file (release.yml) and the environment of the
+#   publish job (npm). The npm CLI tries OIDC first and falls back to a token when the exchange
+#   fails. With trusted publishing, npm adds provenance by itself.
 # - https://docs.npmjs.com/generating-provenance-statements: provenance needs `id-token: write`, a
 #   cloud-hosted runner and a public repository that matches `repository` in package.json;
 #   `publishConfig.provenance` turns it on for the token path too.
 # - https://docs.npmjs.com/cli/v11/commands/npm-trust: a trusted publisher can only be linked to a
-#   package that exists on npm. The first publish therefore needs the NPM_TOKEN repository secret
-#   (a granular access token that may publish the package); once the package exists, add the trusted
-#   publisher and delete the secret.
+#   package that exists on npm. The first publish therefore needs the NPM_TOKEN secret (a granular
+#   access token that may publish the package); once the package exists, add the trusted publisher
+#   and delete the secret.
 
 on:
   push:
@@ -46,6 +61,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
+      node: ${{ steps.version.outputs.node }}
     steps:
       # The whole history of every branch, for the check that the tagged commit is on main.
       - name: Check out the repository
@@ -82,6 +98,7 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "node=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"
 
       # Only what is merged is released: a tag on another branch, or on a commit that never reached
       # main, publishes nothing.
@@ -125,7 +142,8 @@ jobs:
           fi
           echo "$name@$VERSION is not on npm yet."
 
-  # The same gate as every push and pull request: the whole of ci.yml, called as it is.
+  # The same gate as every push and pull request: the whole of ci.yml, called as it is. Its verify
+  # job uploads the checked tarball as the artifact `package`.
   gate:
     name: Gate
     needs: check
@@ -135,30 +153,34 @@ jobs:
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  # Publishes the tarball that the gate packed, checked and smoke tested, as it is. The job that can
+  # mint an OIDC token checks out, installs and builds nothing.
   publish:
     name: Publish to npm
     needs: [check, gate]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
+    # GitHub creates the environment on the first run, without protection rules. The maintainer may
+    # add a required reviewer to it, so that each publish waits for approval. The trusted publisher
+    # on npmjs.com must name this environment.
+    environment: npm
     permissions:
       contents: read
       # Mints the OIDC token for trusted publishing and for provenance.
       id-token: write
     steps:
-      - name: Check out the repository
-        uses: actions/checkout@v7
+      - name: Download the package
+        uses: actions/download-artifact@v8
         with:
-          persist-credentials: false
+          name: package
+          path: ${{ runner.temp }}/package
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-
-      # registry-url writes an .npmrc that reads a token from NODE_AUTH_TOKEN, which the token path
-      # needs. No cache: a release is built from the lockfile alone.
+      # The Node.js of .nvmrc, which the check job read. registry-url writes an .npmrc that reads a
+      # token from NODE_AUTH_TOKEN, which the token path needs.
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ needs.check.outputs.node }}
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
@@ -171,25 +193,35 @@ jobs:
           fi
           echo "npm $current"
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Check the tarball
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          tarball=$(find "$RUNNER_TEMP/package" -name '*.tgz')
+          if [ "$(printf '%s\n' "$tarball" | grep -c .)" -ne 1 ]; then
+            echo "::error::Expected one tarball in the package artifact, found: $tarball"
+            exit 1
+          fi
+          packed=$(tar -xzOf "$tarball" package/package.json | node -p "const p = JSON.parse(require('fs').readFileSync(0, 'utf8')); p.name + '@' + p.version")
+          if [ "$packed" != "tradingview-desktop-mcp@$VERSION" ]; then
+            echo "::error::The tarball holds $packed, not tradingview-desktop-mcp@$VERSION."
+            exit 1
+          fi
+          echo "TARBALL=$tarball" >> "$GITHUB_ENV"
+          echo "Publishing $packed from $(basename "$tarball")."
 
-      - name: Build
-        run: pnpm build
-
-      # npm runs the prepack script, which adds the README, the LICENSE and the CHANGELOG, and
-      # publishConfig makes the package public with provenance. Through a trusted publisher npm
-      # needs no token. Otherwise NODE_AUTH_TOKEN carries the NPM_TOKEN secret, and it is set only
-      # when the secret has a value, so that an empty token never stands in for the OIDC exchange.
+      # publishConfig in the tarball makes the package public with provenance. Through a trusted
+      # publisher npm needs no token. Otherwise NODE_AUTH_TOKEN carries the NPM_TOKEN secret, and it
+      # is set only when the secret has a value, so that an empty token never stands in for the
+      # OIDC exchange.
       - name: Publish
-        working-directory: packages/server
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -n "$NPM_TOKEN" ]; then
             export NODE_AUTH_TOKEN="$NPM_TOKEN"
           fi
-          npm publish
+          npm publish "$TARBALL"
 
   # The release notes are the CHANGELOG section of the version. When this job fails after the
   # publish, re-run the failed jobs only: a new run stops at the check, since npm has the version.
