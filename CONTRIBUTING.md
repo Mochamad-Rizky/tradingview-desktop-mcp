@@ -19,21 +19,21 @@ pnpm build     # the integration tests start the built CLI, so build before you 
 
 Run them from the repository root.
 
-| Script                               | What it does                                                                |
-| ------------------------------------ | --------------------------------------------------------------------------- |
-| `pnpm lint`                          | ESLint, with type-aware rules for the TypeScript                            |
-| `pnpm format`                        | Prettier, rewriting the files                                               |
-| `pnpm typecheck`                     | `tsc --noEmit`                                                              |
-| `pnpm build`                         | Bundles `packages/server/dist/index.js` and `cli.js` with tsup              |
-| `pnpm test`                          | Unit and integration tests                                                  |
-| `pnpm test:unit`, `test:integration` | One of the two levels                                                       |
-| `pnpm test:e2e`                      | End-to-end tests against the real app, local only (see below)               |
-| `pnpm test:e2e:dashboard`            | The dashboard's Playwright tests (mocked); needs `pnpm build` and Chromium  |
-| `pnpm test:coverage`                 | Unit and integration tests with coverage, failing under 80% on any metric   |
-| `pnpm dev:dashboard`                 | The dashboard on Vite's dev server with hot reload (see below)              |
-| `pnpm re:probe`, `pnpm re:record`    | Read-only probes and the fixture recorder for the real app                  |
-| `pnpm docs:examples`                 | Regenerates `docs/examples.md` from the fake app; a test checks it          |
-| `node scripts/smoke-node20.mjs`      | Starts the built CLI over stdio and lists its tools; run after `pnpm build` |
+| Script                               | What it does                                                               |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| `pnpm lint`                          | ESLint, with type-aware rules for the TypeScript                           |
+| `pnpm format`                        | Prettier, rewriting the files                                              |
+| `pnpm typecheck`                     | `tsc --noEmit`                                                             |
+| `pnpm build`                         | Bundles `packages/server/dist/index.js` and `cli.js` with tsup             |
+| `pnpm test`                          | Unit and integration tests                                                 |
+| `pnpm test:unit`, `test:integration` | One of the two levels                                                      |
+| `pnpm test:e2e`                      | End-to-end tests against the real app, local only (see below)              |
+| `pnpm test:e2e:dashboard`            | The dashboard's Playwright tests (mocked); needs `pnpm build` and Chromium |
+| `pnpm test:coverage`                 | Unit and integration tests with coverage, failing under 80% on any metric  |
+| `pnpm dev:dashboard`                 | The dashboard on Vite's dev server with hot reload (see below)             |
+| `pnpm re:probe`, `pnpm re:record`    | Read-only probes and the fixture recorder for the real app                 |
+| `pnpm docs:examples`                 | Regenerates `docs/examples.md` from the fake app; a test checks it         |
+| `node scripts/smoke-node20.mjs`      | Starts the built CLI over stdio and over HTTP; run after `pnpm build`      |
 
 Before you push, run the whole gate:
 

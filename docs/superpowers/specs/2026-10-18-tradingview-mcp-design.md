@@ -302,7 +302,8 @@ port), `doctor` (health report), `config <client>` (print a client configuration
 ## 11. CI/CD
 
 GitHub Actions on every push and pull request: install (`--frozen-lockfile`) → lint → typecheck → unit →
-integration → coverage gate → build → Node 20 runtime smoke test of the built CLI. A separate `dashboard-e2e` job builds the
+integration → coverage gate → build → Node 20 runtime smoke test of the built CLI, over stdio and over HTTP (the dashboard
+page without the token, `/api/info` only with it). A separate `dashboard-e2e` job builds the
 dashboard and the server, and runs the Playwright tests in Chromium twice: against the mock server (the `mocked` project),
 and against the built CLI with the fake TradingView (the `real` project, without `TV_E2E`). Every test fails when its page
 breaks the Content-Security-Policy. The run against the real TradingView (`TV_E2E=1`) stays local only.

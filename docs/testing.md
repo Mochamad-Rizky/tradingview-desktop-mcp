@@ -14,7 +14,7 @@ dashboard has tests of its own, described in [Dashboard tests](#dashboard-tests)
 | Dashboard E2E               | `pnpm test:e2e:dashboard`                                                     | Playwright in Chromium, against a mock server                  | yes        |
 | Dashboard E2E (real server) | `pnpm build && pnpm --filter tradingview-desktop-mcp-dashboard test:e2e:real` | Playwright in Chromium, against the built CLI and the fake app | yes        |
 | Coverage                    | `pnpm test:coverage`                                                          | Unit and integration together, ≥80% on every metric            | yes        |
-| Smoke                       | `pnpm build && node scripts/smoke-node20.mjs`                                 | The built CLI over stdio, with no app                          | yes        |
+| Smoke                       | `pnpm build && node scripts/smoke-node20.mjs`                                 | The built CLI over stdio and over HTTP, with no app            | yes        |
 
 Before a commit, run the whole local gate:
 
@@ -97,12 +97,19 @@ prompts, the excerpts and the links in the README come from the page. Prettier s
 
 ## Smoke test
 
-`scripts/smoke-node20.mjs` starts the built CLI (`packages/server/dist/cli.js --transport stdio`) the
-way a client does and talks to it over stdio. The debug port points at port 9, where nothing
-listens, so no app is needed. The script checks that the handshake works, that `app_health` and
-`batch_run` are listed, that every line on stdout is a JSON-RPC 2.0 message, and that the server
-exits with code 0 once its input closes. It prints `smoke ok`, or the reason it failed and the start
-of the server's stderr, and it gives up after 20 s.
+`scripts/smoke-node20.mjs` starts the built CLI (`packages/server/dist/cli.js`) twice, the way a
+client does. The debug port points at port 9, where nothing listens, so no app is needed.
+
+- **Over stdio** it checks that the handshake works, that the server lists the 83 tools of the full
+  profile, each once, that every line on stdout is a JSON-RPC 2.0 message, and that the server exits
+  with code 0 once its input closes.
+- **Over HTTP** (`--transport http`, with a token made for the run and a free port) it checks that
+  `GET /` serves the dashboard page without the token, that `GET /api/info` answers 401 without the
+  token and 200 with it, and that the server exits with code 0 on `SIGTERM`. The token is never
+  printed.
+
+It prints `smoke ok`, or the leg and the reason it failed with the start of the server's stderr,
+and it gives each leg 20 s.
 
 CI runs it in the `runtime-node20` job on Node.js 20.19, the oldest runtime the package declares,
 after installing only the production dependencies of the package. The test suites cannot show that
