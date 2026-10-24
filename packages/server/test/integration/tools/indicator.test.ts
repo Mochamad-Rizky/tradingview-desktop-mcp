@@ -161,6 +161,62 @@ describe('indicator_list', () => {
     ]);
   });
 
+  test('indicator_list reports time inputs as seconds and ISO', async () => {
+    const { client } = await startHarness({
+      ...fixture,
+      studies: [
+        {
+          id: 'S1',
+          name: 'Anchored Line',
+          plots: ['plot_0'],
+          inputs: [
+            // TradingView keeps a time input in Unix milliseconds.
+            { id: 'in_0', name: 'Anchor', type: 'time', value: 1_704_153_600_000 },
+            { id: 'in_1', name: 'Bar', type: 'bar_time', value: 1_704_240_000_000 },
+            // A number up to 1e11 is already seconds, as for the time inputs of the tools.
+            { id: 'in_2', name: 'Since', type: 'time', value: 1_704_326_400 },
+            // No time set.
+            { id: 'in_3', name: 'Until', type: 'time', value: 0 },
+            { id: 'in_4', name: 'Length', type: 'integer', value: 14 },
+          ],
+        },
+      ],
+    });
+
+    const result = await callTool(client, 'indicator_list');
+
+    const [study] = dataOf(result).studies as { inputs: unknown[] }[];
+    expect(study?.inputs).toStrictEqual([
+      {
+        id: 'in_0',
+        name: 'Anchor',
+        type: 'time',
+        value: 1_704_153_600,
+        valueIso: '2024-01-02T00:00:00Z',
+        options: null,
+      },
+      {
+        id: 'in_1',
+        name: 'Bar',
+        type: 'bar_time',
+        value: 1_704_240_000,
+        valueIso: '2024-01-03T00:00:00Z',
+        options: null,
+      },
+      {
+        id: 'in_2',
+        name: 'Since',
+        type: 'time',
+        value: 1_704_326_400,
+        valueIso: '2024-01-04T00:00:00Z',
+        options: null,
+      },
+      { id: 'in_3', name: 'Until', type: 'time', value: null, valueIso: null, options: null },
+      // Any other input as it is, without valueIso.
+      { id: 'in_4', name: 'Length', type: 'integer', value: 14, options: null },
+    ]);
+  });
+
   test('indicator_list checks chartIndex against the layout', async () => {
     const { client } = await startHarness();
 
@@ -1101,6 +1157,53 @@ describe('indicator_set_inputs', () => {
           { id: 'in_1', value: 'hl2' },
         ],
       ],
+    ]);
+  });
+
+  test('indicator_set_inputs reports a time input as indicator_list does, in seconds and ISO', async () => {
+    const { client, win } = await startHarness({
+      ...fixture,
+      studies: [
+        {
+          id: 'S1',
+          name: 'Anchored Line',
+          plots: ['plot_0'],
+          inputs: [{ id: 'in_0', name: 'Anchor', type: 'time', value: 1_704_153_600_000 }],
+        },
+      ],
+    });
+
+    const result = await callTool(client, 'indicator_set_inputs', {
+      id: 'S1',
+      inputs: { Anchor: '2024-01-05' },
+    });
+
+    expect(dataOf(result)).toStrictEqual({
+      id: 'S1',
+      previous: [
+        {
+          id: 'in_0',
+          name: 'Anchor',
+          type: 'time',
+          value: 1_704_153_600,
+          valueIso: '2024-01-02T00:00:00Z',
+          options: null,
+        },
+      ],
+      current: [
+        {
+          id: 'in_0',
+          name: 'Anchor',
+          type: 'time',
+          value: 1_704_412_800,
+          valueIso: '2024-01-05T00:00:00Z',
+          options: null,
+        },
+      ],
+    });
+    // TradingView is given the time in milliseconds, as it keeps it.
+    expect(changesOf(win)).toEqual([
+      ['study.setInputValues', 'S1', [{ id: 'in_0', value: 1_704_412_800_000 }]],
     ]);
   });
 

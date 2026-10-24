@@ -11,6 +11,7 @@ import {
   plotKeys,
   resolveIndicator,
   searchCatalog,
+  toReportedInput,
   toStudyInputs,
   toValueRows,
   validateInputs,
@@ -71,7 +72,7 @@ const INPUTS_TEXT =
   'Input values by input id or name (case aside), as indicator_list reports them, such as ' +
   '{ "Length": 21, "Source": "hl2" }. Numbers must be within the bounds of the input, and a ' +
   'value of an input with options one of them. A time input takes ' +
-  `${TIME_INPUT}; indicator_list reports it in Unix milliseconds, as TradingView keeps it.`;
+  `${TIME_INPUT}; indicator_list reports it in Unix seconds with valueIso.`;
 
 // What the app knows of the indicators it can add, with a warning for each source it could not
 // read: the standard Pine scripts (each with the script version a Pine study descriptor takes as
@@ -106,8 +107,10 @@ export const indicatorList = defineTool({
     'Lists the indicators (studies) on a chart, strategies included, and changes nothing. Returns ' +
     'studies, each with id (what the other indicator tools take), name, title (as the legend ' +
     'shows it), visible, isPine, isStrategy and inputs: id, name, type, value and options (the ' +
-    'choices of an input that has them, else null). The internal inputs of Pine scripts are left ' +
-    'out. Use indicator_get_values for the values an indicator computed.',
+    'choices of an input that has them, else null). The value of a time input (type time or ' +
+    'bar_time) is in Unix seconds, with valueIso (ISO 8601, UTC), both null when no time is set. ' +
+    'The internal inputs of Pine scripts are left out. Use indicator_get_values for the values ' +
+    'an indicator computed.',
   inputSchema: { chartIndex: chartIndexInput() },
   annotations: READ_ONLY,
   core: true,
@@ -120,7 +123,13 @@ export const indicatorList = defineTool({
         `The study ${id} could not be read, so only its id and name are reported; the other ` +
         'fields are defaults.',
     );
-    return { data: { studies }, via: 'internal', warnings };
+    return {
+      data: {
+        studies: studies.map((study) => ({ ...study, inputs: study.inputs.map(toReportedInput) })),
+      },
+      via: 'internal',
+      warnings,
+    };
   },
 });
 
@@ -468,8 +477,9 @@ export const indicatorSetInputs = defineTool({
     'aside) as indicator_list reports them, and checked first: an unknown input, a value of the ' +
     'wrong type, a number outside the bounds of the input or a value that is not one of its ' +
     'options fails with INVALID_INPUT, and then nothing is set. Returns id, previous and current: ' +
-    'the inputs before and after (id, name, type, value, options), so a change can be undone ' +
-    'with the previous values.',
+    'the inputs before and after (id, name, type, value, options; a time input in Unix seconds ' +
+    'with valueIso, as indicator_list reports it), so a change can be undone with the previous ' +
+    'values.',
   inputSchema: {
     id: idInput(),
     inputs: inputValues().describe(INPUTS_TEXT),

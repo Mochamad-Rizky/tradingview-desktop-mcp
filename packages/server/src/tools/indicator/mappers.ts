@@ -1,5 +1,5 @@
 import { TvMcpError } from '../../core/errors.js';
-import { parseTimeInput, toIso } from '../../utils/time.js';
+import { modifiedToSeconds, parseTimeInput, toIso } from '../../utils/time.js';
 import { isReportableTime } from '../chart/mappers.js';
 import type { PageErrorSentinel } from '../../core/tv/page-bridge.js';
 import type { editStudyInputs, readStudies, readStudyCatalog } from './page.js';
@@ -183,15 +183,43 @@ export function resolveIndicator(
   return builtin === undefined ? null : { kind: 'builtin', id: builtin.id, name: builtin.name };
 }
 
-// The inputs as indicator_list reports them: options only when they are all text.
-export function toStudyInputs(specs: readonly InputSpec[]): StudyInput[] {
-  return specs.map(({ id, name, type, value, options }) => ({
+// The input types that hold a time, which TradingView keeps in Unix milliseconds.
+const TIME_TYPES = new Set(['time', 'bar_time']);
+
+// An input as the tools report it: a time input in Unix seconds with valueIso (design spec 5.1),
+// both null for a value that is no time, such as the 0 of a time not set; any other input as it is.
+export type ReportedInput = StudyInput & { valueIso?: string | null };
+
+// A number above 1e11 is read as milliseconds, the rule of the times of the tools, so a time kept
+// in seconds is reported as it is.
+export function toReportedInput(input: StudyInput): ReportedInput {
+  if (!TIME_TYPES.has(input.type)) {
+    return input;
+  }
+  const { id, name, type, value, options } = input;
+  const seconds = typeof value === 'boolean' ? null : modifiedToSeconds(value);
+  return {
     id,
     name,
     type,
-    value,
-    options: options?.every((option) => typeof option === 'string') ? options.map(String) : null,
-  }));
+    value: seconds,
+    valueIso: seconds === null ? null : toIso(seconds),
+    options,
+  };
+}
+
+// The inputs as indicator_list reports them: options only when they are all text, and a time in
+// seconds with valueIso.
+export function toStudyInputs(specs: readonly InputSpec[]): ReportedInput[] {
+  return specs.map(({ id, name, type, value, options }) =>
+    toReportedInput({
+      id,
+      name,
+      type,
+      value,
+      options: options?.every((option) => typeof option === 'string') ? options.map(String) : null,
+    }),
+  );
 }
 
 // What a value has to be for each type of input.
@@ -205,7 +233,6 @@ const TEXT_TYPES = new Set([
   'color',
   'text_area',
 ]);
-const TIME_TYPES = new Set(['time', 'bar_time']);
 
 // The value to set for a value that suits an input, or why it does not. A time input takes a time
 // as the time inputs of the tools do (design spec 5.1): an ISO 8601 date or date-time, or a Unix

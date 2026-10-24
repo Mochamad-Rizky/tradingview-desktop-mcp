@@ -261,7 +261,7 @@ Reads the top of the book of a symbol from its quote, and changes nothing: the b
 
 `Read-only` `Idempotent` `core` `readonly`
 
-Lists the indicators (studies) on a chart, strategies included, and changes nothing. Returns studies, each with id (what the other indicator tools take), name, title (as the legend shows it), visible, isPine, isStrategy and inputs: id, name, type, value and options (the choices of an input that has them, else null). The internal inputs of Pine scripts are left out. Use indicator_get_values for the values an indicator computed.
+Lists the indicators (studies) on a chart, strategies included, and changes nothing. Returns studies, each with id (what the other indicator tools take), name, title (as the legend shows it), visible, isPine, isStrategy and inputs: id, name, type, value and options (the choices of an input that has them, else null). The value of a time input (type time or bar_time) is in Unix seconds, with valueIso (ISO 8601, UTC), both null when no time is set. The internal inputs of Pine scripts are left out. Use indicator_get_values for the values an indicator computed.
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -291,7 +291,7 @@ Adds an indicator to a chart. name is an id from indicator_search, or a name or 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `name` | string | yes | The indicator: an id from indicator_search, or its name or short name. 1 to 200 characters. |
-| `inputs` | object | no | Input values by input id or name (case aside), as indicator_list reports them, such as { "Length": 21, "Source": "hl2" }. Numbers must be within the bounds of the input, and a value of an input with options one of them. A time input takes ISO 8601 date/time (e.g. 2024-01-31 or 2024-01-31T10:00:00Z) or Unix timestamp in seconds/milliseconds; compact forms like 20240131 are rejected; indicator_list reports it in Unix milliseconds, as TradingView keeps it. Set once the indicator is added. Default: its defaults. |
+| `inputs` | object | no | Input values by input id or name (case aside), as indicator_list reports them, such as { "Length": 21, "Source": "hl2" }. Numbers must be within the bounds of the input, and a value of an input with options one of them. A time input takes ISO 8601 date/time (e.g. 2024-01-31 or 2024-01-31T10:00:00Z) or Unix timestamp in seconds/milliseconds; compact forms like 20240131 are rejected; indicator_list reports it in Unix seconds with valueIso. Set once the indicator is added. Default: its defaults. |
 | `overlay` | boolean | no | true to put a built-in study on the price pane. Not applied to Pine scripts. Default: where TradingView puts it. |
 | `chartIndex` | integer | no | Which chart of a multi-chart layout, counted from 0 (layout.chartsCount of chart_get_state says how many there are). Leave it out for the active chart. At least 0. |
 
@@ -315,12 +315,12 @@ Removes an indicator from a chart, the way the user could undo in TradingView. A
 
 `Idempotent`
 
-Changes input values of an indicator on a chart. Inputs are named by id or name (case aside) as indicator_list reports them, and checked first: an unknown input, a value of the wrong type, a number outside the bounds of the input or a value that is not one of its options fails with INVALID_INPUT, and then nothing is set. Returns id, previous and current: the inputs before and after (id, name, type, value, options), so a change can be undone with the previous values.
+Changes input values of an indicator on a chart. Inputs are named by id or name (case aside) as indicator_list reports them, and checked first: an unknown input, a value of the wrong type, a number outside the bounds of the input or a value that is not one of its options fails with INVALID_INPUT, and then nothing is set. Returns id, previous and current: the inputs before and after (id, name, type, value, options; a time input in Unix seconds with valueIso, as indicator_list reports it), so a change can be undone with the previous values.
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | string | yes | The id of the indicator on the chart, from indicator_list. 1 to 64 characters. |
-| `inputs` | object | yes | Input values by input id or name (case aside), as indicator_list reports them, such as { "Length": 21, "Source": "hl2" }. Numbers must be within the bounds of the input, and a value of an input with options one of them. A time input takes ISO 8601 date/time (e.g. 2024-01-31 or 2024-01-31T10:00:00Z) or Unix timestamp in seconds/milliseconds; compact forms like 20240131 are rejected; indicator_list reports it in Unix milliseconds, as TradingView keeps it. |
+| `inputs` | object | yes | Input values by input id or name (case aside), as indicator_list reports them, such as { "Length": 21, "Source": "hl2" }. Numbers must be within the bounds of the input, and a value of an input with options one of them. A time input takes ISO 8601 date/time (e.g. 2024-01-31 or 2024-01-31T10:00:00Z) or Unix timestamp in seconds/milliseconds; compact forms like 20240131 are rejected; indicator_list reports it in Unix seconds with valueIso. |
 | `chartIndex` | integer | no | Which chart of a multi-chart layout, counted from 0 (layout.chartsCount of chart_get_state says how many there are). Leave it out for the active chart. At least 0. |
 
 ### indicator_set_visibility

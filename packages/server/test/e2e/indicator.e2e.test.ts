@@ -32,6 +32,8 @@ interface StudyInput {
   name: string;
   type: string;
   value: string | number | boolean | null;
+  // A time input only.
+  valueIso?: string | null;
   options: string[] | null;
 }
 
@@ -184,6 +186,13 @@ describe.skipIf(!e2eEnabled())('the indicator tools against TradingView Desktop'
         expect(
           ['string', 'number', 'boolean'].includes(typeof input.value) || input.value === null,
         ).toBe(true);
+        // A time input in Unix seconds, never the milliseconds TradingView keeps, with valueIso.
+        if (input.type === 'time' || input.type === 'bar_time') {
+          expect(
+            input.value === null || (typeof input.value === 'number' && input.value <= 1e11),
+          ).toBe(true);
+          expect(input.valueIso === null || typeof input.valueIso === 'string').toBe(true);
+        }
       }
       // The internal inputs of a Pine script (its text, id and version) are left out.
       expect(study.inputs.some(({ id }) => ['text', 'pineId', 'pineVersion'].includes(id))).toBe(

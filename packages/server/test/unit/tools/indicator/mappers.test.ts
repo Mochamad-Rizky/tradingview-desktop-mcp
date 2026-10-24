@@ -479,4 +479,36 @@ describe('validateInputs', () => {
       { id: 'in_9', name: 'Step', type: 'integer', value: 1, options: null },
     ]);
   });
+
+  test('reports a time input in Unix seconds with valueIso, and null for no time', () => {
+    const times = [
+      spec({ id: 't0', name: 'Anchor', type: 'time', value: 1_704_153_600_000 }),
+      spec({ id: 't1', name: 'Bar', type: 'bar_time', value: 1_704_153_600 }),
+      spec({ id: 't2', name: 'Unset', type: 'time', value: 0 }),
+      spec({ id: 't3', name: 'Odd', type: 'time', value: true }),
+      spec({ id: 't4', name: 'Huge', type: 'time', value: 1e300 }),
+    ];
+
+    expect(toStudyInputs(times)).toStrictEqual([
+      {
+        id: 't0',
+        name: 'Anchor',
+        type: 'time',
+        value: 1_704_153_600,
+        valueIso: '2024-01-02T00:00:00Z',
+        options: null,
+      },
+      {
+        id: 't1',
+        name: 'Bar',
+        type: 'bar_time',
+        value: 1_704_153_600,
+        valueIso: '2024-01-02T00:00:00Z',
+        options: null,
+      },
+      { id: 't2', name: 'Unset', type: 'time', value: null, valueIso: null, options: null },
+      { id: 't3', name: 'Odd', type: 'time', value: null, valueIso: null, options: null },
+      { id: 't4', name: 'Huge', type: 'time', value: null, valueIso: null, options: null },
+    ]);
+  });
 });
