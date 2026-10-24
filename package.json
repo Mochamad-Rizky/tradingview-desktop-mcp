@@ -20,6 +20,7 @@
     "test:coverage": "pnpm -r --if-present test:coverage",
     "re:probe": "pnpm --filter tradingview-desktop-mcp re:probe",
     "re:record": "pnpm --filter tradingview-desktop-mcp re:record",
+    "docs:clients": "pnpm --filter tradingview-desktop-mcp docs:clients",
     "docs:examples": "pnpm --filter tradingview-desktop-mcp docs:examples",
     "docs:tools": "pnpm --filter tradingview-desktop-mcp docs:tools",
     "prepare": "husky"
