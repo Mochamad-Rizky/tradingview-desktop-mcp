@@ -499,3 +499,48 @@ describe('the README', () => {
     }
   });
 });
+
+describe('the README dashboard section', () => {
+  const readme = readText(README_PATH);
+  const section = ((): string => {
+    const start = readme.indexOf('\n## Dashboard\n');
+    expect(start, 'README has no "## Dashboard" heading').toBeGreaterThanOrEqual(0);
+    const rest = readme.slice(start + 1 + '## Dashboard\n'.length);
+    const end = rest.search(/^## /m);
+    return end === -1 ? rest : rest.slice(0, end);
+  })();
+  const prose = section.replaceAll(/\n>? */g, ' ');
+
+  test('the README documents the dashboard routes, the token and --dashboard', () => {
+    // Every route it names is one that the dashboard API serves, and it names them all.
+    const api = readText(new URL('../../src/transports/dashboard/api.ts', import.meta.url));
+    const served = [...api.matchAll(/case '(\/api\/[a-z]+)'/g)].map((match) => match[1] ?? '');
+    expect(served.sort()).toEqual(['/api/events', '/api/health', '/api/info', '/api/tools']);
+    for (const route of served) {
+      expect(section, `The dashboard section does not name ${route}`).toContain(`GET ${route}\``);
+    }
+    expect(section).toContain('`POST /api/tools/<name>`');
+
+    // The token: its variable, the Bearer header, the fragment link and where it is kept.
+    expect(section).toContain('`TV_MCP_AUTH_TOKEN`');
+    expect(section).toContain('`Authorization: Bearer <token>`');
+    expect(section).toContain('#token=<token>');
+    expect(prose).toContain('never sent to the server');
+    expect(prose).toContain('`sessionStorage`');
+
+    // The flag exists in the help of the CLI, and the section says how it behaves.
+    const help = readText(new URL('../../src/cli/output.ts', import.meta.url));
+    expect(help).toContain('--dashboard, --no-dashboard');
+    expect(section).toContain('--dashboard');
+    expect(prose).toContain('http://127.0.0.1:8787/');
+    expect(prose).toContain('serves no `/mcp`');
+  });
+
+  test('the dashboard section shows the three screenshots, which exist', () => {
+    for (const name of ['status', 'log', 'tools']) {
+      const path = `docs/images/dashboard-${name}.png`;
+      expect(section, `The dashboard section does not show ${path}`).toContain(`](${path})`);
+      expect(() => readFileSync(new URL(`../../../../${path}`, import.meta.url))).not.toThrow();
+    }
+  });
+});

@@ -22,7 +22,8 @@ plan limits, or call TradingView's servers.
 > runs several tools in one call. It also offers resources (the app health, the chart state and
 > bars, the Pine source and the last compile result, the strategy report, the active watchlist),
 > each along with the tool it shares its data with, and five prompts for common jobs. A web
-> dashboard is planned. It has been tried on macOS; Windows and Linux are best effort.
+> dashboard shows the calls live and runs tools by hand (see [Dashboard](#dashboard)). It has been
+> tried on macOS; Windows and Linux are best effort.
 
 ## Quick start from source
 
@@ -270,6 +271,73 @@ Some descriptions and hints name tools that `core` leaves out, such as `pine_ope
 which the assistant cannot call under `core`. The resources follow the tools: each one is offered
 only with the tool it shares its data with, such as `tradingview://pine/source` with
 `pine_get_source`, so `--tools 'chart_*'` offers the chart state and nothing of the Pine Editor.
+
+## Dashboard
+
+The server comes with a web dashboard for watching what your assistant does and for trying a tool
+by hand. It needs no extra install: `pnpm build` builds it into the server.
+
+![The status page: whether TradingView is reachable, the server, the plan limits and the recent calls](docs/images/dashboard-status.png)
+
+### Open it
+
+- **HTTP transport:** start the server with a token and open `http://127.0.0.1:8787/`. The dashboard
+  is on by default in this mode; `--no-dashboard` (`TV_MCP_DASHBOARD=false`) turns it off.
+
+  ```sh
+  TV_MCP_AUTH_TOKEN="$(openssl rand -hex 32)" node packages/server/dist/cli.js --transport http
+  ```
+
+- **Next to stdio:** an MCP client that starts the server over stdio can have a dashboard too. Add
+  `--dashboard` (`TV_MCP_DASHBOARD=true`) and `TV_MCP_AUTH_TOKEN` to its configuration. The dashboard
+  listens on its own address, `127.0.0.1:8787` unless you set `--host` and `--port`, and serves no
+  `/mcp`. Without the token, or when the port is taken, the dashboard stays off and the server
+  logs a warning, but the MCP server runs on. The calls the client makes show up in the live log.
+
+The server prints the address of the dashboard on stderr when it starts. It never prints the token.
+
+### The token
+
+The page asks for the token (`TV_MCP_AUTH_TOKEN`) before it shows anything. Paste it in, or open
+`http://127.0.0.1:8787/#token=<token>` once: the page reads the token from the fragment and removes
+it from the address, and the fragment is never sent to the server. The page keeps the token in
+`sessionStorage`, so it is gone when you close the tab, and it sends the token only as
+`Authorization: Bearer <token>`, never in a URL. When the server restarts with another token, the page
+asks again. See [SECURITY.md](SECURITY.md#the-dashboard).
+
+### What it shows
+
+![The live log: every tool call as it happens, with the details of the selected call](docs/images/dashboard-log.png)
+
+- **Status** shows whether TradingView is reachable (and how to start it when it is not), how the
+  server runs, the plan limits and the latest calls.
+- **Log** streams every tool call the server runs, whether an MCP client or the dashboard made
+  it, with a filter by tool name, pause, clear and the details of each call. After a dropped
+  connection it says "Reconnecting…" and picks up where it stopped.
+- **Tools** lists the tools the server offers, with their inputs, and runs one by hand. The result
+  is shown as it came back, with long JSON collapsed behind "Show all" and images as images.
+
+![The tools page: the tools on the left, one tool with its form and result on the right](docs/images/dashboard-tools.png)
+
+A run from the dashboard is a real tool call. It goes through the same registry as an MCP call, so
+the same schemas, profile, `confirm` rules and plan limit checks apply, and it appears in the log.
+The dashboard asks you to confirm before it runs any tool that is not read-only.
+
+### The API
+
+The page talks to the server through a small API, which you can also call with `curl` and the
+token. Every route needs `Authorization: Bearer <token>`, and the server checks `Host` and `Origin`
+as it does for `/mcp`.
+
+| Route                    | What it does                                                            |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `GET /api/info`          | Version, transport, profile, tool count and start time                  |
+| `GET /api/health`        | The health report: whether TradingView is reachable                     |
+| `GET /api/tools`         | The tools on offer, with their schemas and annotations                  |
+| `POST /api/tools/<name>` | Runs a tool with `{"arguments": {...}}`, as the origin `dashboard`      |
+| `GET /api/events`        | Server-sent events of the tool calls; `?limit=` sets how many to replay |
+
+The files of the page itself, at `/`, need no token and hold no data.
 
 ## Contributing
 

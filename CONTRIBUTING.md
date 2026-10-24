@@ -29,6 +29,7 @@ Run them from the repository root.
 | `pnpm test:unit`, `test:integration` | One of the two levels                                                       |
 | `pnpm test:e2e`                      | End-to-end tests against the real app, local only (see below)               |
 | `pnpm test:coverage`                 | Unit and integration tests with coverage, failing under 80% on any metric   |
+| `pnpm dev:dashboard`                 | The dashboard on Vite's dev server with hot reload (see below)              |
 | `pnpm re:probe`, `pnpm re:record`    | Read-only probes and the fixture recorder for the real app                  |
 | `pnpm docs:examples`                 | Regenerates `docs/examples.md` from the fake app; a test checks it          |
 | `node scripts/smoke-node20.mjs`      | Starts the built CLI over stdio and lists its tools; run after `pnpm build` |
@@ -38,6 +39,41 @@ Before you push, run the whole gate:
 ```sh
 pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm test:coverage
 ```
+
+## The dashboard
+
+The web dashboard lives in `packages/dashboard` (React, Vite, Tailwind and shadcn components). The
+package is private and is not published: every dependency in it is a devDependency, because
+`pnpm build` bundles the page into the server and the published package gains no runtime
+dependency.
+
+To work on it with hot reload, start the server with a token and the dashboard on, then the dev
+server beside it:
+
+```sh
+TV_MCP_AUTH_TOKEN="$(openssl rand -hex 32)" node packages/server/dist/cli.js --transport http
+pnpm dev:dashboard   # in a second terminal; open the address Vite prints
+```
+
+Vite hands `/api` and `/healthz` to the server on `TV_MCP_HTTP_PORT` (8787 by default). The server
+refuses a request whose `Host` or `Origin` is not its own, so the proxy rewrites both. Open the
+dev page, paste the token on the token screen, or open it once as `#token=<token>`.
+
+To add a shadcn component, use the pinned CLI from `packages/dashboard`:
+
+```sh
+pnpm dlx shadcn@4.22.1 add <component>
+```
+
+Then point what it generated back at our own code, by hand:
+
+- import `cn` from `@/lib/utils`, not from a `cn` package;
+- remove any import of `shadcn/tailwind.css`, which we do not install;
+- put the variants and utilities it needs in `src/styles/shadcn.css`.
+
+Components under `src/components/ui/` are vendored, so they are not counted in the
+coverage. The screenshots of the README come from `pnpm --filter
+tradingview-desktop-mcp-dashboard docs:screenshots`; see [docs/testing.md](docs/testing.md).
 
 ## Tests
 
@@ -56,7 +92,9 @@ There are three levels, described in [docs/testing.md](docs/testing.md):
   suite.
 
 Code in `packages/server/src` needs at least 80% coverage on lines, branches, functions and
-statements, counting the unit and integration tests together.
+statements, counting the unit and integration tests together. So does `packages/dashboard/src`,
+apart from the generated components. The dashboard also has unit tests and Playwright end-to-end
+tests, which [docs/testing.md](docs/testing.md#dashboard-tests) describes.
 
 ## Commits
 
@@ -90,7 +128,8 @@ Do not skip them with `--no-verify`. When a hook fails, fix what it reports.
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request. The
 `verify` job installs with the frozen lockfile, then lints, type-checks, builds, runs the unit and
-integration tests and checks the coverage. The `runtime-node20` job then takes the build from
+integration tests and checks the coverage. The `dashboard-e2e` job builds the dashboard and runs its
+Playwright tests in Chromium against a mock server. The `runtime-node20` job then takes the build from
 `verify`, installs only the production dependencies on Node.js 20.19 and runs
 `scripts/smoke-node20.mjs`, so that the bundle is proven on the oldest runtime it supports.
 

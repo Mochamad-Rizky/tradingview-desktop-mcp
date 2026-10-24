@@ -249,10 +249,11 @@ Prompts: `analyze_current_chart`, `write_and_backtest_strategy`, `debug_pine_scr
 - **Streamable HTTP** (`--transport http`): binds `127.0.0.1:8787` by default with stateful sessions. A token is
   required (`TV_MCP_AUTH_TOKEN`) and is accepted as `Authorization: Bearer <token>`, or as a path segment
   (`/mcp/<token>`) for connector UIs that cannot send headers. `Host` and `Origin` are validated against an allowlist
-  to block DNS rebinding. `/healthz` is the only unauthenticated route.
+  to block DNS rebinding. Unauthenticated routes: `/healthz` and the static dashboard files; `/api/*` takes the Bearer
+  token only.
 - **Dashboard**: served by the HTTP transport at `/`. `--dashboard` also starts it next to a stdio server, so tool
   calls made by a desktop client show up in the live log. A port conflict disables the dashboard with a warning
-  instead of failing the MCP server.
+  instead of failing the MCP server. The dashboard next to stdio needs `TV_MCP_AUTH_TOKEN` and serves no `/mcp`.
 - Remote clients (ChatGPT connectors, OpenAI Responses API) need a public HTTPS URL, which means a tunnel. The docs
   will recommend `--profile readonly` for that setup and warn that the endpoint can control the logged-in session.
 
@@ -272,6 +273,8 @@ Prompts: `analyze_current_chart`, `write_and_backtest_strategy`, `debug_pine_scr
 | `TV_MCP_PROFILE` / `TV_MCP_TOOLS`       | `--profile` / `--tools`          | `full` / all                       |
 | `TV_MCP_ALLOW_EVAL`                     | `--allow-eval`                   | `false`                            |
 | `TV_MCP_DASHBOARD`                      | `--dashboard` / `--no-dashboard` | on in HTTP mode, off in stdio mode |
+
+The dashboard next to stdio needs `TV_MCP_AUTH_TOKEN`; without it the dashboard is disabled with a warning.
 
 Precedence: CLI flag over environment variable over default. Subcommands: `launch` (start TradingView with the debug
 port), `doctor` (health report), `config <client>` (print a client configuration snippet).
@@ -299,7 +302,8 @@ port), `doctor` (health report), `config <client>` (print a client configuration
 ## 11. CI/CD
 
 GitHub Actions on every push and pull request: install (`--frozen-lockfile`) → lint → typecheck → unit →
-integration → coverage gate → build → Node 20 runtime smoke test of the built CLI → dashboard Playwright (mocked).
+integration → coverage gate → build → Node 20 runtime smoke test of the built CLI. A separate `dashboard-e2e` job builds the
+dashboard and runs its Playwright tests in Chromium against the mock server (the `mocked` project).
 Badges: CI status (GitHub Actions) and coverage (Codecov, which requires enabling the repository on codecov.io).
 
 ## 12. Roadmap
