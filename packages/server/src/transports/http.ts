@@ -14,7 +14,7 @@ import type { Config } from '../config/schema.js';
 import { TvMcpError } from '../core/errors.js';
 import type { Logger } from '../core/logger.js';
 import type { DashboardApi } from './dashboard/api.js';
-import { serveDashboard } from './dashboard/static.js';
+import { dashboardFiles } from './dashboard/static.js';
 import {
   allowedHostsFor,
   bearerToken,
@@ -229,6 +229,8 @@ export function warnIfTokenIsShort(token: string, logger: Logger): void {
 // every MCP and API request must carry it.
 export function createRouter(options: RouterOptions): RequestListener {
   const { token, logger, allowedHosts, dashboard, mcp } = options;
+  const serveFiles =
+    dashboard?.dir === undefined ? undefined : dashboardFiles(dashboard.dir, logger);
 
   // What a client sends can carry the token: under /mcp/ whole, cut by a slash it holds, or with a
   // typo; anywhere as it is or percent-encoded in any form. No part of it may reach a log.
@@ -339,9 +341,9 @@ export function createRouter(options: RouterOptions): RequestListener {
       return;
     }
     if (
-      dashboard?.dir !== undefined &&
+      serveFiles !== undefined &&
       !RESERVED_ROUTE.test(path) &&
-      (await serveDashboard(req, res, dashboard.dir, path))
+      (await serveFiles(req, res, path))
     ) {
       return;
     }

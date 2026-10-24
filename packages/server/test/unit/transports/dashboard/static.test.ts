@@ -1,12 +1,13 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { Logger } from '../../../../src/core/logger.js';
 import {
+  dashboardFiles,
   resolveDashboardDir,
-  serveDashboard,
 } from '../../../../src/transports/dashboard/static.js';
 import { send, type RawResponse } from '../../../helpers/dashboard-client.js';
 import {
@@ -16,6 +17,7 @@ import {
   createDashboardFiles,
   type DashboardFiles,
 } from '../../../helpers/dashboard-files.js';
+import { capturingLogger } from '../../../helpers/tool-context.js';
 
 const SECURITY_HEADERS = {
   'content-security-policy':
@@ -27,7 +29,7 @@ const SECURITY_HEADERS = {
   'x-frame-options': 'DENY',
 };
 const HTML = { Accept: 'text/html,application/xhtml+xml,*/*;q=0.8' };
-// What the harness answers when serveDashboard leaves a request to its caller.
+// What the harness answers when the file server leaves a request to its caller.
 const NOT_HANDLED = 418;
 
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -46,11 +48,13 @@ function files(): DashboardFiles {
   return created;
 }
 
-// serveDashboard behind a plain listener, with the path as sent, as the transport hands it over.
-async function serve(dir: string): Promise<number> {
+// The file server of `dir` behind a plain listener, with the path as sent, as the transport hands
+// it over.
+async function serve(dir: string, logger: Logger = capturingLogger().logger): Promise<number> {
+  const serveFiles = dashboardFiles(dir, logger);
   const server = createServer((req, res) => {
     const path = (req.url ?? '/').split('?', 1)[0] ?? '/';
-    void serveDashboard(req, res, dir, path).then((handled) => {
+    void serveFiles(req, res, path).then((handled) => {
       if (!handled) {
         res.writeHead(NOT_HANDLED);
         res.end();
@@ -105,7 +109,7 @@ test.each([
   ['assets/UPPER.JS', 'text/javascript; charset=utf-8'],
   ['assets/archive.bin', 'application/octet-stream'],
   ['LICENSE', 'application/octet-stream'],
-])('serveDashboard sends /%s as %s, with the security headers', async (path, type) => {
+])('dashboardFiles sends /%s as %s, with the security headers', async (path, type) => {
   const built = files();
   const content = `synthetic content of ${path}`;
   if (path !== 'index.html') {
@@ -122,7 +126,7 @@ test.each([
   expect(response.headers['content-length']).toBe(String(Buffer.byteLength(response.body)));
 });
 
-test('serveDashboard sends index.html for / and keeps it out of caches, unlike the assets', async () => {
+test('dashboardFiles sends index.html for / and keeps it out of caches, unlike the assets', async () => {
   const built = files();
   built.add('robots.txt', 'User-agent: *\n');
   const port = await serve(built.dir);
@@ -141,7 +145,7 @@ test('serveDashboard sends index.html for / and keeps it out of caches, unlike t
   expect(robots.headers['cache-control']).toBe('no-cache');
 });
 
-test('serveDashboard answers HEAD with the headers of GET and no body', async () => {
+test('dashboardFiles answers HEAD with the headers of GET and no body', async () => {
   const port = await serve(files().dir);
 
   const found = await send(port, { method: 'HEAD', path: '/' });
@@ -156,7 +160,7 @@ test('serveDashboard answers HEAD with the headers of GET and no body', async ()
   expect(missing.body).toBe('');
 });
 
-test('serveDashboard leaves any method but GET and HEAD to its caller', async () => {
+test('dashboardFiles leaves any method but GET and HEAD to its caller', async () => {
   const port = await serve(files().dir);
 
   for (const method of ['POST', 'PUT', 'DELETE', 'OPTIONS']) {
@@ -165,7 +169,7 @@ test('serveDashboard leaves any method but GET and HEAD to its caller', async ()
   }
 });
 
-test('serveDashboard sends index.html for a page path that accepts html, and 404 for any other miss', async () => {
+test('dashboardFiles sends index.html for a page path that accepts html, and 404 for any other miss', async () => {
   const port = await serve(files().dir);
 
   for (const path of ['/log', '/tools', '/log/', '/assets']) {
@@ -191,7 +195,7 @@ test('serveDashboard sends index.html for a page path that accepts html, and 404
   }
 });
 
-test('serveDashboard refuses a path that leaves its folder or cannot be read, even for html', async () => {
+test('dashboardFiles refuses a path that leaves its folder or cannot be read, even for html', async () => {
   const port = await serve(files().dir);
 
   for (const path of [
@@ -217,3 +221,93 @@ test('serveDashboard refuses a path that leaves its folder or cannot be read, ev
     }
   }
 });
+
+// The build holds no link, but a folder that was copied or installed by hand could: a link may
+// point at another file of the dashboard, never outside its folder.
+test.skipIf(process.platform === 'win32')(
+  'dashboardFiles follows a link only to a file inside its folder',
+  async () => {
+    const built = files();
+    symlinkSync(join(built.root, 'package.json'), join(built.dir, 'outside.json'));
+    symlinkSync(built.root, join(built.dir, 'up'));
+    mkdirSync(join(built.dir, 'nested'));
+    symlinkSync(join(built.dir, 'assets', 'index-abc123.js'), join(built.dir, 'nested', 'app.js'));
+    const port = await serve(built.dir);
+
+    for (const path of ['/outside.json', '/up/package.json']) {
+      for (const headers of [{}, HTML]) {
+        const response = await send(port, { path, headers });
+        expect({ path, status: response.status }).toEqual({ path, status: 404 });
+        expect(response.body).not.toContain(OUTSIDE_JSON);
+      }
+    }
+    const inside = await send(port, { path: '/nested/app.js' });
+    expect(inside.status).toBe(200);
+    expect(inside.body).toBe(ASSET_JS);
+    // The cache follows the address asked for, which names no hashed asset.
+    expect(inside.headers['cache-control']).toBe('no-cache');
+    // Out of the folder and back into it: the file is the dashboard's own.
+    const back = await send(port, { path: '/up/dashboard/index.html' });
+    expect(back.status).toBe(200);
+    expect(back.body).toBe(INDEX_HTML);
+  },
+);
+
+// A page path answers with the page for a browser and with 404 for a script, so a cache must keep
+// the answers apart by what the client accepts.
+test('dashboardFiles marks the page sent for a page path as varying with Accept', async () => {
+  const port = await serve(files().dir);
+
+  const fallback = await send(port, { path: '/log', headers: HTML });
+  const root = await send(port, { path: '/', headers: HTML });
+  const index = await send(port, { path: '/index.html', headers: HTML });
+  const asset = await send(port, { path: '/assets/index-abc123.js' });
+
+  expect(fallback.status).toBe(200);
+  expect(fallback.body).toBe(INDEX_HTML);
+  expect(fallback.headers.vary).toBe('Accept');
+  // These name their file whatever the client accepts.
+  for (const response of [root, index, asset]) {
+    expect(response.status).toBe(200);
+    expect(response.headers.vary).toBeUndefined();
+  }
+});
+
+// A file of the package that the server may not read is no missing file: the answer says the server
+// failed, and the log says why, once for each kind of error rather than on every request. The log
+// names the error alone: the path came from the client.
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'dashboardFiles answers 500 for a file it may not read, and logs that once',
+  async () => {
+    const built = files();
+    chmodSync(join(built.dir, 'index.html'), 0o000);
+    cleanups.push(() => {
+      chmodSync(join(built.dir, 'index.html'), 0o644);
+    });
+    const { logger, lines } = capturingLogger();
+    const port = await serve(built.dir, logger);
+
+    const answers = [
+      await send(port, { path: '/' }),
+      await send(port, { path: '/log', headers: HTML }),
+      await send(port, { method: 'HEAD', path: '/index.html' }),
+    ];
+
+    for (const response of answers) {
+      expect(response.status).toBe(500);
+      expect(response.headers).toMatchObject(SECURITY_HEADERS);
+      expect(response.headers['cache-control']).toBe('no-store');
+    }
+    expect(JSON.parse(answers[0]?.body ?? '')).toEqual({ error: 'Internal server error' });
+    const warnings = lines.filter((line) => line.level === 40);
+    expect(warnings).toEqual([
+      expect.objectContaining({
+        code: 'EACCES',
+        msg: expect.stringContaining('could not be read') as string,
+      }),
+    ]);
+    expect(JSON.stringify(warnings)).not.toContain(built.dir);
+    // A file it may read is served as before.
+    expect((await send(port, { path: '/assets/index-abc123.js' })).status).toBe(200);
+  },
+);
