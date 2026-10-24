@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { anchorOf } from '../../scripts/docs/anchor.js';
 import {
   EXAMPLES_PATH,
   renderExamples,
@@ -328,15 +329,6 @@ describe('the README', () => {
     const rest = readme.slice(start + heading.length + 2);
     const end = rest.search(new RegExp(`^#{1,${String(level)}} `, 'm'));
     return end === -1 ? rest : rest.slice(0, end);
-  }
-
-  // How GitHub turns the text of a heading into the anchor that links to it.
-  function anchorOf(heading: string): string {
-    return heading
-      .toLowerCase()
-      .replaceAll(/[^\p{L}\p{N}\s_-]/gu, '')
-      .trim()
-      .replaceAll(/\s/g, '-');
   }
 
   const tryThese = (): string => sectionOf('### Try these prompts');

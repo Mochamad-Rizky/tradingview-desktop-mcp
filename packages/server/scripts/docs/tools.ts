@@ -4,6 +4,7 @@ import { allTools } from '../../src/tools/index.js';
 import { toolInputJsonSchema, toolProfiles } from '../../src/tools/schema-export.js';
 import type { AnyToolDefinition, Domain } from '../../src/tools/types.js';
 import type { JsonObject, JsonValue } from '../../src/utils/json.js';
+import { anchorOf } from './anchor.js';
 
 // Generates docs/tools.md (`pnpm docs:tools`): every tool with its title, hints, profiles,
 // description and inputs, written from the tool definitions, so the page cannot say anything the
@@ -29,15 +30,6 @@ const DOMAIN_TITLES: Record<Domain, string> = {
   ui: 'Low-level UI',
   batch: 'Batch',
 };
-
-// How GitHub turns the text of a heading into the anchor that links to it.
-function anchorOf(heading: string): string {
-  return heading
-    .toLowerCase()
-    .replaceAll(/[^\p{L}\p{N}\s_-]/gu, '')
-    .trim()
-    .replaceAll(/\s/g, '-');
-}
 
 function escapeCell(text: string): string {
   return text.replaceAll('|', String.raw`\|`).replaceAll(/\r?\n/g, '<br>');
