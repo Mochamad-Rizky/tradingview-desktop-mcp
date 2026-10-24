@@ -2,7 +2,7 @@ name: Release
 
 # Publishes the server package to npm and creates its GitHub release when a version tag such as
 # v0.1.0 is pushed. Nothing else starts it. To release, set the version in packages/server/
-# package.json, date its section of CHANGELOG.md, merge that to main and push the tag.
+# package.json, date its section of CHANGELOG.md, merge that to main and push the tag on main.
 #
 # npm authentication, checked against the npm docs:
 # - https://docs.npmjs.com/trusted-publishers: trusted publishing (OIDC) needs npm 11.5.1 or newer,
@@ -37,8 +37,9 @@ env:
   HUSKY: '0'
 
 jobs:
-  # Refuses the tag before anything runs: it must name the version of the package, the CHANGELOG
-  # must have a dated section for that version, and npm must not have the version yet.
+  # Refuses the tag before anything runs: it must be a plain vX.Y.Z on a commit of main and name the
+  # version of the package, the CHANGELOG must have a dated section for that version, and npm must
+  # not have the version yet.
   check:
     name: Check the tag
     runs-on: ubuntu-latest
@@ -46,9 +47,11 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
+      # The whole history of every branch, for the check that the tagged commit is on main.
       - name: Check out the repository
         uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
@@ -56,6 +59,17 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+
+      # A prerelease tag such as v0.2.0-rc.1 would otherwise get through the whole gate and fail
+      # only at npm publish.
+      - name: Check that the tag is a plain version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The tag $TAG is not of the form vX.Y.Z. This workflow publishes releases only, and no prerelease."
+            exit 1
+          fi
 
       - name: Check that the tag names the version of the package
         id: version
@@ -68,6 +82,21 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Only what is merged is released: a tag on another branch, or on a commit that never reached
+      # main, publishes nothing.
+      - name: Check that the tagged commit is on main
+        run: |
+          commit=$(git rev-parse --verify "$GITHUB_SHA^{commit}")
+          main=$(git rev-parse --verify --quiet refs/remotes/origin/main) || {
+            echo "::error::The checkout has no origin/main to compare the tagged commit with."
+            exit 1
+          }
+          if ! git merge-base --is-ancestor "$commit" "$main"; then
+            echo "::error::The tagged commit $commit is not on main. Merge it into main, then tag a commit of main."
+            exit 1
+          fi
+          echo "$commit is on main."
 
       - name: Check that CHANGELOG.md has a dated section for the version
         env:
