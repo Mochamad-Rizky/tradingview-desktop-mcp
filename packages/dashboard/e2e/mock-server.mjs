@@ -1,5 +1,5 @@
 /** @import { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http' */
-/** @import { DashboardError, DashboardEvent, JsonValue } from '../../server/src/transports/dashboard/contract.ts' */
+/** @import { DashboardError, DashboardEvent, DashboardProfile, DashboardTool, JsonValue } from '../../server/src/transports/dashboard/contract.ts' */
 /** @import { UnnumberedEvent } from './fixtures.mjs' */
 
 // The mock server of the dashboard's end-to-end tests (playwright.config.ts starts it, on port
@@ -9,8 +9,9 @@
 // - the same Host and Origin checks, and the token as "Authorization: Bearer" only, a 401 with
 //   WWW-Authenticate otherwise, and a token in the URL refused (transports/http.ts);
 // - the same 401 for /mcp without the token; with it the mock answers 404, as it speaks no MCP;
-// - the same event stream: retry: 3000, ids of the form <bootId>-<seq>, event: tool, event: gap for
-//   a Last-Event-ID of another boot, and a ": ping" comment every 15 s (dashboard/sse.ts);
+// - the same event stream: retry: 3000, ids of the form <bootId>-<seq>, event: tool, event: gap with
+//   an id of this boot for a Last-Event-ID of another one, and a ": ping" comment every 15 s
+//   (dashboard/sse.ts);
 // - the same headers on the dashboard files (dashboard/static.ts).
 // A tool call runs nothing: it answers from the fixtures, and its start and end go to the event
 // stream as a dashboard call. The routes under /__control/ are the tests' own: they push events,
@@ -184,6 +185,7 @@ function streamId(bus, seq) {
  * @typedef {object} MockState
  * @property {string} token
  * @property {keyof typeof health} health
+ * @property {DashboardProfile} profile
  * @property {Bus} bus
  * @property {{ name: string, arguments: Record<string, JsonValue> }[]} calls
  */
@@ -192,12 +194,21 @@ function streamId(bus, seq) {
 const state = {
   token: MOCK_TOKEN,
   health: 'ready',
+  profile: 'full',
   bus: createBus(backlogEvents()),
   calls: [],
 };
 
 /** @type {Set<EventStream>} */
 const streams = new Set();
+
+/**
+ * The tools of the profile the mock runs with, as the server offers only those.
+ * @returns {DashboardTool[]}
+ */
+function offeredTools() {
+  return tools.filter((tool) => tool.profiles.includes(state.profile));
+}
 
 /**
  * Ends every open event stream: cleanly, as a server that shuts down, or by breaking the
@@ -347,7 +358,7 @@ async function allows(req, res, allowed) {
  * @param {string} name
  */
 async function callTool(req, res, name) {
-  if (!tools.some((tool) => tool.name === name)) {
+  if (!offeredTools().some((tool) => tool.name === name)) {
     await discardBody(req);
     sendError(res, 404, 'This server offers no tool of that name');
     return;
@@ -473,8 +484,9 @@ function openEvents(req, res) {
     write(`id: ${streamId(bus, event.seq)}\nevent: tool\ndata: ${JSON.stringify(event)}\n\n`);
   };
 
+  // As the server does, the gap carries an id of this bus: its newest seq, or 0 before its first.
   if (replay.gap) {
-    write('event: gap\ndata: {}\n\n');
+    write(`id: ${streamId(bus, bus.lastSeq)}\nevent: gap\ndata: {}\n\n`);
   }
   for (const event of replay.events) {
     send(event);
@@ -508,7 +520,7 @@ async function handleApi(req, res, path) {
   switch (path) {
     case '/api/info':
       if (await allows(req, res, 'GET')) {
-        sendJson(res, 200, info);
+        sendJson(res, 200, { ...info, profile: state.profile, toolCount: offeredTools().length });
       }
       return;
     case '/api/health':
@@ -518,7 +530,7 @@ async function handleApi(req, res, path) {
       return;
     case '/api/tools':
       if (await allows(req, res, 'GET')) {
-        sendJson(res, 200, { tools });
+        sendJson(res, 200, { tools: offeredTools() });
       }
       return;
     case '/api/events':
@@ -761,6 +773,7 @@ async function control(req, res, path) {
       closeStreams('end');
       state.token = MOCK_TOKEN;
       state.health = 'ready';
+      state.profile = 'full';
       state.calls = [];
       state.bus = createBus(backlogEvents());
       break;
@@ -790,10 +803,22 @@ async function control(req, res, path) {
     case '/__control/drop':
       closeStreams('drop');
       break;
-    case '/__control/restart':
+    case '/__control/restart': {
+      // A restart may come with other settings, such as another profile.
+      const { profile } = fields;
+      if (
+        profile !== undefined &&
+        profile !== 'full' &&
+        profile !== 'core' &&
+        profile !== 'readonly'
+      ) {
+        throw new BodyError(400, 'profile must be full, core or readonly');
+      }
       closeStreams('drop');
       state.bus = createBus([]);
+      state.profile = profile ?? state.profile;
       break;
+    }
     default:
       sendError(res, 404, 'Not found');
       return;

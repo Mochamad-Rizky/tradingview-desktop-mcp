@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { StrictMode, type ReactNode } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { StrictMode, useState, type ReactNode } from 'react';
 import { http, HttpResponse } from 'msw';
 import { reconnectDelay } from '@/api/event-log';
 import { onUnauthorized } from '@/api/client';
@@ -14,11 +15,24 @@ import {
   TEST_TOKEN,
 } from '@/test/fixtures';
 import { createEventStream, type EventStream } from '@/test/handlers';
+import { createTestQueryClient } from '@/test/query';
 import { server } from '@/test/server';
+import { useInfo } from './use-info';
+import { useTools } from './use-tools';
 import { EventLogProvider, useEventLog } from './use-event-log';
 
+// The log as the app mounts it, inside the query client, which it refreshes after a gap.
+function LogProviders({ children }: { children: ReactNode }) {
+  const [client] = useState(createTestQueryClient);
+  return (
+    <QueryClientProvider client={client}>
+      <EventLogProvider>{children}</EventLogProvider>
+    </QueryClientProvider>
+  );
+}
+
 function renderEventLog() {
-  return renderHook(() => useEventLog(), { wrapper: EventLogProvider });
+  return renderHook(() => useEventLog(), { wrapper: LogProviders });
 }
 
 // An event stream of its own for the test, which the test writes to as the server would.
@@ -263,18 +277,19 @@ test('after a server restart the log keeps its calls, says some were missed, and
   await advance(1000);
   const second = await stream.next();
   expect(second.lastEventId).toBe(streamId(7));
-  second.gap();
+  second.gap(streamId(0, 'c0ffee00'));
   await waitFor(() => {
     expect(result.current.missed).toBe(true);
   });
   expect(result.current.calls.map((call) => call.id)).toEqual([callId(7)]);
 
-  // The id of the old server means nothing to the new one: with no event of the new one yet, the
-  // next connection starts afresh rather than announce the same gap again.
+  // The id of the old server means nothing to the new one, which gives its own with the gap: with
+  // no event of the new server yet, the next connection resumes from that id rather than announce
+  // the same gap again.
   second.drop();
   await advance(1000);
   const third = await stream.next();
-  expect(third.lastEventId).toBeNull();
+  expect(third.lastEventId).toBe(streamId(0, 'c0ffee00'));
   third.send(startEvent(1, callId(8), 'chart_get_state'), streamId(1, 'c0ffee00'));
   await waitFor(() => {
     expect(result.current.calls).toHaveLength(2);
@@ -283,6 +298,40 @@ test('after a server restart the log keeps its calls, says some were missed, and
   await advance(1000);
   const fourth = await stream.next();
   expect(fourth.lastEventId).toBe(streamId(1, 'c0ffee00'));
+});
+
+// A server that restarted may run with another profile or other tools: after a gap the facts of the
+// server and its tool list are asked for again.
+test('a gap refreshes the facts of the server and its tool list, and an event does not', async () => {
+  const stream = serveStream();
+  const requests = { info: 0, tools: 0 };
+  server.events.on('request:start', ({ request }) => {
+    const { pathname } = new URL(request.url);
+    if (pathname === '/api/info') {
+      requests.info += 1;
+    } else if (pathname === '/api/tools') {
+      requests.tools += 1;
+    }
+  });
+  const { result } = renderHook(
+    () => ({ log: useEventLog(), info: useInfo(), tools: useTools() }),
+    { wrapper: LogProviders },
+  );
+  await waitFor(() => {
+    expect(result.current.info.isSuccess && result.current.tools.isSuccess).toBe(true);
+  });
+  const connection = await stream.next();
+  connection.send(startEvent(1, callId(1), 'chart_get_state'));
+  await waitFor(() => {
+    expect(result.current.log.calls).toHaveLength(1);
+  });
+  expect(requests).toEqual({ info: 1, tools: 1 });
+
+  connection.gap(streamId(0, 'c0ffee00'));
+  await waitFor(() => {
+    expect(requests).toEqual({ info: 2, tools: 2 });
+  });
+  expect(result.current.log.missed).toBe(true);
 });
 
 test('a gap marks the calls still running as result not seen, and a later end still completes them', async () => {
@@ -743,7 +792,7 @@ test('in strict mode the log ends the stream of its first mount and keeps one op
   const { result } = renderHook(() => useEventLog(), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <StrictMode>
-        <EventLogProvider>{children}</EventLogProvider>
+        <LogProviders>{children}</LogProviders>
       </StrictMode>
     ),
   });

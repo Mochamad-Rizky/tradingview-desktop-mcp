@@ -11,6 +11,7 @@ import type {
   DashboardCallResult,
   DashboardEvent,
   DashboardInfo,
+  DashboardProfile,
   JsonValue,
 } from '../../server/src/transports/dashboard/contract.ts';
 import { MOCK_TOKEN, MOCK_URL } from './fixtures.mjs';
@@ -54,8 +55,9 @@ export interface MockControl {
   setToken(token: string): Promise<void>;
   // Breaks every open event stream, as a network that failed: the bus and its seqs stay.
   dropStreams(): Promise<void>;
-  // A server that restarted: a new boot id, an empty bus, and every event stream broken.
-  restart(): Promise<void>;
+  // A server that restarted: a new boot id, an empty bus, and every event stream broken. It may
+  // come back with another profile, which narrows the tools it offers.
+  restart(options?: { profile?: DashboardProfile }): Promise<void>;
 }
 
 interface WorkerFixtures {
@@ -128,8 +130,8 @@ function mockControl(request: APIRequestContext): MockControl {
     async dropStreams() {
       await post('drop', {});
     },
-    async restart() {
-      await post('restart', {});
+    async restart(options = {}) {
+      await post('restart', options);
     },
   };
 }

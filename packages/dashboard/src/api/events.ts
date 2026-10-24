@@ -152,8 +152,9 @@ export interface StreamEventsOptions {
   signal: AbortSignal;
   // A tool event, with the last event id of the stream after it.
   onEvent(event: DashboardEvent, lastEventId: string | null): void;
-  // The server could not resume from lastEventId: events were missed.
-  onGap(): void;
+  // The server could not resume from lastEventId: events were missed. `lastEventId` is the id the
+  // server gave the gap, from which the stream resumes until an event gives another.
+  onGap(lastEventId: string | null): void;
   // The server accepted the stream.
   onOpen(): void;
 }
@@ -219,7 +220,7 @@ async function readEvents(
         : parser.push(decoder.decode(value, { stream: true }));
       for (const message of messages) {
         if (message.event === 'gap') {
-          options.onGap();
+          options.onGap(message.id);
           continue;
         }
         const event = message.event === 'tool' ? toolEvent(message.data) : null;

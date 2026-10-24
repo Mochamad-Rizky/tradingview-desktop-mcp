@@ -13,7 +13,7 @@ const encoder = new TextEncoder();
 function recorder() {
   const seen: (
     | { kind: 'event'; event: DashboardEvent; lastEventId: string | null }
-    | { kind: 'gap' }
+    | { kind: 'gap'; lastEventId: string | null }
     | { kind: 'open' }
   )[] = [];
   return {
@@ -21,8 +21,8 @@ function recorder() {
     onEvent(event: DashboardEvent, lastEventId: string | null) {
       seen.push({ kind: 'event', event, lastEventId });
     },
-    onGap() {
-      seen.push({ kind: 'gap' });
+    onGap(lastEventId: string | null) {
+      seen.push({ kind: 'gap', lastEventId });
     },
     onOpen() {
       seen.push({ kind: 'open' });
@@ -94,7 +94,7 @@ test('streamEvents sends the token and the last id, and reports events, gaps and
   expect(connection.lastEventId).toBe('b0-41');
   const start = startEvent(1, callId(1), 'chart_get_state');
   const end = endEvent(2, callId(1), 'chart_get_state');
-  connection.gap();
+  connection.gap(streamId(0));
   connection.send(start);
   connection.write(': ping\n\n');
   // An event whose data is no tool event, or no JSON, is passed over.
@@ -107,7 +107,8 @@ test('streamEvents sends the token and the last id, and reports events, gaps and
 
   expect(record.seen).toEqual([
     { kind: 'open' },
-    { kind: 'gap' },
+    // The gap gives the id the client resumes from, until an event gives another.
+    { kind: 'gap', lastEventId: streamId(0) },
     { kind: 'event', event: start, lastEventId: streamId(1) },
     { kind: 'event', event: end, lastEventId: streamId(2) },
   ]);
@@ -198,7 +199,7 @@ test('streamEvents takes only a 200 answer of type text/event-stream, and fails 
   );
   const record = recorder();
   await streamEvents({ lastEventId: null, signal: new AbortController().signal, ...record });
-  expect(record.seen).toEqual([{ kind: 'open' }, { kind: 'gap' }]);
+  expect(record.seen).toEqual([{ kind: 'open' }, { kind: 'gap', lastEventId: null }]);
 });
 
 test('streamEvents opens nothing when it is aborted while the answer comes in', async () => {

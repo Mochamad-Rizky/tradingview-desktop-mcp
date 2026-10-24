@@ -8,7 +8,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { EventLog, type EventLogState } from '@/api/event-log';
+import { queryKeys } from '@/api/query-client';
 
 export type { StreamStatus, ToolCall } from '@/api/event-log';
 
@@ -16,9 +18,20 @@ const EventLogContext = createContext<EventLog | null>(null);
 
 // One event log for the whole app, with one stream: it keeps the calls, a pause and a clear while
 // the user moves between pages. Mounted inside the token gate, so it streams only with a token, and
-// a 401 that sends the user back to the gate closes it.
+// a 401 that sends the user back to the gate closes it. A gap, such as after a server restart that
+// may have changed the profile or the tools, asks for the facts of the server and the tool list
+// again.
 export function EventLogProvider({ children }: { children: ReactNode }) {
-  const [log] = useState(() => new EventLog());
+  const queryClient = useQueryClient();
+  const [log] = useState(
+    () =>
+      new EventLog({
+        onGap: () => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.info });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
+        },
+      }),
+  );
   useEffect(() => {
     log.start();
     return () => {

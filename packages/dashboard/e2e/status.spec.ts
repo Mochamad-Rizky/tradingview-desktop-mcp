@@ -109,6 +109,25 @@ test(
   },
 );
 
+// The server lost the stream's place, so the dashboard asks for the facts of the server again: a
+// restart may have changed them.
+test('after a restart with another profile the status page shows the new facts', async ({
+  page,
+  server,
+  mock,
+  api,
+}) => {
+  await signIn(page, server);
+  const card = page.getByRole('region', { name: 'Server' });
+  await expect(fact(card, 'Profile')).toHaveText('full');
+
+  await mock.restart({ profile: 'readonly' });
+  const info = await api.info();
+  expect(info.profile).toBe('readonly');
+  await expect(fact(card, 'Profile')).toHaveText('readonly');
+  await expect(fact(card, 'Tools')).toHaveText(String(info.toolCount));
+});
+
 test('the status page lists the recent calls of every client, newest first', async ({
   page,
   server,

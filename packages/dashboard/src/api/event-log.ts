@@ -119,6 +119,12 @@ function callFromEnd(event: DashboardEvent): ToolCall {
   };
 }
 
+export interface EventLogOptions {
+  // Called on each gap: the server could not resume the stream, as after a restart, which may have
+  // changed what it offers.
+  onGap?: () => void;
+}
+
 // The state of the log, and the connection that feeds it. React reads it through
 // useSyncExternalStore (subscribe and getSnapshot); the provider starts and stops the connection.
 export class EventLog {
@@ -146,12 +152,18 @@ export class EventLog {
   #lastEventId: string | null = null;
   #controller: AbortController | null = null;
 
+  readonly #onGap: (() => void) | undefined;
+
   readonly #listeners = new Set<() => void>();
   #snapshot: EventLogState | null = null;
   // The calls as an array, made again only once they change: while paused the snapshot changes
   // with the count of what is held, and the calls a table shows stay the same array.
   #callList: readonly ToolCall[] | null = null;
   #notifyQueued = false;
+
+  constructor(options: EventLogOptions = {}) {
+    this.#onGap = options.onGap;
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
@@ -258,8 +270,8 @@ export class EventLog {
             this.#lastEventId = lastEventId;
             this.#receive(event);
           },
-          onGap: () => {
-            this.#gap();
+          onGap: (lastEventId) => {
+            this.#gap(lastEventId);
           },
         });
       } catch (error) {
@@ -280,13 +292,14 @@ export class EventLog {
     }
   }
 
-  // The server could not resume from the id: it starts afresh, and the id means nothing to it any
-  // more. The calls the log has stay, and an event of one replayed later is taken once all the
-  // same. The calls running then may have ended unseen; while paused, they are marked on resume,
-  // in the order the events came.
-  #gap(): void {
-    this.#lastEventId = null;
+  // The server could not resume from the id, which means nothing to it any more: the stream goes on
+  // from the id the server gave the gap. The calls the log has stay, and an event of one replayed
+  // later is taken once all the same. The calls running then may have ended unseen; while paused,
+  // they are marked on resume, in the order the events came.
+  #gap(lastEventId: string | null): void {
+    this.#lastEventId = lastEventId;
     this.#missed = true;
+    this.#onGap?.();
     if (this.#paused) {
       this.#gapInPending = this.#pending.length;
     } else {

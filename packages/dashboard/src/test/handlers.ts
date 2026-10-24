@@ -57,8 +57,9 @@ export interface StreamConnection {
   readonly closed: boolean;
   // A tool event, with the id `<bootId>-<seq>` unless one is given; null sends no id line.
   send(event: DashboardEvent, id?: string | null): void;
-  // The event that tells the client it missed events.
-  gap(): void;
+  // The event that tells the client it missed events, with the id the server gives it (`<bootId>-
+  // <lastSeq>`), or with no id line when none is given.
+  gap(id?: string): void;
   // Raw text of the stream, such as a comment or half an event.
   write(text: string): void;
   // Breaks the connection, as a server that crashed or a network that failed.
@@ -116,8 +117,8 @@ export function createEventStream(
       send(event, id = streamId(event.seq)) {
         connection.write(toolEventText(event, id));
       },
-      gap() {
-        connection.write('event: gap\ndata: {}\n\n');
+      gap(id) {
+        connection.write(`${id === undefined ? '' : `id: ${id}\n`}event: gap\ndata: {}\n\n`);
       },
       drop() {
         if (!closed) {
