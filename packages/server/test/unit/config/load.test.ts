@@ -428,6 +428,79 @@ test('parses subcommands', () => {
   expect(commandArgs).toEqual(['cursor']);
 });
 
+test('reads the options of config, which are off or absent unless given', () => {
+  expect(load(['config', 'cursor']).clientOptions).toStrictEqual({ local: false });
+  expect(
+    load([
+      'config',
+      'chatgpt',
+      '--local',
+      '--url',
+      'https://Abc.Ngrok.app/',
+      '--platform',
+      ' Win32 ',
+      '--profile',
+      'core',
+    ]).clientOptions,
+  ).toStrictEqual({ local: true, url: 'abc.ngrok.app', platform: 'win32', profile: 'core' });
+});
+
+test('--url is normalised like an allowed host, and keeps a port other than 80 or 443', () => {
+  const url = (text: string) => load(['config', 'chatgpt', '--url', text]).clientOptions.url;
+
+  expect(url('abc.ngrok.app')).toBe('abc.ngrok.app');
+  expect(url('https://Abc.ngrok.app/')).toBe('abc.ngrok.app');
+  expect(url('abc.ngrok.app:443')).toBe('abc.ngrok.app');
+  expect(url('https://tunnel.example:8443')).toBe('tunnel.example:8443');
+  // A blank flag is not given, as for every other flag.
+  expect(url('  ')).toBeUndefined();
+});
+
+test('--url is refused with the message and hint of a refused allowed host', () => {
+  const error = loadError(['config', 'chatgpt', '--url', '*.ngrok.app']);
+
+  expect(error.code).toBe('INVALID_INPUT');
+  expect(error.message).toBe(
+    '--url: "*.ngrok.app" is not a host name: a wildcard is not supported, so list each host',
+  );
+  expect(error.hint).toBe(ALLOWED_HOSTS_HINT);
+});
+
+test('--platform takes darwin, win32 or linux', () => {
+  const error = loadError(['config', 'cursor', '--platform', 'macos']);
+
+  expect(error.code).toBe('INVALID_INPUT');
+  expect(error.message).toBe('--platform must be one of darwin, win32, linux, but got "macos"');
+});
+
+test('only a --profile flag is passed on to a snippet, not TV_MCP_PROFILE', () => {
+  // The client starts the server with an environment of its own, not the one of this shell.
+  expect(load(['config', 'cursor'], { TV_MCP_PROFILE: 'core' }).clientOptions).toStrictEqual({
+    local: false,
+  });
+  expect(
+    load(['config', 'cursor', '--profile', 'readonly'], { TV_MCP_PROFILE: 'core' }).clientOptions
+      .profile,
+  ).toBe('readonly');
+});
+
+test.each([
+  [['--local'], '--local is an option of the config command, not of serve'],
+  [['launch', '--url', 'abc.ngrok.app'], '--url is an option of the config command, not of launch'],
+  [
+    ['doctor', '--platform', 'linux', '--local'],
+    '--local and --platform are options of the config command, not of doctor',
+  ],
+  // Given, even blank, so that the mistake shows.
+  [['--url', ''], '--url is an option of the config command, not of serve'],
+])('config options with another command are refused: %j', (argv, message) => {
+  const error = loadError(argv);
+
+  expect(error.code).toBe('INVALID_INPUT');
+  expect(error.message).toBe(message);
+  expect(error.hint).toContain('config <client>');
+});
+
 test.each(['serve', 'launch', 'doctor'])('parses the %s command without arguments', (name) => {
   const { command, commandArgs } = load([name]);
 

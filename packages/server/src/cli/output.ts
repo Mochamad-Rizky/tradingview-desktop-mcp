@@ -4,6 +4,7 @@ import type { HealthReport } from '../core/connection.js';
 import { isTvMcpError } from '../core/errors.js';
 import type { LaunchResult } from '../core/launcher/launch.js';
 import { PACKAGE_NAME, VERSION } from '../version.js';
+import { CLIENT_IDS } from './clients.js';
 
 // What the CLI prints for people. Every function returns text and leaves the stream to the caller,
 // who decides about color from the stream it writes to.
@@ -37,7 +38,14 @@ const COMMANDS = [
   ['[serve] [options]', 'Start the MCP server (the default command)'],
   ['launch [options]', 'Start TradingView Desktop with the debug port'],
   ['doctor [options]', 'Check that TradingView can be reached and is ready'],
-  ['config <client>', 'Print a client config snippet (not implemented yet)'],
+  ['config <client> [options]', 'Print the setup snippet of an AI client (see below)'],
+] as const;
+
+const CONFIG_OPTIONS = [
+  ['--local', 'Start this installation with node instead of npx'],
+  ['--url <host>', 'The public host of your tunnel, for chatgpt and openai-api'],
+  ['--platform <darwin|win32|linux>', 'The system the client runs on (default: this one)'],
+  ['--profile <name>', 'Passed on to the server when given'],
 ] as const;
 
 const OPTIONS = [
@@ -97,6 +105,10 @@ export function renderHelp(): string {
     '',
     'Environment only:',
     table(ENVIRONMENT_ONLY),
+    '',
+    'Options of config:',
+    table(CONFIG_OPTIONS),
+    `  Clients: ${CLIENT_IDS.join(', ')}`,
     '',
     'Logs go to stderr. In stdio mode, stdout carries only MCP messages.',
     '',

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import pkg from '../../../package.json' with { type: 'json' };
+import { CLIENT_IDS, renderClientConfig, resolveCliPath } from '../../../src/cli/clients.js';
 import { runCli, type CliDeps } from '../../../src/cli/run.js';
 import { ConnectionManager, type HealthReport } from '../../../src/core/connection.js';
 import { TvMcpError } from '../../../src/core/errors.js';
@@ -139,12 +140,142 @@ test.each(['--version', '-v'])('%s prints the version on stdout and exits 0', as
   expect(stderr).toBe('');
 });
 
-test('config is not implemented yet and exits 2', async () => {
-  const { code, stdout, stderr } = await run(['config', 'claude']);
+test('config prints the snippet on stdout, the notes on stderr, and exits 0', async () => {
+  const expected = renderClientConfig('cursor', { platform: 'linux', command: { kind: 'npx' } });
 
-  expect(code).toBe(2);
-  expect(stderr).toContain('Not implemented yet');
+  const { code, stdout, stderr } = await run(['config', 'cursor', '--platform', 'linux']);
+
+  expect(code).toBe(0);
+  expect(stdout).toBe(expected.snippet);
+  expect(stderr).toBe(expected.notes.map((note) => `${note}\n`).join(''));
+});
+
+test('config writes for the running system unless --platform names another', async () => {
+  const running = renderClientConfig('claude-desktop', {
+    platform: process.platform,
+    command: { kind: 'npx' },
+  });
+  const windows = renderClientConfig('claude-desktop', {
+    platform: 'win32',
+    command: { kind: 'npx' },
+  });
+
+  expect((await run(['config', 'claude-desktop'])).stderr).toContain(running.notes[0]);
+  expect((await run(['config', 'claude-desktop', '--platform', 'WIN32'])).stderr).toContain(
+    windows.notes[0],
+  );
+});
+
+test('--local uses node and the absolute path of the running CLI', async () => {
+  const cliPath = '/opt/tradingview-desktop-mcp/dist/cli.js';
+
+  const { code, stdout } = await run(['config', 'claude-desktop', '--local'], {
+    deps: offlineDeps({ cliPath }),
+  });
+  const line = await run(['config', 'claude-code', '--local', '--profile', 'core'], {
+    deps: offlineDeps({ cliPath }),
+  });
+
+  expect(code).toBe(0);
+  expect(JSON.parse(stdout)).toEqual({
+    mcpServers: { tradingview: { command: 'node', args: [cliPath] } },
+  });
+  expect(line.stdout).toBe(`claude mcp add tradingview -- node ${cliPath} --profile core\n`);
+});
+
+test('--local without an injected path names the script that runs, resolved', async () => {
+  const { code, stdout } = await run(['config', 'cursor', '--local']);
+  const script = process.argv[1] ?? '';
+
+  expect(code).toBe(0);
+  expect(JSON.parse(stdout)).toMatchObject({
+    mcpServers: { tradingview: { command: 'node', args: [resolveCliPath(script)] } },
+  });
+});
+
+test('remote clients use the --url host, or YOUR-TUNNEL-HOST, and never the real token even when TV_MCP_AUTH_TOKEN is set', async () => {
+  const token = 'synthetic-token-0123456789abcdef0123456789abcdef';
+  const env = { ...ENV, TV_MCP_AUTH_TOKEN: token };
+
+  for (const client of ['chatgpt', 'openai-api']) {
+    const given = await run(['config', client, '--url', 'https://Abc.Ngrok.app/'], { env });
+    const placeholder = await run(['config', client], { env });
+
+    expect(given.code).toBe(0);
+    expect(given.stdout).toContain('https://abc.ngrok.app/mcp');
+    expect(given.stderr).toContain('TV_MCP_ALLOWED_HOSTS=abc.ngrok.app');
+    expect(placeholder.code).toBe(0);
+    expect(placeholder.stdout).toContain('https://YOUR-TUNNEL-HOST/mcp');
+    for (const { stdout, stderr } of [given, placeholder]) {
+      expect(stdout).toContain('<TV_MCP_AUTH_TOKEN>');
+      expect(stdout).not.toContain(token);
+      expect(stderr).not.toContain(token);
+    }
+  }
+
+  // A port other than 443 is part of the host and stays; 443 is what https means anyway.
+  expect((await run(['config', 'chatgpt', '--url', 'abc.ngrok.app:8443'], { env })).stdout).toBe(
+    'https://abc.ngrok.app:8443/mcp/<TV_MCP_AUTH_TOKEN>\n',
+  );
+  expect((await run(['config', 'chatgpt', '--url', 'abc.ngrok.app:443'], { env })).stdout).toBe(
+    'https://abc.ngrok.app/mcp/<TV_MCP_AUTH_TOKEN>\n',
+  );
+});
+
+test('a --url that is not a host is refused with the rules and message of an allowed host', async () => {
+  const { code, stdout, stderr } = await run([
+    'config',
+    'chatgpt',
+    '--url',
+    'https://abc.ngrok.app/mcp/s3cret',
+  ]);
+
+  expect(code).toBe(1);
   expect(stdout).toBe('');
+  expect(stderr).toContain(
+    '✖ INVALID_INPUT: --url: "https://abc.ngrok.app/…" is not a host name: it has a path',
+  );
+  // The part after the host may be a pasted token, so it is not repeated.
+  expect(stderr).not.toContain('s3cret');
+});
+
+test('an unknown client exits 1 and lists the clients with the closest one', async () => {
+  const { code, stdout, stderr } = await run(['config', 'vs-code']);
+
+  expect(code).toBe(1);
+  expect(stdout).toBe('');
+  expect(stderr).toContain('✖ INVALID_INPUT: Unknown client "vs-code". Did you mean "vscode"?');
+  expect(stderr).toContain(`Valid clients: ${CLIENT_IDS.join(', ')}`);
+});
+
+test('config options with another command are INVALID_INPUT', async () => {
+  for (const [argv, named] of [
+    [['--local'], '--local'],
+    [['doctor', '--url', 'abc.ngrok.app'], '--url'],
+    [['launch', '--platform', 'win32'], '--platform'],
+    [['serve', '--local', '--platform', 'linux'], '--local and --platform'],
+  ] as const) {
+    const { code, stdout, stderr } = await run([...argv]);
+
+    expect(code).toBe(1);
+    expect(stdout).toBe('');
+    expect(stderr).toContain(`✖ INVALID_INPUT: ${named}`);
+    expect(stderr).toContain('config');
+  }
+});
+
+test('--help lists the options of config and the clients under config', async () => {
+  const { stdout } = await run(['--help']);
+  const config = stdout.slice(stdout.indexOf('Options of config'));
+
+  expect(stdout).not.toContain('not implemented');
+  expect(config).toContain('--local');
+  expect(config).toContain('--url <host>');
+  expect(config).toContain('--platform <darwin|win32|linux>');
+  expect(config).toContain('--profile');
+  for (const client of CLIENT_IDS) {
+    expect(config).toContain(client);
+  }
 });
 
 test('an unknown flag prints the code, the message and the hint, and exits 1', async () => {

@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { TvMcpError } from '../core/errors.js';
 import { normalizeHostEntry } from './hosts.js';
 import { CLI_COMMANDS, DEFAULTS, settingSchemas } from './schema.js';
-import type { CliCommand, Config } from './schema.js';
+import type { ClientOptions, CliCommand, Config } from './schema.js';
 
 // The flags of design spec 9. The value flags are plain strings here and are validated like their
 // variables, so both sources share one set of rules and messages.
@@ -21,6 +21,10 @@ const OPTIONS = {
   'allow-eval': { type: 'boolean' },
   dashboard: { type: 'boolean' },
   'no-dashboard': { type: 'boolean' },
+  // The options of config alone.
+  local: { type: 'boolean' },
+  url: { type: 'string' },
+  platform: { type: 'string' },
   // The CLI answers these itself before it loads a configuration, so they change nothing here.
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
@@ -45,6 +49,10 @@ const UNKNOWN_OPTION_HINT =
 const LOOPBACK_HINT =
   "TradingView's debug port gives full control of the app, so the server only connects to it on " +
   'this machine. Use 127.0.0.1.';
+
+const CONFIG_OPTIONS = ['local', 'url', 'platform'] as const;
+
+const CONFIG_OPTIONS_HINT = 'For example: config <client> --local';
 
 const TOKEN_HINT =
   'Set TV_MCP_AUTH_TOKEN to a random secret, for example the output of "openssl rand -hex 32", ' +
@@ -104,6 +112,22 @@ function parseCommand(positionals: string[]): { command: CliCommand; commandArgs
   return { command: name, commandArgs };
 }
 
+// An option of config given to another command is a mistake to point out, not a setting to drop:
+// even a blank one.
+function refuseConfigOptions(command: CliCommand, flags: Flags): void {
+  const given = CONFIG_OPTIONS.filter((name) => flags[name] !== undefined).map(
+    (name) => `--${name}`,
+  );
+  if (command === 'config' || given.length === 0) {
+    return;
+  }
+  const options =
+    given.length === 1 ? `${given.join('')} is an option` : `${given.join(' and ')} are options`;
+  throw new TvMcpError('INVALID_INPUT', `${options} of the config command, not of ${command}`, {
+    hint: CONFIG_OPTIONS_HINT,
+  });
+}
+
 function parseDashboardFlag(flags: Flags): boolean | undefined {
   const on = flags.dashboard === true;
   const off = flags['no-dashboard'] === true;
@@ -131,10 +155,11 @@ interface Source {
 }
 
 // The flag wins over the variable. A blank flag does not count as given, so the variable applies.
+// A setting without a variable comes from its flag alone.
 function pickSource(
   env: NodeJS.ProcessEnv,
   flags: Flags,
-  variable: string,
+  variable: string | undefined,
   flag: StringOption | undefined,
 ): Source | undefined {
   if (flag !== undefined) {
@@ -142,6 +167,9 @@ function pickSource(
     if (raw !== undefined) {
       return { name: `--${flag}`, raw };
     }
+  }
+  if (variable === undefined) {
+    return undefined;
   }
   const raw = present(env[variable]);
   return raw === undefined ? undefined : { name: variable, raw };
@@ -173,15 +201,17 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
   command: CliCommand;
   commandArgs: string[];
   config: Readonly<Config>;
+  clientOptions: ClientOptions;
 } {
   const { env } = input;
   const { values: flags, positionals } = parseFlags(input.argv);
   const { command, commandArgs } = parseCommand(positionals);
+  refuseConfigOptions(command, flags);
   const dashboardFlag = parseDashboardFlag(flags);
 
   const read = <S extends z.ZodType>(
     schema: S,
-    variable: string,
+    variable: string | undefined,
     flag?: StringOption,
     hint?: string,
   ): z.output<S> | undefined => {
@@ -237,6 +267,20 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
     });
   }
 
+  // The tunnel's host, by the rules and with the messages of an allowed host.
+  const urlSource = pickSource(env, flags, undefined, 'url');
+  const url =
+    urlSource === undefined ? undefined : normalizeHostEntry(urlSource.raw, urlSource.name);
+  const platform = read(settingSchemas.platform, undefined, 'platform');
+  // The flag wins over the variable, so a --profile flag is the profile that was read.
+  const explicitProfile = present(flags.profile) === undefined ? undefined : profile;
+  const clientOptions: ClientOptions = {
+    local: flags.local === true,
+    ...(url === undefined ? {} : { url }),
+    ...(platform === undefined ? {} : { platform }),
+    ...(explicitProfile === undefined ? {} : { profile: explicitProfile }),
+  };
+
   const config: Config = {
     cdpHost,
     cdpPort,
@@ -255,5 +299,5 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
     dashboard,
     allowedHosts,
   };
-  return { command, commandArgs, config: freeze(config) };
+  return { command, commandArgs, config: freeze(config), clientOptions };
 }

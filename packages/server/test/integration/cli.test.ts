@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { CLIENT_IDS, renderClientConfig } from '../../src/cli/clients.js';
 import { runCli } from '../../src/cli/run.js';
 import { ToolEventBus } from '../../src/core/events.js';
 import { allTools } from '../../src/tools/index.js';
@@ -21,6 +22,8 @@ import {
 } from '../helpers/tool-context.js';
 
 const HEALTH_URI = 'tradingview://app/health';
+// The level pino gives info, the default of --log-level.
+const INFO_LEVEL = 30;
 const TOKEN = 'test-token';
 // The chart tab of the recorded target list.
 const CHART_ID = 'BBB144A7827AE55CBA0E74986FC9574C';
@@ -85,6 +88,29 @@ async function connectHttpClient(url: string): Promise<Client> {
   cleanups.push(() => client.close());
   return client;
 }
+
+test('config writes the snippet alone to stdout and the notes to stderr, exit 0', async () => {
+  for (const client of CLIENT_IDS) {
+    const { logger, lines } = capturingLogger();
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    const expected = renderClientConfig(client, { platform: 'darwin', command: { kind: 'npx' } });
+
+    // The HTTP transport and a token in the shell change nothing: config starts no server.
+    const code = await runCli(
+      ['config', client, '--platform', 'darwin', '--transport', 'http'],
+      { TV_CDP_PORT: '9', TV_MCP_AUTH_TOKEN: TOKEN },
+      { stdout, stderr },
+      { logger, launcher: refusingLauncher(), connection: unreachableConnection(logger) },
+    );
+
+    expect(code).toBe(0);
+    expect(stdout.text).toBe(expected.snippet);
+    expect(stderr.text).toBe(expected.notes.map((note) => `${note}\n`).join(''));
+    // Neither a banner nor a log line at the default level: the notes are all there is on stderr.
+    expect(lines.filter(({ level }) => Number(level) >= INFO_LEVEL)).toEqual([]);
+  }
+});
 
 test('doctor reports a ready app, exits 0, and closes its CDP session', async () => {
   const app = await startApp();

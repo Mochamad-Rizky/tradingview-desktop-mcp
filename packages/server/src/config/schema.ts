@@ -28,6 +28,23 @@ const LOG_LEVELS = [
 // The debug port gives full control of the app, so the server only ever connects to it locally.
 const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '::1'] as const;
 
+// The systems `config` can write a client's snippet for.
+const CLIENT_PLATFORMS = ['darwin', 'win32', 'linux'] as const;
+export type ClientPlatform = (typeof CLIENT_PLATFORMS)[number];
+
+// The options of the config command, which no other command takes.
+export interface ClientOptions {
+  // Start the server with node and the path of this installation instead of npx.
+  local: boolean;
+  // The public host of a tunnel, normalised like an allowed host.
+  url?: string;
+  // Absent means the system the CLI runs on.
+  platform?: ClientPlatform;
+  // Only a --profile flag: the client starts the server with an environment of its own, so a
+  // TV_MCP_PROFILE of this shell would not reach it.
+  profile?: Profile;
+}
+
 export interface Config {
   cdpHost: string;
   cdpPort: number;
@@ -118,6 +135,10 @@ export const settingSchemas = {
     .string()
     .toLowerCase()
     .pipe(z.enum(PROFILES, oneOf(PROFILES))),
+  platform: z
+    .string()
+    .toLowerCase()
+    .pipe(z.enum(CLIENT_PLATFORMS, oneOf(CLIENT_PLATFORMS))),
   boolean: z
     .string()
     .toLowerCase()

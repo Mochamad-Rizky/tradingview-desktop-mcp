@@ -1,7 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import { parseArgs } from 'node:util';
 import { loadConfig } from '../config/load.js';
-import type { CliCommand, Config } from '../config/schema.js';
+import type { ClientOptions, CliCommand, Config } from '../config/schema.js';
 import { debugPortEndpoint } from '../core/cdp/discovery.js';
 import { isTvMcpError } from '../core/errors.js';
 import { createMcpServer, createServerDeps, type ServerDeps } from '../server.js';
@@ -13,6 +13,7 @@ import { startStdioTransport } from '../transports/stdio.js';
 import { withTimeout } from '../utils/timeout.js';
 import { VERSION } from '../version.js';
 import { renderBanner } from './banner.js';
+import { parseClientId, renderClientConfig, resolveCliPath } from './clients.js';
 import {
   colorEnabled,
   isHealthy,
@@ -38,11 +39,10 @@ export interface CliIo {
   process?: CliProcess;
 }
 
-// Dependencies to use instead of the ones the CLI creates from the configuration, and the folder
-// of a built dashboard to serve instead of the one beside the bundle (null: none was built).
-export type CliDeps = Partial<ServerDeps> & { dashboardDir?: string | null };
-
-type Command = Exclude<CliCommand, 'config'>;
+// Dependencies to use instead of the ones the CLI creates from the configuration, the folder of a
+// built dashboard to serve instead of the one beside the bundle (null: none was built), and the
+// path that config --local prints instead of the real path of the running script.
+export type CliDeps = Partial<ServerDeps> & { dashboardDir?: string | null; cliPath?: string };
 
 interface CommandContext {
   config: Readonly<Config>;
@@ -51,6 +51,11 @@ interface CommandContext {
   env: NodeJS.ProcessEnv;
   // Where the built dashboard is, or null when it was not built.
   dashboardDir: () => string | null;
+  // What follows the command's name: the client of config.
+  commandArgs: readonly string[];
+  clientOptions: ClientOptions;
+  // The real path of the running CLI, for config --local.
+  cliPath: () => string;
 }
 
 const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM'];
@@ -302,10 +307,31 @@ async function doctor({ deps, io, env }: CommandContext): Promise<number> {
   return isHealthy(report) ? 0 : 1;
 }
 
-const COMMANDS: Record<Command, (context: CommandContext) => Promise<number>> = {
+// The snippet alone goes to stdout, so that it can be piped or pasted as it is.
+function printClientConfig({
+  io,
+  commandArgs,
+  clientOptions,
+  cliPath,
+}: CommandContext): Promise<number> {
+  const client = parseClientId(commandArgs);
+  const { local, url, platform, profile } = clientOptions;
+  const { snippet, notes } = renderClientConfig(client, {
+    platform: platform ?? process.platform,
+    command: local ? { kind: 'local', cliPath: cliPath() } : { kind: 'npx' },
+    ...(profile === undefined ? {} : { profile }),
+    ...(url === undefined ? {} : { url }),
+  });
+  io.stdout.write(snippet);
+  io.stderr.write(notes.map((note) => `${note}\n`).join(''));
+  return Promise.resolve(0);
+}
+
+const COMMANDS: Record<CliCommand, (context: CommandContext) => Promise<number>> = {
   serve,
   launch,
   doctor,
+  config: printClientConfig,
 };
 
 // The whole CLI, without the process: it takes the arguments (without node and the script), the
@@ -335,13 +361,9 @@ export async function runCli(
     io.stderr.write(renderError(error, { color }));
     return 1;
   }
-  const { command, config } = loaded;
-  if (command === 'config') {
-    io.stderr.write('Not implemented yet\n');
-    return 2;
-  }
+  const { command, commandArgs, config, clientOptions } = loaded;
 
-  const { dashboardDir, ...given } = deps;
+  const { dashboardDir, cliPath, ...given } = deps;
   const shared = createServerDeps(config, given);
   const fatal = deferred<number>();
   let ended = false;
@@ -365,6 +387,9 @@ export async function runCli(
         io,
         env,
         dashboardDir: () => (dashboardDir === undefined ? resolveDashboardDir() : dashboardDir),
+        commandArgs,
+        clientOptions,
+        cliPath: () => cliPath ?? resolveCliPath(process.argv[1]),
       }),
       fatal.promise,
     ]);
