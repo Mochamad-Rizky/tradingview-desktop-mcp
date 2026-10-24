@@ -88,8 +88,9 @@ directly needs the `cmd /c npx` form, which `config` prints when it runs on Wind
 ChatGPT and the OpenAI API cannot start a program on your computer. They reach the server at a
 public HTTPS address, so you run it over HTTP and put a tunnel in front of it. That puts a server
 that can control your logged-in TradingView on the internet: use `--profile readonly`, a strong
-token (`TV_MCP_AUTH_TOKEN`), and the public host of the tunnel in `--allowed-hosts`
-(`TV_MCP_ALLOWED_HOSTS`). The tutorials for [ChatGPT](docs/clients/chatgpt.md) and the
+token (`TV_MCP_AUTH_TOKEN`), the public host of the tunnel in `--allowed-hosts`
+(`TV_MCP_ALLOWED_HOSTS`), and `--no-dashboard`, so that the files of the dashboard are not served
+through the tunnel. The tutorials for [ChatGPT](docs/clients/chatgpt.md) and the
 [OpenAI API](docs/clients/openai-api.md) walk through it, and
 [SECURITY.md](SECURITY.md#tunnels-and-remote-clients) lists what a read-only token can still reach.
 

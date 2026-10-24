@@ -174,7 +174,7 @@ npx -y tradingview-desktop-mcp launch
 
 ### A tunnel answers 403
 
-The server only accepts requests addressed to its own names, so a request that arrives with your tunnel's public host in the `Host` header is refused with 403 until you name that host. Set `TV_MCP_ALLOWED_HOSTS` (or `--allowed-hosts`) to the host, then start the server again. The host alone is enough: `abc.ngrok.app`. An `https://` URL is accepted and reduced to its host.
+The server only accepts requests addressed to its own names, so a request that arrives with your tunnel's public host in the `Host` header is refused with 403 until you name that host. Set `TV_MCP_ALLOWED_HOSTS` (or `--allowed-hosts`) to the host, then start the server again, as below. The host alone is enough: `abc.ngrok.app`. An `https://` URL is accepted and reduced to its host.
 
 macOS and Linux:
 
@@ -192,6 +192,12 @@ Windows, in PowerShell:
 
 ```powershell
 $env:TV_MCP_ALLOWED_HOSTS = "abc.ngrok.app"
+```
+
+Then start the server again as the tutorials do, with the dashboard off so that its files are not served through the tunnel:
+
+```sh
+npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile readonly
 ```
 
 The check is exact, so list each host you use, separated by commas. A request from a web page of another site is refused with 403 as well. A 401 means the request reached the server but carried no valid token. Whenever you use a tunnel, read [Tunnels and remote clients](../SECURITY.md#tunnels-and-remote-clients), and stop the tunnel when you are done.
