@@ -28,6 +28,7 @@ Run them from the repository root.
 | `pnpm test`                          | Unit and integration tests                                                  |
 | `pnpm test:unit`, `test:integration` | One of the two levels                                                       |
 | `pnpm test:e2e`                      | End-to-end tests against the real app, local only (see below)               |
+| `pnpm test:e2e:dashboard`            | The dashboard's Playwright tests (mocked); needs `pnpm build` and Chromium  |
 | `pnpm test:coverage`                 | Unit and integration tests with coverage, failing under 80% on any metric   |
 | `pnpm dev:dashboard`                 | The dashboard on Vite's dev server with hot reload (see below)              |
 | `pnpm re:probe`, `pnpm re:record`    | Read-only probes and the fixture recorder for the real app                  |
@@ -129,8 +130,8 @@ Do not skip them with `--no-verify`. When a hook fails, fix what it reports.
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request. The
 `verify` job installs with the frozen lockfile, then lints, type-checks, builds, runs the unit and
 integration tests and checks the coverage. The `dashboard-e2e` job builds the dashboard and runs its
-Playwright tests in Chromium against a mock server. The `runtime-node20` job then takes the build from
-`verify`, installs only the production dependencies on Node.js 20.19 and runs
+Playwright tests in Chromium against a mock server. Next to it, the `runtime-node20` job takes the
+build from `verify`, installs only the production dependencies on Node.js 20.19 and runs
 `scripts/smoke-node20.mjs`, so that the bundle is proven on the oldest runtime it supports.
 
 Maintainers: the coverage report goes to Codecov, which needs the repository enabled on

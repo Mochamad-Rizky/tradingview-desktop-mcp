@@ -259,20 +259,20 @@ Prompts: `analyze_current_chart`, `write_and_backtest_strategy`, `debug_pine_scr
 
 ## 9. Configuration
 
-| Env var                                 | CLI flag                         | Default                            |
-| --------------------------------------- | -------------------------------- | ---------------------------------- |
-| `TV_CDP_HOST`                           | `--cdp-host`                     | `127.0.0.1` (loopback only)        |
-| `TV_CDP_PORT`                           | `--cdp-port`                     | `9222`                             |
-| `TV_APP_PATH`                           | `--app-path`                     | auto-detect                        |
-| `TV_LAUNCH_TIMEOUT_MS`                  | —                                | `60000`                            |
-| `TV_CALL_TIMEOUT_MS`                    | —                                | `15000`                            |
-| `TV_MCP_LOG_LEVEL`                      | `--log-level`                    | `info`                             |
-| `TV_MCP_TRANSPORT`                      | `--transport`                    | `stdio`                            |
-| `TV_MCP_HTTP_HOST` / `TV_MCP_HTTP_PORT` | `--host` / `--port`              | `127.0.0.1` / `8787`               |
-| `TV_MCP_AUTH_TOKEN`                     | —                                | required for HTTP                  |
-| `TV_MCP_PROFILE` / `TV_MCP_TOOLS`       | `--profile` / `--tools`          | `full` / all                       |
-| `TV_MCP_ALLOW_EVAL`                     | `--allow-eval`                   | `false`                            |
-| `TV_MCP_DASHBOARD`                      | `--dashboard` / `--no-dashboard` | on in HTTP mode, off in stdio mode |
+| Env var                                 | CLI flag                         | Default                             |
+| --------------------------------------- | -------------------------------- | ----------------------------------- |
+| `TV_CDP_HOST`                           | `--cdp-host`                     | `127.0.0.1` (loopback only)         |
+| `TV_CDP_PORT`                           | `--cdp-port`                     | `9222`                              |
+| `TV_APP_PATH`                           | `--app-path`                     | auto-detect                         |
+| `TV_LAUNCH_TIMEOUT_MS`                  | —                                | `60000`                             |
+| `TV_CALL_TIMEOUT_MS`                    | —                                | `15000`                             |
+| `TV_MCP_LOG_LEVEL`                      | `--log-level`                    | `info`                              |
+| `TV_MCP_TRANSPORT`                      | `--transport`                    | `stdio`                             |
+| `TV_MCP_HTTP_HOST` / `TV_MCP_HTTP_PORT` | `--host` / `--port`              | `127.0.0.1` / `8787`                |
+| `TV_MCP_AUTH_TOKEN`                     | —                                | required for HTTP and the dashboard |
+| `TV_MCP_PROFILE` / `TV_MCP_TOOLS`       | `--profile` / `--tools`          | `full` / all                        |
+| `TV_MCP_ALLOW_EVAL`                     | `--allow-eval`                   | `false`                             |
+| `TV_MCP_DASHBOARD`                      | `--dashboard` / `--no-dashboard` | on in HTTP mode, off in stdio mode  |
 
 The dashboard next to stdio needs `TV_MCP_AUTH_TOKEN`; without it the dashboard is disabled with a warning.
 
