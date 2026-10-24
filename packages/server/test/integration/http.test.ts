@@ -286,6 +286,146 @@ test('accepts every loopback name of the server as the Host', async () => {
   }
 });
 
+const TUNNEL = 'abc.ngrok.app';
+const TUNNEL_WARNING =
+  'Extra allowed hosts are set and the profile is "full": anyone who reaches them with the token ' +
+  'can control TradingView. Prefer --profile readonly behind a tunnel.';
+
+function tunnelWarnings(lines: Record<string, unknown>[]): Record<string, unknown>[] {
+  return lines.filter(
+    (line) => typeof line.msg === 'string' && line.msg.startsWith('Extra allowed hosts are set'),
+  );
+}
+
+test('a tunnel Host without a port is accepted on /mcp with the token, and still refused without it', async () => {
+  const { handle } = await start({ allowedHosts: [TUNNEL] });
+
+  // A tunnel forwards the request with the Host its client sent, which names no port for https.
+  const accepted = await send(handle.port, {
+    method: 'POST',
+    headers: { ...MCP_HEADERS, ...AUTH, Host: TUNNEL },
+    body: INITIALIZE,
+  });
+  const defaultPort = await send(handle.port, {
+    method: 'POST',
+    headers: { ...MCP_HEADERS, ...AUTH, Host: `${TUNNEL}:443` },
+    body: INITIALIZE,
+  });
+  const pathToken = await send(handle.port, {
+    method: 'POST',
+    path: `/mcp/${TOKEN}`,
+    headers: { ...MCP_HEADERS, Host: TUNNEL },
+    body: INITIALIZE,
+  });
+  const anonymous = await send(handle.port, {
+    method: 'POST',
+    headers: { ...MCP_HEADERS, Host: TUNNEL },
+    body: INITIALIZE,
+  });
+  const wrong = await send(handle.port, {
+    method: 'POST',
+    headers: { ...MCP_HEADERS, Authorization: 'Bearer not-the-token', Host: TUNNEL },
+    body: INITIALIZE,
+  });
+  const otherHost = await send(handle.port, {
+    method: 'POST',
+    headers: { ...MCP_HEADERS, ...AUTH, Host: 'evil.example' },
+    body: INITIALIZE,
+  });
+  const subdomain = await send(handle.port, {
+    method: 'POST',
+    headers: { ...MCP_HEADERS, ...AUTH, Host: `x.${TUNNEL}` },
+    body: INITIALIZE,
+  });
+
+  expect(accepted.status).toBe(200);
+  expect(accepted.headers['mcp-session-id']).toEqual(expect.any(String));
+  expect(defaultPort.status).toBe(200);
+  expect(pathToken.status).toBe(200);
+  expect(anonymous.status).toBe(401);
+  expect(wrong.status).toBe(401);
+  expect(otherHost.status).toBe(403);
+  expect(subdomain.status).toBe(403);
+});
+
+test('a tunnel Origin https://<host> is accepted and another origin is still refused', async () => {
+  const { handle } = await start({ allowedHosts: [TUNNEL] });
+  const fromOrigin = (origin: string) =>
+    send(handle.port, {
+      method: 'POST',
+      headers: { ...MCP_HEADERS, ...AUTH, Host: TUNNEL, Origin: origin },
+      body: INITIALIZE,
+    });
+
+  const tunnel = await fromOrigin(`https://${TUNNEL}`);
+  // A host without a port lets in no page over plain http.
+  const plain = await fromOrigin(`http://${TUNNEL}`);
+  const foreign = await fromOrigin('https://evil.example');
+  const sibling = await fromOrigin(`https://x.${TUNNEL}`);
+
+  expect(tunnel.status).toBe(200);
+  for (const response of [plain, foreign, sibling]) {
+    expect(response.status).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({
+      error: expect.stringContaining('Origin') as string,
+    });
+  }
+});
+
+test('an extra host:port matches only with its port, and lets its pages in over http too', async () => {
+  const { handle } = await start({ allowedHosts: ['mymac.local:8443'] });
+
+  const exact = await send(handle.port, {
+    path: '/healthz',
+    headers: { Host: 'mymac.local:8443', Origin: 'http://mymac.local:8443' },
+  });
+  const noPort = await send(handle.port, { path: '/healthz', headers: { Host: 'mymac.local' } });
+
+  expect(exact.status).toBe(200);
+  expect(noPort.status).toBe(403);
+});
+
+test('extra hosts with a profile other than readonly log the tunnel warning once', async () => {
+  const { handle, lines } = await start({ allowedHosts: [TUNNEL], profile: 'full' });
+  await send(handle.port, { path: '/healthz', headers: { Host: TUNNEL } });
+  await initialize(handle.port);
+
+  const warnings = tunnelWarnings(lines);
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toMatchObject({ level: 40, msg: TUNNEL_WARNING });
+  expect(JSON.stringify(lines)).not.toContain(TOKEN);
+
+  const core = await start({ allowedHosts: [TUNNEL], profile: 'core' });
+  expect(tunnelWarnings(core.lines).map((line) => line.msg)).toEqual([
+    TUNNEL_WARNING.replace('"full"', '"core"'),
+  ]);
+  // Behind a tunnel readonly is the advice, and without extra hosts there is nothing to warn of.
+  expect(
+    tunnelWarnings((await start({ allowedHosts: [TUNNEL], profile: 'readonly' })).lines),
+  ).toEqual([]);
+  expect(tunnelWarnings((await start({ profile: 'full' })).lines)).toEqual([]);
+});
+
+test('loopback hosts keep working with extra hosts set', async () => {
+  const { handle } = await start({ allowedHosts: [TUNNEL, 'mymac.local:8443'] });
+  const port = String(handle.port);
+
+  for (const host of [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`]) {
+    const response = await send(handle.port, {
+      path: '/healthz',
+      headers: { Host: host, Origin: `http://${host}` },
+    });
+    expect(response.status).toBe(200);
+  }
+  expect(await initialize(handle.port)).toEqual(expect.any(String));
+  // A rebinding Host on the bound port is refused as before.
+  const rebinding = await send(handle.port, {
+    path: '/healthz',
+    headers: { Host: `evil.example:${port}` },
+  });
+  expect(rebinding.status).toBe(403);
+});
+
 test('accepts the token as a Bearer header', async () => {
   const { handle } = await start();
 

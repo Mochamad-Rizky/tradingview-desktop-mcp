@@ -17,6 +17,7 @@ import type { DashboardApi } from './dashboard/api.js';
 import { dashboardFiles } from './dashboard/static.js';
 import {
   allowedHostsFor,
+  allowedOriginsFor,
   bearerToken,
   isAllowedHost,
   isAllowedOrigin,
@@ -58,6 +59,8 @@ export interface RouterOptions {
   logger: Logger;
   // The Host header values of the server, known once its port is bound.
   allowedHosts: () => readonly string[];
+  // The origins of the pages the server serves, known then too.
+  allowedOrigins: () => readonly string[];
   dashboard?: DashboardOptions;
   // Serves an MCP request that carried the token. Without it, /mcp is 404 like any unknown path.
   mcp?: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -223,12 +226,26 @@ export function warnIfTokenIsShort(token: string, logger: Logger): void {
   }
 }
 
+// The startup warning about extra allowed hosts, which put the listener within reach of whoever can
+// reach those names, such as anyone on the internet for a tunnel. Only the readonly profile keeps
+// such a caller from changing anything.
+function warnIfExposedWithControl(config: Readonly<Config>, logger: Logger): void {
+  if (config.allowedHosts.length === 0 || config.profile === 'readonly') {
+    return;
+  }
+  logger.warn(
+    { allowedHosts: config.allowedHosts, profile: config.profile },
+    `Extra allowed hosts are set and the profile is "${config.profile}": anyone who reaches them ` +
+      'with the token can control TradingView. Prefer --profile readonly behind a tunnel.',
+  );
+}
+
 // What answers every request of a listener that MCP clients, the dashboard or both talk to. Every
 // request must name this server as its Host and come from no web page but the server's own. Only
 // /healthz, for scripts that check the server is up, and the files of the dashboard need no token;
 // every MCP and API request must carry it.
 export function createRouter(options: RouterOptions): RequestListener {
-  const { token, logger, allowedHosts, dashboard, mcp } = options;
+  const { token, logger, allowedHosts, allowedOrigins, dashboard, mcp } = options;
   const serveFiles =
     dashboard?.dir === undefined ? undefined : dashboardFiles(dashboard.dir, logger);
 
@@ -327,7 +344,7 @@ export function createRouter(options: RouterOptions): RequestListener {
       });
       return;
     }
-    if (!isAllowedOrigin(origin, allowedHosts())) {
+    if (!isAllowedOrigin(origin, allowedOrigins())) {
       refuse(req, path, 'origin not allowed', { name: 'origin', value: origin });
       sendJson(res, 403, { error: `Requests from the Origin ${String(origin)} are not allowed` });
       return;
@@ -391,18 +408,29 @@ export function createRouter(options: RouterOptions): RequestListener {
   };
 }
 
-// A server that answers with createRouter, listening on config.httpHost:config.httpPort.
+// A server that answers with createRouter, listening on config.httpHost:config.httpPort, for its
+// own names and the extra allowed hosts of the configuration. Every listener starts here, so each
+// gives the warning about extra hosts once it listens.
 export async function listenWithRouter(
   config: Readonly<Config>,
-  options: Omit<RouterOptions, 'allowedHosts'>,
+  options: Omit<RouterOptions, 'allowedHosts' | 'allowedOrigins'>,
 ): Promise<{ server: Server; port: number }> {
   // Known once the port is bound, which is before the first request.
   let allowedHosts: string[] = [];
-  const server = createHttpServer(createRouter({ ...options, allowedHosts: () => allowedHosts }));
+  let allowedOrigins: string[] = [];
+  const server = createHttpServer(
+    createRouter({
+      ...options,
+      allowedHosts: () => allowedHosts,
+      allowedOrigins: () => allowedOrigins,
+    }),
+  );
   await listen(server, config.httpHost, config.httpPort);
   // Port 0 asks the system for a free port, so the bound one is read back.
   const { port } = server.address() as AddressInfo;
-  allowedHosts = allowedHostsFor(config.httpHost, port);
+  allowedHosts = allowedHostsFor(config.httpHost, port, config.allowedHosts);
+  allowedOrigins = allowedOriginsFor(config.httpHost, port, config.allowedHosts);
+  warnIfExposedWithControl(config, options.logger);
   return { server, port };
 }
 

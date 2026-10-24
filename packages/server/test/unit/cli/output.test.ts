@@ -269,9 +269,12 @@ test('renderHelp lists the commands and every variable of the configuration', ()
     'TV_MCP_TOOLS',
     'TV_MCP_ALLOW_EVAL',
     'TV_MCP_DASHBOARD',
+    // Added for tunnels.
+    'TV_MCP_ALLOWED_HOSTS',
   ]) {
     expect(help).toContain(variable);
   }
+  expect(help).toContain('--allowed-hosts <hosts>');
   expect(help).toContain('9222');
   expect(help).toContain('8787');
 });

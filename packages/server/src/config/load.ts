@@ -1,6 +1,7 @@
 import { parseArgs } from 'node:util';
 import type { z } from 'zod';
 import { TvMcpError } from '../core/errors.js';
+import { normalizeHostEntry } from './hosts.js';
 import { CLI_COMMANDS, DEFAULTS, settingSchemas } from './schema.js';
 import type { CliCommand, Config } from './schema.js';
 
@@ -16,6 +17,7 @@ const OPTIONS = {
   port: { type: 'string' },
   profile: { type: 'string' },
   tools: { type: 'string' },
+  'allowed-hosts': { type: 'string' },
   'allow-eval': { type: 'boolean' },
   dashboard: { type: 'boolean' },
   'no-dashboard': { type: 'boolean' },
@@ -150,7 +152,18 @@ function pickSource(
 // because the consumers that take patterns declare it that way.
 function freeze(config: Config): Readonly<Config> {
   Object.freeze(config.toolPatterns);
+  Object.freeze(config.allowedHosts);
   return Object.freeze(config);
+}
+
+// Each entry is normalised on its own, and the error names the variable or flag and the entry at
+// fault. The same host written twice, say as a host and as a URL, is kept once.
+function readAllowedHosts(source: Source | undefined): string[] {
+  if (source === undefined) {
+    return [];
+  }
+  const entries = settingSchemas.list.parse(source.raw);
+  return [...new Set(entries.map((entry) => normalizeHostEntry(entry, source.name)))];
 }
 
 // Pure on purpose: the caller passes argv (without the node and script entries) and env, so tests
@@ -207,6 +220,9 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
   const authToken = read(settingSchemas.text, 'TV_MCP_AUTH_TOKEN');
   const profile = read(settingSchemas.profile, 'TV_MCP_PROFILE', 'profile') ?? DEFAULTS.profile;
   const toolPatterns = read(settingSchemas.toolPatterns, 'TV_MCP_TOOLS', 'tools') ?? [];
+  const allowedHosts = readAllowedHosts(
+    pickSource(env, flags, 'TV_MCP_ALLOWED_HOSTS', 'allowed-hosts'),
+  );
   const allowEval =
     flags['allow-eval'] ?? read(settingSchemas.boolean, 'TV_MCP_ALLOW_EVAL') ?? DEFAULTS.allowEval;
   // Without a flag or a variable the dashboard follows the transport: on for http, off for stdio.
@@ -237,6 +253,7 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
     toolPatterns,
     allowEval,
     dashboard,
+    allowedHosts,
   };
   return { command, commandArgs, config: freeze(config) };
 }

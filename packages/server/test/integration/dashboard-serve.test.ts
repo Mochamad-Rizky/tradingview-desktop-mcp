@@ -492,6 +492,47 @@ test('stdio with --dashboard and a token serves the dashboard and the API but no
   });
 });
 
+// A tunnel can reach the dashboard next to stdio as it reaches the HTTP transport.
+test('stdio with --dashboard and --allowed-hosts serves the tunnel host, and warns once', async () => {
+  const tunnel = 'abc.ngrok.app';
+  const server = runServer(['--dashboard', '--allowed-hosts', `https://${tunnel}/`], {
+    env: { TV_MCP_AUTH_TOKEN: TOKEN },
+    port: await freePort(),
+    dashboardDir: files().dir,
+  });
+  const client = await connectStdioClient(server.stdout, server.stdin);
+  cleanups.push(() => client.close());
+  await expect.poll(() => server.stderr.text, { timeout: 5000 }).toMatch(/dashboard +http/);
+
+  const fromTunnel = { Host: tunnel, Origin: `https://${tunnel}` };
+  const page = await send(server.port, { path: '/', headers: { ...HTML, Host: tunnel } });
+  const info = await send(server.port, { path: '/api/info', headers: { ...AUTH, ...fromTunnel } });
+  const anonymous = await send(server.port, { path: '/api/info', headers: fromTunnel });
+  const plainOrigin = await send(server.port, {
+    path: '/api/info',
+    headers: { ...AUTH, Host: tunnel, Origin: `http://${tunnel}` },
+  });
+  const otherHost = await send(server.port, {
+    path: '/api/info',
+    headers: { ...AUTH, Host: 'evil.example' },
+  });
+  const loopback = await send(server.port, { path: '/api/info', headers: AUTH });
+
+  expect(page.status).toBe(200);
+  expect(info.status).toBe(200);
+  expect(anonymous.status).toBe(401);
+  expect(plainOrigin.status).toBe(403);
+  expect(otherHost.status).toBe(403);
+  expect(loopback.status).toBe(200);
+  expect(
+    warnings(server.lines, /^Extra allowed hosts are set and the profile is "full"/),
+  ).toHaveLength(1);
+  expect(JSON.stringify(server.lines)).not.toContain(TOKEN);
+
+  server.stdin.end();
+  expect(await server.running).toBe(0);
+});
+
 // From the sources, before a build, a development server serves the page and asks this listener
 // for the API.
 test('stdio with --dashboard and no built files serves the API alone, with one warning', async () => {

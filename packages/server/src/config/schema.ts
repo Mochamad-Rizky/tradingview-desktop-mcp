@@ -46,10 +46,13 @@ export interface Config {
   toolPatterns: string[];
   allowEval: boolean;
   dashboard: boolean;
+  // Host header values the HTTP listener accepts besides its own address, such as a tunnel's public
+  // host: lower case, with a port only when it is not 80 or 443. Empty means only its own address.
+  allowedHosts: string[];
 }
 
-// Settings without an entry here have no fixed default: appPath, authToken and toolPatterns are
-// absent or empty, and the dashboard default depends on the transport.
+// Settings without an entry here have no fixed default: appPath, authToken, toolPatterns and
+// allowedHosts are absent or empty, and the dashboard default depends on the transport.
 export const DEFAULTS = {
   cdpHost: '127.0.0.1',
   cdpPort: 9222,
@@ -87,6 +90,7 @@ function oneOf(values: readonly string[]): string {
   return `must be one of ${values.join(', ')}`;
 }
 
+// Blank items are dropped: a trailing comma is a slip, not an item.
 const list = z.string().transform((text) =>
   text
     .split(',')
@@ -125,4 +129,6 @@ export const settingSchemas = {
   toolPatterns: list.transform((patterns) =>
     patterns.length === 1 && patterns[0]?.toLowerCase() === 'all' ? [] : patterns,
   ),
+  // Each item is normalised by the loader, so that an error names the item at fault.
+  list,
 };

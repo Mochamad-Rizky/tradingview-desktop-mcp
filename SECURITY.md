@@ -93,10 +93,29 @@ Some assistants only connect to a public HTTPS address, which means a tunnel to 
 puts a server that can control your TradingView on the internet.
 
 - Start the server with `--profile readonly`, which offers only the tools that declare themselves
-  read-only, and with a strong token.
-- The server rejects a request whose `Host` header is not its own address, so the tunnel has to
-  rewrite the header to the local address.
-- Stop the tunnel when you do not use it.
+  read-only, and with a strong token. Read-only is not private: whoever holds the token can still
+  take screenshots of your charts and read your alert messages, your watchlists, your layout names,
+  the source of your Pine scripts and your strategy results.
+- The server refuses a request whose `Host` header is not one of its own names. Give it the public
+  host of the tunnel with `TV_MCP_ALLOWED_HOSTS` or `--allowed-hosts`, for example
+  `--allowed-hosts abc.ngrok.app`. Several hosts are comma-separated, and an entry may be written as
+  a host, a `host:port` or an `https://` URL; it is stored as a lower-case host.
+  - A host without a port also matches `:443` and `:80`, and lets in pages from `https://<host>`
+    only. A `host:port` matches that port only, and lets in pages from both `https://` and
+    `http://` on it. Ports 80 and 443 count as no port.
+  - An entry with a path, a query, a user name or password, or a wildcard is refused, and so is an
+    `http://` URL without another port. Each name is matched exactly, so list every host you use.
+  - The token is still required on every MCP and API request: the extra hosts only add names that
+    the `Host` and `Origin` checks accept. Keep the server on `127.0.0.1` and point the tunnel at
+    it. The setting covers the dashboard too, whether it runs with the HTTP transport or next to
+    stdio.
+  - When extra hosts are set and the profile is not `readonly`, the server logs a warning at
+    startup.
+- Prefer the `Authorization: Bearer <token>` header. A `/mcp/<token>` URL, which connector
+  interfaces without headers need, lands in the tunnel provider's request logs and dashboards as
+  well as in your own, so treat those logs as holding the token, and change the token if anyone
+  else can read them.
+- Stop the tunnel when you do not use it, and remove its host from `TV_MCP_ALLOWED_HOSTS`.
 
 ### JavaScript in the app
 

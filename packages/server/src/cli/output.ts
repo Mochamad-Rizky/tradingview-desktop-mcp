@@ -45,6 +45,10 @@ const OPTIONS = [
   ['--host <address>', `HTTP listen address (TV_MCP_HTTP_HOST, default ${DEFAULTS.httpHost})`],
   ['--port <number>', `HTTP listen port (TV_MCP_HTTP_PORT, default ${String(DEFAULTS.httpPort)})`],
   [
+    '--allowed-hosts <hosts>',
+    "Extra host names, such as a tunnel's (TV_MCP_ALLOWED_HOSTS, default none)",
+  ],
+  [
     '--cdp-host <address>',
     `Debug port host, loopback only (TV_CDP_HOST, default ${DEFAULTS.cdpHost})`,
   ],

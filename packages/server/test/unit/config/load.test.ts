@@ -32,8 +32,8 @@ function textOf(error: TvMcpError): string {
   return `${error.message}\n${error.hint ?? ''}`;
 }
 
-// The 14 variables of design spec 9, copied by hand so the assertions below do not depend on the
-// code under test.
+// The variables of design spec 9 and TV_MCP_ALLOWED_HOSTS, copied by hand so the assertions below
+// do not depend on the code under test.
 const SPEC_VARIABLES = [
   'TV_CDP_HOST',
   'TV_CDP_PORT',
@@ -49,6 +49,7 @@ const SPEC_VARIABLES = [
   'TV_MCP_TOOLS',
   'TV_MCP_ALLOW_EVAL',
   'TV_MCP_DASHBOARD',
+  'TV_MCP_ALLOWED_HOSTS',
 ];
 
 // Satisfies the HTTP transport's token rule when a test is about something else.
@@ -74,6 +75,7 @@ test('uses documented defaults', () => {
     toolPatterns: [],
     allowEval: false,
     dashboard: false,
+    allowedHosts: [],
   });
 });
 
@@ -345,6 +347,70 @@ test('reads all as an ordinary pattern when other patterns come with it', () => 
   expect(load(['--tools', 'all,chart_*']).config.toolPatterns).toEqual(['all', 'chart_*']);
 });
 
+const ALLOWED_HOSTS_HINT =
+  'TV_MCP_ALLOWED_HOSTS takes host names such as abc.ngrok.app, comma-separated';
+
+test('TV_MCP_ALLOWED_HOSTS accepts hosts, host:port and https URLs and normalises them', () => {
+  const { config } = load([], {
+    TV_MCP_ALLOWED_HOSTS:
+      ' abc.ngrok.app , https://Abc.Ngrok.APP/, mymac.local:8443,https://abc.ngrok.app:443,' +
+      'tunnel.example:443,[2001:db8::1],,',
+  });
+
+  // In order, each one once; blank entries are dropped as for TV_MCP_TOOLS.
+  expect(config.allowedHosts).toEqual([
+    'abc.ngrok.app',
+    'mymac.local:8443',
+    'tunnel.example',
+    '[2001:db8::1]',
+  ]);
+});
+
+test('TV_MCP_ALLOWED_HOSTS refuses a path, a wildcard and credentials with the expected form in the hint', () => {
+  // What the message quotes of the entry stops at the host, where a pasted URL carries no secret.
+  const cases = [
+    ['https://abc.ngrok.app/mcp', 'path', 'https://abc.ngrok.app/…'],
+    ['*.ngrok.app', 'wildcard', '*.ngrok.app'],
+    ['https://user:secret@abc.ngrok.app', 'user name or password', 'https://…@abc.ngrok.app'],
+    ['abc.ngrok.app/?x=1', 'query', 'abc.ngrok.app/…'],
+  ];
+
+  for (const [entry = '', problem = '', shown = ''] of cases) {
+    const error = loadError([], { TV_MCP_ALLOWED_HOSTS: `good.example,${entry}` });
+
+    expect(error.code).toBe('INVALID_INPUT');
+    // The variable and the entry at fault are named, never silently dropped, and the hint shows
+    // what is expected.
+    expect(error.message).toContain('TV_MCP_ALLOWED_HOSTS');
+    expect(error.message).toContain(JSON.stringify(shown));
+    expect(error.message).toContain(problem);
+    expect(error.message).not.toContain('good.example');
+    expect(error.message).not.toContain('secret');
+    expect(error.hint).toBe(ALLOWED_HOSTS_HINT);
+  }
+});
+
+test('--allowed-hosts beats TV_MCP_ALLOWED_HOSTS', () => {
+  expect(load(['--allowed-hosts', 'flag.example']).config.allowedHosts).toEqual(['flag.example']);
+  expect(
+    load(['--allowed-hosts', 'https://Flag.Example/'], { TV_MCP_ALLOWED_HOSTS: 'env.example' })
+      .config.allowedHosts,
+  ).toEqual(['flag.example']);
+  // Only the source that wins is read, so a broken variable under a flag does no harm.
+  expect(
+    load(['--allowed-hosts', 'flag.example'], { TV_MCP_ALLOWED_HOSTS: '*.example' }).config
+      .allowedHosts,
+  ).toEqual(['flag.example']);
+});
+
+test('names the flag when the refused allowed host came from --allowed-hosts', () => {
+  const error = loadError(['--allowed-hosts', 'http://abc.ngrok.app']);
+
+  expect(error.message).toContain('--allowed-hosts');
+  expect(error.message).toContain('"http://abc.ngrok.app"');
+  expect(error.hint).toBe(ALLOWED_HOSTS_HINT);
+});
+
 test('parses subcommands', () => {
   expect(load(['launch']).command).toBe('launch');
 
@@ -432,6 +498,7 @@ test('never takes the auth token from a flag', () => {
     ['--port', '9000'],
     ['--profile', 'core'],
     ['--tools', 'chart_*'],
+    ['--allowed-hosts', 'abc.ngrok.app'],
   ].flat();
 
   expect(load(argv).config).not.toHaveProperty('authToken');
@@ -660,6 +727,9 @@ test('returns a frozen config, so a stray write fails instead of going unnoticed
   }).toThrow(TypeError);
   expect(() => {
     writable.toolPatterns.push('data_*');
+  }).toThrow(TypeError);
+  expect(() => {
+    writable.allowedHosts.push('evil.example');
   }).toThrow(TypeError);
 });
 
