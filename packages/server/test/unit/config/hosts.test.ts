@@ -39,6 +39,15 @@ test.each([
   ['a host with port 443', 'abc.ngrok.app:443', 'abc.ngrok.app'],
   ['a host with port 80', 'abc.ngrok.app:80', 'abc.ngrok.app'],
   ['an https URL with port 443', 'https://abc.ngrok.app:443/', 'abc.ngrok.app'],
+  // A fully qualified name ends with a dot, which names the same host as none.
+  ['a trailing dot', 'ABC.ngrok.app.', 'abc.ngrok.app'],
+  ['an ideographic trailing dot', 'abc.ngrok.app\u3002', 'abc.ngrok.app'],
+  ['a trailing dot before the port', 'abc.ngrok.app.:8443', 'abc.ngrok.app:8443'],
+  // A client sends a name in other scripts as punycode, and an IPv6 address in its short form.
+  ['a name in another script', 'b\u00FCcher.example', 'xn--bcher-kva.example'],
+  ['a long IPv6 address', '[2001:DB8:0:0::1]', '[2001:db8::1]'],
+  ['a name of one label', 'localhost:8443', 'localhost:8443'],
+  ['a port with a leading zero', 'mymac.local:08443', 'mymac.local:8443'],
 ])('normalizeHostEntry accepts %s', (_case, entry, expected) => {
   expect(normalizeHostEntry(entry)).toBe(expected);
 });
@@ -79,9 +88,43 @@ test.each([
   ],
   ['another scheme', 'ftp://abc.ngrok.app', 'https URL', 'ftp://abc.ngrok.app'],
   ['a space inside', 'abc ngrok.app', 'not a host name', 'abc ngrok.app'],
-  ['an IPv6 address without brackets', '2001:db8::1', 'not a host name', '2001:db8::1'],
-  ['a port out of range', 'abc.ngrok.app:99999', 'not a host name', 'abc.ngrok.app:99999'],
-  ['a backslash', 'abc.ngrok.app\\x', 'not a host name', 'abc.ngrok.app\\x'],
+  ['a tab inside', 'abc\tngrok.app', 'not a host name', 'abc\tngrok.app'],
+  ['an IPv6 address without brackets', '2001:db8::1', 'brackets', '2001:db8::1'],
+  ['a port out of range', 'abc.ngrok.app:99999', 'port', 'abc.ngrok.app:99999'],
+  // The parser of a URL reads a backslash as a slash.
+  ['a backslash', 'abc.ngrok.app\\x', 'path', 'abc.ngrok.app\\…'],
+  ['a backslash in a URL', 'https://abc.ngrok.app\\mcp', 'path', 'https://abc.ngrok.app\\…'],
+  // Each of these would be stored and then never match a Host header.
+  ['a leading dot', '.ngrok.app', 'not a host name', '.ngrok.app'],
+  ['a semicolon between hosts', 'a.example;b.example', 'not a host name', 'a.example;b.example'],
+  ['a comma alone', ',', 'not a host name', ','],
+  ['two trailing dots', 'abc.ngrok.app..', 'not a host name', 'abc.ngrok.app..'],
+  ['an empty label', 'abc..ngrok.app', 'not a host name', 'abc..ngrok.app'],
+  ['a label that starts with a hyphen', '-abc.ngrok.app', 'not a host name', '-abc.ngrok.app'],
+  ['a label that ends with a hyphen', 'abc-.ngrok.app', 'not a host name', 'abc-.ngrok.app'],
+  ['an underscore', 'a_b.example', 'not a host name', 'a_b.example'],
+  [
+    'a label of 64 characters',
+    `${'a'.repeat(64)}.example`,
+    'not a host name',
+    `${'a'.repeat(64)}.example`,
+  ],
+  [
+    'a name of 254 characters',
+    `${'a'.repeat(63)}.`.repeat(4).slice(0, 254),
+    'not a host name',
+    `${'a'.repeat(63)}.`.repeat(4).slice(0, 254),
+  ],
+  ['a short form of an IPv4 address', '192.0.2', 'not a host name', '192.0.2'],
+  ['an IPv4 address with a leading zero', '192.0.02.10', 'not a host name', '192.0.02.10'],
+  ['a name that ends in a number', 'abc.123', 'not a host name', 'abc.123'],
+  ['an invalid IPv6 address', '[2001:zz::1]', 'not a host name', '[2001:zz::1]'],
+  ['an unclosed bracket', '[2001:db8::1', 'not a host name', '[2001:db8::1'],
+  ['an IPv6 zone index', '[fe80::1%25en0]', 'percent', '[fe80::1…'],
+  ['a percent-encoded wildcard', '%2A.ngrok.app', 'percent', '…'],
+  ['port 0', 'abc.ngrok.app:0', 'port', 'abc.ngrok.app:0'],
+  ['an empty port', 'abc.ngrok.app:', 'port', 'abc.ngrok.app:'],
+  ['a port that is not a number', 'abc.ngrok.app:https', 'port', 'abc.ngrok.app:https'],
 ])('normalizeHostEntry refuses %s and says why', (_case, entry, problem, shown) => {
   const error = refusal(entry);
 
@@ -102,6 +145,11 @@ test('a refused entry never shows the token of a copied connector URL', () => {
     `https://${secret}@abc.ngrok.app/mcp`,
     `abc.ngrok.app/mcp/${secret}`,
     `*.ngrok.app/mcp/${secret}`,
+    `https://abc.ngrok.app\\mcp\\${secret}`,
+    `abc.ngrok.app\\${secret}`,
+    `https://abc.ngrok.app\\?token=${secret}`,
+    `https://abc.ngrok.app%2Fmcp%2F${secret}`,
+    `abc.ngrok.app%2F${secret}`,
   ];
 
   for (const entry of entries) {

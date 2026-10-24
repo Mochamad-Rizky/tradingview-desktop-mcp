@@ -390,6 +390,15 @@ test('TV_MCP_ALLOWED_HOSTS refuses a path, a wildcard and credentials with the e
   }
 });
 
+test('TV_MCP_ALLOWED_HOSTS refuses an entry that could never match a Host header', () => {
+  // A semicolon is not a separator, so this would be one name that no client sends.
+  const error = loadError([], { TV_MCP_ALLOWED_HOSTS: 'a.example;b.example' });
+
+  expect(error.code).toBe('INVALID_INPUT');
+  expect(error.message).toBe('TV_MCP_ALLOWED_HOSTS: "a.example;b.example" is not a host name');
+  expect(error.hint).toBe(ALLOWED_HOSTS_HINT);
+});
+
 test('--allowed-hosts beats TV_MCP_ALLOWED_HOSTS', () => {
   expect(load(['--allowed-hosts', 'flag.example']).config.allowedHosts).toEqual(['flag.example']);
   expect(
