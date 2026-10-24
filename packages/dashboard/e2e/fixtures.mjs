@@ -11,6 +11,27 @@ export const MOCK_URL = `http://${MOCK_HOST}:${String(MOCK_PORT)}`;
 // The token the mock accepts, as TV_MCP_AUTH_TOKEN would hold it.
 export const MOCK_TOKEN = 'e2e-token-0123456789abcdef0123456789abcdef';
 
+// The headers of every answer of the dashboard files, a 404 included, as the server's
+// transports/dashboard/static.ts sends them. The mock sends these, and a test of auth.spec.ts holds
+// the real server to them as well, so that the two cannot drift apart unseen.
+export const SECURITY_HEADERS = {
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "font-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; '),
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+};
+
 const DEBUG_PORT = 'http://127.0.0.1:9222';
 const BROWSER = 'Chrome/146.0.7680.216';
 

@@ -8,6 +8,7 @@
 // - the same routes, statuses and JSON (packages/server/src/transports/dashboard/api.ts);
 // - the same Host and Origin checks, and the token as "Authorization: Bearer" only, a 401 with
 //   WWW-Authenticate otherwise, and a token in the URL refused (transports/http.ts);
+// - the same 401 for /mcp without the token; with it the mock answers 404, as it speaks no MCP;
 // - the same event stream: retry: 3000, ids of the form <bootId>-<seq>, event: tool, event: gap for
 //   a Last-Event-ID of another boot, and a ": ping" comment every 15 s (dashboard/sse.ts);
 // - the same headers on the dashboard files (dashboard/static.ts).
@@ -35,6 +36,7 @@ import {
   MOCK_PORT,
   MOCK_TOKEN,
   resultFor,
+  SECURITY_HEADERS,
   tools,
 } from './fixtures.mjs';
 
@@ -58,28 +60,14 @@ const ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '[::1]'].map(
   (name) => `${name}:${String(MOCK_PORT)}`,
 );
 
+const MCP_ROUTE = /^\/mcp(?:\/([^/]+))?\/?$/;
 const MISSING_API_TOKEN =
   'Authentication required: send the token as "Authorization: Bearer <token>"';
+const MISSING_MCP_TOKEN =
+  'Authentication required: send the token as "Authorization: Bearer <token>", or in the path ' +
+  'as /mcp/<token>';
 const TOKEN_IN_URL =
   'Send the token in the "Authorization: Bearer <token>" header only, never in the URL';
-
-const SECURITY_HEADERS = {
-  'Content-Security-Policy': [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "connect-src 'self'",
-    "font-src 'self'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-    "frame-ancestors 'none'",
-  ].join('; '),
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-  'X-Frame-Options': 'DENY',
-};
 
 const CONTENT_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -603,6 +591,40 @@ async function serveApi(req, res, path) {
   await handleApi(req, res, path);
 }
 
+/**
+ * /mcp, /mcp/ and /mcp/<token>, refused as the server refuses them without the token. The mock
+ * speaks no MCP, so with the token it answers 404.
+ * @param {IncomingMessage} req
+ * @param {ServerResponse} res
+ * @param {string} path
+ */
+function serveMcp(req, res, path) {
+  const match = MCP_ROUTE.exec(path);
+  if (match === null) {
+    sendError(res, 404, 'Not found');
+    return;
+  }
+  const segment = match[1];
+  /** @type {string | null | undefined} */
+  let provided;
+  if (segment === undefined) {
+    provided = BEARER.exec(req.headers.authorization ?? '')?.[1];
+  } else {
+    try {
+      provided = decodeURIComponent(segment);
+    } catch {
+      provided = null;
+    }
+  }
+  if (provided === undefined) {
+    sendError(res, 401, MISSING_MCP_TOKEN, { 'WWW-Authenticate': 'Bearer' });
+  } else if (provided !== state.token) {
+    sendError(res, 401, 'Invalid token', { 'WWW-Authenticate': 'Bearer' });
+  } else {
+    sendError(res, 404, 'Not found');
+  }
+}
+
 // The dashboard files, as dashboard/static.ts serves them.
 
 /**
@@ -779,7 +801,7 @@ async function control(req, res, path) {
   sendJson(res, 200, { ok: true });
 }
 
-// The router: Host, Origin, /healthz, the tests' controls, the files, the API, as the server
+// The router: Host, Origin, /healthz, the tests' controls, the files, the API, /mcp, as the server
 // orders them.
 
 /**
@@ -838,7 +860,7 @@ async function route(req, res, path) {
     await serveApi(req, res, path);
     return;
   }
-  sendError(res, 404, 'Not found');
+  serveMcp(req, res, path);
 }
 
 const server = createServer((req, res) => {

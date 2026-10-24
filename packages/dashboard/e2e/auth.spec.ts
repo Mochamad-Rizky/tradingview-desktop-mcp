@@ -1,3 +1,5 @@
+import type { APIResponse } from '@playwright/test';
+import { SECURITY_HEADERS } from './fixtures.mjs';
 import { expect, signIn, test } from './support.ts';
 
 // The token screen: the dashboard shows nothing of the server before it has the token, takes it
@@ -17,7 +19,8 @@ test.describe('the token screen', () => {
 
       await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
       await expect(page.getByRole('heading', { level: 1, name: 'Status' })).toBeVisible();
-      expect(page.url()).not.toContain(server.token);
+      // A boolean, so that a failure does not print the token.
+      expect(page.url().includes(server.token), 'the address holds no token').toBe(false);
     },
   );
 
@@ -64,33 +67,84 @@ test.describe('the token screen', () => {
   });
 });
 
+// The headers of `response` that `expected` names, with their names in lower case as they come.
+function headersOf(
+  response: APIResponse,
+  expected: Record<string, string>,
+): Record<string, string | undefined> {
+  const headers = response.headers();
+  return Object.fromEntries(
+    Object.keys(expected).map((name) => [name.toLowerCase(), headers[name.toLowerCase()]]),
+  );
+}
+
+function lowerCaseNames(expected: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(expected).map(([name, value]) => [name.toLowerCase(), value]),
+  );
+}
+
+// Runs against the mock and the real server alike, with the same expected headers: a change to the
+// server's headers that the mock does not follow fails here.
 test.describe('the server', () => {
   test(
-    'serves the page without the token, with its security headers, and the API only with the Bearer header',
+    'serves the files with every security header, and the API and MCP only with the token',
     { tag: '@real' },
     async ({ request, server }) => {
       const page = await request.get('/log', { headers: { Accept: 'text/html' } });
       expect(page.status()).toBe(200);
-      expect(page.headers()['content-type']).toBe('text/html; charset=utf-8');
-      expect(page.headers()['content-security-policy']).toContain("default-src 'self'");
-      expect(page.headers()['x-frame-options']).toBe('DENY');
-      expect(await page.text()).toContain('<div id="root"></div>');
+      const pageHeaders = {
+        ...SECURITY_HEADERS,
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      };
+      expect(headersOf(page, pageHeaders)).toEqual(lowerCaseNames(pageHeaders));
+      const html = await page.text();
+      expect(html).toContain('<div id="root"></div>');
 
+      const script = /src="(\/assets\/[^"]+\.js)"/.exec(html)?.[1];
+      expect(script, 'the page loads a script of the build').toBeDefined();
+      const asset = await request.get(script ?? '');
+      expect(asset.status()).toBe(200);
+      const assetHeaders = {
+        ...SECURITY_HEADERS,
+        'Content-Type': 'text/javascript; charset=utf-8',
+        'Cache-Control': 'public, max-age=31536000, immutable',
+      };
+      expect(headersOf(asset, assetHeaders)).toEqual(lowerCaseNames(assetHeaders));
+
+      const absent = await request.get('/assets/absent.js');
+      expect(absent.status()).toBe(404);
+      const absentHeaders = {
+        ...SECURITY_HEADERS,
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-store',
+      };
+      expect(headersOf(absent, absentHeaders)).toEqual(lowerCaseNames(absentHeaders));
+
+      const refusedHeaders = { 'WWW-Authenticate': 'Bearer', 'Cache-Control': 'no-store' };
       const missing = await request.get('/api/info');
       expect(missing.status()).toBe(401);
-      expect(missing.headers()['www-authenticate']).toBe('Bearer');
+      expect(headersOf(missing, refusedHeaders)).toEqual(lowerCaseNames(refusedHeaders));
 
       const inQuery = await request.get(`/api/info?token=${server.token}`, {
         headers: { Authorization: `Bearer ${server.token}` },
       });
       expect(inQuery.status()).toBe(401);
 
+      const mcp = await request.post('/mcp', { data: {} });
+      expect(mcp.status()).toBe(401);
+      expect(headersOf(mcp, refusedHeaders)).toEqual(lowerCaseNames(refusedHeaders));
+
       const allowed = await request.get('/api/info', {
         headers: { Authorization: `Bearer ${server.token}` },
       });
       expect(allowed.status()).toBe(200);
       expect(allowed.headers()['cache-control']).toBe('no-store');
-      expect(await allowed.text()).not.toContain(server.token);
+      // A boolean, so that a failure does not print the token.
+      expect((await allowed.text()).includes(server.token), 'the answer holds no token').toBe(
+        false,
+      );
     },
   );
 });
