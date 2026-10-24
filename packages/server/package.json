@@ -30,7 +30,7 @@
     "node": ">=20.19"
   },
   "bin": {
-    "tradingview-desktop-mcp": "./dist/cli.js"
+    "tradingview-desktop-mcp": "dist/cli.js"
   },
   "types": "./dist/index.d.ts",
   "exports": {
