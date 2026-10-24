@@ -295,20 +295,23 @@ export function createRouter(options: RouterOptions): RequestListener {
 
   // The dashboard API takes the token from the Authorization header only. A URL ends up in logs,
   // browser histories and Referer headers, so one that carries the token is refused even next to
-  // the header: whoever sent it learns to stop.
+  // the header: whoever sent it learns to stop. The header is checked first, in constant time, so
+  // that the URL, whose search for the token is not, is looked at only for a client that holds the
+  // token.
   const serveApi = async (
     req: IncomingMessage,
     res: ServerResponse,
     path: string,
     api: DashboardApi,
   ): Promise<void> => {
+    if (!authorized(req, res, path, bearerToken(req.headers.authorization), MISSING_API_TOKEN)) {
+      return;
+    }
     if (urlCarriesToken(req.url ?? path, token)) {
       unauthorized(req, res, path, 'token in the URL', TOKEN_IN_URL);
       return;
     }
-    if (authorized(req, res, path, bearerToken(req.headers.authorization), MISSING_API_TOKEN)) {
-      await api.handle(req, res, path);
-    }
+    await api.handle(req, res, path);
   };
 
   const route = async (req: IncomingMessage, res: ServerResponse, path: string): Promise<void> => {

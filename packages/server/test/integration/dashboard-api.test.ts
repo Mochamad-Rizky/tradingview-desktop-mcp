@@ -192,7 +192,7 @@ test('GET /api/info with a token in the query or path is 401', async () => {
   const { handle, lines } = await start();
 
   const refused: [string, Record<string, string>][] = [
-    [`/api/info?token=${TOKEN}`, {}],
+    [`/api/info?token=${TOKEN}`, AUTH],
     [`/api/info?access_token=${TOKEN}`, AUTH],
     [`/api/info?auth=Bearer+${TOKEN}`, AUTH],
     ['/api/info?token=test%2Dtoken', AUTH],
@@ -218,6 +218,36 @@ test('GET /api/info with a token in the query or path is 401', async () => {
   expect(lines).toContainEqual(
     expect.objectContaining({ path: '/api/<redacted>/info', reason: 'token in the URL' }),
   );
+});
+
+// The URL is searched for the token only once the header has shown, by the constant-time check,
+// that the client holds it: a client without it gets the answer of a missing or wrong token, and
+// how long the server takes to give it says nothing of the token.
+test('GET /api/info with a token in the URL but not in the header is refused for the header', async () => {
+  const { handle, lines } = await start();
+
+  const missing = await send(handle.port, { path: `/api/info?token=${TOKEN}` });
+  const wrong = await send(handle.port, {
+    path: `/api/${TOKEN}/info`,
+    headers: { Authorization: 'Bearer not-the-token' },
+  });
+
+  for (const response of [missing, wrong]) {
+    expect(response.status).toBe(401);
+    expect(response.headers['www-authenticate']).toBe('Bearer');
+  }
+  expect(JSON.parse(missing.body)).toEqual({
+    error: 'Authentication required: send the token as "Authorization: Bearer <token>"',
+  });
+  expect(JSON.parse(wrong.body)).toEqual({ error: 'Invalid token' });
+  expect(JSON.stringify(lines)).not.toContain(TOKEN);
+  expect(lines).toContainEqual(
+    expect.objectContaining({ path: '/api/info', reason: 'missing token' }),
+  );
+  expect(lines).toContainEqual(
+    expect.objectContaining({ path: '/api/<redacted>/info', reason: 'wrong token' }),
+  );
+  expect(lines).not.toContainEqual(expect.objectContaining({ reason: 'token in the URL' }));
 });
 
 test('a foreign Origin on /api is 403 and a rebinding Host is 403', async () => {

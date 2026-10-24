@@ -587,10 +587,7 @@ async function serveApi(req, res, path) {
   const unauthorized = (error) => {
     sendError(res, 401, error, { 'WWW-Authenticate': 'Bearer' });
   };
-  if (urlCarriesToken(req.url ?? path, state.token)) {
-    unauthorized(TOKEN_IN_URL);
-    return;
-  }
+  // The header first, as the server checks it, and then the URL, for a client that holds the token.
   const provided = BEARER.exec(req.headers.authorization ?? '')?.[1];
   if (provided === undefined) {
     unauthorized(MISSING_API_TOKEN);
@@ -598,6 +595,10 @@ async function serveApi(req, res, path) {
   }
   if (provided !== state.token) {
     unauthorized('Invalid token');
+    return;
+  }
+  if (urlCarriesToken(req.url ?? path, state.token)) {
+    unauthorized(TOKEN_IN_URL);
     return;
   }
   await handleApi(req, res, path);
