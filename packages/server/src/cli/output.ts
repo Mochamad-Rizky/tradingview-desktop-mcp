@@ -169,6 +169,17 @@ function chartCheck({ cdp, chart }: HealthReport): Check {
       hint: 'Open a chart in TradingView Desktop, then run doctor again.',
     };
   }
+  // A tab without a chart, such as the New tab page, is in front of the chart tabs: the tools read
+  // the tab in front, so they cannot use a chart until the user brings one forward.
+  if (chart.inBackground === true) {
+    return {
+      state: 'fail',
+      text: 'A chart is open but not in front; bring its tab to the front.',
+      hint:
+        "Switch to the tab of the chart, away from TradingView's New tab page or another tab " +
+        'without a chart, then run doctor again.',
+    };
+  }
   // The tab in use is the one in front, and with several tabs and none in front there is no url.
   if (chart.url === undefined) {
     return {
@@ -182,7 +193,7 @@ function chartCheck({ cdp, chart }: HealthReport): Check {
 }
 
 function appCheck({ chart, app }: HealthReport): Check {
-  if (chart.url === undefined) {
+  if (chart.url === undefined || chart.inBackground === true) {
     return { state: 'skipped', text: 'App: not checked' };
   }
   if (app.ready) {
@@ -204,9 +215,10 @@ function appCheck({ chart, app }: HealthReport): Check {
   };
 }
 
-// Ready means a tool call can work now: the debug port answers and the app in the tab is up.
+// Ready means a tool call can work now: the debug port answers, a chart tab is in front, and the app
+// in it is up.
 export function isHealthy(report: HealthReport): boolean {
-  return report.cdp.reachable && report.app.ready;
+  return report.cdp.reachable && report.chart.inBackground !== true && report.app.ready;
 }
 
 export function renderHealth(report: HealthReport, { color }: ColorOption): string {

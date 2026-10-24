@@ -155,6 +155,36 @@ test('isHealthy wants a reachable debug port and a ready app', () => {
   expect(isHealthy({ ...READY, app: { ready: false, connected: false } })).toBe(false);
 });
 
+test('isHealthy is false while the chart is in the background, whatever the app says', () => {
+  const behind: HealthReport = {
+    cdp: REACHABLE,
+    chart: { found: true, tabs: 1, url: CHART_URL, inBackground: true },
+    app: { ready: false },
+  };
+
+  expect(isHealthy(behind)).toBe(false);
+  expect(isHealthy({ ...behind, app: READY.app })).toBe(false);
+});
+
+test('renderHealth fails the chart check when the chart is in the background', () => {
+  const text = renderHealth(
+    {
+      cdp: REACHABLE,
+      chart: { found: true, tabs: 2, url: CHART_URL, inBackground: true },
+      app: { ready: false },
+    },
+    { color: false },
+  );
+
+  expect(text).toContain('✖ A chart is open but not in front; bring its tab to the front.\n');
+  expect(text).toContain(
+    "    Switch to the tab of the chart, away from TradingView's New tab page",
+  );
+  expect(text).toContain('- App: not checked');
+  expect(text).not.toContain('✔ Chart tab open');
+  expect(text).toContain('TradingView is not ready.');
+});
+
 test('renderHealth colors only when asked, and says the same either way', () => {
   const colored = renderHealth(UNREACHABLE, { color: true });
 

@@ -15,6 +15,7 @@ import { freePort } from '../../helpers/dashboard-client.js';
 import { createDashboardFiles } from '../../helpers/dashboard-files.js';
 import {
   MAC_BINARY,
+  behindReport,
   createMachine,
   downReport,
   readyReport,
@@ -479,6 +480,22 @@ test('doctor exits 1 when several chart tabs are open and none is in front', asy
   const { code } = await run(['doctor'], { deps: offlineDeps({ connection }) });
 
   expect(code).toBe(1);
+});
+
+test('doctor fails the chart check when the chart is in the background', async () => {
+  // A tab that shows no chart, TradingView's New tab page, is in front of the chart tab.
+  const connection = new ReportingConnection(behindReport());
+
+  const { code, stdout } = await run(['doctor'], { deps: offlineDeps({ connection }) });
+
+  expect(code).toBe(1);
+  expect(stdout).toContain(
+    '✖ A chart is open but not in front; bring its tab to the front.\n    Switch to the tab',
+  );
+  expect(stdout).not.toContain('✔ Chart tab open');
+  // What the app says is not looked at, since it is not the chart that would be used.
+  expect(stdout).toContain('- App: not checked');
+  expect(stdout).toContain('TradingView is not ready.');
 });
 
 test('the CDP connection gets at most 3 s to close before the CLI moves on', async () => {
