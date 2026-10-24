@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { TvMcpError } from '../core/errors.js';
 import { normalizeHostEntry } from './hosts.js';
 import { CLI_COMMANDS, DEFAULTS, settingSchemas } from './schema.js';
-import type { ClientOptions, CliCommand, Config } from './schema.js';
+import type { ClientOptions, CliCommand, Config, LaunchOptions } from './schema.js';
 
 // The flags of design spec 9. The value flags are plain strings here and are validated like their
 // variables, so both sources share one set of rules and messages.
@@ -25,6 +25,8 @@ const OPTIONS = {
   local: { type: 'boolean' },
   url: { type: 'string' },
   platform: { type: 'string' },
+  // The option of launch alone.
+  restart: { type: 'boolean' },
   // The CLI answers these itself before it loads a configuration, so they change nothing here.
   help: { type: 'boolean', short: 'h' },
   version: { type: 'boolean', short: 'v' },
@@ -50,9 +52,19 @@ const LOOPBACK_HINT =
   "TradingView's debug port gives full control of the app, so the server only connects to it on " +
   'this machine. Use 127.0.0.1.';
 
-const CONFIG_OPTIONS = ['local', 'url', 'platform'] as const;
-
-const CONFIG_OPTIONS_HINT = 'For example: config <client> --local';
+// The options that belong to one command, with an example of their use.
+const COMMAND_OPTIONS = [
+  {
+    command: 'config',
+    options: ['local', 'url', 'platform'],
+    hint: 'For example: config <client> --local',
+  },
+  { command: 'launch', options: ['restart'], hint: 'For example: launch --restart' },
+] as const satisfies readonly {
+  command: CliCommand;
+  options: readonly (keyof typeof OPTIONS)[];
+  hint: string;
+}[];
 
 // --url takes one host, unlike the comma-separated TV_MCP_ALLOWED_HOSTS.
 const URL_HINT = '--url takes a host or https URL such as abc.ngrok.app';
@@ -115,20 +127,24 @@ function parseCommand(positionals: string[]): { command: CliCommand; commandArgs
   return { command: name, commandArgs };
 }
 
-// An option of config given to another command is a mistake to point out, not a setting to drop:
+// An option of one command given to another is a mistake to point out, not a setting to drop:
 // even a blank one.
-function refuseConfigOptions(command: CliCommand, flags: Flags): void {
-  const given = CONFIG_OPTIONS.filter((name) => flags[name] !== undefined).map(
-    (name) => `--${name}`,
-  );
-  if (command === 'config' || given.length === 0) {
-    return;
+function refuseOtherCommandsOptions(command: CliCommand, flags: Flags): void {
+  for (const owner of COMMAND_OPTIONS) {
+    const given = owner.options
+      .filter((name) => flags[name] !== undefined)
+      .map((name) => `--${name}`);
+    if (owner.command === command || given.length === 0) {
+      continue;
+    }
+    const options =
+      given.length === 1 ? `${given.join('')} is an option` : `${given.join(' and ')} are options`;
+    throw new TvMcpError(
+      'INVALID_INPUT',
+      `${options} of the ${owner.command} command, not of ${command}`,
+      { hint: owner.hint },
+    );
   }
-  const options =
-    given.length === 1 ? `${given.join('')} is an option` : `${given.join(' and ')} are options`;
-  throw new TvMcpError('INVALID_INPUT', `${options} of the config command, not of ${command}`, {
-    hint: CONFIG_OPTIONS_HINT,
-  });
 }
 
 function parseDashboardFlag(flags: Flags): boolean | undefined {
@@ -205,11 +221,12 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
   commandArgs: string[];
   config: Readonly<Config>;
   clientOptions: ClientOptions;
+  launchOptions: LaunchOptions;
 } {
   const { env } = input;
   const { values: flags, positionals } = parseFlags(input.argv);
   const { command, commandArgs } = parseCommand(positionals);
-  refuseConfigOptions(command, flags);
+  refuseOtherCommandsOptions(command, flags);
   const dashboardFlag = parseDashboardFlag(flags);
 
   const read = <S extends z.ZodType>(
@@ -304,5 +321,6 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
     dashboard,
     allowedHosts,
   };
-  return { command, commandArgs, config: freeze(config), clientOptions };
+  const launchOptions: LaunchOptions = { restart: flags.restart === true };
+  return { command, commandArgs, config: freeze(config), clientOptions, launchOptions };
 }

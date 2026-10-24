@@ -1,5 +1,6 @@
 import type { Config } from '../../config/schema.js';
 import { pollUntil } from '../../utils/poll.js';
+import { PACKAGE_NAME } from '../../version.js';
 import { otherBrowserOnPort, type HealthReport } from '../connection.js';
 import { isTvMcpError, TvMcpError } from '../errors.js';
 import { findInstall, searchedLocations, type InstallDeps } from './install.js';
@@ -68,12 +69,15 @@ function isReady({ cdp, chart, app }: HealthReport): boolean {
   );
 }
 
+// The hint names both ways to ask for a restart, since the launcher serves the app_launch tool and
+// the launch command of the CLI alike.
 function restartRequired(port: number): TvMcpError {
   return new TvMcpError('RESTART_REQUIRED', 'TradingView is running without the debug port', {
     hint:
       'TradingView allows only one instance, so starting it again would not turn the debug port ' +
-      'on. Quit TradingView and launch again, or use restart: true to have it quit and reopen ' +
-      `with --remote-debugging-port=${String(port)}. A restart closes the app, so save unsaved ` +
+      'on. Quit TradingView and launch again, or have it quit and reopen with ' +
+      `--remote-debugging-port=${String(port)}: call app_launch with restart: true and confirm: ` +
+      `true, or run ${PACKAGE_NAME} launch --restart. A restart closes the app, so save unsaved ` +
       'work first.',
     details: { port },
   });

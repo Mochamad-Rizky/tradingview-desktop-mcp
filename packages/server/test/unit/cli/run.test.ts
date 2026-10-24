@@ -3,11 +3,23 @@ import { PassThrough } from 'node:stream';
 import pkg from '../../../package.json' with { type: 'json' };
 import { CLIENT_IDS, renderClientConfig, resolveCliPath } from '../../../src/cli/clients.js';
 import { runCli, type CliDeps } from '../../../src/cli/run.js';
+import { loadConfig } from '../../../src/config/load.js';
 import { ConnectionManager, type HealthReport } from '../../../src/core/connection.js';
 import { TvMcpError } from '../../../src/core/errors.js';
-import type { Launcher, LaunchResult } from '../../../src/core/launcher/launch.js';
+import {
+  createLauncher,
+  type Launcher,
+  type LaunchResult,
+} from '../../../src/core/launcher/launch.js';
 import { freePort } from '../../helpers/dashboard-client.js';
 import { createDashboardFiles } from '../../helpers/dashboard-files.js';
+import {
+  MAC_BINARY,
+  createMachine,
+  downReport,
+  readyReport,
+  type FakeMachine,
+} from '../../helpers/fake-machine.js';
 import { CaptureStream } from '../../helpers/streams.js';
 import {
   capturingLogger,
@@ -16,6 +28,18 @@ import {
   unreachableConnection,
   unreachableConnectionDeps,
 } from '../../helpers/tool-context.js';
+
+// Nothing in this file may run a real program or start TradingView: the machine this suite runs on
+// may have one open. The launch tests inject the launcher, or one built on a fake machine, and this
+// is the second lock, so that a mistake in the wiring fails the test instead of starting something.
+vi.mock('node:child_process', () => ({
+  spawn: () => {
+    throw new Error('A test tried to start a real program with spawn');
+  },
+  execFile: () => {
+    throw new Error('A test tried to start a real program with execFile');
+  },
+}));
 
 // Port 9 (discard): should a test reach the network by mistake, no TradingView answers there.
 const ENV = { TV_CDP_PORT: '9' };
@@ -70,6 +94,17 @@ function offlineDeps(overrides: CliDeps = {}): CliDeps {
     logger: quietLogger,
     ...overrides,
   };
+}
+
+// The launcher of a real run, on a fake machine: nothing on this machine is looked up or started.
+function launcherOn(machine: FakeMachine): Launcher {
+  return createLauncher({
+    install: machine.deps,
+    spawn: machine.spawn,
+    health: machine.health,
+    config: loadConfig({ argv: [], env: {} }).config,
+    sleep: machine.sleep,
+  });
 }
 
 function launcherAnswering(outcome: () => Promise<LaunchResult>): Launcher & { calls: unknown[] } {
@@ -303,10 +338,83 @@ test('launch starts TradingView without restarting it and prints the result', as
   const { code, stdout } = await run(['launch'], { deps: offlineDeps({ launcher }) });
 
   expect(code).toBe(0);
-  // A restart could close the app with unsaved work, so the CLI never asks for one.
+  // A restart could close the app with unsaved work, so only --restart asks for one.
   expect(launcher.calls).toEqual([{ restart: false }]);
   expect(stdout).toContain(`Started TradingView with the debug port at ${ENDPOINT}`);
   expect(stdout).toContain(LAUNCHED.executable);
+});
+
+test('launch --restart restarts through the launcher and is required for a running app without the port', async () => {
+  // TradingView runs without the debug port.
+  const refused = createMachine({ running: true, reports: [downReport()] });
+  const plain = await run(['launch'], { deps: offlineDeps({ launcher: launcherOn(refused) }) });
+
+  expect(plain.code).toBe(1);
+  expect(plain.stderr).toContain(
+    '✖ RESTART_REQUIRED: TradingView is running without the debug port',
+  );
+  // The hint names the flag of the CLI and the option of the tool.
+  expect(plain.stderr).toContain('launch --restart');
+  expect(plain.stderr).toContain('restart: true');
+  // Nothing was quit and nothing started.
+  expect(refused.log).toEqual(['health', 'lookup']);
+
+  const restarting = createMachine({
+    running: true,
+    reports: [downReport(), readyReport()],
+  });
+  const restarted = await run(['launch', '--restart'], {
+    deps: offlineDeps({ launcher: launcherOn(restarting) }),
+  });
+
+  expect(restarted.code).toBe(0);
+  expect(restarted.stdout).toContain('Restarted TradingView with the debug port at');
+  expect(restarted.stderr).toContain('quit');
+  // Asked to quit, never killed, then started again with the debug port.
+  expect(restarting.programs).toContainEqual(['osascript', '-e', 'quit app "TradingView"']);
+  expect(restarting.spawned).toEqual([
+    { command: MAC_BINARY, args: ['--remote-debugging-port=9222'] },
+  ]);
+});
+
+test('launch --restart passes restart: true to the launcher', async () => {
+  const launcher = launcherAnswering(() =>
+    Promise.resolve({ ...LAUNCHED, status: 'restarted' as const }),
+  );
+
+  const { code, stdout } = await run(['launch', '--restart'], {
+    deps: offlineDeps({ launcher }),
+  });
+
+  expect(code).toBe(0);
+  expect(launcher.calls).toEqual([{ restart: true }]);
+  expect(stdout).toContain(`Restarted TradingView with the debug port at ${ENDPOINT}`);
+});
+
+test('--restart with another command is INVALID_INPUT, and nothing is launched', async () => {
+  for (const command of [[], ['doctor'], ['serve'], ['config', 'cursor']]) {
+    const launcher = launcherAnswering(() => Promise.resolve(LAUNCHED));
+
+    const { code, stdout, stderr } = await run([...command, '--restart'], {
+      deps: offlineDeps({ launcher }),
+    });
+
+    expect(code).toBe(1);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('✖ INVALID_INPUT: --restart is an option of the launch command');
+    expect(stderr).toContain('launch --restart');
+    expect(launcher.calls).toEqual([]);
+  }
+});
+
+test('--help lists --restart under the options of launch, with what it does', async () => {
+  const { stdout } = await run(['--help']);
+  const launch = stdout.slice(stdout.indexOf('Options of launch'));
+
+  expect(launch).toContain('--restart');
+  expect(launch).toMatch(/quits TradingView politely/i);
+  expect(launch).toMatch(/debug port/);
+  expect(launch).toMatch(/save changes/);
 });
 
 test('launch prints the code, the message and the hint of a failure, and exits 1', async () => {

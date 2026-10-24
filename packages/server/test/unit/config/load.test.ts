@@ -502,6 +502,28 @@ test.each([
   expect(error.hint).toContain('config <client>');
 });
 
+test('reads --restart of launch, which is off unless given', () => {
+  expect(load(['launch']).launchOptions).toStrictEqual({ restart: false });
+  expect(load(['launch', '--restart']).launchOptions).toStrictEqual({ restart: true });
+  // Read whatever the command, so that the CLI never acts on a refused one.
+  expect(load(['doctor']).launchOptions).toStrictEqual({ restart: false });
+});
+
+test.each([
+  [['--restart'], '--restart is an option of the launch command, not of serve'],
+  [['doctor', '--restart'], '--restart is an option of the launch command, not of doctor'],
+  [
+    ['config', 'cursor', '--restart'],
+    '--restart is an option of the launch command, not of config',
+  ],
+])('the launch option with another command is refused: %j', (argv, message) => {
+  const error = loadError(argv);
+
+  expect(error.code).toBe('INVALID_INPUT');
+  expect(error.message).toBe(message);
+  expect(error.hint).toBe('For example: launch --restart');
+});
+
 test.each(['serve', 'launch', 'doctor'])('parses the %s command without arguments', (name) => {
   const { command, commandArgs } = load([name]);
 

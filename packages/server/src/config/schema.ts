@@ -45,6 +45,12 @@ export interface ClientOptions {
   profile?: Profile;
 }
 
+// The options of the launch command, which no other command takes.
+export interface LaunchOptions {
+  // Quit a TradingView that runs without the debug port and start it again with the port.
+  restart: boolean;
+}
+
 export interface Config {
   cdpHost: string;
   cdpPort: number;

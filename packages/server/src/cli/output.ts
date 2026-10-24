@@ -41,6 +41,12 @@ const COMMANDS = [
   ['config <client> [options]', 'Print the setup snippet of an AI client (see below)'],
 ] as const;
 
+// A row without an option goes on with the text of the row before it.
+const LAUNCH_OPTIONS = [
+  ['--restart', 'Quits TradingView politely if it runs without the debug port, then starts it'],
+  ['', 'again with the port. TradingView may ask to save changes before it quits.'],
+] as const;
+
 const CONFIG_OPTIONS = [
   ['--local', 'Start this installation with node instead of npx'],
   ['--url <host>', 'The public host of your tunnel, for chatgpt and openai-api'],
@@ -105,6 +111,9 @@ export function renderHelp(): string {
     '',
     'Environment only:',
     table(ENVIRONMENT_ONLY),
+    '',
+    'Options of launch:',
+    table(LAUNCH_OPTIONS),
     '',
     'Options of config:',
     table(CONFIG_OPTIONS),

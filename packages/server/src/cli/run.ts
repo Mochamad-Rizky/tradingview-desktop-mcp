@@ -1,7 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import { parseArgs } from 'node:util';
 import { loadConfig } from '../config/load.js';
-import type { ClientOptions, CliCommand, Config } from '../config/schema.js';
+import type { ClientOptions, CliCommand, Config, LaunchOptions } from '../config/schema.js';
 import { debugPortEndpoint } from '../core/cdp/discovery.js';
 import { isTvMcpError } from '../core/errors.js';
 import { createMcpServer, createServerDeps, type ServerDeps } from '../server.js';
@@ -54,6 +54,7 @@ interface CommandContext {
   // What follows the command's name: the client of config.
   commandArgs: readonly string[];
   clientOptions: ClientOptions;
+  launchOptions: LaunchOptions;
   // The real path of the running CLI, for config --local.
   cliPath: () => string;
 }
@@ -291,12 +292,17 @@ async function serve(context: CommandContext): Promise<number> {
   }
 }
 
-async function launch({ config, deps, io, env }: CommandContext): Promise<number> {
+async function launch({ config, deps, io, env, launchOptions }: CommandContext): Promise<number> {
+  const { restart } = launchOptions;
+  const port = String(config.cdpPort);
   io.stderr.write(
-    `Looking for TradingView, and starting it with the debug port ${String(config.cdpPort)} if needed...\n`,
+    restart
+      ? `Looking for TradingView, and starting it with the debug port ${port} if needed: if it runs without the port, it is asked to quit first...\n`
+      : `Looking for TradingView, and starting it with the debug port ${port} if needed...\n`,
   );
-  // Never a restart: closing the app can lose unsaved work, and that is the user's call to make.
-  const result = await deps.launcher.launch({ restart: false });
+  // A restart only on --restart: closing the app can lose unsaved work, and that is the user's call
+  // to make.
+  const result = await deps.launcher.launch({ restart });
   io.stdout.write(renderLaunchResult(result, { color: colorEnabled(env, io.stdout) }));
   return 0;
 }
@@ -361,7 +367,7 @@ export async function runCli(
     io.stderr.write(renderError(error, { color }));
     return 1;
   }
-  const { command, commandArgs, config, clientOptions } = loaded;
+  const { command, commandArgs, config, clientOptions, launchOptions } = loaded;
 
   const { dashboardDir, cliPath, ...given } = deps;
   const shared = createServerDeps(config, given);
@@ -389,6 +395,7 @@ export async function runCli(
         dashboardDir: () => (dashboardDir === undefined ? resolveDashboardDir() : dashboardDir),
         commandArgs,
         clientOptions,
+        launchOptions,
         cliPath: () => cliPath ?? resolveCliPath(process.argv[1]),
       }),
       fatal.promise,

@@ -254,13 +254,15 @@ describe('launch when TradingView is not running', () => {
 });
 
 describe('launch when TradingView runs without the debug port', () => {
-  test('running without CDP and restart=false throws RESTART_REQUIRED, with a hint naming restart: true', async () => {
+  test('running without CDP and restart=false throws RESTART_REQUIRED, with a hint naming restart: true and launch --restart', async () => {
     const machine = createMachine({ running: true, reports: [downReport()] });
 
     const error = await failureOf(launcherFor(machine).launch({ restart: false }));
 
     expect(error.code).toBe('RESTART_REQUIRED');
-    expect(error.hint).toContain('restart: true');
+    // The option of app_launch and the flag of the CLI, whichever the caller came through.
+    expect(error.hint).toContain('app_launch with restart: true');
+    expect(error.hint).toContain('tradingview-desktop-mcp launch --restart');
     expect(error.hint).toContain('one instance');
     // The app is left alone: nothing is closed and nothing is started.
     expect(machine.log).toEqual(['health', 'lookup']);
