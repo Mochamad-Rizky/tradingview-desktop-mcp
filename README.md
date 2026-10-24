@@ -277,7 +277,7 @@ only with the tool it shares its data with, such as `tradingview://pine/source` 
 The server comes with a web dashboard for watching what your assistant does and for trying a tool
 by hand. It needs no extra install: `pnpm build` builds it into the server.
 
-![The status page: whether TradingView is reachable, the server, the plan limits and the recent calls](docs/images/dashboard-status.png)
+![The status page: TradingView reachable with a chart found and the app ready, the facts of the server, and the plan limits](docs/images/dashboard-status.png)
 
 ### Open it
 
@@ -307,17 +307,20 @@ asks again. See [SECURITY.md](SECURITY.md#the-dashboard).
 
 ### What it shows
 
-![The live log: every tool call as it happens, with the details of the selected call](docs/images/dashboard-log.png)
+![The live log: a table of tool calls, newest first, with their time, tool, origin, status and duration, and the search and filters above it](docs/images/dashboard-log.png)
 
 - **Status** shows whether TradingView is reachable (and how to start it when it is not), how the
   server runs, the plan limits and the latest calls.
 - **Log** streams every tool call the server runs, whether an MCP client or the dashboard made
   it, with a filter by tool name, pause, clear and the details of each call. After a dropped
-  connection it says "Reconnecting…" and picks up where it stopped.
+  connection it says "Reconnecting…" and picks up where it stopped. Each open tab of the dashboard
+  keeps one event stream to the server, and a browser allows about six connections to one host, so
+  with many dashboard tabs open a new one can wait for a free connection: close the tabs you do not
+  use.
 - **Tools** lists the tools the server offers, with their inputs, and runs one by hand. The result
   is shown as it came back, with long JSON collapsed behind "Show all" and images as images.
 
-![The tools page: the tools on the left, one tool with its form and result on the right](docs/images/dashboard-tools.png)
+![The tools page: the tool list with its search and filters on the left, and chart_get_state with its description, facts and input fields on the right](docs/images/dashboard-tools.png)
 
 A run from the dashboard is a real tool call. It goes through the same registry as an MCP call, so
 the same schemas, profile, `confirm` rules and plan limit checks apply, and it appears in the log.

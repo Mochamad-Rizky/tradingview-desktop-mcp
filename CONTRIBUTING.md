@@ -19,21 +19,21 @@ pnpm build     # the integration tests start the built CLI, so build before you 
 
 Run them from the repository root.
 
-| Script                               | What it does                                                               |
-| ------------------------------------ | -------------------------------------------------------------------------- |
-| `pnpm lint`                          | ESLint, with type-aware rules for the TypeScript                           |
-| `pnpm format`                        | Prettier, rewriting the files                                              |
-| `pnpm typecheck`                     | `tsc --noEmit`                                                             |
-| `pnpm build`                         | Bundles `packages/server/dist/index.js` and `cli.js` with tsup             |
-| `pnpm test`                          | Unit and integration tests                                                 |
-| `pnpm test:unit`, `test:integration` | One of the two levels                                                      |
-| `pnpm test:e2e`                      | End-to-end tests against the real app, local only (see below)              |
-| `pnpm test:e2e:dashboard`            | The dashboard's Playwright tests (mocked); needs `pnpm build` and Chromium |
-| `pnpm test:coverage`                 | Unit and integration tests with coverage, failing under 80% on any metric  |
-| `pnpm dev:dashboard`                 | The dashboard on Vite's dev server with hot reload (see below)             |
-| `pnpm re:probe`, `pnpm re:record`    | Read-only probes and the fixture recorder for the real app                 |
-| `pnpm docs:examples`                 | Regenerates `docs/examples.md` from the fake app; a test checks it         |
-| `node scripts/smoke-node20.mjs`      | Starts the built CLI over stdio and over HTTP; run after `pnpm build`      |
+| Script                               | What it does                                                                        |
+| ------------------------------------ | ----------------------------------------------------------------------------------- |
+| `pnpm lint`                          | ESLint, with type-aware rules for the TypeScript                                    |
+| `pnpm format`                        | Prettier, rewriting the files                                                       |
+| `pnpm typecheck`                     | `tsc --noEmit`                                                                      |
+| `pnpm build`                         | Bundles `packages/server/dist/index.js` and `cli.js` with tsup                      |
+| `pnpm test`                          | Unit and integration tests                                                          |
+| `pnpm test:unit`, `test:integration` | One of the two levels                                                               |
+| `pnpm test:e2e`                      | End-to-end tests against the real app, local only (see below)                       |
+| `pnpm test:e2e:dashboard`            | The dashboard's Playwright tests (mocked); needs the dashboard's build and Chromium |
+| `pnpm test:coverage`                 | Unit and integration tests with coverage, failing under 80% on any metric           |
+| `pnpm dev:dashboard`                 | The dashboard on Vite's dev server with hot reload (see below)                      |
+| `pnpm re:probe`, `pnpm re:record`    | Read-only probes and the fixture recorder for the real app                          |
+| `pnpm docs:examples`                 | Regenerates `docs/examples.md` from the fake app; a test checks it                  |
+| `node scripts/smoke-node20.mjs`      | Starts the built CLI over stdio and over HTTP; run after `pnpm build`               |
 
 Before you push, run the whole gate:
 
@@ -57,7 +57,9 @@ pnpm dev:dashboard   # in a second terminal; open the address Vite prints
 ```
 
 Vite hands `/api` and `/healthz` to the server on `TV_MCP_HTTP_PORT` (8787 by default). The server
-refuses a request whose `Host` or `Origin` is not its own, so the proxy rewrites both. Open the
+refuses a request whose `Host` or `Origin` is not its own, so the proxy rewrites the `Host`, and the
+`Origin` of the dev page or of a request without one; the `Origin` of any other page goes on as it
+is, for the server to refuse. Open the
 dev page, paste the token on the token screen, or open it once as `#token=<token>`.
 
 To add a shadcn component, use the pinned CLI from `packages/dashboard`:

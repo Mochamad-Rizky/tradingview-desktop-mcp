@@ -70,9 +70,11 @@ shows your tool calls and runs tools, so it is as sensitive as the HTTP transpor
   URL, because a URL lands in logs and history.
 - The page keeps the token in the `sessionStorage` of its tab, so it is gone when the tab closes. A
   link of the form `/#token=<token>` hands it over: the fragment is never sent to the server, and
-  the page removes it from the address. Do not paste such a link into a chat or a ticket, though,
-  because the link is the token. The server is built never to print the token or write it to a log,
-  an event or an error, and its logs redact it, in URLs too.
+  the page removes it from the address. The browser's history can still keep the link as you opened
+  it, with the token, so clear it there on a shared machine, or paste the token instead. Do not
+  paste such a link into a chat or a ticket, either, because the link is the token. The server is
+  built never to print the token or write it to a log, an event or an error, and its logs redact
+  it, in URLs too.
 - The page is served with a strict Content-Security-Policy: scripts, styles, images, fonts and
   connections from its own origin only (plus inline styles and `data:` images), no frames and no
   forms. It loads nothing from the internet. `Host` and `Origin` are checked on every route, as for

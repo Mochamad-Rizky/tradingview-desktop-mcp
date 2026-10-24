@@ -64,8 +64,9 @@ function decode(value: string): string {
 }
 
 // A link such as http://127.0.0.1:8787/#token=… signs the dashboard in. The fragment never reaches
-// the server, and it is taken out of the address at once, so that the token stays out of the
-// history and out of any link copied from the address bar. Returns the token it stored, or null.
+// the server, and it is taken out of the address at once, so that the token does not stay in the
+// address bar or in a link copied from it. The browser's history may still keep the address as it
+// was opened. Returns the token it stored, or null.
 export function takeTokenFromLocation(): string | null {
   const raw = TOKEN_IN_FRAGMENT.exec(window.location.hash)?.[1];
   if (raw === undefined) {

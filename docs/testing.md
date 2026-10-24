@@ -5,16 +5,16 @@ Desktop. A smoke test of the built CLI on the oldest supported Node.js runs next
 Fixtures for the fake app are recorded from the real one by a script that scrubs them first. The web
 dashboard has tests of its own, described in [Dashboard tests](#dashboard-tests).
 
-| Level                       | Command                                                                       | Runs against                                                   | In CI      |
-| --------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- | ---------- |
-| Unit                        | `pnpm test:unit`                                                              | Fakes: no network, no app                                      | yes        |
-| Integration                 | `pnpm build && pnpm test:integration`                                         | A fake CDP server with a fake TradingView window               | yes        |
-| End-to-end                  | `TV_E2E=1 pnpm test:e2e`                                                      | The TradingView Desktop running on this machine                | local only |
-| Dashboard                   | `pnpm --filter tradingview-desktop-mcp-dashboard test:unit`                   | Vitest, Testing Library and MSW: no server, no browser         | yes        |
-| Dashboard E2E               | `pnpm test:e2e:dashboard`                                                     | Playwright in Chromium, against a mock server                  | yes        |
-| Dashboard E2E (real server) | `pnpm build && pnpm --filter tradingview-desktop-mcp-dashboard test:e2e:real` | Playwright in Chromium, against the built CLI and the fake app | yes        |
-| Coverage                    | `pnpm test:coverage`                                                          | Unit and integration together, ≥80% on every metric            | yes        |
-| Smoke                       | `pnpm build && node scripts/smoke-node20.mjs`                                 | The built CLI over stdio and over HTTP, with no app            | yes        |
+| Level                       | Command                                                                       | Runs against                                                                             | In CI      |
+| --------------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------- |
+| Unit                        | `pnpm test:unit`                                                              | Fakes: no network, no app                                                                | yes        |
+| Integration                 | `pnpm build && pnpm test:integration`                                         | A fake CDP server with a fake TradingView window                                         | yes        |
+| End-to-end                  | `TV_E2E=1 pnpm test:e2e`                                                      | The TradingView Desktop running on this machine                                          | local only |
+| Dashboard                   | `pnpm --filter tradingview-desktop-mcp-dashboard test:unit`                   | Vitest, Testing Library and MSW: no server, no browser                                   | yes        |
+| Dashboard E2E               | `pnpm test:e2e:dashboard`                                                     | Playwright in Chromium, against a mock server                                            | yes        |
+| Dashboard E2E (real server) | `pnpm build && pnpm --filter tradingview-desktop-mcp-dashboard test:e2e:real` | Playwright in Chromium, against the built CLI and the fake app                           | yes        |
+| Coverage                    | `pnpm test:coverage`                                                          | Server unit and integration together, and the dashboard unit tests, ≥80% on every metric | yes        |
+| Smoke                       | `pnpm build && node scripts/smoke-node20.mjs`                                 | The built CLI over stdio and over HTTP, with no app                                      | yes        |
 
 Before a commit, run the whole local gate:
 
@@ -393,14 +393,16 @@ a socket. `pnpm test:coverage` fails under 80% of lines, branches, functions and
 browser once with `pnpm --filter tradingview-desktop-mcp-dashboard exec playwright install
 chromium`. A run is of one project, because each project starts a server of its own:
 
-| Project       | Command                                        | Runs against                                                                                                       |
-| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `mocked`      | `pnpm test:e2e:dashboard` (after `pnpm build`) | The built page and `e2e/mock-server.mjs`, which answers like the server with synthetic data. The default; in CI.   |
-| `real`        | `pnpm build`, then `... test:e2e:real`         | The built CLI, as it ships, with the fake TradingView of the server's tests. Runs the specs tagged `@real`. In CI. |
-| `real` (app)  | `TV_E2E=1 pnpm ... test:e2e:real`              | The same CLI against your own TradingView. Runs the specs tagged `@app` only. Local only.                          |
-| `screenshots` | `pnpm ... docs:screenshots`                    | The mock server. Writes `docs/images/dashboard-*.png`, which the README shows.                                     |
+| Project       | Command                                                | Runs against                                                                                                       |
+| ------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `mocked`      | `pnpm test:e2e:dashboard`, after the dashboard's build | The built page and `e2e/mock-server.mjs`, which answers like the server with synthetic data. The default; in CI.   |
+| `real`        | `pnpm build`, then `... test:e2e:real`                 | The built CLI, as it ships, with the fake TradingView of the server's tests. Runs the specs tagged `@real`. In CI. |
+| `real` (app)  | `TV_E2E=1 pnpm ... test:e2e:real`                      | The same CLI against your own TradingView. Runs the specs tagged `@app` only. Local only.                          |
+| `screenshots` | `pnpm ... docs:screenshots`                            | The mock server. Writes `docs/images/dashboard-*.png`, which the README shows.                                     |
 
-The `real` project builds nothing itself, so run `pnpm build` first. It starts the server through
+The `mocked` and `screenshots` projects serve the built page of the dashboard alone, so they need
+only its build: `pnpm --filter tradingview-desktop-mcp-dashboard build`, which `pnpm build` runs
+too. The `real` project builds nothing itself, so run `pnpm build` first. It starts the server through
 `packages/server/scripts/dashboard-e2e-server.ts` on a free port with a token made for the run; the
 script hands the address and token to the tests through a file only you can read, and never prints
 the token.
