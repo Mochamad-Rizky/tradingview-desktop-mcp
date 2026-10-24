@@ -66,10 +66,15 @@ The fake window models what the real app was seen to do, among others:
   few kilobytes whatever its size, after checking the clip the way Chrome does. The calls it
   receives are recorded, so a test reads the clip and the scale from them, and the size in the
   header of the picture says whether the clip was the right one.
-- Bar replay starts as on the app: the replay date shows a moment after the start, and with the replay option
-  `barsMs` the main series holds no bars for that long after it. The step that reaches the last bar resolves, and
-  replay then stops by itself before it shows that bar, its toolbar staying on. The line-tool registry answers the
-  point counts of the app for the curated shapes (three for the ellipse).
+- Bar replay starts as on the app: the replay date shows a moment after the start, and with the
+  replay option `barsMs` the main series holds no bars for that long after it. The step that reaches
+  the last bar resolves, and replay then stops by itself before it shows that bar, its toolbar
+  staying on. After replay is left, with the replay option `liveBarsMs` the main series keeps the
+  bars of the replay, up to its point, for that long before it shows the live bars again. A new
+  alert lists as not active, with no stop reason, for as many listings after its creation as
+  `state.alerts.activationListings` says, and with `state.alerts.firesAtCreation` it fires at once
+  and lists as stopped by itself. The line-tool registry answers the point counts of the app for
+  the curated shapes (three for the ellipse).
 - Options model the rest of the real behavior where a test needs it: `sessionOffsetSeconds` (the
   chart reports a daily bar as its day at 00:00 UTC while its row holds the session start),
   `futurePoints` (the time points the time scale keeps after the last bar), `feeds` (the chart
@@ -265,7 +270,10 @@ tests. The packed tarball, installed with `npm install` into an empty directory,
 `--profile readonly` and a token made for the check (401 without it), then stopped and freed its
 port. Before and after the runs, the drawings, alerts and watchlist entries, the saved layouts and
 the one shown, the tabs, replay (off, none saved), the panels, the studies, the Pine Editor, and the
-symbol, timeframe, chart type and exact view of the chart were the same.
+symbol, timeframe, chart type and exact view of the chart were the same. Not observed on the real
+app in this verification: an alert on an indicator (the `kind`, `indicator` and `value` that
+`alert_list` reports for one), since the account had no alerts, and the time inputs of an indicator,
+since no indicator with a time input was on the chart.
 
 ### Safety rules
 
