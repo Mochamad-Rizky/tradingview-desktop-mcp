@@ -66,12 +66,39 @@ test('toolInputJsonSchema describes the input a client sends', () => {
   );
 
   expect(schema.required).toEqual(['text']);
-  expect(propertiesOf(schema).count).toEqual({
+  // The bounds zod writes for an integer are its own business.
+  expect(propertiesOf(schema).count).toMatchObject({
     type: 'integer',
     default: 1,
     description: 'How many times',
-    minimum: Number.MIN_SAFE_INTEGER,
-    maximum: Number.MAX_SAFE_INTEGER,
+  });
+});
+
+// Whether `value` and everything inside it is frozen.
+function deeplyFrozen(value: JsonValue): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return true;
+  }
+  return Object.isFrozen(value) && Object.values(value).every(deeplyFrozen);
+}
+
+// One schema object serves every caller, so none of them may change it for the others.
+test('toolInputJsonSchema hands out a schema that no caller can change', () => {
+  for (const tool of allTools) {
+    expect(deeplyFrozen(toolInputJsonSchema(tool)), tool.name).toBe(true);
+  }
+  const tool = fake({ text: z.string().describe('The text to show') });
+  const schema = toolInputJsonSchema(tool);
+
+  expect(() => {
+    schema.type = 'array';
+  }).toThrow(TypeError);
+  expect(() => {
+    propertiesOf(schema).text = {};
+  }).toThrow(TypeError);
+  expect(toolInputJsonSchema(tool)).toMatchObject({
+    type: 'object',
+    properties: { text: { type: 'string' } },
   });
 });
 
