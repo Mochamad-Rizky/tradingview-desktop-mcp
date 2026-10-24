@@ -24,6 +24,11 @@ import { createFakeTvWindow } from '../test/helpers/fake-tv/window.js';
 // that Playwright waits for. On SIGTERM or SIGINT, as Playwright stops it, and when the server
 // exits, it stops the server and the fake app and removes the file.
 //
+// The server runs in a process group of its own, so that the script alone signals it: Playwright
+// signals the whole group of the script, and the server, which shuts down gracefully on a first
+// SIGTERM, would quit at once on the second one that the script passes on. If the script exits any
+// other way, it takes the server with it.
+//
 // Usage: DASHBOARD_E2E_SERVER_FILE=<path> [TV_E2E=1] tsx scripts/dashboard-e2e-server.ts
 
 const READY_TIMEOUT_MS = 30_000;
@@ -78,10 +83,8 @@ async function answers(url: string): Promise<boolean> {
 }
 
 // What stops everything the script started, once: the server, the fake app and the file. Set as
-// soon as there is something to stop. `signaled` says that a signal stops the script: Playwright
-// sends it to the whole process group, the server included, which then stops on its own, and a
-// second signal would make it quit at once instead.
-let stop: (code: number, signaled?: boolean) => Promise<never> = (code) => process.exit(code);
+// soon as there is something to stop.
+let stop: (code: number) => Promise<never> = (code) => process.exit(code);
 
 async function main(): Promise<void> {
   const serverFile = process.env.DASHBOARD_E2E_SERVER_FILE;
@@ -128,20 +131,27 @@ async function main(): Promise<void> {
   const child = spawn(process.execPath, [CLI, '--transport', 'http'], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
   });
+  const running = (): boolean => child.exitCode === null && child.signalCode === null;
   const exited = new Promise<void>((resolve) => {
     child.once('exit', () => {
       resolve();
     });
   });
+  // Last: an exit the script did not plan, such as an error it did not catch.
+  process.once('exit', () => {
+    if (running()) {
+      child.kill('SIGKILL');
+    }
+  });
   let stopping: Promise<never> | undefined;
-  stop = (code, signaled = false) => {
+  stop = (code) => {
     stopping ??= (async () => {
       rmSync(serverFile, { force: true });
-      if (child.exitCode === null && child.signalCode === null) {
-        if (!signaled) {
-          child.kill('SIGTERM');
-        }
+      if (running()) {
+        // The server closes its connections and exits; one that hangs is killed.
+        child.kill('SIGTERM');
         const timer = setTimeout(() => child.kill('SIGKILL'), STOP_TIMEOUT_MS);
         await exited;
         clearTimeout(timer);
@@ -153,7 +163,7 @@ async function main(): Promise<void> {
   };
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {
-      void stop(0, true);
+      void stop(0);
     });
   }
 
