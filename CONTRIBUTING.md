@@ -88,11 +88,11 @@ There are three levels, described in [docs/testing.md](docs/testing.md):
   debug-port server and a fake TradingView window. They refuse to run against a build older than
   the sources, so run `pnpm build` first.
 - **End-to-end** tests drive the TradingView Desktop on your machine. They run only on request
-  (`TV_E2E=1 pnpm test:e2e`), never in CI, and are safe by design: they change only the symbol,
-  timeframe, chart type and visible range of the active chart, put them back, and never touch
-  drawings, indicators, alerts, layouts, watchlists, Pine scripts or replay, or anything that
-  trades. Read the safety rules in [docs/testing.md](docs/testing.md) before you run them or add a
-  suite.
+  (`TV_E2E=1 pnpm test:e2e`), never in CI. They change the chart and put it back, create and
+  remove drawings, an alert, a watchlist symbol and a tab of their own, and run bar replay, as
+  [Safety rules](docs/testing.md#safety-rules) and
+  [What a run may leave behind, when allowed](docs/testing.md#what-a-run-may-leave-behind-when-allowed)
+  describe, so read both before you run them or add a suite.
 
 Code in `packages/server/src` needs at least 80% coverage on lines, branches, functions and
 statements, counting the unit and integration tests together. So does `packages/dashboard/src`,
@@ -190,13 +190,28 @@ A trusted publisher can only be linked to a package that exists
 ([`npm trust`](https://docs.npmjs.com/cli/v11/commands/npm-trust)), so the first publish, 0.1.0,
 cannot use it:
 
-1. Create a granular access token on npmjs.com that may publish `tradingview-desktop-mcp`, and store
-   it as the secret `NPM_TOKEN`. Store it as a secret of the `npm` environment (Settings,
-   Environments), so that only the publish job sees it. The workflow uses it only when it is set.
+1. Store a token for the first publish:
+   - Create the `npm` environment first: in the repository on GitHub, Settings → Environments → New
+     environment, name it `npm` and select Configure environment
+     ([Managing environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)).
+     Only then can `NPM_TOKEN` be stored as a secret of that environment (Environment secrets → Add
+     secret), which only the publish job, the one job that uses the environment, can read. A
+     repository secret also works, but then every job can read it.
+   - Create the token on npmjs.com as a granular access token (Access Tokens → Generate New Token,
+     [Creating and viewing access tokens](https://docs.npmjs.com/creating-and-viewing-access-tokens)).
+     Tick "Bypass two-factor authentication", and under "Packages and scopes" set the permissions to
+     "Read and write (publish and stage)", or it cannot publish from CI.
+   - A package that does not exist yet cannot be picked under "Only select packages and scopes", so
+     this first token needs "All Packages". `tradingview-desktop-mcp` has no scope that could be
+     picked instead.
+   - The workflow uses the secret only when it is set. Delete the token once trusted publishing
+     works (step 3).
 2. Push the tag for 0.1.0.
 3. Once the package exists, open its settings on npmjs.com and add a trusted publisher for GitHub
    Actions: the owner and name of this repository, the workflow filename `release.yml`, and the
-   environment name `npm`. Allow `npm publish`. Then delete the `NPM_TOKEN` secret.
+   environment name `npm`. Allow `npm publish`. Then delete the `NPM_TOKEN` secret, so that the next
+   release goes through the trusted publisher, and once it has, delete the token on npmjs.com
+   (Access Tokens).
 
 npm expects a new trusted-publisher configuration to make its first successful publish within 2
 days, or it expires. Add it close to the next release, not long before. When trusted publishing
