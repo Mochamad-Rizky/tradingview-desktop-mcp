@@ -8,7 +8,7 @@ export default mergeConfig(
       environment: 'jsdom',
       globals: true,
       setupFiles: ['src/test/setup.ts'],
-      include: ['src/**/*.test.{ts,tsx}'],
+      include: ['src/**/*.test.{ts,tsx}', 'dev-proxy.test.ts'],
       // Tests that type and pick from menus through user-event, or render hundreds of rows, take a
       // few seconds under coverage, and the root scripts run them next to the server's suite: the 5 s
       // default leaves too little room on a busy machine.
