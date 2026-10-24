@@ -12,3 +12,7 @@ coverage/
 test-results/
 playwright-report/
 packages/dashboard/e2e/.real-server.json
+# Written into the server package by its prepack script, from the files at the root.
+packages/server/README.md
+packages/server/LICENSE
+packages/server/CHANGELOG.md

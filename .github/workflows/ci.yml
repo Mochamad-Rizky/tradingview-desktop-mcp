@@ -3,12 +3,19 @@ name: CI
 on:
   push:
   pull_request:
+  # The release workflow runs this same gate before it publishes. A called workflow sees only the
+  # secrets it is handed, and the release hands over the Codecov token alone.
+  workflow_call:
+    secrets:
+      CODECOV_TOKEN:
+        required: false
 
 permissions:
   contents: read
 
 # A newer push to the same branch or pull request makes the run in progress pointless. On main every
-# commit is checked to the end, so that a failure there names the commit that brought it.
+# commit is checked to the end, so that a failure there names the commit that brought it. Called by
+# the release workflow, github.workflow names the caller, so that run has a group of its own.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}

@@ -2,7 +2,11 @@
 
 ## Supported versions
 
-There is no release yet. Fixes go to the `main` branch.
+| Version | Supported |
+| ------- | --------- |
+| 0.1.x   | Yes       |
+
+Fixes go to the `main` branch and ship in the next 0.1.x release.
 
 ## Reporting a vulnerability
 

@@ -2,7 +2,29 @@
   "name": "tradingview-desktop-mcp",
   "version": "0.1.0",
   "description": "MCP server that controls the TradingView Desktop app over the Chrome DevTools Protocol",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "tradingview",
+    "trading",
+    "charting",
+    "claude",
+    "cursor",
+    "ai",
+    "chrome-devtools-protocol"
+  ],
+  "homepage": "https://github.com/Mochamad-Rizky/tradingview-mcp#readme",
+  "bugs": "https://github.com/Mochamad-Rizky/tradingview-mcp/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mochamad-Rizky/tradingview-mcp.git",
+    "directory": "packages/server"
+  },
   "license": "MIT",
+  "author": {
+    "name": "Mochamad Rizky",
+    "url": "https://github.com/Mochamad-Rizky"
+  },
   "type": "module",
   "engines": {
     "node": ">=20.19"
@@ -10,14 +32,26 @@
   "bin": {
     "tradingview-desktop-mcp": "./dist/cli.js"
   },
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsup && node scripts/copy-dashboard.mjs",
+    "prepack": "node scripts/prepare-package.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --project unit --project integration",
     "test:unit": "vitest run --project unit",

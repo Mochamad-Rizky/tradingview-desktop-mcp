@@ -1,0 +1,194 @@
+name: Release
+
+# Publishes the server package to npm and creates its GitHub release when a version tag such as
+# v0.1.0 is pushed. Nothing else starts it. To release, set the version in packages/server/
+# package.json, date its section of CHANGELOG.md, merge that to main and push the tag.
+#
+# npm authentication, checked against the npm docs:
+# - https://docs.npmjs.com/trusted-publishers: trusted publishing (OIDC) needs npm 11.5.1 or newer,
+#   Node.js 22.14.0 or newer, a GitHub-hosted runner, `id-token: write`, and a trusted publisher on
+#   npmjs.com that names this repository and this file, release.yml. The npm CLI tries OIDC first
+#   and falls back to a token when the exchange fails. With trusted publishing, npm adds provenance
+#   by itself.
+# - https://docs.npmjs.com/generating-provenance-statements: provenance needs `id-token: write`, a
+#   cloud-hosted runner and a public repository that matches `repository` in package.json;
+#   `publishConfig.provenance` turns it on for the token path too.
+# - https://docs.npmjs.com/cli/v11/commands/npm-trust: a trusted publisher can only be linked to a
+#   package that exists on npm. The first publish therefore needs the NPM_TOKEN repository secret
+#   (a granular access token that may publish the package); once the package exists, add the trusted
+#   publisher and delete the secret.
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+# One release at a time: a second tag push waits for the run in progress, which is never cancelled
+# half way through a publish. The group differs from the one of the called CI workflow, which a
+# called workflow must not share with its caller.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # The prepare script installs the Git hooks, which a CI checkout has no use for.
+  HUSKY: '0'
+
+jobs:
+  # Refuses the tag before anything runs: it must name the version of the package, the CHANGELOG
+  # must have a dated section for that version, and npm must not have the version yet.
+  check:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Check that the tag names the version of the package
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node -p "require('./packages/server/package.json').version")
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::The tag $TAG does not name the version of the package, $version. Tag v$version, or set the version first."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check that CHANGELOG.md has a dated section for the version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: node packages/server/scripts/changelog.mjs "$VERSION" > /dev/null
+
+      # npm 11 answers E404 for a version it does not have, and older npm prints nothing. Any other
+      # failure stops the release rather than guess.
+      - name: Check that npm does not have the version yet
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          name=$(node -p "require('./packages/server/package.json').name")
+          set +e
+          published=$(npm view "$name@$VERSION" version 2> "$RUNNER_TEMP/npm-view.log")
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ] && [ -n "$published" ]; then
+            echo "::error::$name@$VERSION is on npm already. Set a new version before you tag a release."
+            exit 1
+          fi
+          if [ "$status" -ne 0 ] && ! grep -q E404 "$RUNNER_TEMP/npm-view.log"; then
+            cat "$RUNNER_TEMP/npm-view.log"
+            echo "::error::Cannot ask npm whether $name@$VERSION is published."
+            exit 1
+          fi
+          echo "$name@$VERSION is not on npm yet."
+
+  # The same gate as every push and pull request: the whole of ci.yml, called as it is.
+  gate:
+    name: Gate
+    needs: check
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  publish:
+    name: Publish to npm
+    needs: [check, gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Mints the OIDC token for trusted publishing and for provenance.
+      id-token: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      # registry-url writes an .npmrc that reads a token from NODE_AUTH_TOKEN, which the token path
+      # needs. No cache: a release is built from the lockfile alone.
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Check the npm version
+        run: |
+          current=$(npm --version)
+          if ! printf '%s\n' 11.5.1 "$current" | sort -V -C; then
+            echo "::error::npm $current is older than 11.5.1, which trusted publishing needs."
+            exit 1
+          fi
+          echo "npm $current"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # npm runs the prepack script, which adds the README, the LICENSE and the CHANGELOG, and
+      # publishConfig makes the package public with provenance. Through a trusted publisher npm
+      # needs no token. Otherwise NODE_AUTH_TOKEN carries the NPM_TOKEN secret, and it is set only
+      # when the secret has a value, so that an empty token never stands in for the OIDC exchange.
+      - name: Publish
+        working-directory: packages/server
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
+          fi
+          npm publish
+
+  # The release notes are the CHANGELOG section of the version. When this job fails after the
+  # publish, re-run the failed jobs only: a new run stops at the check, since npm has the version.
+  github-release:
+    name: Create the GitHub release
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          node packages/server/scripts/changelog.mjs "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
