@@ -140,10 +140,13 @@ function dashboardApi(
   });
 }
 
+// The published package carries the dashboard's files, so without them it is incomplete. A
+// checkout of the sources has them once built.
 function warnDashboardFilesMissing({ logger }: ServerDeps): void {
   logger.warn(
-    'Dashboard files not found, so the dashboard page is not served, only its API. Build them ' +
-      'with "pnpm build"',
+    'Dashboard files not found, so the dashboard page is not served, only its API. The installed ' +
+      'package is incomplete: reinstall it. In a checkout of the sources, build them with ' +
+      '"pnpm build"',
   );
 }
 
@@ -201,9 +204,13 @@ async function serveStdio(context: CommandContext, stop: Deferred<string>): Prom
   const dashboard = config.dashboard ? await startStdioDashboard(context) : undefined;
   return {
     ...(dashboard?.page === undefined ? {} : { dashboard: dashboard.page }),
+    // The dashboard closes even when the MCP server fails to, so that its port is freed.
     close: async () => {
-      await server.close();
-      await dashboard?.close();
+      try {
+        await server.close();
+      } finally {
+        await dashboard?.close();
+      }
     },
   };
 }

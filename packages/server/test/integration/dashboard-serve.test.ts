@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { createServer as createTcpServer, type AddressInfo, type Server } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
@@ -508,7 +509,12 @@ test('stdio with --dashboard and no built files serves the API alone, with one w
 
   expect(info.status).toBe(200);
   expectNotFound(page);
-  expect(warnings(server.lines, FILES_NOT_FOUND)).toHaveLength(1);
+  expect(warnings(server.lines, FILES_NOT_FOUND)).toEqual([
+    expect.objectContaining({
+      // What a user of the package can do, and what a developer can.
+      msg: expect.stringMatching(/package is incomplete: reinstall it\..*pnpm build/) as string,
+    }),
+  ]);
   // There is no page to point at, so neither the banner nor the log names one.
   expect(server.stderr.text).not.toMatch(/dashboard +http/);
   expect(server.lines).not.toContainEqual(
@@ -516,6 +522,34 @@ test('stdio with --dashboard and no built files serves the API alone, with one w
   );
   server.stdin.end();
   expect(await server.running).toBe(0);
+});
+
+// The dashboard listener must not outlive the CLI, whatever went wrong before it was closed.
+test('stdio with --dashboard closes the dashboard even when the MCP server fails to close', async () => {
+  const failingClose = vi
+    .spyOn(McpServer.prototype, 'close')
+    .mockRejectedValueOnce(new Error('Synthetic close failure'));
+  cleanups.push(() => {
+    failingClose.mockRestore();
+  });
+  const server = runServer(['--dashboard'], {
+    env: { TV_MCP_AUTH_TOKEN: TOKEN },
+    port: await freePort(),
+    dashboardDir: files().dir,
+  });
+  await expect
+    .poll(() => server.stderr.text, { timeout: 5000 })
+    .toMatch(/dashboard +http:\/\/127\.0\.0\.1:/);
+  expect((await send(server.port, { path: '/healthz' })).status).toBe(200);
+
+  server.signals.emit('SIGTERM');
+
+  expect(await server.running).toBe(1);
+  expect(failingClose).toHaveBeenCalledTimes(1);
+  expect(server.stderr.text).toContain('Synthetic close failure');
+  await expect(send(server.port, { path: '/healthz' })).rejects.toMatchObject({
+    code: 'ECONNREFUSED',
+  });
 });
 
 test('stdio with --dashboard and no token logs that TV_MCP_AUTH_TOKEN is needed and starts no listener', async () => {
