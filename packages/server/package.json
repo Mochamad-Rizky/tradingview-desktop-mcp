@@ -26,7 +26,8 @@
     "test:coverage": "vitest run --project unit --project integration --coverage",
     "re:probe": "tsx scripts/re/probe.ts",
     "re:record": "tsx scripts/re/record-fixtures.ts",
-    "docs:examples": "tsx scripts/docs/examples.ts"
+    "docs:examples": "tsx scripts/docs/examples.ts",
+    "docs:tools": "tsx scripts/docs/tools.ts"
   },
   "devDependencies": {
     "@types/chrome-remote-interface": "^0.34.0",

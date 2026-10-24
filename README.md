@@ -272,6 +272,8 @@ which the assistant cannot call under `core`. The resources follow the tools: ea
 only with the tool it shares its data with, such as `tradingview://pine/source` with
 `pine_get_source`, so `--tools 'chart_*'` offers the chart state and nothing of the Pine Editor.
 
+The [tool reference](docs/tools.md) lists every tool with its inputs and the profiles it belongs to.
+
 ## Dashboard
 
 The server comes with a web dashboard for watching what your assistant does and for trying a tool
