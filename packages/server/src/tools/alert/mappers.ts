@@ -339,6 +339,17 @@ export function outOfTimeError(budgetMs: number): TvMcpError {
   );
 }
 
+// The warning of alert_create when TradingView did not list the new alert as active within the wait
+// after its creation: its alerts server activates a new alert a moment after it answers (about 1.5 s
+// seen) and lists it as not active until then, which alert_list reports as stopped.
+export function notActiveYetWarning(waitedMs: number): string {
+  return (
+    'The alert was created, but TradingView did not list it as active within ' +
+    `${(waitedMs / 1000).toFixed(1)} s, so alert_list may report it as stopped until TradingView ` +
+    'activates it. Check alert_list before creating it again.'
+  );
+}
+
 // The warning of alert_delete for the alerts TradingView still lists after the deletion.
 export function notDeletedWarning(ids: readonly string[]): string {
   return (

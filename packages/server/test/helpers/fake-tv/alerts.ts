@@ -18,6 +18,10 @@ import type { FixtureAlert } from './fixture.js';
 //   when the active price alerts (primitive, not on a watchlist) fill primitive_limit, or limit when
 //   the plan has no primitive_limit. A created alert is stored as sent, with the next id after the
 //   largest one (9001 at the least), and its record is the answer; ignore_warnings is not kept.
+//   The alerts server of the app activates a new alert a moment after it answers its creation
+//   (about 1.5 s seen) and lists it with active false and no stop reason until then: the next
+//   state.alerts.activationListings answers of listAlerts after a creation (0 by default) list the
+//   new alert that way, and later ones as it was sent.
 //   deleteAlerts deletes the ids the account has and passes over the others, and deletes nothing
 //   while state.alerts.deleteIgnored is set. The other methods of the client only record
 //   themselves.
@@ -63,6 +67,8 @@ export interface FakeAlertsState {
   errors: Partial<Record<FakeAlertsMethod, FakeAlertsError>>;
   // Whether deleteAlerts answers without deleting anything.
   deleteIgnored: boolean;
+  // How many answers of listAlerts after a creation list the new alert as not active yet.
+  activationListings: number;
 }
 
 export interface FakeAlertsDeps {
@@ -271,6 +277,10 @@ export function createFakeAlerts(
   );
   state.errors = {};
   state.deleteIgnored = false;
+  state.activationListings = 0;
+  // The created alerts the server has not activated yet, by id, with how many more answers of
+  // listAlerts list them as not active.
+  const inactiveFor = new Map<number, number>();
 
   const nextId = (): number => {
     const ids = state.list.flatMap(({ alert_id: id }) => (typeof id === 'number' ? [id] : []));
@@ -302,7 +312,21 @@ export function createFakeAlerts(
         'alertsRestApi.listAlerts',
         [signal, initiator].filter((arg) => arg !== undefined),
       );
-      return answer('listAlerts', () => overTheWire(state.list));
+      return answer('listAlerts', () =>
+        overTheWire(state.list).map((alert) => {
+          const id = alert.alert_id as number;
+          const left = inactiveFor.get(id);
+          if (left === undefined) {
+            return alert;
+          }
+          if (left <= 1) {
+            inactiveFor.delete(id);
+          } else {
+            inactiveFor.set(id, left - 1);
+          }
+          return { ...alert, active: false };
+        }),
+      );
     },
     createAlert(payload: unknown): Promise<Record<string, JsonValue>> {
       deps.record('alertsRestApi.createAlert', [payload]);
@@ -344,6 +368,9 @@ export function createFakeAlerts(
           ...fields,
         };
         state.list.push(created);
+        if (state.activationListings > 0 && created.active === true) {
+          inactiveFor.set(created.alert_id as number, state.activationListings);
+        }
         return overTheWire(created);
       });
     },

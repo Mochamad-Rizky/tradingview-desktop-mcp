@@ -7,6 +7,7 @@ import {
   inPlanLimitedTurn,
   requireBelowLimit,
 } from '../../core/tv/plan-limits.js';
+import { pollUntil } from '../../utils/poll.js';
 import { parseTimeInput, toIso } from '../../utils/time.js';
 import { DESTRUCTIVE, READ_ONLY } from '../annotations.js';
 import { TIME_INPUT, timeInput } from '../chart/index.js';
@@ -23,6 +24,7 @@ import {
   defaultMessage,
   expirationWindow,
   isSecondsResolution,
+  notActiveYetWarning,
   notDeletedWarning,
   outOfTimeError,
   plainSymbol,
@@ -59,6 +61,11 @@ const MAX_MESSAGE = 400;
 const MAX_DELETE = 50;
 // The id of an alert of the server, a positive integer, as alert_list reports it.
 const ALERT_ID = /^[1-9]\d{0,14}$/;
+// How long alert_create waits for TradingView to list a new alert as active (about 1.5 s seen),
+// how often it looks, and the least a listing meanwhile waits for its answer.
+const ACTIVATION_WAIT_MS = 5000;
+const ACTIVATION_POLL_MS = 250;
+const MIN_LISTING_WAIT_MS = 1000;
 
 const ACTIVE_LIMIT_HINT =
   'The plan allows that many active price alerts at a time. Delete one with alert_delete, or ' +
@@ -229,7 +236,10 @@ export const alertCreate = defineTool({
     'on a timeframe in seconds needs a plan that allows alerts on seconds. No dialog opens. ' +
     'A call keeps within 45 s, so that no client gives up on it and creates the alert again: ' +
     'when too little of that is left before the alert is sent, it fails with TIMEOUT and nothing ' +
-    'is created. alert_delete deletes what this tool created without confirm.',
+    'is created. TradingView activates a new alert a moment after it creates it, so the call ' +
+    'answers once TradingView lists the alert as active, waiting 5 s at most; past that it ' +
+    'answers with a warning, the alert created all the same. alert_delete deletes what this ' +
+    'tool created without confirm.',
   inputSchema: {
     symbol: z
       .string()
@@ -348,7 +358,7 @@ export async function createAlert(
   const waitMs = Math.min(pageWaitMs(ctx.config.callTimeoutMs), Math.floor(budgetMs / 3));
   // From the check of the limit to the end of the creation, the other actions on plan limits
   // wait.
-  const id = await inPlanLimitedTurn(async () => {
+  const outcome = await inPlanLimitedTurn(async () => {
     await requireAlertRoom(page, waitMs);
     if (remainingMs() < waitMs) {
       throw outOfTimeError(budgetMs);
@@ -367,12 +377,20 @@ export async function createAlert(
     if ('refused' in created) {
       throw refusalError(created.refused, 'create the alert');
     }
-    return created.id;
+    ctx.session.createdAlertIds.add(created.id);
+    // Within the turn, so that the next check of the limit counts the alert as active.
+    const activation = await awaitActivation(
+      page,
+      created.id,
+      waitMs,
+      Math.min(ACTIVATION_WAIT_MS, remainingMs()),
+      now,
+    );
+    return { id: created.id, activation };
   });
-  ctx.session.createdAlertIds.add(id);
   return {
     data: {
-      id,
+      id: outcome.id,
       symbol: target.plain,
       condition,
       price,
@@ -380,7 +398,46 @@ export async function createAlert(
       expirationIso: toIso(expiresOn),
     },
     via: 'internal',
+    warnings: outcome.activation.active ? [] : [notActiveYetWarning(outcome.activation.waitedMs)],
   };
+}
+
+// Waits, within limitMs, until TradingView lists the alert it just created (id) as active. Its
+// alerts server answers the creation first and activates the alert a moment later (about 1.5 s
+// seen), listing it as not active, with no stop reason, until then; alert_list would report it as
+// stopped. Each listing waits at most pageWait, and no longer than the wait has left, but at least
+// MIN_LISTING_WAIT_MS. An error of the app does not fail the call, since the alert exists and a
+// failed call would invite creating it again: a listing that fails or is refused counts as not
+// active yet.
+async function awaitActivation(
+  page: PageHandle,
+  id: string,
+  pageWait: number,
+  limitMs: number,
+  now: () => number,
+): Promise<{ active: boolean; waitedMs: number }> {
+  const wanted = Number(id);
+  const startedAt = now();
+  const listingWait = (): number =>
+    Math.max(Math.min(pageWait, limitMs - (now() - startedAt)), MIN_LISTING_WAIT_MS);
+  const result = await pollUntil(
+    async () => {
+      try {
+        const listing = await page.bridge.evaluateWithLib(readAlerts, [listingWait()]);
+        return 'refused' in listing
+          ? null
+          : (listing.alerts.find((row) => row.id === wanted)?.active ?? null);
+      } catch (error) {
+        if (isTvMcpError(error)) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    (active) => active === true,
+    { intervalMs: ACTIVATION_POLL_MS, timeoutMs: limitMs, now },
+  );
+  return { active: result.satisfied, waitedMs: result.waitedMs };
 }
 
 export const alertList = defineTool({

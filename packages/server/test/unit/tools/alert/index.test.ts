@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { TvMcpError } from '../../../../src/core/errors.js';
 import { readPlanConfig } from '../../../../src/core/tv/plan-limits.js';
 import { alertDelete, alertTools, createAlert } from '../../../../src/tools/alert/index.js';
 import {
@@ -208,23 +209,33 @@ test('alert_delete lets through a failure that is no error of the server, after 
   expect(lists).toBe(2);
 });
 
+// What a scripted page function answers: value, or the items of sequence one call after another (the
+// last one again once they run out), where an Error is a rejection; each call takes `takesMs` of the
+// clock of the run.
+interface Scripted {
+  value?: unknown;
+  sequence?: unknown[];
+  takesMs?: number;
+}
+
 describe('alert_create within the time a client waits for one call', () => {
   // A chart page whose page functions answer as `answers` says, each taking `takesMs` of the clock
   // of the run, which the call reads as its own.
-  function scriptedRun(
-    answers: Map<unknown, { value: unknown; takesMs?: number }>,
-    callTimeoutMs: number,
-  ) {
+  function scriptedRun(answers: Map<unknown, Scripted>, callTimeoutMs: number) {
     const clock = { now: 0 };
     const asked: { fn: unknown; args: unknown[] }[] = [];
     const answer = (fn: unknown, args: unknown[]): Promise<unknown> => {
-      asked.push({ fn, args });
       const scripted = answers.get(fn);
+      const nth = asked.filter((call) => call.fn === fn).length;
+      asked.push({ fn, args });
       if (scripted === undefined) {
         return Promise.reject(new Error('Unexpected page function'));
       }
       clock.now += scripted.takesMs ?? 0;
-      return Promise.resolve(scripted.value);
+      const { sequence } = scripted;
+      const value =
+        sequence === undefined ? scripted.value : sequence[Math.min(nth, sequence.length - 1)];
+      return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
     };
     const ctx = {
       ...createTestContext({ config: testConfig({ callTimeoutMs }) }),
@@ -237,9 +248,27 @@ describe('alert_create within the time a client waits for one call', () => {
     return { clock, ctx, argsOf };
   }
 
-  // A daily chart of a symbol the alert takes, and a plan with room for it.
-  function script(change: [unknown, { value: unknown; takesMs?: number }][] = []) {
-    return new Map<unknown, { value: unknown; takesMs?: number }>([
+  // A row of the alert the run creates, as TradingView lists it.
+  const createdRow = (active: boolean) => ({
+    id: 9001,
+    symbol: 'NASDAQ:AAPL',
+    kinds: ['regular'],
+    active,
+    lastStopReason: null,
+    complexity: 'primitive',
+    condition: 'cross',
+    series: 'barset',
+    study: null,
+    value: 150,
+    message: 'AAPL crossing 150',
+    expires: null,
+  });
+  const listing = (...alerts: ReturnType<typeof createdRow>[]) => ({ alerts, unreadable: 0 });
+
+  // A daily chart of a symbol the alert takes, and a plan with room for it; TradingView lists the
+  // alert as active once it is created.
+  function script(change: [unknown, Scripted][] = []) {
+    return new Map<unknown, Scripted>([
       [
         readAlertContext,
         {
@@ -253,7 +282,7 @@ describe('alert_create within the time a client waits for one call', () => {
           },
         },
       ],
-      [readAlerts, { value: { alerts: [], unreadable: 0 } }],
+      [readAlerts, { sequence: [listing(), listing(createdRow(true))] }],
       [readPlanConfig, { value: { limit: 3, primitive_limit: 3, overall_limit: 50 } }],
       [createAlertViaApi, { value: { id: '9001' } }],
       ...change,
@@ -294,8 +323,72 @@ describe('alert_create within the time a client waits for one call', () => {
     const output = await createAlert(INPUT, run.ctx, 45_000, () => run.clock.now);
 
     expect(output.data).toMatchObject({ id: '9001', condition: 'crossing', price: 150 });
-    expect(run.argsOf(readAlerts)).toEqual([[15_000]]);
+    // The check of the limit, then one listing that finds the new alert active, which waits no
+    // longer than the 5 s of the wait for it.
+    expect(run.argsOf(readAlerts)).toEqual([[15_000], [5000]]);
     expect(run.argsOf(createAlertViaApi)[0]?.[1]).toBe(15_000);
     expect(run.ctx.session.createdAlertIds).toEqual(new Set(['9001']));
+    expect(output.warnings ?? []).toEqual([]);
+  });
+
+  test('waits until TradingView lists the new alert as active, a refused or failed listing, or one without it, counting as not active yet', async () => {
+    const run = scriptedRun(
+      script([
+        [
+          readAlerts,
+          {
+            sequence: [
+              listing(),
+              { refused: { code: 'general', message: 'Synthetic refusal' } },
+              new TvMcpError('TIMEOUT', 'Synthetic timeout'),
+              // Not listed yet.
+              listing(),
+              listing(createdRow(false)),
+              listing(createdRow(true)),
+            ],
+            takesMs: 100,
+          },
+        ],
+      ]),
+      120_000,
+    );
+
+    const output = await createAlert(INPUT, run.ctx, 45_000, () => run.clock.now);
+
+    expect(output.data).toMatchObject({ id: '9001' });
+    expect(output.warnings ?? []).toEqual([]);
+    expect(run.argsOf(readAlerts)).toHaveLength(6);
+  });
+
+  test('answers the alert with a warning when TradingView does not list it as active within 5 s', async () => {
+    const run = scriptedRun(
+      script([[readAlerts, { sequence: [listing(), listing(createdRow(false))], takesMs: 1000 }]]),
+      120_000,
+    );
+
+    const output = await createAlert(INPUT, run.ctx, 45_000, () => run.clock.now);
+
+    expect(output.data).toMatchObject({ id: '9001' });
+    expect(output.warnings).toEqual([
+      expect.stringContaining('did not list it as active within 5') as string,
+    ]);
+    expect(output.warnings?.[0]).toContain('Check alert_list before creating it again');
+    expect(run.ctx.session.createdAlertIds).toEqual(new Set(['9001']));
+    // Each listing of the wait waits no longer than what is left of it, and 1 s at the least.
+    const waits = run
+      .argsOf(readAlerts)
+      .slice(1)
+      .map(([waitMs]) => waitMs as number);
+    expect(waits[0]).toBe(5000);
+    expect(Math.min(...waits)).toBe(1000);
+  });
+
+  test('a bug in a listing of the wait is not taken for an inactive alert', async () => {
+    const run = scriptedRun(
+      script([[readAlerts, { sequence: [listing(), new Error('A bug')] }]]),
+      120_000,
+    );
+
+    await expect(createAlert(INPUT, run.ctx, 45_000, () => run.clock.now)).rejects.toThrow('A bug');
   });
 });

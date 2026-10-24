@@ -263,6 +263,23 @@ describe('alert_create', () => {
     expectNothingElseTouched(win);
   });
 
+  test('alert_create answers once TradingView lists the new alert as active, so alert_list reports it active at once', async () => {
+    const { client, win } = await startHarness();
+    // TradingView activates a new alert a moment after it answers the creation.
+    inspectFakeWindow(win).state.alerts.activationListings = 2;
+
+    const result = await callTool(client, 'alert_create', { condition: 'crossing', price: 150 });
+
+    expect(envelopeOf(result).ok).toBe(true);
+    expect(warningsOf(result)).toEqual([]);
+    // The check of the limit, two listings of the alert not active yet, and the one that lists
+    // it active.
+    expect(calls(win, 'alertsRestApi.listAlerts')).toHaveLength(4);
+    const listed = alertsOf(await callTool(client, 'alert_list'));
+    expect(listed.map(({ id, status }) => [id, status])).toEqual([['9001', 'active']]);
+    expectNothingElseTouched(win);
+  });
+
   test('alert_create returns PLAN_LIMIT SERVER_SIDE_ALERTS when the active alerts fill the plan and sends nothing', async () => {
     const { client, win, session } = await startHarness(withAlerts(activeAlerts(3)));
 

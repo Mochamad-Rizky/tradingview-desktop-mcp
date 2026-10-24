@@ -145,8 +145,9 @@ import { createFakeWebpack } from './webpack.js';
 // tools must never use, which only record their calls, are in the default webpack cache. The client
 // refuses while no account is signed in and holds the account to the alert limits of the plan of
 // the fixture (planLimits and planConfigs of SERVER_SIDE_ALERTS), which the plan modules serve as
-// well. state.alerts holds the alerts, the errors a test stages for the methods of the client and
-// whether deleteAlerts is ignored; the alerts option sets the product, which sets the expirations of
+// well. state.alerts holds the alerts, the errors a test stages for the methods of the client,
+// whether deleteAlerts is ignored and how many listings show a new alert as not active yet; the
+// alerts option sets the product, which sets the expirations of
 // the alert config, or leaves a module out. The main series gives the chart symbol the way an alert
 // takes it (getAlertSymbolString).
 //
@@ -489,8 +490,8 @@ export interface FakeTvState {
   fullscreen: FakeFullscreenState;
   // The drawings on the chart, their removals and the drawings experiment (drawings.ts).
   drawings: FakeDrawingsState;
-  // The alerts of the account, the errors staged for the alerts client and whether it ignores a
-  // deletion (alerts.ts).
+  // The alerts of the account, the errors staged for the alerts client, whether it ignores a
+  // deletion and how many listings show a new alert as not active yet (alerts.ts).
   alerts: FakeAlertsState;
   // The watchlists of the server and of the store, the errors staged for the backend, the limit of
   // the server and the lists with open sections to save (watchlists.ts).
@@ -598,7 +599,7 @@ export function createFakeTvWindow(
     // Filled with the drawings of the fixture once the bars are there (drawings.ts).
     drawings: { list: [], removed: [], experiment: null },
     // Filled with the alerts of the fixture (alerts.ts).
-    alerts: { list: [], errors: {}, deleteIgnored: false },
+    alerts: { list: [], errors: {}, deleteIgnored: false, activationListings: 0 },
     // Filled with the watchlists of the fixture (watchlists.ts).
     watchlists: {
       server: [],

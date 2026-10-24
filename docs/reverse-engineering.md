@@ -945,7 +945,10 @@ These are resolved during implementation of the corresponding domain, each with 
    `last_fire_time`, `last_fire_bar_time`, `last_error`, `last_stop_reason`, `active`, `auto_deactivate`, `message`,
    `popup`, `email`, `sms_over_email`, `mobile_push`, `sound_file`, `sound_duration`, `web_hook`, `name`,
    `cross_interval` and `presentation_data`. The bar set series is `{type: "barset"}` alone, and times are ISO 8601 in
-   UTC without fractions; the expiration reads back to the second.
+   UTC without fractions; the expiration reads back to the second. Seen in the release verification (TradingView
+   Desktop 3.4.1): the alerts server activates a new alert a moment after `createAlert` answers. Until then
+   `listAlerts` lists it with `active: false`, `last_stop_reason` and `last_error` `null` (about 1.5 s, four listings),
+   which `alert_list` would report as stopped, so `alert_create` waits until the alert lists as active.
 5. Shapes of Pine `graphics()` primitives (lines, labels, boxes, polylines) and `tables()`. Partly answered:
    `graphics()` exists on Pine studies, and its collections are `Map`s, empty on studies that draw nothing
    ([§4.4](#44-chart-model-internals)). The items and the ids of tables and cells wait for a study that draws, which

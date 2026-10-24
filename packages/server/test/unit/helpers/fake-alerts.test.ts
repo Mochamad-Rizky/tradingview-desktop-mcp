@@ -264,6 +264,33 @@ describe('the alerts REST client', () => {
     expect((await api.createAlert(payload())).alert_id).toBe(9007);
   });
 
+  test('a new alert lists as not active for as many listings as the test stages, then as sent', async () => {
+    const win = windowWith({ ...fixture, alerts: [{ id: 9005 }] });
+    const api = apiOf(win);
+    const activeOf = async (): Promise<unknown[]> =>
+      (await api.listAlerts()).map(({ active }) => active);
+
+    // Activated at once by default.
+    await api.createAlert(payload());
+    expect(await activeOf()).toEqual([true, true]);
+
+    inspectFakeWindow(win).state.alerts.activationListings = 2;
+    const created = await api.createAlert(payload());
+
+    // The answer of the creation and the stored record are as sent.
+    expect(created.active).toBe(true);
+    expect(await activeOf()).toEqual([true, true, false]);
+    const second = await api.listAlerts();
+    expect(second.map(({ active }) => active)).toEqual([true, true, false]);
+    expect(second[2]?.last_stop_reason).toBeNull();
+    expect(await activeOf()).toEqual([true, true, true]);
+    expect(inspectFakeWindow(win).state.alerts.list.map(({ active }) => active)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+  });
+
   test('createAlert refuses a payload the server would not take', async () => {
     const win = windowWith();
     const api = apiOf(win);
