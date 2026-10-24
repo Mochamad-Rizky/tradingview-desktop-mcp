@@ -64,7 +64,12 @@ const CLOSING = '<!-- /config -->';
 // Replaces the inside of one block. A page without the block it needs, or with one it does not
 // need, is refused: an author has to place the markers, because only they know where on the page
 // each one belongs.
-function fillBlock(text: string, client: ClientId, platform: BlockPlatform, wanted: boolean) {
+export function fillBlock(
+  text: string,
+  client: ClientId,
+  platform: BlockPlatform,
+  wanted: boolean,
+): string {
   const marker = markerOf(client, platform);
   const start = text.indexOf(marker);
   if (start === -1) {

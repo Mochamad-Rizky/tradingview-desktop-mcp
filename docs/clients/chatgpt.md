@@ -66,7 +66,22 @@ https://YOUR-TUNNEL-HOST/mcp/<TV_MCP_AUTH_TOKEN>
 
 <!-- /config -->
 
-`npx -y tradingview-desktop-mcp config chatgpt --url abc.ngrok.app` prints the address with your own tunnel host in place of `YOUR-TUNNEL-HOST`, and `config chatgpt` alone prints the placeholder. The result is the same on every system. Put your token where `<TV_MCP_AUTH_TOKEN>` stands.
+For Windows:
+
+<!-- config:chatgpt:win32 -->
+
+```text
+https://YOUR-TUNNEL-HOST/mcp/<TV_MCP_AUTH_TOKEN>
+```
+
+- Paste this URL, with your token in place of `<TV_MCP_AUTH_TOKEN>`, as the connection of a custom MCP server in ChatGPT (chatgpt.com/plugins, +, Add custom MCP server), with no authentication.
+- The URL holds the token, so anyone who has it can use TradingView through the server: keep it private.
+- Start the server with TV_MCP_AUTH_TOKEN set to a random secret, such as the output of node -e "console.log(require('crypto').randomBytes(32).toString('hex'))", and TV_MCP_ALLOWED_HOSTS=YOUR-TUNNEL-HOST: npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile readonly
+- Then point an HTTPS tunnel whose public host is YOUR-TUNNEL-HOST at the server, http://127.0.0.1:8787 unless you set --host or --port.
+
+<!-- /config -->
+
+`npx -y tradingview-desktop-mcp config chatgpt --url abc.ngrok.app` prints the address with your own tunnel host in place of `YOUR-TUNNEL-HOST`, and `config chatgpt` alone prints the placeholder. The address is the same on every system; only the notes differ on Windows, which has no `openssl` of its own. Put your token where `<TV_MCP_AUTH_TOKEN>` stands.
 
 ChatGPT has no field for a secret header here, so the token travels in the path of the address (`/mcp/<token>`). A tunnel provider can log that address, and so can the tunnel agent on your computer. Treat those logs as holding the token, and make a new token if anyone else can read them. The clients that can send headers use `Authorization: Bearer <token>` instead, which keeps the token out of URLs. The [OpenAI API tutorial](openai-api.md) does.
 

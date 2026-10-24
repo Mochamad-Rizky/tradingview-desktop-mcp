@@ -522,6 +522,21 @@ test('the remote clients take the host from --url and keep its port', () => {
   expect(notesOf('chatgpt').join('\n')).toMatch(/anyone who has it/i);
 });
 
+test('the remote clients suggest a token command that runs on the system of the notes', () => {
+  const NODE_TOKEN = `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`;
+  for (const client of ['chatgpt', 'openai-api'] as const) {
+    // Windows has no openssl of its own, and Node.js is there for npx anyway.
+    const windows = notesOf(client, { platform: 'win32' }).join('\n');
+    expect(windows).toContain(NODE_TOKEN);
+    expect(windows).not.toContain('openssl');
+    for (const platform of ['darwin', 'linux'] as const) {
+      const notes = notesOf(client, { platform }).join('\n');
+      expect(notes, platform).toContain('"openssl rand -hex 32"');
+      expect(notes, platform).not.toContain('node -e');
+    }
+  }
+});
+
 test('the remote clients start this installation with node when --local is given', () => {
   const notes = notesOf('chatgpt', {
     platform: 'win32',

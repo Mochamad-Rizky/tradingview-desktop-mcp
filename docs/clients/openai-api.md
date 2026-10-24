@@ -73,7 +73,29 @@ The server listens on `127.0.0.1:8787`, on this computer only. It prints its add
 
 <!-- /config -->
 
-`npx -y tradingview-desktop-mcp config openai-api --url abc.ngrok.app` prints the object with your own tunnel host in place of `YOUR-TUNNEL-HOST`, and `config openai-api` alone prints the placeholder. The result is the same on every system.
+For Windows:
+
+<!-- config:openai-api:win32 -->
+
+```json
+{
+  "type": "mcp",
+  "server_label": "tradingview",
+  "server_url": "https://YOUR-TUNNEL-HOST/mcp",
+  "headers": {
+    "Authorization": "Bearer <TV_MCP_AUTH_TOKEN>"
+  },
+  "require_approval": "always"
+}
+```
+
+- Add this object to the tools of a Responses API request, with your token in place of `<TV_MCP_AUTH_TOKEN>`. Read the token from the environment rather than writing it into your code.
+- Start the server with TV_MCP_AUTH_TOKEN set to a random secret, such as the output of node -e "console.log(require('crypto').randomBytes(32).toString('hex'))", and TV_MCP_ALLOWED_HOSTS=YOUR-TUNNEL-HOST: npx -y tradingview-desktop-mcp --transport http --no-dashboard --profile readonly
+- Then point an HTTPS tunnel whose public host is YOUR-TUNNEL-HOST at the server, http://127.0.0.1:8787 unless you set --host or --port.
+
+<!-- /config -->
+
+`npx -y tradingview-desktop-mcp config openai-api --url abc.ngrok.app` prints the object with your own tunnel host in place of `YOUR-TUNNEL-HOST`, and `config openai-api` alone prints the placeholder. The object is the same on every system; only the notes differ on Windows, which has no `openssl` of its own.
 
 Add the object to the `tools` of a Responses API request, with your token in place of `<TV_MCP_AUTH_TOKEN>`. Read the token from the environment in your code, so that it is not in a file you commit. This is the form that OpenAI documents as of October 2026, at <https://developers.openai.com/api/reference/resources/responses/methods/create>: the token goes in `headers`, which sends it as `Authorization: Bearer <token>` and keeps it out of URLs. The server also accepts the token in the path, `/mcp/<token>`, for clients that cannot send headers, but a URL is logged by tunnels; prefer the header.
 

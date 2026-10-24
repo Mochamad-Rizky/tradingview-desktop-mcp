@@ -273,6 +273,14 @@ function codexCli(options: ClientConfigOptions): ClientConfig {
   };
 }
 
+// A command that prints a random token on the system of the notes. Windows has no openssl of its
+// own, and Node.js is there for npx anyway.
+function tokenCommand(platform: NodeJS.Platform): string {
+  return platform === 'win32'
+    ? `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+    : '"openssl rand -hex 32"';
+}
+
 // What a remote client needs on this machine: the server over HTTP, and a tunnel to it. The
 // dashboard stays off, so that its files are not served through the tunnel.
 function serverNotes(options: ClientConfigOptions, host: string): string[] {
@@ -283,7 +291,7 @@ function serverNotes(options: ClientConfigOptions, host: string): string[] {
   ]);
   const address = `http://${DEFAULTS.httpHost}:${String(DEFAULTS.httpPort)}`;
   return [
-    `Start the server with TV_MCP_AUTH_TOKEN set to a random secret, such as the output of "openssl rand -hex 32", and TV_MCP_ALLOWED_HOSTS=${host}: ${commandLine(start, options.platform)}`,
+    `Start the server with TV_MCP_AUTH_TOKEN set to a random secret, such as the output of ${tokenCommand(options.platform)}, and TV_MCP_ALLOWED_HOSTS=${host}: ${commandLine(start, options.platform)}`,
     `Then point an HTTPS tunnel whose public host is ${host} at the server, ${address} unless you set --host or --port.`,
   ];
 }

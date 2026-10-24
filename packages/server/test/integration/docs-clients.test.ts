@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import {
   clientDocPath,
+  fillBlock,
   markdownNote,
   renderConfigBlock,
   syncClientDoc,
@@ -125,14 +126,15 @@ describe('docs/clients', () => {
 
   test('docs:clients refuses an unclosed marker and a surplus Windows block', () => {
     const text = readText(clientDocPath('chatgpt'));
-    expect(() =>
-      syncClientDoc('chatgpt', text.replace('<!-- /config -->', '<!-- /confg -->')),
-    ).toThrow(/not closed/);
-    const surplus = text.replace(
-      '<!-- /config -->',
-      '<!-- /config -->\n\n<!-- config:chatgpt:win32 -->\n<!-- /config -->',
+    const lastClosing = text.lastIndexOf('<!-- /config -->');
+    const unclosed = `${text.slice(0, lastClosing)}<!-- /confg -->${text.slice(lastClosing + 16)}`;
+    expect(() => syncClientDoc('chatgpt', unclosed)).toThrow(/not closed/);
+    // Every client prints other notes on Windows today, so the refusal of a Windows block that a
+    // client with the same snippet everywhere would not need is asked of the block filler itself.
+    expect(() => fillBlock(text, 'chatgpt', 'win32', false)).toThrow(/snippet is the same/);
+    expect(fillBlock('# No Windows block\n', 'chatgpt', 'win32', false)).toBe(
+      '# No Windows block\n',
     );
-    expect(() => syncClientDoc('chatgpt', surplus)).toThrow(/snippet is the same/);
   });
 
   test('docs:clients refuses a page whose blocks do not match the client', () => {
