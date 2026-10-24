@@ -387,14 +387,50 @@ test('a path inside the npx cache comes with a note that npm can clear it', () =
 });
 
 // None of the clients' current documentation asks for cmd /c: Claude Desktop's shows npx started
-// directly on Windows, and Claude Code dropped its cmd /c warning as a false positive. So on
-// Windows only the notes change, and a path from --local is kept as given.
+// directly on Windows, and Claude Code dropped its cmd /c warning as a false positive. So the
+// snippet keeps npx, and on Windows a last note gives the cmd /c form for a client that cannot
+// start npx directly. A path from --local is kept as given.
+const CMD_ARGS = '["/c", "npx", "-y", "tradingview-desktop-mcp"]';
+const JSON_FALLBACK = `"command": "cmd", "args": ${CMD_ARGS}`;
+
 test('--platform win32 uses cmd /c npx where the client needs it', () => {
-  for (const [client] of STDIO_CLIENTS) {
+  for (const [client, format] of STDIO_CLIENTS) {
     const windows = renderClientConfig(client, { ...NPX_DARWIN, platform: 'win32' });
+    const fallback = windows.notes.at(-1) ?? '';
 
     expect(windows.snippet).toBe(snippetOf(client));
     expect(windows.snippet).not.toContain('cmd');
+    expect(windows.notes).toHaveLength(notesOf(client).length + 1);
+    expect(fallback).toContain('cannot start npx');
+    if (format === 'json') {
+      // The members as they are written, which read back as the cmd launch.
+      expect(fallback).toContain(JSON_FALLBACK);
+      expect(JSON.parse(`{${JSON_FALLBACK}}`)).toEqual({
+        command: 'cmd',
+        args: ['/c', 'npx', '-y', 'tradingview-desktop-mcp'],
+      });
+    }
+  }
+  expect(notesOf('codex-cli', { platform: 'win32' }).at(-1)).toContain(
+    `command = "cmd" and args = ${CMD_ARGS}`,
+  );
+  expect(tomlEntry(`[mcp_servers.tradingview]\ncommand = "cmd"\nargs = ${CMD_ARGS}\n`)).toEqual({
+    command: 'cmd',
+    args: ['/c', 'npx', '-y', 'tradingview-desktop-mcp'],
+  });
+  expect(notesOf('claude-code', { platform: 'win32' }).at(-1)).toContain(
+    'claude mcp add tradingview -- cmd /c npx -y tradingview-desktop-mcp',
+  );
+
+  // The fallback keeps the profile, and is for npx on Windows alone.
+  expect(notesOf('cursor', { platform: 'win32', profile: 'core' }).at(-1)).toContain(
+    '"args": ["/c", "npx", "-y", "tradingview-desktop-mcp", "--profile", "core"]',
+  );
+  for (const [client] of STDIO_CLIENTS) {
+    expect(notesOf(client, { platform: 'linux' }).join('\n')).not.toContain('cmd');
+  }
+  for (const client of ['chatgpt', 'openai-api'] as const) {
+    expect(notesOf(client, { platform: 'win32' }).join('\n')).not.toContain('cmd /c');
   }
 
   const cliPath =
@@ -405,6 +441,8 @@ test('--platform win32 uses cmd /c npx where the client needs it', () => {
     command: 'node',
     args: [cliPath],
   });
+  // node is a program of its own, so it needs no cmd.
+  expect(notesOf('claude-desktop', local).join('\n')).not.toContain('cmd');
 });
 
 test('an explicit --profile is added to the args', () => {

@@ -116,6 +116,26 @@ function homeFile(platform: NodeJS.Platform, ...segments: string[]): string {
   return platform === 'win32' ? `%USERPROFILE%\\${segments.join('\\')}` : `~/${segments.join('/')}`;
 }
 
+// No client's documentation asks for cmd /c any more, but a client that cannot start npx, which is
+// a script on Windows, can still start cmd, which then runs it. So on Windows the notes end with
+// that form, which `note` writes the way the client takes it.
+function cmdFallback(options: ClientConfigOptions, note: (cmd: Launch) => string): string[] {
+  if (options.platform !== 'win32' || options.command.kind !== 'npx') {
+    return [];
+  }
+  const { command, args } = launch(options);
+  return [note({ command: 'cmd', args: ['/c', command, ...args] })];
+}
+
+// The fallback of a client configured in JSON: its command and args members.
+function jsonCmdFallback(options: ClientConfigOptions): string[] {
+  return cmdFallback(
+    options,
+    ({ command, args }) =>
+      `If the client cannot start npx, use "command": ${formatJson(command)}, "args": ${formatJson(args)} instead.`,
+  );
+}
+
 function stdioEntry(options: ClientConfigOptions): { command: string; args: string[] } {
   const { command, args } = launch(options);
   return { command, args };
@@ -139,6 +159,7 @@ function claudeDesktop(options: ClientConfigOptions): ClientConfig {
     notes: [
       `Put this in ${file}, ${KEEP_OTHERS}. In Claude Desktop, Settings > Developer > Edit Config opens the file.`,
       'Then quit Claude Desktop completely and open it again.',
+      ...jsonCmdFallback(options),
     ],
   };
 }
@@ -152,6 +173,11 @@ function claudeCode(options: ClientConfigOptions): ClientConfig {
     notes: [
       'Run this in a terminal. It adds the server to the current project; put --scope user before tradingview to add it to every project.',
       'Then check that it connects with: claude mcp get tradingview',
+      ...cmdFallback(
+        options,
+        (cmd) =>
+          `If Claude Code cannot start npx, add it with: claude mcp add ${SERVER_NAME} -- ${commandLine(cmd, options.platform)}`,
+      ),
     ],
   };
 }
@@ -166,6 +192,7 @@ function cursor(options: ClientConfigOptions): ClientConfig {
     notes: [
       `Put this in ${homeFile(options.platform, '.cursor', 'mcp.json')} for every project, or in .cursor/mcp.json in a project, ${KEEP_OTHERS}.`,
       "Then open Customize in Cursor's sidebar and check that tradingview is on.",
+      ...jsonCmdFallback(options),
     ],
   };
 }
@@ -181,6 +208,7 @@ function vscode(options: ClientConfigOptions): ClientConfig {
     notes: [
       'Put this in .vscode/mcp.json in your workspace, or in your user mcp.json (run MCP: Open User Configuration), keeping any other servers.',
       'Then run MCP: List Servers from the Command Palette and start tradingview.',
+      ...jsonCmdFallback(options),
     ],
   };
 }
@@ -198,6 +226,7 @@ function windsurf(options: ClientConfigOptions): ClientConfig {
     notes: [
       `Windsurf is now Devin Desktop: put this in ${file}, ${KEEP_OTHERS} (releases from before the new name read ${legacy}). Cascade opens it from its ... (Actions) menu > Open MCP config file.`,
       'Then check that tradingview is on in the MCPs section of that menu.',
+      ...jsonCmdFallback(options),
     ],
   };
 }
@@ -210,6 +239,7 @@ function geminiCli(options: ClientConfigOptions): ClientConfig {
     notes: [
       `Put this in ${homeFile(options.platform, '.gemini', 'settings.json')} for every project, or in .gemini/settings.json in a project, keeping your other settings.`,
       'Then start gemini and run /mcp to check that tradingview is connected.',
+      ...jsonCmdFallback(options),
     ],
   };
 }
@@ -228,6 +258,11 @@ function codexCli(options: ClientConfigOptions): ClientConfig {
     notes: [
       `Put this in ${homeFile(options.platform, '.codex', 'config.toml')}, or in .codex/config.toml in a trusted project.`,
       'Then start codex and run /mcp to check that tradingview is listed.',
+      ...cmdFallback(
+        options,
+        ({ command, args }) =>
+          `If Codex cannot start npx, set command = ${tomlString(command)} and args = [${args.map(tomlString).join(', ')}] instead.`,
+      ),
     ],
   };
 }
