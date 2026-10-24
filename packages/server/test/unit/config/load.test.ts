@@ -456,14 +456,15 @@ test('--url is normalised like an allowed host, and keeps a port other than 80 o
   expect(url('  ')).toBeUndefined();
 });
 
-test('--url is refused with the message and hint of a refused allowed host', () => {
+test('--url is refused with the message of a refused allowed host and a hint of its own', () => {
   const error = loadError(['config', 'chatgpt', '--url', '*.ngrok.app']);
 
   expect(error.code).toBe('INVALID_INPUT');
   expect(error.message).toBe(
     '--url: "*.ngrok.app" is not a host name: a wildcard is not supported, so list each host',
   );
-  expect(error.hint).toBe(ALLOWED_HOSTS_HINT);
+  // One host, so the comma-separated form of TV_MCP_ALLOWED_HOSTS would mislead.
+  expect(error.hint).toBe('--url takes a host or https URL such as abc.ngrok.app');
 });
 
 test('--platform takes darwin, win32 or linux', () => {

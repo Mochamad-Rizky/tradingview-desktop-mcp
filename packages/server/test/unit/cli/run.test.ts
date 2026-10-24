@@ -222,7 +222,7 @@ test('remote clients use the --url host, or YOUR-TUNNEL-HOST, and never the real
   );
 });
 
-test('a --url that is not a host is refused with the rules and message of an allowed host', async () => {
+test('a --url that is not a host is refused with the rules of an allowed host and a hint for --url', async () => {
   const { code, stdout, stderr } = await run([
     'config',
     'chatgpt',
@@ -235,6 +235,8 @@ test('a --url that is not a host is refused with the rules and message of an all
   expect(stderr).toContain(
     '✖ INVALID_INPUT: --url: "https://abc.ngrok.app/…" is not a host name: it has a path',
   );
+  expect(stderr).toContain('--url takes a host or https URL such as abc.ngrok.app');
+  expect(stderr).not.toContain('comma-separated');
   // The part after the host may be a pasted token, so it is not repeated.
   expect(stderr).not.toContain('s3cret');
 });

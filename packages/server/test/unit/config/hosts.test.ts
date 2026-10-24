@@ -14,6 +14,24 @@ function refusal(entry: string): TvMcpError {
   throw new Error(`expected ${JSON.stringify(entry)} to be refused`);
 }
 
+test('a refusal takes the hint of the setting that was read', () => {
+  const hint = '--url takes a host or https URL such as abc.ngrok.app';
+  let refused: unknown;
+  try {
+    normalizeHostEntry('https://abc.ngrok.app/mcp', '--url', hint);
+  } catch (error) {
+    refused = error;
+  }
+
+  expect(refused).toBeInstanceOf(TvMcpError);
+  expect((refused as TvMcpError).message).toBe(
+    '--url: "https://abc.ngrok.app/…" is not a host name: it has a path',
+  );
+  expect((refused as TvMcpError).hint).toBe(hint);
+  // Without one, the hint is the one of TV_MCP_ALLOWED_HOSTS.
+  expect(refusal('https://abc.ngrok.app/mcp').hint).toBe(ALLOWED_HOSTS_HINT);
+});
+
 test('the hint shows the expected form', () => {
   expect(ALLOWED_HOSTS_HINT).toBe(
     'TV_MCP_ALLOWED_HOSTS takes host names such as abc.ngrok.app, comma-separated',

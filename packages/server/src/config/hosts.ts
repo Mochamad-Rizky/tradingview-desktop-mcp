@@ -123,15 +123,19 @@ function canonicalHost(host: string): string | undefined {
 // wildcard, which the list never implies, a percent-encoded character and port 0. So is a plain
 // http URL without a port other than 80 or 443, because a host without a port lets only https
 // pages in. `source`, the variable or flag the entry came from, starts the message of a refusal
-// when given.
-export function normalizeHostEntry(entry: string, source?: string): string {
+// when given, and `hint` says what that setting expects.
+export function normalizeHostEntry(
+  entry: string,
+  source?: string,
+  hint = ALLOWED_HOSTS_HINT,
+): string {
   const parts = split(entry.trim());
   const refused = (problem?: string): TvMcpError =>
     new TvMcpError(
       'INVALID_INPUT',
       `${source === undefined ? '' : `${source}: `}${JSON.stringify(shown(parts))} is not a ` +
         `host name${problem === undefined ? '' : `: ${problem}`}`,
-      { hint: ALLOWED_HOSTS_HINT },
+      { hint },
     );
   const { scheme, authority, tail } = parts;
 

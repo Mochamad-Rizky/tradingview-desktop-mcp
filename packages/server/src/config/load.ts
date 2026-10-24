@@ -54,6 +54,9 @@ const CONFIG_OPTIONS = ['local', 'url', 'platform'] as const;
 
 const CONFIG_OPTIONS_HINT = 'For example: config <client> --local';
 
+// --url takes one host, unlike the comma-separated TV_MCP_ALLOWED_HOSTS.
+const URL_HINT = '--url takes a host or https URL such as abc.ngrok.app';
+
 const TOKEN_HINT =
   'Set TV_MCP_AUTH_TOKEN to a random secret, for example the output of "openssl rand -hex 32", ' +
   'or use the stdio transport.';
@@ -270,7 +273,9 @@ export function loadConfig(input: { argv: readonly string[]; env: NodeJS.Process
   // The tunnel's host, by the rules and with the messages of an allowed host.
   const urlSource = pickSource(env, flags, undefined, 'url');
   const url =
-    urlSource === undefined ? undefined : normalizeHostEntry(urlSource.raw, urlSource.name);
+    urlSource === undefined
+      ? undefined
+      : normalizeHostEntry(urlSource.raw, urlSource.name, URL_HINT);
   const platform = read(settingSchemas.platform, undefined, 'platform');
   // The flag wins over the variable, so a --profile flag is the profile that was read.
   const explicitProfile = present(flags.profile) === undefined ? undefined : profile;
