@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-10-25
+
+### Changed
+
+- **A shorter install prompt.** The prompt in the README that has the AI app install the server no
+  longer tells the app who is asking; it only asks for the steps in simple words.
+
 ## [0.1.1] - 2026-10-25
 
 ### Added
@@ -79,5 +86,6 @@ change in a minor release.
   and worked examples generated from the server itself, a security policy with advice on running
   the server safely, and a testing guide.
 
+[0.1.2]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.0

@@ -133,7 +133,8 @@ test('changelogSection ignores headings inside fenced code blocks', () => {
 test('the CHANGELOG of the repository has a section for the version of the package', () => {
   const section = changelogSection(readFileSync(ROOT_CHANGELOG, 'utf8'), pkg.version);
   expect(section).not.toBeNull();
-  expect(section?.body).toContain('### Added');
+  // Any of the change types of Keep a Changelog: a release of fixes alone has no Added.
+  expect(section?.body).toMatch(/^### (Added|Changed|Deprecated|Removed|Fixed|Security)$/m);
 });
 
 let dir = '';

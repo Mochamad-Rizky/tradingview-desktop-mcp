@@ -47,7 +47,7 @@ Then copy this prompt, paste it into your AI app and send it:
 ```text
 Install the TradingView MCP server for me. It is the npm package tradingview-desktop-mcp
 (https://github.com/Mochamad-Rizky/tradingview-desktop-mcp). Follow these steps and explain each one
-to me in simple words, because I am not a programmer:
+to me in simple words:
 
 1. Check that Node.js 20.19 or newer is installed. If it is not, stop and tell me how to install it.
 2. Run "npx -y tradingview-desktop-mcp config <client>", with <client> being the app you are
