@@ -14,6 +14,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the server to its configuration, starts TradingView with its debug port and runs `doctor`, so
   you do not have to type the commands yourself.
 
+### Changed
+
+- **The repository is now `Mochamad-Rizky/tradingview-desktop-mcp`**, named like the package. The
+  package metadata, the README and the security policy link to the new address; GitHub forwards
+  the old one.
+
 ## [0.1.0] - 2026-10-25
 
 The first public release. The version is below 1.0, so tool names, inputs and options may still
@@ -73,5 +79,5 @@ change in a minor release.
   and worked examples generated from the server itself, a security policy with advice on running
   the server safely, and a testing guide.
 
-[0.1.1]: https://github.com/Mochamad-Rizky/tradingview-mcp/releases/tag/v0.1.1
-[0.1.0]: https://github.com/Mochamad-Rizky/tradingview-mcp/releases/tag/v0.1.0
+[0.1.1]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.1
+[0.1.0]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.0

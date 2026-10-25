@@ -13,11 +13,11 @@
     "ai",
     "chrome-devtools-protocol"
   ],
-  "homepage": "https://github.com/Mochamad-Rizky/tradingview-mcp#readme",
-  "bugs": "https://github.com/Mochamad-Rizky/tradingview-mcp/issues",
+  "homepage": "https://github.com/Mochamad-Rizky/tradingview-desktop-mcp#readme",
+  "bugs": "https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/issues",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Mochamad-Rizky/tradingview-mcp.git",
+    "url": "git+https://github.com/Mochamad-Rizky/tradingview-desktop-mcp.git",
     "directory": "packages/server"
   },
   "license": "MIT",

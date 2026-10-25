@@ -1,8 +1,8 @@
 # tradingview-desktop-mcp
 
 [![npm](https://img.shields.io/npm/v/tradingview-desktop-mcp)](https://www.npmjs.com/package/tradingview-desktop-mcp)
-[![CI](https://github.com/Mochamad-Rizky/tradingview-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Mochamad-Rizky/tradingview-mcp/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/Mochamad-Rizky/tradingview-mcp/graph/badge.svg)](https://codecov.io/gh/Mochamad-Rizky/tradingview-mcp)
+[![CI](https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Mochamad-Rizky/tradingview-desktop-mcp/graph/badge.svg)](https://codecov.io/gh/Mochamad-Rizky/tradingview-desktop-mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 An [MCP](https://modelcontextprotocol.io) server that lets AI assistants read and control the
@@ -46,7 +46,7 @@ Then copy this prompt, paste it into your AI app and send it:
 
 ```text
 Install the TradingView MCP server for me. It is the npm package tradingview-desktop-mcp
-(https://github.com/Mochamad-Rizky/tradingview-mcp). Follow these steps and explain each one
+(https://github.com/Mochamad-Rizky/tradingview-desktop-mcp). Follow these steps and explain each one
 to me in simple words, because I am not a programmer:
 
 1. Check that Node.js 20.19 or newer is installed. If it is not, stop and tell me how to install it.
@@ -138,8 +138,8 @@ To run a checkout instead of the published package, you need Node.js 24 to build
 server runs on Node.js 20.19 or newer.
 
 ```sh
-git clone https://github.com/Mochamad-Rizky/tradingview-mcp.git
-cd tradingview-mcp
+git clone https://github.com/Mochamad-Rizky/tradingview-desktop-mcp.git
+cd tradingview-desktop-mcp
 pnpm install && pnpm build
 node packages/server/dist/cli.js launch
 node packages/server/dist/cli.js doctor
@@ -154,7 +154,7 @@ configuration, the entry looks like this:
   "mcpServers": {
     "tradingview": {
       "command": "node",
-      "args": ["/absolute/path/to/tradingview-mcp/packages/server/dist/cli.js"]
+      "args": ["/absolute/path/to/tradingview-desktop-mcp/packages/server/dist/cli.js"]
     }
   }
 }

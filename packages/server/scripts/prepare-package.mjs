@@ -12,8 +12,8 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BLOB_BASE = 'https://github.com/Mochamad-Rizky/tradingview-mcp/blob/main/';
-const RAW_BASE = 'https://raw.githubusercontent.com/Mochamad-Rizky/tradingview-mcp/main/';
+const BLOB_BASE = 'https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/blob/main/';
+const RAW_BASE = 'https://raw.githubusercontent.com/Mochamad-Rizky/tradingview-desktop-mcp/main/';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const PACKAGE = fileURLToPath(new URL('../', import.meta.url));

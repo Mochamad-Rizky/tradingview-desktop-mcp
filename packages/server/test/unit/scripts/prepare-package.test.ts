@@ -19,8 +19,8 @@ import { rewriteReadmeLinks } from '../../../scripts/prepare-package.mjs';
 
 const SCRIPT = fileURLToPath(new URL('../../../scripts/prepare-package.mjs', import.meta.url));
 const ROOT_README = fileURLToPath(new URL('../../../../../README.md', import.meta.url));
-const BLOB = 'https://github.com/Mochamad-Rizky/tradingview-mcp/blob/main/';
-const RAW = 'https://raw.githubusercontent.com/Mochamad-Rizky/tradingview-mcp/main/';
+const BLOB = 'https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/blob/main/';
+const RAW = 'https://raw.githubusercontent.com/Mochamad-Rizky/tradingview-desktop-mcp/main/';
 
 test('rewriteReadmeLinks makes relative links and images absolute and leaves absolute ones alone', () => {
   const readme = [

@@ -14,7 +14,7 @@ Please report a vulnerability privately, and do not open a public issue or pull 
 
 Use GitHub's private vulnerability reporting: open the **Security** tab of the repository, choose
 **Report a vulnerability**, and describe the problem. The form is at
-<https://github.com/Mochamad-Rizky/tradingview-mcp/security/advisories/new>.
+<https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/security/advisories/new>.
 
 Say what you found, how to reproduce it, which commit or version you tested, and what an attacker
 gains. Remove tokens and personal data from anything you attach. This project is maintained by one
