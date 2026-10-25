@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-10-25
+
+### Added
+
+- **Videos in the README.** The README opens with a 48-second overview and a setup tutorial of
+  about two minutes. A moving teaser and a poster link to the two MP4 files in `docs/media`. Both
+  videos use a made-up chart, not market data.
+
 ## [0.1.2] - 2026-10-25
 
 ### Changed
@@ -86,6 +94,7 @@ change in a minor release.
   and worked examples generated from the server itself, a security policy with advice on running
   the server safely, and a testing guide.
 
+[0.1.3]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.0
