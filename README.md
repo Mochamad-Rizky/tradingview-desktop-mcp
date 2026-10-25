@@ -28,10 +28,47 @@ the chart state and bars, the Pine source and the last compile result, the strat
 active watchlist), each along with the tool it shares its data with, and five prompts for common
 jobs. A web dashboard shows the calls live and runs tools by hand (see [Dashboard](#dashboard)).
 
-Contents: [Install](#install), [Connect your AI app](#connect-your-ai-app),
-[Remote clients and tunnels](#remote-clients-and-tunnels), [Quick start from source](#quick-start-from-source),
-[Use it](#use-it), [Troubleshooting](#troubleshooting), [Dashboard](#dashboard),
-[Contributing](#contributing).
+Contents: [Install by asking your AI app](#install-by-asking-your-ai-app), [Install](#install),
+[Connect your AI app](#connect-your-ai-app), [Remote clients and tunnels](#remote-clients-and-tunnels),
+[Quick start from source](#quick-start-from-source), [Use it](#use-it),
+[Troubleshooting](#troubleshooting), [Dashboard](#dashboard), [Contributing](#contributing).
+
+## Install by asking your AI app
+
+You do not have to type any commands yourself. If your AI app can run commands on your computer,
+as Claude Code, Cursor, VS Code, Windsurf, Gemini CLI and Codex CLI can, it can do the setup for
+you. First:
+
+1. Install [TradingView Desktop](https://www.tradingview.com/desktop/) and log in.
+2. Install [Node.js](https://nodejs.org) (the LTS version), if you do not have it yet.
+
+Then copy this prompt, paste it into your AI app and send it:
+
+```text
+Install the TradingView MCP server for me. It is the npm package tradingview-desktop-mcp
+(https://github.com/Mochamad-Rizky/tradingview-mcp). Follow these steps and explain each one
+to me in simple words, because I am not a programmer:
+
+1. Check that Node.js 20.19 or newer is installed. If it is not, stop and tell me how to install it.
+2. Run "npx -y tradingview-desktop-mcp config <client>", with <client> being the app you are
+   running in (claude-code, cursor, vscode, windsurf, gemini-cli or codex-cli). Do what it prints
+   to add the server to my configuration, and keep any other servers that are already there.
+3. Start TradingView with "npx -y tradingview-desktop-mcp launch". If it says TradingView is
+   already running without the debug port, ask me first, and only when I agree run it again
+   with --restart, because that closes TradingView and I may lose unsaved changes.
+4. Run "npx -y tradingview-desktop-mcp doctor" and tell me whether all checks pass. If the
+   chart check fails, tell me to bring the chart tab to the front in TradingView.
+5. Tell me whether I have to restart you, or open a new chat, before the TradingView tools show up.
+```
+
+When it is done, restart the app or open a new chat if it told you to, and ask "Check that
+TradingView is connected." Then try the [prompts below](#try-these-prompts).
+
+Using Claude Desktop? It cannot run commands, but Claude Code, Cursor and the other apps above can
+set it up for you: add "Set it up for Claude Desktop (config claude-desktop), not for this app." to
+the end of the prompt. ChatGPT and the OpenAI API need a tunnel, which you set up by hand (see
+[Remote clients and tunnels](#remote-clients-and-tunnels)). If the assistant gets stuck, follow the
+steps below yourself.
 
 ## Install
 
