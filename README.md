@@ -5,6 +5,17 @@
 [![codecov](https://codecov.io/gh/Mochamad-Rizky/tradingview-desktop-mcp/graph/badge.svg)](https://codecov.io/gh/Mochamad-Rizky/tradingview-desktop-mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+<p align="center">
+  <a href="docs/media/promo.mp4"><img src="docs/media/teaser.gif" width="49%" alt="The overview video: an assistant reads a chart, draws a support line, writes a Pine Script and sets a price alert"></a>
+  <a href="docs/media/tutorial.mp4"><img src="docs/media/tutorial-poster.jpg" width="49%" alt="The setup tutorial: set it up in five steps"></a>
+</p>
+
+<p align="center">
+  <a href="docs/media/promo.mp4"><b>▶ Watch the overview</b></a> (0:48) &nbsp;·&nbsp;
+  <a href="docs/media/tutorial.mp4"><b>▶ Watch the setup tutorial</b></a> (1:53)<br>
+  <sub>Both videos use a made-up chart, not market data.</sub>
+</p>
+
 An [MCP](https://modelcontextprotocol.io) server that lets AI assistants read and control the
 TradingView Desktop app on your own machine. It drives the app you are already logged in to over the
 Chrome DevTools Protocol, through the debug port the app opens when it starts with
