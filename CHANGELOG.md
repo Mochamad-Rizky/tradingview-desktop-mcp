@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-25
+
+### Added
+
+- **Install by asking your AI app.** The README starts its install steps with a prompt to paste
+  into an AI app that runs commands, such as Claude Code or Cursor. The app checks Node.js, adds
+  the server to its configuration, starts TradingView with its debug port and runs `doctor`, so
+  you do not have to type the commands yourself.
+
 ## [0.1.0] - 2026-10-25
 
 The first public release. The version is below 1.0, so tool names, inputs and options may still
@@ -64,4 +73,5 @@ change in a minor release.
   and worked examples generated from the server itself, a security policy with advice on running
   the server safely, and a testing guide.
 
+[0.1.1]: https://github.com/Mochamad-Rizky/tradingview-mcp/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Mochamad-Rizky/tradingview-mcp/releases/tag/v0.1.0
