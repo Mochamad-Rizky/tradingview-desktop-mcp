@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-11-01
+
+### Added
+
+- **The README in 22 more languages.** A line under the title links the translations in
+  `docs/i18n`: Simplified and Traditional Chinese, Japanese, Korean, Turkish, Russian, Vietnamese,
+  Thai, German, Spanish, French, Ukrainian, Polish, Brazilian Portuguese, Arabic, Persian,
+  Indonesian, Italian, Greek, Malayalam, Roman Urdu and Romanian. The English README stays the
+  reference. Each translation keeps the English anchors of the headings, and a test checks its
+  links and its commands. The package itself is unchanged.
+
 ## [0.1.3] - 2026-10-25
 
 ### Added
@@ -94,6 +105,7 @@ change in a minor release.
   and worked examples generated from the server itself, a security policy with advice on running
   the server safely, and a testing guide.
 
+[0.1.4]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Mochamad-Rizky/tradingview-desktop-mcp/releases/tag/v0.1.1
