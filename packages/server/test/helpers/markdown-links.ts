@@ -13,10 +13,19 @@ function proseOfFile(path: string): string {
   return readFileSync(path, 'utf8').replaceAll('\r\n', '\n').replaceAll(FENCED_CODE, '');
 }
 
-export function headingAnchors(path: string): string[] {
-  return [...proseOfFile(path).matchAll(/^#{1,6} (.*)$/gm)].map((match) =>
-    anchorOf(match[1] ?? ''),
+// The anchors a document defines itself with `<a id="…">` or `<a name="…">`, as the translations of
+// the README do to keep the English anchors on their translated headings.
+export function explicitAnchors(path: string): string[] {
+  return [...proseOfFile(path).matchAll(/<a\s+(?:id|name)="([^"]+)"/g)].map(
+    (match) => match[1] ?? '',
   );
+}
+
+export function headingAnchors(path: string): string[] {
+  return [
+    ...[...proseOfFile(path).matchAll(/^#{1,6} (.*)$/gm)].map((match) => anchorOf(match[1] ?? '')),
+    ...explicitAnchors(path),
+  ];
 }
 
 // The targets of the Markdown links and images of a file.
